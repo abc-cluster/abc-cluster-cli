@@ -2,6 +2,7 @@ package data
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"golang.org/x/crypto/nacl/secretbox"
@@ -101,5 +102,5 @@ func (e *cryptTestError) Error() string {
 	if e.size == 0 {
 		return e.msg
 	}
-	return e.msg
+	return fmt.Sprintf("%s (size=%d)", e.msg, e.size)
 }
