@@ -155,10 +155,10 @@ mpirun -np 112 ./ocean_model
 
 ### `data upload`
 
-Upload a local file to the abc-cluster data service using tus resumable uploads.
+Upload a local file or folder to the abc-cluster data service using tus resumable uploads.
 
 ```
-abc data upload <file> [flags]
+abc data upload <path> [flags]
 ```
 
 **Flags:**
@@ -176,6 +176,9 @@ abc data upload ./data.csv
 
 # Upload with a display name
 abc data upload ./data.csv --name sample-data
+
+# Upload all files from a folder (recursively)
+abc data upload ./dataset
 ```
 
 ## Development
