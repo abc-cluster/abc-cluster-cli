@@ -148,6 +148,7 @@ For the full list of runtime environment variables, see the
 #ABC --mem=64G
 #ABC --time=02:00:00
 #ABC --env=NOMAD_ALLOC_ID
+#ABC --env=NOMAD_TASK_DIR
 #ABC --env=NOMAD_REGION=global
 mpirun -np 112 ./ocean_model
 ```

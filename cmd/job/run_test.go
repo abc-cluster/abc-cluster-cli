@@ -287,7 +287,7 @@ func TestJobRun_ABCOverridesEnvVar(t *testing.T) {
 // ── NOMAD env directive ──────────────────────────────────────────────────────
 
 func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
-	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_ALLOC_ID\n#NOMAD --env=NOMAD_REGION\necho hi\n"
+	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_ALLOC_ID\n#NOMAD --env=NOMAD_REGION\n#NOMAD --env=NOMAD_TASK_DIR\necho hi\n"
 	p := writeTempScript(t, "env_vars.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
@@ -296,6 +296,7 @@ func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
 	checks := []string{
 		`NOMAD_ALLOC_ID = "${NOMAD_ALLOC_ID}"`,
 		`NOMAD_REGION = "${NOMAD_REGION}"`,
+		`NOMAD_TASK_DIR = "${NOMAD_TASK_DIR}"`,
 	}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {
