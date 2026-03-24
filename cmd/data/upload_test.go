@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
@@ -15,6 +17,7 @@ import (
 )
 
 type mockUploader struct {
+	mu       sync.Mutex
 	calls    []uploadCall
 	location string
 	err      error
@@ -26,6 +29,8 @@ type uploadCall struct {
 }
 
 func (m *mockUploader) Upload(_ context.Context, filePath string, metadata map[string]string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, uploadCall{filePath: filePath, metadata: metadata})
 	return m.location, m.err
 }
@@ -91,6 +96,12 @@ func TestDataUpload_Basic(t *testing.T) {
 	}
 	if !strings.Contains(out, "File uploaded successfully") {
 		t.Errorf("expected success output, got %q", out)
+	}
+	if !strings.Contains(out, "Size: ") || !strings.Contains(out, "bytes") {
+		t.Errorf("expected size in bytes output for tiny file, got %q", out)
+	}
+	if !strings.Contains(out, "Checksum: sha256:") {
+		t.Errorf("expected checksum output, got %q", out)
 	}
 	if strings.Contains(out, mock.location) {
 		t.Errorf("did not expect location in output, got %q", out)
@@ -274,13 +285,50 @@ func TestDataUpload_DirectoryUploadsFiles(t *testing.T) {
 		mock.calls[1].metadata["relativePath"],
 		mock.calls[2].metadata["relativePath"],
 	}
+	sort.Strings(relativePaths)
 	expected := []string{"a.txt", "b.txt", filepath.ToSlash(filepath.Join("nested", "c.txt"))}
+	sort.Strings(expected)
 	for i, rel := range expected {
 		if relativePaths[i] != rel {
 			t.Fatalf("expected relative path %q, got %q", rel, relativePaths[i])
 		}
 	}
 	if !strings.Contains(out, "Uploading 3 files") {
+		t.Fatalf("expected upload summary, got %q", out)
+	}
+	if !strings.Contains(out, "Size: ") || !strings.Contains(out, "bytes") {
+		t.Fatalf("expected size in bytes output for tiny file, got %q", out)
+	}
+	if !strings.Contains(out, "Checksum: sha256:") {
+		t.Fatalf("expected checksum output for directory upload, got %q", out)
+	}
+}
+
+func TestDataUpload_DirectoryUploadsFilesWithoutParallel(t *testing.T) {
+	dir := t.TempDir()
+	fileA := filepath.Join(dir, "a.txt")
+	fileB := filepath.Join(dir, "b.txt")
+	for _, path := range []string{fileA, fileB} {
+		if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/parallel-off"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	out, err := executeCmd(t, cmd, "upload", dir, "--parallel=false")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.calls) != 2 {
+		t.Fatalf("expected 2 upload calls, got %d", len(mock.calls))
+	}
+	if !strings.Contains(out, "Uploading 2 files") {
 		t.Fatalf("expected upload summary, got %q", out)
 	}
 }
@@ -323,7 +371,7 @@ func TestDataUpload_ChecksumDisabled(t *testing.T) {
 	workspace := ""
 
 	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
-	_, err := executeCmd(t, cmd, "upload", tmpFile, "--checksum=false")
+	out, err := executeCmd(t, cmd, "upload", tmpFile, "--checksum=false")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -332,6 +380,9 @@ func TestDataUpload_ChecksumDisabled(t *testing.T) {
 	}
 	if v, ok := mock.calls[0].metadata["checksum"]; !ok || v != "" {
 		t.Fatalf("expected checksum metadata marker to disable checksum, got %q (present=%v)", v, ok)
+	}
+	if strings.Contains(out, "Checksum:") {
+		t.Fatalf("did not expect checksum output when disabled, got %q", out)
 	}
 }
 
