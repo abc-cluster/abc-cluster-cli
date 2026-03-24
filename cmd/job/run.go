@@ -4,6 +4,7 @@ package job
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -46,8 +47,8 @@ If a required value (job name) cannot be resolved from any source it defaults to
 the script filename without extension. An error is returned if the name is still
 empty after all sources are exhausted.
 
-The script body is referenced as an artifact that Nomad fetches and executes on
-the compute node via the exec2 driver.
+The script body is embedded as a Nomad template and executed on the compute node
+via the exec2 driver.
 
 Supported directives (identical syntax for both #ABC and #NOMAD):
   --name=<string>        Job name
@@ -83,7 +84,12 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 	defer f.Close()
 
-	abcDirs, nomadDirs, err := parsePreamble(f)
+	scriptBytes, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("cannot read script %q: %w", scriptPath, err)
+	}
+
+	abcDirs, nomadDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
 	if err != nil {
 		return fmt.Errorf("failed to parse script preamble: %w", err)
 	}
@@ -96,7 +102,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprint(cmd.OutOrStdout(), generateHCL(spec, scriptBase))
+	fmt.Fprint(cmd.OutOrStdout(), generateHCL(spec, scriptBase, string(scriptBytes)))
 	return nil
 }
 
@@ -355,7 +361,7 @@ func walltimeToSeconds(t string) (int, error) {
 }
 
 // generateHCL produces a Nomad HCL job specification from the resolved spec.
-func generateHCL(spec *jobSpec, scriptName string) string {
+func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	var b strings.Builder
 
 	// ── job block ──────────────────────────────────────────────────────────
@@ -409,9 +415,18 @@ func generateHCL(spec *jobSpec, scriptName string) string {
 	fmt.Fprintf(&b, "      }\n")
 	fmt.Fprintln(&b)
 
-	// artifact block
-	fmt.Fprintf(&b, "      artifact {\n")
-	fmt.Fprintf(&b, "        source = %q\n", scriptName)
+	// template block
+	fmt.Fprintln(&b)
+	delimiter := heredocDelimiter(scriptContent)
+	fmt.Fprintf(&b, "      template {\n")
+	fmt.Fprintf(&b, "        data = <<-%s\n", delimiter)
+	fmt.Fprint(&b, scriptContent)
+	if !strings.HasSuffix(scriptContent, "\n") {
+		fmt.Fprintln(&b)
+	}
+	fmt.Fprintf(&b, "%s\n", delimiter)
+	fmt.Fprintf(&b, "        destination = %q\n", filepath.ToSlash(filepath.Join("local", scriptName)))
+	fmt.Fprintf(&b, "        perms = \"0755\"\n")
 	fmt.Fprintf(&b, "      }\n")
 
 	// resources block (only when at least one resource is specified)
@@ -470,4 +485,13 @@ func generateHCL(spec *jobSpec, scriptName string) string {
 	fmt.Fprintf(&b, "}\n")     // close job
 
 	return b.String()
+}
+
+func heredocDelimiter(scriptContent string) string {
+	base := "ABC_SCRIPT"
+	delimiter := base
+	for i := 1; strings.Contains(scriptContent, delimiter); i++ {
+		delimiter = fmt.Sprintf("%s_%d", base, i)
+	}
+	return delimiter
 }

@@ -58,7 +58,11 @@ python analysis.py
 		`memory = 8192`,
 		`command  = "/bin/bash"`,
 		`args     = ["local/job.sh"]`,
-		`source = "job.sh"`,
+		`template {`,
+		`data = <<-`,
+		`#!/bin/bash`,
+		`destination = "local/job.sh"`,
+		`perms = "0755"`,
 		`SLURM_JOB_ID`,
 		`PBS_JOBID`,
 	}
@@ -596,7 +600,7 @@ echo "body starts here"
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The cores directive after the echo line must NOT appear in the output.
-	if strings.Contains(out, "cores") {
+	if strings.Contains(out, "cores  =") {
 		t.Errorf("directive after body line should be ignored, got:\n%s", out)
 	}
 	// No resource directives were processed so the resources block must be absent.
