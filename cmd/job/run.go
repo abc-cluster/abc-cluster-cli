@@ -416,7 +416,6 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	fmt.Fprintln(&b)
 
 	// template block
-	fmt.Fprintln(&b)
 	delimiter := heredocDelimiter(scriptContent)
 	fmt.Fprintf(&b, "      template {\n")
 	fmt.Fprintf(&b, "        data = <<-%s\n", delimiter)
