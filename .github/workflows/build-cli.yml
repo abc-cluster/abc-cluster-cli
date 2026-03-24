@@ -3,7 +3,7 @@ name: Build abc-cluster-cli
 on:
   push:
     tags:
-      - abc-cli-v*
+      - v*.*.*
 
 permissions:
   contents: read
