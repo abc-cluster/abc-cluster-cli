@@ -1,6 +1,6 @@
 # abc-cluster-cli
 
-`abc` is the command line interface for the [abc-cluster](https://abc-cluster.io) platform, inspired by [tower-cli](https://github.com/seqeralabs/tower-cli).
+`abc` is the command line interface for the [abc-cluster](https://abc-cluster.io) platform, inspired by the smooth experience offered by the [tower-cli](https://github.com/seqeralabs/tower-cli).
 
 It brings abc-cluster concepts like pipelines to the terminal, enabling you to launch and manage pipeline runs directly from your shell.
 
