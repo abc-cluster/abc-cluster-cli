@@ -117,7 +117,7 @@ invocation.
 | `--namespace=<string>`             | Nomad namespace |
 | `--nodes=<int>`                    | Number of group instances (default: 1) |
 | `--cores=<int>`                    | CPU cores reserved per task |
-| `--mem=<size>[K\|M\|G]`            | Memory per task (KiB / MiB / GiB; stored as MiB) |
+| `--mem=<size>[K|M|G]`              | Memory per task (KiB / MiB / GiB; stored as MiB) |
 | `--gpus=<int>`                     | GPU count (nvidia/gpu device) |
 | `--time=<HH:MM:SS>`                | Walltime limit (wrapped with the timeout command) |
 | `--chdir=<path>`                   | Working directory inside the task sandbox |
