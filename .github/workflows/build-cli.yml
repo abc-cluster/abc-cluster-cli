@@ -3,7 +3,7 @@ name: Build abc-cluster-cli
 on:
   push:
     branches:
-      - master
+      - main
 
 permissions:
   contents: read
