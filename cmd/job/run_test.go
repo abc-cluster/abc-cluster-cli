@@ -311,7 +311,7 @@ echo hi
 	}
 }
 
-func TestJobRun_NomadEnvDirectiveExplicitValueABC(t *testing.T) {
+func TestJobRun_NomadEnvDirectiveExplicitValue(t *testing.T) {
 	script := `#!/bin/bash
 #ABC --name=env-vars
 #ABC --env=NOMAD_REGION=global
@@ -327,7 +327,7 @@ echo hi
 	}
 }
 
-func TestJobRun_NomadEnvDirectiveExplicitValueFromNomad(t *testing.T) {
+func TestJobRun_NomadEnvDirectiveExplicitValueWithNomadMarker(t *testing.T) {
 	script := `#!/bin/bash
 #NOMAD --name=env-vars
 #NOMAD --env=NOMAD_REGION=global
