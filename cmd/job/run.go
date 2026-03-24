@@ -1,6 +1,6 @@
-// Package submit implements the "abc submit" command, which parses #NOMAD
-// directives from a Bash script preamble and generates a Nomad HCL job spec.
-package submit
+// Package job implements the "abc job" command group, including "abc job run"
+// which parses preamble directives and generates a Nomad HCL batch job spec.
+package job
 
 import (
 	"bufio"
@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// jobSpec holds the directives extracted from the script preamble.
+// jobSpec holds the configuration for a Nomad batch job.
 type jobSpec struct {
 	Name         string // --name
 	Namespace    string // --namespace
@@ -27,40 +27,49 @@ type jobSpec struct {
 	Depend       string // --depend
 }
 
-// NewCmd returns the "submit" subcommand.
-func NewCmd() *cobra.Command {
+func newRunCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "submit <script>",
-		Short: "Submit a Nomad batch job from an annotated Bash script",
-		Long: `Parse #NOMAD directives from a Bash script preamble and print a Nomad HCL job spec.
+		Use:   "run <script>",
+		Short: "Generate a Nomad HCL batch job spec from an annotated Bash script",
+		Long: `Parse preamble directives from a Bash script and print a Nomad HCL job spec.
 
-The preamble is scanned for lines beginning with '#NOMAD'. Each such line is treated
-as a job configuration directive. The script body is referenced as an artifact that
-Nomad fetches and executes on the compute node via the exec2 driver.
+Directive sources are consulted in priority order (highest to lowest):
 
-Supported directives:
-  #NOMAD --name=<string>        Job name (default: script filename without extension)
-  #NOMAD --namespace=<string>   Nomad namespace
-  #NOMAD --nodes=<int>          Number of group instances (default: 1)
-  #NOMAD --cores=<int>          CPU cores reserved per task
-  #NOMAD --mem=<size>[K|M|G]    Memory per task (KiB / MiB / GiB; stored as MiB)
-  #NOMAD --gpus=<int>           GPU count (nvidia/gpu device)
-  #NOMAD --time=<HH:MM:SS>      Walltime limit (wrapped with the timeout command)
-  #NOMAD --chdir=<path>         Working directory inside the task sandbox
-  #NOMAD --depend=<type:id>     Dependency on another job (injects a prestart task)
+  1. #ABC  preamble  — lines beginning with "#ABC"  in the script header
+  2. #NOMAD preamble — lines beginning with "#NOMAD" in the script header
+  3. NOMAD env vars  — NOMAD_JOB_NAME, NOMAD_NAMESPACE, NOMAD_GROUP_COUNT,
+                       NOMAD_CPU_CORES, NOMAD_MEMORY_LIMIT (read at invocation time)
+
+If a required value (job name) cannot be resolved from any source it defaults to
+the script filename without extension. An error is returned if the name is still
+empty after all sources are exhausted.
+
+The script body is referenced as an artifact that Nomad fetches and executes on
+the compute node via the exec2 driver.
+
+Supported directives (identical syntax for both #ABC and #NOMAD):
+  --name=<string>        Job name
+  --namespace=<string>   Nomad namespace
+  --nodes=<int>          Number of group instances (default: 1)
+  --cores=<int>          CPU cores reserved per task
+  --mem=<size>[K|M|G]    Memory per task (KiB / MiB / GiB; stored as MiB)
+  --gpus=<int>           GPU count (nvidia/gpu device)
+  --time=<HH:MM:SS>      Walltime limit (wrapped with the timeout command)
+  --chdir=<path>         Working directory inside the task sandbox
+  --depend=<type:id>     Dependency on another job (injects a prestart task)
 
 Examples:
-  # Generate HCL from a script and pipe it to nomad
-  abc submit job.sh | nomad job run -
+  # Generate HCL and pipe directly to Nomad
+  abc job run job.sh | nomad job run -
 
   # Save generated HCL to a file
-  abc submit mpi_job.sh > ocean-model.nomad.hcl`,
+  abc job run mpi_job.sh > ocean-model.nomad.hcl`,
 		Args: cobra.ExactArgs(1),
-		RunE: runSubmit,
+		RunE: runJob,
 	}
 }
 
-func runSubmit(cmd *cobra.Command, args []string) error {
+func runJob(cmd *cobra.Command, args []string) error {
 	scriptPath := args[0]
 
 	f, err := os.Open(scriptPath)
@@ -69,29 +78,27 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 	}
 	defer f.Close()
 
-	spec, err := parsePreamble(f)
+	abcDirs, nomadDirs, err := parsePreamble(f)
 	if err != nil {
 		return fmt.Errorf("failed to parse script preamble: %w", err)
 	}
 
-	// Apply defaults.
-	if spec.Name == "" {
-		base := filepath.Base(scriptPath)
-		spec.Name = strings.TrimSuffix(base, filepath.Ext(base))
-	}
-	if spec.Nodes == 0 {
-		spec.Nodes = 1
+	scriptBase := filepath.Base(scriptPath)
+	defaultName := strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
+
+	spec, err := resolveSpec(abcDirs, nomadDirs, readNomadEnvVars(), defaultName)
+	if err != nil {
+		return err
 	}
 
-	fmt.Fprint(cmd.OutOrStdout(), generateHCL(spec, filepath.Base(scriptPath)))
+	fmt.Fprint(cmd.OutOrStdout(), generateHCL(spec, scriptBase))
 	return nil
 }
 
 // parsePreamble scans the contiguous comment block at the top of a Bash script
-// and extracts #NOMAD directives. Scanning stops at the first non-comment,
-// non-empty line after the optional shebang.
-func parsePreamble(r io.Reader) (*jobSpec, error) {
-	spec := &jobSpec{}
+// and returns separate slices of raw #ABC and #NOMAD directive strings.
+// Scanning stops at the first non-comment, non-empty line after the optional shebang.
+func parsePreamble(r io.Reader) (abcDirs, nomadDirs []string, err error) {
 	scanner := bufio.NewScanner(r)
 	first := true
 
@@ -112,38 +119,111 @@ func parsePreamble(r io.Reader) (*jobSpec, error) {
 			break
 		}
 
-		// Only process lines that start with the #NOMAD marker.
-		if !strings.HasPrefix(trimmed, "#NOMAD") {
-			continue
+		switch {
+		case strings.HasPrefix(trimmed, "#ABC"):
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#ABC"))
+			if rest != "" {
+				abcDirs = append(abcDirs, rest)
+			}
+		case strings.HasPrefix(trimmed, "#NOMAD"):
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#NOMAD"))
+			if rest != "" {
+				nomadDirs = append(nomadDirs, rest)
+			}
 		}
+	}
 
-		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#NOMAD"))
-		if rest == "" {
-			continue
+	if scanErr := scanner.Err(); scanErr != nil {
+		return nil, nil, fmt.Errorf("error reading script: %w", scanErr)
+	}
+
+	return abcDirs, nomadDirs, nil
+}
+
+// readNomadEnvVars reads the standard Nomad runtime environment variables and
+// returns them as a partial jobSpec. Integer env vars that fail to parse are
+// silently ignored.
+func readNomadEnvVars() *jobSpec {
+	spec := &jobSpec{}
+	spec.Name = os.Getenv("NOMAD_JOB_NAME")
+	spec.Namespace = os.Getenv("NOMAD_NAMESPACE")
+	if v := os.Getenv("NOMAD_GROUP_COUNT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			spec.Nodes = n
 		}
+	}
+	if v := os.Getenv("NOMAD_CPU_CORES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			spec.Cores = n
+		}
+	}
+	if v := os.Getenv("NOMAD_MEMORY_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			spec.MemoryMB = n
+		}
+	}
+	return spec
+}
 
-		if err := applyDirective(spec, rest); err != nil {
+// resolveSpec builds a final jobSpec by applying sources in priority order:
+//
+//  1. envSpec     — values from NOMAD_* environment variables (lowest priority)
+//  2. nomadDirs   — directives from #NOMAD preamble lines
+//  3. abcDirs     — directives from #ABC preamble lines (highest priority)
+//
+// After merging, filename-based and numeric defaults are applied, then the
+// result is validated. An error is returned if a required field cannot be
+// resolved.
+func resolveSpec(abcDirs, nomadDirs []string, envSpec *jobSpec, defaultName string) (*jobSpec, error) {
+	// Start from the env-var baseline (lowest priority).
+	spec := envSpec
+	if spec == nil {
+		spec = &jobSpec{}
+	}
+
+	// Apply #NOMAD directives (overwrite env-var values).
+	for _, d := range nomadDirs {
+		if err := applyDirective(spec, d, "NOMAD"); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading script: %w", err)
+	// Apply #ABC directives (highest priority; overwrite #NOMAD and env vars).
+	for _, d := range abcDirs {
+		if err := applyDirective(spec, d, "ABC"); err != nil {
+			return nil, err
+		}
+	}
+
+	// Apply defaults.
+	if spec.Name == "" {
+		spec.Name = defaultName
+	}
+	if spec.Nodes == 0 {
+		spec.Nodes = 1
+	}
+
+	// Validate required fields.
+	if spec.Name == "" {
+		return nil, fmt.Errorf(
+			"job name is required: set #ABC --name=<name>, #NOMAD --name=<name>, or NOMAD_JOB_NAME env var",
+		)
 	}
 
 	return spec, nil
 }
 
-// applyDirective parses a space-separated list of --key=value flags and
-// applies them to spec.
-func applyDirective(spec *jobSpec, directive string) error {
+// applyDirective parses a space-separated list of --key=value tokens and
+// writes the corresponding fields into spec. marker ("ABC" or "NOMAD") is used
+// only in error messages.
+func applyDirective(spec *jobSpec, directive, marker string) error {
 	for _, field := range strings.Fields(directive) {
 		if !strings.HasPrefix(field, "--") {
-			return fmt.Errorf("invalid directive %q: expected --key=value", field)
+			return fmt.Errorf("invalid #%s directive %q: expected --key=value", marker, field)
 		}
 		kv := strings.SplitN(strings.TrimPrefix(field, "--"), "=", 2)
 		if len(kv) != 2 {
-			return fmt.Errorf("invalid directive %q: expected --key=value", field)
+			return fmt.Errorf("invalid #%s directive %q: expected --key=value", marker, field)
 		}
 		key, val := kv[0], kv[1]
 
@@ -187,14 +267,14 @@ func applyDirective(spec *jobSpec, directive string) error {
 		case "depend":
 			spec.Depend = val
 		default:
-			return fmt.Errorf("unknown #NOMAD directive --%s", key)
+			return fmt.Errorf("unknown #%s directive --%s", marker, key)
 		}
 	}
 	return nil
 }
 
 // parseMemoryMB converts a memory string with an optional K/M/G suffix to MiB.
-// K (KiB) → MiB (ceiling division), M (MiB) → as-is, G (GiB) → × 1024.
+// K (KiB) → ceiling to MiB, M (MiB) → as-is, G (GiB) → × 1024.
 // No suffix is treated as MiB.
 func parseMemoryMB(s string) (int, error) {
 	upper := strings.ToUpper(strings.TrimSpace(s))
@@ -252,7 +332,7 @@ func walltimeToSeconds(t string) (int, error) {
 	return h*3600 + m*60 + s, nil
 }
 
-// generateHCL produces a Nomad HCL job specification from the parsed spec.
+// generateHCL produces a Nomad HCL job specification from the resolved spec.
 func generateHCL(spec *jobSpec, scriptName string) string {
 	var b strings.Builder
 

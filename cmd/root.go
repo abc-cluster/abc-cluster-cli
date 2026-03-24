@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	"github.com/spf13/cobra"
 )
 
@@ -14,7 +14,7 @@ var rootCmd = &cobra.Command{
 	Short: "abc-cluster CLI",
 	Long: `abc is the command line interface for the abc-cluster platform.
 
-It allows you to manage and submit batch jobs on the abc-cluster platform
+It allows you to manage and run batch jobs on the abc-cluster platform
 from your terminal.`,
 }
 
@@ -27,5 +27,5 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.AddCommand(submit.NewCmd())
+	rootCmd.AddCommand(job.NewCmd())
 }
