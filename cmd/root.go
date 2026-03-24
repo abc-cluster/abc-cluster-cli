@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
 	"github.com/spf13/cobra"
@@ -54,6 +55,7 @@ func init() {
 	)
 
 	rootCmd.AddCommand(pipeline.NewCmd(&ServerURL, &AccessToken, &Workspace))
+	rootCmd.AddCommand(data.NewCmd(&ServerURL, &AccessToken, &Workspace))
 	rootCmd.AddCommand(job.NewCmd())
 }
 

@@ -3,6 +3,7 @@ module github.com/abc-cluster/abc-cluster-cli
 go 1.24.13
 
 require (
+	github.com/bdragon300/tusgo v0.1.2
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
