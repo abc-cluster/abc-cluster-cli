@@ -258,6 +258,9 @@ go test ./...
 
 # Build
 go build -o abc .
+
+# Build multi-platform binaries locally (linux/darwin/windows x amd64/arm64)
+bash scripts/local-matrix-build.sh
 ```
 
 ### Local tus + MinIO testing (rclone compatibility)
