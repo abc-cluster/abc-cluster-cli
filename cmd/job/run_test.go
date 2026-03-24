@@ -284,6 +284,65 @@ func TestJobRun_ABCOverridesEnvVar(t *testing.T) {
 	}
 }
 
+// ── NOMAD env directive ──────────────────────────────────────────────────────
+
+func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
+	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_ALLOC_ID\n#NOMAD --env=NOMAD_REGION\necho hi\n"
+	p := writeTempScript(t, "env_vars.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	checks := []string{
+		`NOMAD_ALLOC_ID = "${NOMAD_ALLOC_ID}"`,
+		`NOMAD_REGION = "${NOMAD_REGION}"`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output\ngot:\n%s", want, out)
+		}
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveExplicitValue(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=env-vars\n#ABC --env=NOMAD_REGION=global\necho hi\n"
+	p := writeTempScript(t, "env_explicit.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `NOMAD_REGION = "global"`) {
+		t.Errorf("expected explicit NOMAD_REGION value, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveABCOverridesNomad(t *testing.T) {
+	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_REGION=global\n#ABC --env=NOMAD_REGION=local\necho hi\n"
+	p := writeTempScript(t, "env_override.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `NOMAD_REGION = "local"`) {
+		t.Errorf("expected #ABC env override, got:\n%s", out)
+	}
+	if strings.Contains(out, `NOMAD_REGION = "global"`) {
+		t.Errorf("expected #NOMAD env to be overridden, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveRejectsNonNomad(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=env-vars\n#ABC --env=FOO=bar\necho hi\n"
+	p := writeTempScript(t, "env_bad.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error for non-NOMAD env var")
+	}
+	if !strings.Contains(err.Error(), "NOMAD_*") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 // ── GPU, chdir, depend directives ───────────────────────────────────────────
 
 func TestJobRun_GPUDirective(t *testing.T) {

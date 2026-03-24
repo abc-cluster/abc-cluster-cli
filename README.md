@@ -96,6 +96,62 @@ abc --url https://api.my-cluster.example.com \
     pipeline run --pipeline my-pipeline
 ```
 
+### `job run`
+
+Generate a Nomad HCL batch job from an annotated Bash script and optionally pipe
+it directly to Nomad.
+
+```bash
+abc job run <script> | nomad job run -
+```
+
+Scripts can include a preamble of `#ABC` or `#NOMAD` directives. `#ABC` entries
+override `#NOMAD`, and both override NOMAD_* environment variables read at CLI
+invocation.
+
+**Supported directives:**
+
+| Directive                          | Description |
+|------------------------------------|-------------|
+| `--name=<string>`                  | Job name |
+| `--namespace=<string>`             | Nomad namespace |
+| `--nodes=<int>`                    | Number of group instances (default: 1) |
+| `--cores=<int>`                    | CPU cores reserved per task |
+| `--mem=<size>[K\|M\|G]`            | Memory per task (KiB / MiB / GiB; stored as MiB) |
+| `--gpus=<int>`                     | GPU count (nvidia/gpu device) |
+| `--time=<HH:MM:SS>`                | Walltime limit (wrapped with the timeout command) |
+| `--chdir=<path>`                   | Working directory inside the task sandbox |
+| `--depend=<type:id>`               | Dependency on another job (injects a prestart task) |
+| `--env=<NOMAD_VAR>[=<value>]`      | Emit a NOMAD_* runtime environment variable. If no value is provided, defaults to `${NOMAD_VAR}`. |
+
+**Common NOMAD_* variables you can emit with `--env`:**
+
+- Task identity: `NOMAD_ALLOC_ID`, `NOMAD_SHORT_ALLOC_ID`, `NOMAD_ALLOC_NAME`, `NOMAD_ALLOC_INDEX`
+- Job identity: `NOMAD_JOB_NAME`, `NOMAD_JOB_ID`, `NOMAD_JOB_PARENT_ID`
+- Task/group: `NOMAD_TASK_NAME`, `NOMAD_GROUP_NAME`
+- Placement: `NOMAD_NAMESPACE`, `NOMAD_REGION`, `NOMAD_DC`
+- Directories: `NOMAD_ALLOC_DIR`, `NOMAD_TASK_DIR`, `NOMAD_SECRETS_DIR`
+- Resources: `NOMAD_CPU_LIMIT`, `NOMAD_CPU_CORES`, `NOMAD_MEMORY_LIMIT`, `NOMAD_MEMORY_MAX_LIMIT`
+- Metadata: `NOMAD_META_<key>`
+- Network patterns: `NOMAD_IP_<label>`, `NOMAD_PORT_<label>`, `NOMAD_ADDR_<label>`, `NOMAD_HOST_PORT_<label>`
+
+For the full list of runtime environment variables, see the
+[Nomad runtime environment settings](https://developer.hashicorp.com/nomad/docs/reference/runtime-environment-settings).
+
+**Example script:**
+
+```bash
+#!/bin/bash
+#ABC --name=ocean-model
+#ABC --nodes=4
+#ABC --cores=28
+#ABC --mem=64G
+#ABC --time=02:00:00
+#ABC --env=NOMAD_ALLOC_ID
+#ABC --env=NOMAD_REGION=global
+mpirun -np 112 ./ocean_model
+```
+
 ## Development
 
 ```bash

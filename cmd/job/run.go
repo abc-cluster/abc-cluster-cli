@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,7 @@ type jobSpec struct {
 	WalltimeSecs int    // --time   (stored as seconds, 0 = unlimited)
 	ChDir        string // --chdir
 	Depend       string // --depend
+	Env          map[string]string
 }
 
 func newRunCmd() *cobra.Command {
@@ -57,6 +59,9 @@ Supported directives (identical syntax for both #ABC and #NOMAD):
   --time=<HH:MM:SS>      Walltime limit (wrapped with the timeout command)
   --chdir=<path>         Working directory inside the task sandbox
   --depend=<type:id>     Dependency on another job (injects a prestart task)
+  --env=<NOMAD_VAR>[=<value>]
+                         Emit a NOMAD_* runtime environment variable. If no value
+                         is provided, defaults to ${NOMAD_VAR}.
 
 Examples:
   # Generate HCL and pipe directly to Nomad
@@ -266,6 +271,30 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			spec.ChDir = val
 		case "depend":
 			spec.Depend = val
+		case "env":
+			envKey := val
+			envValue := ""
+			hasValue := false
+			if parts := strings.SplitN(val, "=", 2); len(parts) > 0 {
+				envKey = parts[0]
+				if len(parts) == 2 {
+					envValue = parts[1]
+					hasValue = true
+				}
+			}
+			if envKey == "" {
+				return fmt.Errorf("--env must be NOMAD_* variable name, got %q", val)
+			}
+			if !strings.HasPrefix(envKey, "NOMAD_") {
+				return fmt.Errorf("--env only supports NOMAD_* variables, got %q", envKey)
+			}
+			if !hasValue {
+				envValue = fmt.Sprintf("${%s}", envKey)
+			}
+			if spec.Env == nil {
+				spec.Env = make(map[string]string)
+			}
+			spec.Env[envKey] = envValue
 		default:
 			return fmt.Errorf("unknown #%s directive --%s", marker, key)
 		}
@@ -430,11 +459,22 @@ func generateHCL(spec *jobSpec, scriptName string) string {
 	fmt.Fprintf(&b, "        PBS_NUM_PPN         = \"${NOMAD_CPU_CORES}\"\n")
 	fmt.Fprintf(&b, "        SLURM_MEM_PER_NODE  = \"${NOMAD_MEMORY_LIMIT}\"\n")
 	fmt.Fprintf(&b, "        PBS_MEM             = \"${NOMAD_MEMORY_LIMIT}\"\n")
+	if len(spec.Env) > 0 {
+		fmt.Fprintln(&b)
+		keys := make([]string, 0, len(spec.Env))
+		for key := range spec.Env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(&b, "        %s = %q\n", key, spec.Env[key])
+		}
+	}
 	fmt.Fprintf(&b, "      }\n")
 
 	fmt.Fprintf(&b, "    }\n") // close task
-	fmt.Fprintf(&b, "  }\n")  // close group
-	fmt.Fprintf(&b, "}\n")    // close job
+	fmt.Fprintf(&b, "  }\n")   // close group
+	fmt.Fprintf(&b, "}\n")     // close job
 
 	return b.String()
 }
