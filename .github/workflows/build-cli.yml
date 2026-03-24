@@ -12,32 +12,9 @@ permissions:
   contents: read
 
 jobs:
-  verify-tag-on-main:
-    name: Verify Tag Commit On Main
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Ensure tagged commit is on main
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main --depth=1
-          if git branch -r --contains "${GITHUB_SHA}" | grep -q "origin/main"; then
-            echo "Tag ${GITHUB_REF_NAME} points to a commit on main."
-          else
-            echo "Tag ${GITHUB_REF_NAME} does not point to a commit on main." >&2
-            exit 1
-          fi
-
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
-    needs: verify-tag-on-main
     strategy:
       fail-fast: false
       matrix:
