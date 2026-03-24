@@ -36,5 +36,6 @@ func NewCmd(serverURL, accessToken, workspace *string, factory ...ClientFactory)
 	}
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
 	cmd.AddCommand(newEncryptCmd())
+	cmd.AddCommand(newDecryptCmd())
 	return cmd
 }

@@ -17,7 +17,7 @@ const (
 	rcloneFileHeaderSize  = len(rcloneFileMagic) + rcloneFileNonceSize
 	rcloneBlockDataSize   = 64 * 1024
 	rcloneBlockHeaderSize = secretbox.Overhead
-	rcloneDefaultSuffix   = ".bin"
+	rcloneDefaultSuffix   = ".encrypted"
 )
 
 var defaultSalt = []byte{0xA8, 0x0D, 0xF4, 0x3A, 0x8F, 0xBD, 0x03, 0x08, 0xA7, 0xCA, 0xB8, 0x3E, 0x58, 0x1F, 0x86, 0xB1}
@@ -125,6 +125,19 @@ func (c *cryptConfig) encryptToPath(sourcePath, destPath string) error {
 	return out.Close()
 }
 
+func (c *cryptConfig) decryptToPath(sourcePath, destPath string) error {
+	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if err := c.decryptToWriter(sourcePath, out); err != nil {
+		out.Close()
+		_ = os.Remove(destPath)
+		return err
+	}
+	return out.Close()
+}
+
 func (c *cryptConfig) encryptToWriter(sourcePath string, out io.Writer) error {
 	in, err := os.Open(sourcePath)
 	if err != nil {
@@ -132,6 +145,16 @@ func (c *cryptConfig) encryptToWriter(sourcePath string, out io.Writer) error {
 	}
 	defer in.Close()
 	_, err = c.encryptStream(out, in)
+	return err
+}
+
+func (c *cryptConfig) decryptToWriter(sourcePath string, out io.Writer) error {
+	in, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+	defer in.Close()
+	_, err = c.decryptStream(out, in)
 	return err
 }
 
@@ -161,6 +184,50 @@ func (c *cryptConfig) encryptStream(dst io.Writer, src io.Reader) (int64, error)
 		if read > 0 {
 			sealed := secretbox.Seal(nil, buf[:read], n.pointer(), &c.dataKey)
 			nw, err := writeAll(dst, sealed)
+			written += int64(nw)
+			if err != nil {
+				return written, err
+			}
+			n.increment()
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			break
+		}
+	}
+	return written, nil
+}
+
+func (c *cryptConfig) decryptStream(dst io.Writer, src io.Reader) (int64, error) {
+	header := make([]byte, rcloneFileHeaderSize)
+	if _, err := io.ReadFull(src, header); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return 0, fmt.Errorf("invalid encrypted file: missing header")
+		}
+		return 0, err
+	}
+	if string(header[:len(rcloneFileMagic)]) != rcloneFileMagic {
+		return 0, fmt.Errorf("invalid encrypted file: unexpected header")
+	}
+
+	var n nonce
+	copy(n[:], header[len(rcloneFileMagic):])
+
+	block := make([]byte, rcloneBlockDataSize+rcloneBlockHeaderSize)
+	written := int64(0)
+	for {
+		read, err := io.ReadFull(src, block)
+		if err == io.EOF {
+			break
+		}
+		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return written, err
+		}
+		if read > 0 {
+			plain, ok := secretbox.Open(nil, block[:read], n.pointer(), &c.dataKey)
+			if !ok {
+				return written, fmt.Errorf("decrypt failed: invalid password/salt or corrupted data")
+			}
+			nw, err := writeAll(dst, plain)
 			written += int64(nw)
 			if err != nil {
 				return written, err

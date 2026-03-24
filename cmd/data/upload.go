@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -86,7 +87,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 		authToken = accessToken
 	}
 
-	uploader, err := factory(endpoint, accessToken)
+	uploader, err := factory(endpoint, authToken)
 	if err != nil {
 		return fmt.Errorf("failed to initialize upload client: %w", err)
 	}
@@ -283,7 +284,7 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 
 	upload := tusgo.Upload{}
 	if _, err := client.CreateUpload(&upload, info.Size(), false, metadata); err != nil {
-		return "", fmt.Errorf("create upload: %w", err)
+		return "", fmt.Errorf("create upload: %w", explainTusUnexpectedResponse(err, client.BaseURL.String()))
 	}
 
 	stream := tusgo.NewUploadStream(client, &upload)
@@ -299,4 +300,14 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 	}
 
 	return upload.Location, nil
+}
+
+func explainTusUnexpectedResponse(err error, endpoint string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, tusgo.ErrUnexpectedResponse) {
+		return fmt.Errorf("unexpected response from tus endpoint %q; ensure the endpoint points to a tus upload root (often requires a trailing slash) and provide a valid --upload-token/ABC_UPLOAD_TOKEN", endpoint)
+	}
+	return err
 }
