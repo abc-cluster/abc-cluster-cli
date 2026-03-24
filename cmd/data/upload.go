@@ -1,7 +1,9 @@
 package data
 
 import (
+	"crypto/sha256"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -23,8 +25,8 @@ type uploadOptions struct {
 	endpoint      string
 	cryptPassword string
 	cryptSalt     string
-	token    string
-
+	token         string
+	checksum      bool
 }
 
 // newUploadCmd returns the "data upload" subcommand.
@@ -57,6 +59,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
 	cmd.Flags().StringVar(&opts.token, "upload-token", os.Getenv("ABC_UPLOAD_TOKEN"), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN); falls back to --access-token")
+	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in tus upload metadata")
 
 	return cmd
 }
@@ -93,10 +96,10 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	}
 
 	if info.IsDir() {
-		return uploadDirectory(cmd, uploader, opts.filePath, cryptor)
+		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum)
 	}
 
-	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor)
+	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum)
 }
 
 func resolveEndpoint(endpoint, serverURL, workspace string) (string, error) {
@@ -140,7 +143,7 @@ func applyWorkspace(endpoint, workspace string) (string, error) {
 	return parsed.String(), nil
 }
 
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig) error {
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -164,6 +167,9 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 		if err != nil {
 			return fmt.Errorf("data encryption failed for %q: %w", relPath, err)
 		}
+		if !checksumEnabled {
+			metadata["checksum"] = ""
+		}
 		location, err := uploader.Upload(cmd.Context(), uploadPath, metadata)
 		if cleanup != nil {
 			if cleanupErr := cleanup(); cleanupErr != nil {
@@ -182,12 +188,15 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 	return nil
 }
 
-func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig) error {
+func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool) error {
 	metadata := map[string]string{
 		"filename": filepath.Base(filePath),
 	}
 	if name != "" {
 		metadata["name"] = name
+	}
+	if !checksumEnabled {
+		metadata["checksum"] = ""
 	}
 
 	uploadPath, cleanup, err := encryptForUpload(filePath, cryptor)
@@ -280,10 +289,27 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		return "", fmt.Errorf("stat file: %w", err)
 	}
 
+	metadataWithChecksum := copyMetadata(metadata)
+	checksumRaw, checksumProvided := metadataWithChecksum["checksum"]
+	if checksumProvided {
+		if strings.TrimSpace(checksumRaw) == "" {
+			delete(metadataWithChecksum, "checksum")
+		}
+	} else {
+		checksumValue, err := sha256Hex(file)
+		if err != nil {
+			return "", fmt.Errorf("compute checksum: %w", err)
+		}
+		metadataWithChecksum["checksum"] = "sha256:" + checksumValue
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek file: %w", err)
+	}
+
 	client := u.client.WithContext(ctx)
 
 	upload := tusgo.Upload{}
-	if _, err := client.CreateUpload(&upload, info.Size(), false, metadata); err != nil {
+	if _, err := client.CreateUpload(&upload, info.Size(), false, metadataWithChecksum); err != nil {
 		return "", fmt.Errorf("create upload: %w", explainTusUnexpectedResponse(err, client.BaseURL.String()))
 	}
 
@@ -300,6 +326,22 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 	}
 
 	return upload.Location, nil
+}
+
+func copyMetadata(metadata map[string]string) map[string]string {
+	result := make(map[string]string, len(metadata)+1)
+	for k, v := range metadata {
+		result[k] = v
+	}
+	return result
+}
+
+func sha256Hex(r io.Reader) (string, error) {
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func explainTusUnexpectedResponse(err error, endpoint string) error {

@@ -307,6 +307,31 @@ func TestDataUpload_WithName(t *testing.T) {
 	}
 }
 
+func TestDataUpload_ChecksumDisabled(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/checksum-off"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--checksum=false")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 upload call, got %d", len(mock.calls))
+	}
+	if v, ok := mock.calls[0].metadata["checksum"]; !ok || v != "" {
+		t.Fatalf("expected checksum metadata marker to disable checksum, got %q (present=%v)", v, ok)
+	}
+}
+
 func TestDataUpload_MissingFile(t *testing.T) {
 	mock := &mockUploader{location: "https://uploads.example.com/files/5"}
 	recorder := &factoryRecorder{uploader: mock}
