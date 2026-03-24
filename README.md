@@ -122,6 +122,7 @@ invocation.
 | `--time=<HH:MM:SS>`                | Walltime limit (wrapped with the timeout command) |
 | `--chdir=<path>`                   | Working directory inside the task sandbox |
 | `--depend=<type:id>`               | Dependency on another job (injects a prestart task) |
+| `--driver=<string>`                | Nomad task driver (default: exec2) |
 | `--env=<NOMAD_VAR>[=<value>]`      | Emit a NOMAD_* runtime environment variable. If no value is provided, defaults to `${NOMAD_VAR}`. |
 
 **Common NOMAD_* variables you can emit with `--env`:**
