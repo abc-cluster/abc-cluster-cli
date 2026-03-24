@@ -272,18 +272,19 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 		case "depend":
 			spec.Depend = val
 		case "env":
-			envKey := val
+			if val == "" {
+				return fmt.Errorf("--env must be NOMAD_* variable name, got %q", val)
+			}
+			parts := strings.SplitN(val, "=", 2)
+			envKey := parts[0]
 			envValue := ""
 			hasValue := false
-			if parts := strings.SplitN(val, "=", 2); len(parts) > 0 {
-				envKey = parts[0]
-				if len(parts) == 2 {
-					envValue = parts[1]
-					hasValue = true
-				}
-			}
 			if envKey == "" {
 				return fmt.Errorf("--env must be NOMAD_* variable name, got %q", val)
+			}
+			if len(parts) == 2 {
+				envValue = parts[1]
+				hasValue = true
 			}
 			if !strings.HasPrefix(envKey, "NOMAD_") {
 				return fmt.Errorf("--env only supports NOMAD_* variables, got %q", envKey)
