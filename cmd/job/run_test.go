@@ -284,6 +284,101 @@ func TestJobRun_ABCOverridesEnvVar(t *testing.T) {
 	}
 }
 
+// ── NOMAD env directive ──────────────────────────────────────────────────────
+
+func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
+	script := `#!/bin/bash
+#NOMAD --name=env-vars
+#NOMAD --env=NOMAD_ALLOC_ID
+#NOMAD --env=NOMAD_REGION
+#NOMAD --env=NOMAD_TASK_DIR
+echo hi
+`
+	p := writeTempScript(t, "env_vars.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	checks := []string{
+		`NOMAD_ALLOC_ID = "${NOMAD_ALLOC_ID}"`,
+		`NOMAD_REGION = "${NOMAD_REGION}"`,
+		`NOMAD_TASK_DIR = "${NOMAD_TASK_DIR}"`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output\ngot:\n%s", want, out)
+		}
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveExplicitValue(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=env-vars
+#ABC --env=NOMAD_REGION=global
+echo hi
+`
+	p := writeTempScript(t, "env_explicit.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `NOMAD_REGION = "global"`) {
+		t.Errorf("expected explicit NOMAD_REGION value, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveExplicitValueWithNomadMarker(t *testing.T) {
+	script := `#!/bin/bash
+#NOMAD --name=env-vars
+#NOMAD --env=NOMAD_REGION=global
+echo hi
+`
+	p := writeTempScript(t, "env_explicit_nomad.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `NOMAD_REGION = "global"`) {
+		t.Errorf("expected explicit NOMAD_REGION value, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveABCOverridesNomad(t *testing.T) {
+	script := `#!/bin/bash
+#NOMAD --name=env-vars
+#NOMAD --env=NOMAD_REGION=global
+#ABC --env=NOMAD_REGION=local
+echo hi
+`
+	p := writeTempScript(t, "env_override.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `NOMAD_REGION = "local"`) {
+		t.Errorf("expected #ABC env override, got:\n%s", out)
+	}
+	if strings.Contains(out, `NOMAD_REGION = "global"`) {
+		t.Errorf("expected #NOMAD env to be overridden, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveRejectsNonNomad(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=env-vars
+#ABC --env=FOO=bar
+echo hi
+`
+	p := writeTempScript(t, "env_bad.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error for non-NOMAD env var")
+	}
+	if !strings.Contains(err.Error(), "NOMAD_*") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 // ── GPU, chdir, depend directives ───────────────────────────────────────────
 
 func TestJobRun_GPUDirective(t *testing.T) {
