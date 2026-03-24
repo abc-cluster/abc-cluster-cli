@@ -39,6 +39,7 @@ Additional optional environment variables:
 |---------------------|---------------------------------------------------|--------------------------------|
 | `ABC_API_ENDPOINT`  | abc-cluster API URL                               | `https://api.abc-cluster.io`   |
 | `ABC_WORKSPACE_ID`  | Workspace ID to use for operations                | *(user's default workspace)*   |
+| `ABC_UPLOAD_TOKEN`  | Bearer token used by `abc data upload` for tus auth (falls back to `ABC_ACCESS_TOKEN`) | *(unset)* |
 
 ## Usage
 
@@ -170,12 +171,17 @@ abc data upload <path> [flags]
 | `--endpoint` | Tus upload endpoint URL (defaults to `<url>/data/uploads`) |
 | `--crypt-password` | rclone crypt password for client-side encryption     |
 | `--crypt-salt`     | rclone crypt salt (password2) for encryption          |
+| `--upload-token` | Bearer token for tus uploads (or set `ABC_UPLOAD_TOKEN`; falls back to `--access-token`) |
+
 
 ### Examples
 
 ```bash
 # Upload a file
 abc data upload ./data.csv
+
+# Upload using a dedicated tus bearer token
+ABC_UPLOAD_TOKEN=<tusd-bearer-token> abc data upload ./data.csv
 
 # Upload with a display name
 abc data upload ./data.csv --name sample-data

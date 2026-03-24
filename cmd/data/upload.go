@@ -22,6 +22,8 @@ type uploadOptions struct {
 	endpoint      string
 	cryptPassword string
 	cryptSalt     string
+	token    string
+
 }
 
 // newUploadCmd returns the "data upload" subcommand.
@@ -53,6 +55,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "tus upload endpoint URL (defaults to <url>/data/uploads)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
+	cmd.Flags().StringVar(&opts.token, "upload-token", os.Getenv("ABC_UPLOAD_TOKEN"), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN); falls back to --access-token")
 
 	return cmd
 }
@@ -76,6 +79,11 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	cryptor, err := uploadCryptConfig(opts.cryptPassword, opts.cryptSalt)
 	if err != nil {
 		return err
+	}
+
+	authToken := strings.TrimSpace(opts.token)
+	if authToken == "" {
+		authToken = accessToken
 	}
 
 	uploader, err := factory(endpoint, accessToken)

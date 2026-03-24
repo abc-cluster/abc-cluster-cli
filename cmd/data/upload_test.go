@@ -97,6 +97,50 @@ func TestDataUpload_Basic(t *testing.T) {
 	}
 }
 
+func TestDataUpload_UsesAccessTokenByDefault(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/default-token"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "api-token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.accessToken != "api-token" {
+		t.Fatalf("expected access token fallback, got %q", recorder.accessToken)
+	}
+}
+
+func TestDataUpload_UploadTokenOverridesAccessToken(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/upload-token"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "api-token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--upload-token", "tusd-token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.accessToken != "tusd-token" {
+		t.Fatalf("expected upload token override, got %q", recorder.accessToken)
+	}
+}
+
 func TestDataUpload_WithWorkspace(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
 	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {

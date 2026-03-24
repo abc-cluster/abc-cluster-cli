@@ -10,3 +10,4 @@ abc-cluster-cli
 # Go workspace
 go.work
 go.work.sum
+.tmp
