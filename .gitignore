@@ -1,0 +1,12 @@
+# Built binary
+abc
+abc-cluster-cli
+*.exe
+
+# Test artifacts
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
