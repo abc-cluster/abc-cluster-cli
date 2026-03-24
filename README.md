@@ -153,6 +153,31 @@ For the full list of runtime environment variables, see the
 mpirun -np 112 ./ocean_model
 ```
 
+### `data upload`
+
+Upload a local file to the abc-cluster data service using tus resumable uploads.
+
+```
+abc data upload <file> [flags]
+```
+
+**Flags:**
+
+| Flag         | Description                                                |
+|--------------|------------------------------------------------------------|
+| `--name`     | Display name for the uploaded file                         |
+| `--endpoint` | Tus upload endpoint URL (defaults to `<url>/data/uploads`) |
+
+### Examples
+
+```bash
+# Upload a file
+abc data upload ./data.csv
+
+# Upload with a display name
+abc data upload ./data.csv --name sample-data
+```
+
 ## Development
 
 ```bash
