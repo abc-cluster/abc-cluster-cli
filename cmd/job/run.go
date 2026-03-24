@@ -27,6 +27,7 @@ type jobSpec struct {
 	WalltimeSecs int    // --time   (stored as seconds, 0 = unlimited)
 	ChDir        string // --chdir
 	Depend       string // --depend
+	Driver       string // --driver
 	Env          map[string]string
 }
 
@@ -48,7 +49,7 @@ the script filename without extension. An error is returned if the name is still
 empty after all sources are exhausted.
 
 The script body is embedded as a Nomad template and executed on the compute node
-via the exec2 driver.
+via the configured task driver (default: exec2).
 
 Supported directives (identical syntax for both #ABC and #NOMAD):
   --name=<string>        Job name
@@ -60,9 +61,10 @@ Supported directives (identical syntax for both #ABC and #NOMAD):
   --time=<HH:MM:SS>      Walltime limit (wrapped with the timeout command)
   --chdir=<path>         Working directory inside the task sandbox
   --depend=<type:id>     Dependency on another job (injects a prestart task)
+  --driver=<string>      Nomad task driver (default: exec2)
   --env=<NOMAD_VAR>[=<value>]
-                         Emit a NOMAD_* runtime environment variable. If no value
-                         is provided, defaults to ${NOMAD_VAR}.
+                          Emit a NOMAD_* runtime environment variable. If no value
+                          is provided, defaults to ${NOMAD_VAR}.
 
 Examples:
   # Generate HCL and pipe directly to Nomad
@@ -213,6 +215,9 @@ func resolveSpec(abcDirs, nomadDirs []string, envSpec *jobSpec, defaultName stri
 	if spec.Nodes == 0 {
 		spec.Nodes = 1
 	}
+	if spec.Driver == "" {
+		spec.Driver = "exec2"
+	}
 
 	// Validate required fields.
 	if spec.Name == "" {
@@ -277,6 +282,8 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			spec.ChDir = val
 		case "depend":
 			spec.Depend = val
+		case "driver":
+			spec.Driver = val
 		case "env":
 			if val == "" || strings.HasPrefix(val, "=") {
 				return fmt.Errorf("--env must include a variable name (optionally followed by =value), got %q", val)
@@ -380,7 +387,7 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	if spec.Depend != "" {
 		fmt.Fprintln(&b)
 		fmt.Fprintf(&b, "    task \"wait-dependency\" {\n")
-		fmt.Fprintf(&b, "      driver = \"exec2\"\n")
+		fmt.Fprintf(&b, "      driver = %q\n", spec.Driver)
 		fmt.Fprintln(&b)
 		fmt.Fprintf(&b, "      lifecycle {\n")
 		fmt.Fprintf(&b, "        hook    = \"prestart\"\n")
@@ -397,7 +404,7 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	// ── main task ──────────────────────────────────────────────────────────
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "    task \"main\" {\n")
-	fmt.Fprintf(&b, "      driver = \"exec2\"\n")
+	fmt.Fprintf(&b, "      driver = %q\n", spec.Driver)
 	fmt.Fprintln(&b)
 
 	// config block

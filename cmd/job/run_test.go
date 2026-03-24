@@ -414,6 +414,18 @@ func TestJobRun_ChdirDirective(t *testing.T) {
 	}
 }
 
+func TestJobRun_DriverDirective(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=driver-job\n#ABC --driver=raw_exec\necho hi\n"
+	p := writeTempScript(t, "driver.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `driver = "raw_exec"`) {
+		t.Errorf("expected driver override in output\ngot:\n%s", out)
+	}
+}
+
 func TestJobRun_DependDirective(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --name=dep-job\n#ABC --depend=after:job-abc123\n./step2.sh\n"
 	p := writeTempScript(t, "dep.sh", script)
