@@ -287,7 +287,13 @@ func TestJobRun_ABCOverridesEnvVar(t *testing.T) {
 // ── NOMAD env directive ──────────────────────────────────────────────────────
 
 func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
-	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_ALLOC_ID\n#NOMAD --env=NOMAD_REGION\n#NOMAD --env=NOMAD_TASK_DIR\necho hi\n"
+	script := `#!/bin/bash
+#NOMAD --name=env-vars
+#NOMAD --env=NOMAD_ALLOC_ID
+#NOMAD --env=NOMAD_REGION
+#NOMAD --env=NOMAD_TASK_DIR
+echo hi
+`
 	p := writeTempScript(t, "env_vars.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
@@ -306,7 +312,11 @@ func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
 }
 
 func TestJobRun_NomadEnvDirectiveExplicitValueABC(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=env-vars\n#ABC --env=NOMAD_REGION=global\necho hi\n"
+	script := `#!/bin/bash
+#ABC --name=env-vars
+#ABC --env=NOMAD_REGION=global
+echo hi
+`
 	p := writeTempScript(t, "env_explicit.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
@@ -318,7 +328,11 @@ func TestJobRun_NomadEnvDirectiveExplicitValueABC(t *testing.T) {
 }
 
 func TestJobRun_NomadEnvDirectiveExplicitValueFromNomad(t *testing.T) {
-	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_REGION=global\necho hi\n"
+	script := `#!/bin/bash
+#NOMAD --name=env-vars
+#NOMAD --env=NOMAD_REGION=global
+echo hi
+`
 	p := writeTempScript(t, "env_explicit_nomad.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
@@ -330,7 +344,12 @@ func TestJobRun_NomadEnvDirectiveExplicitValueFromNomad(t *testing.T) {
 }
 
 func TestJobRun_NomadEnvDirectiveABCOverridesNomad(t *testing.T) {
-	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_REGION=global\n#ABC --env=NOMAD_REGION=local\necho hi\n"
+	script := `#!/bin/bash
+#NOMAD --name=env-vars
+#NOMAD --env=NOMAD_REGION=global
+#ABC --env=NOMAD_REGION=local
+echo hi
+`
 	p := writeTempScript(t, "env_override.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
@@ -345,7 +364,11 @@ func TestJobRun_NomadEnvDirectiveABCOverridesNomad(t *testing.T) {
 }
 
 func TestJobRun_NomadEnvDirectiveRejectsNonNomad(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=env-vars\n#ABC --env=FOO=bar\necho hi\n"
+	script := `#!/bin/bash
+#ABC --name=env-vars
+#ABC --env=FOO=bar
+echo hi
+`
 	p := writeTempScript(t, "env_bad.sh", script)
 	_, err := executeCmd(t, p)
 	if err == nil {
