@@ -213,14 +213,41 @@ abc data encrypt <path> [flags]
 ### Examples
 
 ```bash
-# Encrypt a single file to <file>.bin
+# Encrypt a single file to <file>.encrypted
 abc data encrypt ./data.csv --crypt-password "secret"
 
 # Encrypt a folder to ./dataset-encrypted
 abc data encrypt ./dataset --crypt-password "secret" --crypt-salt "pepper"
 
 # Upload a previously encrypted file as-is
-abc data upload ./data.csv.bin
+abc data upload ./data.csv.encrypted
+```
+
+### `data decrypt`
+
+Decrypt a local file or folder previously encrypted with `abc data encrypt`.
+
+```
+abc data decrypt <path> [flags]
+```
+
+**Flags:**
+
+| Flag             | Description                                              |
+|------------------|----------------------------------------------------------|
+| `--output`       | Output file path for single-file decryption              |
+| `--output-dir`   | Output directory for folder decryption                   |
+| `--crypt-password` | rclone crypt password for client-side decryption      |
+| `--crypt-salt`     | rclone crypt salt (password2) for decryption           |
+
+### Examples
+
+```bash
+# Decrypt a single file
+abc data decrypt ./data.csv.encrypted --crypt-password "secret"
+
+# Decrypt a folder to ./dataset-decrypted
+abc data decrypt ./dataset-encrypted --crypt-password "secret" --crypt-salt "pepper"
 ```
 
 ## Development
