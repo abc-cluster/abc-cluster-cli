@@ -168,6 +168,8 @@ abc data upload <path> [flags]
 |--------------|------------------------------------------------------------|
 | `--name`     | Display name for the uploaded file                         |
 | `--endpoint` | Tus upload endpoint URL (defaults to `<url>/data/uploads`) |
+| `--crypt-password` | rclone crypt password for client-side encryption     |
+| `--crypt-salt`     | rclone crypt salt (password2) for encryption          |
 
 ### Examples
 
@@ -178,8 +180,41 @@ abc data upload ./data.csv
 # Upload with a display name
 abc data upload ./data.csv --name sample-data
 
+# Encrypt and upload with rclone-compatible crypt
+abc data upload ./data.csv --crypt-password "secret" --crypt-salt "pepper"
+
 # Upload all files from a folder (recursively)
 abc data upload ./dataset
+```
+
+### `data encrypt`
+
+Encrypt a local file or folder using the rclone crypt format so it can be uploaded later.
+
+```
+abc data encrypt <path> [flags]
+```
+
+**Flags:**
+
+| Flag             | Description                                              |
+|------------------|----------------------------------------------------------|
+| `--output`       | Output file path for single-file encryption              |
+| `--output-dir`   | Output directory for folder encryption                   |
+| `--crypt-password` | rclone crypt password for client-side encryption      |
+| `--crypt-salt`     | rclone crypt salt (password2) for encryption           |
+
+### Examples
+
+```bash
+# Encrypt a single file to <file>.bin
+abc data encrypt ./data.csv --crypt-password "secret"
+
+# Encrypt a folder to ./dataset-encrypted
+abc data encrypt ./dataset --crypt-password "secret" --crypt-salt "pepper"
+
+# Upload a previously encrypted file as-is
+abc data upload ./data.csv.bin
 ```
 
 ## Development
@@ -190,4 +225,51 @@ go test ./...
 
 # Build
 go build -o abc .
+```
+
+### Local tus + MinIO testing (rclone compatibility)
+
+Use the provided docker compose setup to run a tusd server backed by MinIO:
+
+```bash
+docker compose -f docker-compose.tus-minio.yml up -d
+```
+
+Upload a file with client-side encryption:
+
+```bash
+abc data upload ./data.csv \
+  --endpoint http://localhost:1080/files/ \
+  --crypt-password "secret" \
+  --crypt-salt "pepper"
+```
+
+Configure rclone to read from the MinIO bucket and decrypt:
+
+```bash
+rclone config create local-minio s3 \
+  provider Minio \
+  access_key_id minioadmin \
+  secret_access_key minioadmin \
+  endpoint http://localhost:9000 \
+  region us-east-1
+
+rclone config create local-crypt crypt \
+  remote local-minio:tusd \
+  filename_encryption off \
+  suffix none \
+  password "$(rclone obscure secret)" \
+  password2 "$(rclone obscure pepper)"
+```
+
+Use the upload ID from the `Location:` output to fetch the decrypted file:
+
+```bash
+rclone cat local-crypt:<upload-id> > decrypted.txt
+```
+
+Stop the local stack when done:
+
+```bash
+docker compose -f docker-compose.tus-minio.yml down -v
 ```

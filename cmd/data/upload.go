@@ -17,9 +17,11 @@ import (
 )
 
 type uploadOptions struct {
-	filePath string
-	name     string
-	endpoint string
+	filePath      string
+	name          string
+	endpoint      string
+	cryptPassword string
+	cryptSalt     string
 }
 
 // newUploadCmd returns the "data upload" subcommand.
@@ -49,6 +51,8 @@ Examples:
 
 	cmd.Flags().StringVar(&opts.name, "name", "", "display name for the uploaded file")
 	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "tus upload endpoint URL (defaults to <url>/data/uploads)")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
 
 	return cmd
 }
@@ -69,16 +73,21 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 		return err
 	}
 
+	cryptor, err := uploadCryptConfig(opts.cryptPassword, opts.cryptSalt)
+	if err != nil {
+		return err
+	}
+
 	uploader, err := factory(endpoint, accessToken)
 	if err != nil {
 		return fmt.Errorf("failed to initialize upload client: %w", err)
 	}
 
 	if info.IsDir() {
-		return uploadDirectory(cmd, uploader, opts.filePath)
+		return uploadDirectory(cmd, uploader, opts.filePath, cryptor)
 	}
 
-	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size())
+	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor)
 }
 
 func resolveEndpoint(endpoint, serverURL, workspace string) (string, error) {
@@ -122,7 +131,7 @@ func applyWorkspace(endpoint, workspace string) (string, error) {
 	return parsed.String(), nil
 }
 
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string) error {
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -142,7 +151,16 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string) error {
 			"filename":     filepath.Base(file.path),
 			"relativePath": filepath.ToSlash(relPath),
 		}
-		location, err := uploader.Upload(cmd.Context(), file.path, metadata)
+		uploadPath, cleanup, err := encryptForUpload(file.path, cryptor)
+		if err != nil {
+			return fmt.Errorf("data encryption failed for %q: %w", relPath, err)
+		}
+		location, err := uploader.Upload(cmd.Context(), uploadPath, metadata)
+		if cleanup != nil {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				return fmt.Errorf("failed to clean up encrypted file for %q: %w", relPath, cleanupErr)
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("data upload failed for %q: %w", relPath, err)
 		}
@@ -155,7 +173,7 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string) error {
 	return nil
 }
 
-func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64) error {
+func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig) error {
 	metadata := map[string]string{
 		"filename": filepath.Base(filePath),
 	}
@@ -163,7 +181,16 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		metadata["name"] = name
 	}
 
-	location, err := uploader.Upload(cmd.Context(), filePath, metadata)
+	uploadPath, cleanup, err := encryptForUpload(filePath, cryptor)
+	if err != nil {
+		return fmt.Errorf("data encryption failed: %w", err)
+	}
+	location, err := uploader.Upload(cmd.Context(), uploadPath, metadata)
+	if cleanup != nil {
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			return fmt.Errorf("failed to clean up encrypted file: %w", cleanupErr)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("data upload failed: %w", err)
 	}

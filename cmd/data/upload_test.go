@@ -330,3 +330,28 @@ func TestDataUpload_UploaderError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestDataUpload_CryptSaltWithoutPassword(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/9"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--crypt-salt", "pepper")
+	if err == nil {
+		t.Fatal("expected error for missing crypt password")
+	}
+	if !strings.Contains(err.Error(), "crypt-password") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.endpoint != "" {
+		t.Fatalf("factory should not be called on invalid encryption args")
+	}
+}
