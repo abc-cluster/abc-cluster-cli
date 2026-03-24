@@ -8,16 +8,21 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/bdragon300/tusgo"
 	"github.com/spf13/cobra"
 )
+
+const bytesPerMB = 1024 * 1024
 
 type uploadOptions struct {
 	filePath      string
@@ -28,6 +33,8 @@ type uploadOptions struct {
 	token         string
 	checksum      bool
 	progress      bool
+	parallel      bool
+	parallelJobs  int
 }
 
 type uploadProgressContextKey struct{}
@@ -80,6 +87,8 @@ Examples:
 	cmd.Flags().StringVar(&opts.token, "upload-token", os.Getenv("ABC_UPLOAD_TOKEN"), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN); falls back to --access-token")
 	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in tus upload metadata")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
+	cmd.Flags().BoolVar(&opts.parallel, "parallel", true, "upload directory files in parallel")
+	cmd.Flags().IntVar(&opts.parallelJobs, "parallel-jobs", runtime.NumCPU(), "number of parallel upload workers when --parallel=true")
 
 	return cmd
 }
@@ -116,7 +125,14 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	}
 
 	if info.IsDir() {
-		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress)
+		jobs := opts.parallelJobs
+		if !opts.parallel {
+			jobs = 1
+		}
+		if jobs < 1 {
+			return fmt.Errorf("parallel-jobs must be >= 1")
+		}
+		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs)
 	}
 
 	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress)
@@ -163,7 +179,14 @@ func applyWorkspace(endpoint, workspace string) (string, error) {
 	return parsed.String(), nil
 }
 
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool) error {
+type uploadResult struct {
+	relPath  string
+	sizeMB   string
+	checksum string
+	err      error
+}
+
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, jobs int) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -173,56 +196,140 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Uploading %d files...\n", len(files))
-	for _, file := range files {
-		relPath, err := filepath.Rel(dir, file.path)
-		if err != nil {
-			return fmt.Errorf("failed to resolve path for %q: %w", file.path, err)
-		}
-
-		metadata := map[string]string{
-			"filename":     filepath.Base(file.path),
-			"relativePath": filepath.ToSlash(relPath),
-		}
-		encryptProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), file.size)
-		uploadPath, cleanup, err := encryptForUpload(file.path, cryptor, func(n int64) {
-			encryptProgress.Add(n)
-		})
-		encryptDoneErr := encryptProgress.Complete()
-		if encryptDoneErr != nil {
-			return fmt.Errorf("failed to render encryption progress: %w", encryptDoneErr)
-		}
-		if err != nil {
-			return fmt.Errorf("data encryption failed for %q: %w", relPath, err)
-		}
-		if !checksumEnabled {
-			metadata["checksum"] = ""
-		}
-		uploadInfo, err := os.Stat(uploadPath)
-		if err != nil {
-			return fmt.Errorf("failed to access upload file for %q: %w", relPath, err)
-		}
-		uploadProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Uploading %s", relPath), uploadInfo.Size())
-		_, err = uploader.Upload(withUploadProgress(cmd.Context(), func(n int64) {
-			uploadProgress.Add(n)
-		}), uploadPath, metadata)
-		uploadDoneErr := uploadProgress.Complete()
-		if uploadDoneErr != nil {
-			return fmt.Errorf("failed to render upload progress: %w", uploadDoneErr)
-		}
-		if cleanup != nil {
-			if cleanupErr := cleanup(); cleanupErr != nil {
-				return fmt.Errorf("failed to clean up encrypted file for %q: %w", relPath, cleanupErr)
+	if jobs <= 1 {
+		for _, file := range files {
+			result := uploadDirectoryFile(cmd.Context(), cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, progressEnabled)
+			if result.err != nil {
+				return result.err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s\n", result.relPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Size: %s\n", result.sizeMB)
+			if checksumEnabled {
+				fmt.Fprintf(cmd.OutOrStdout(), "  Checksum: %s\n", result.checksum)
 			}
 		}
-		if err != nil {
-			return fmt.Errorf("data upload failed for %q: %w", relPath, err)
-		}
+		return nil
+	}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s\n", relPath)
-		fmt.Fprintf(cmd.OutOrStdout(), "  Size: %d bytes\n", file.size)
+	jobsCh := make(chan uploadFile)
+	resultsCh := make(chan uploadResult, len(files))
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := 0; i < jobs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for file := range jobsCh {
+				result := uploadDirectoryFile(ctx, cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, false)
+				if result.err != nil {
+					cancel()
+				}
+				resultsCh <- result
+			}
+		}()
+	}
+
+submitLoop:
+	for _, file := range files {
+		select {
+		case <-ctx.Done():
+			break submitLoop
+		case jobsCh <- file:
+		}
+	}
+	close(jobsCh)
+	wg.Wait()
+	close(resultsCh)
+
+	var firstErr error
+	for result := range resultsCh {
+		if result.err != nil {
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			continue
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s\n", result.relPath)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Size: %s\n", result.sizeMB)
+		if checksumEnabled {
+			fmt.Fprintf(cmd.OutOrStdout(), "  Checksum: %s\n", result.checksum)
+		}
+	}
+
+	if firstErr != nil {
+		return firstErr
 	}
 
 	return nil
+}
+
+func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, dir string, file uploadFile, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool) uploadResult {
+	result := uploadResult{}
+	relPath, err := filepath.Rel(dir, file.path)
+	if err != nil {
+		result.err = fmt.Errorf("failed to resolve path for %q: %w", file.path, err)
+		return result
+	}
+	result.relPath = relPath
+
+	metadata := map[string]string{
+		"filename":     filepath.Base(file.path),
+		"relativePath": filepath.ToSlash(relPath),
+	}
+	encryptProgress := newProgressReporter(out, progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), file.size)
+	uploadPath, cleanup, err := encryptForUpload(file.path, cryptor, func(n int64) {
+		encryptProgress.Add(n)
+	})
+	encryptDoneErr := encryptProgress.Complete()
+	if encryptDoneErr != nil {
+		result.err = fmt.Errorf("failed to render encryption progress: %w", encryptDoneErr)
+		return result
+	}
+	if err != nil {
+		result.err = fmt.Errorf("data encryption failed for %q: %w", relPath, err)
+		return result
+	}
+	if !checksumEnabled {
+		metadata["checksum"] = ""
+	}
+	uploadInfo, err := os.Stat(uploadPath)
+	if err != nil {
+		result.err = fmt.Errorf("failed to access upload file for %q: %w", relPath, err)
+		return result
+	}
+	if checksumEnabled {
+		checksumValue, err := fileSHA256(uploadPath)
+		if err != nil {
+			result.err = fmt.Errorf("failed to compute checksum for %q: %w", relPath, err)
+			return result
+		}
+		result.checksum = "sha256:" + checksumValue
+		metadata["checksum"] = result.checksum
+	}
+	uploadProgress := newProgressReporter(out, progressEnabled, fmt.Sprintf("Uploading %s", relPath), uploadInfo.Size())
+	_, err = uploader.Upload(withUploadProgress(ctx, func(n int64) {
+		uploadProgress.Add(n)
+	}), uploadPath, metadata)
+	uploadDoneErr := uploadProgress.Complete()
+	if uploadDoneErr != nil {
+		result.err = fmt.Errorf("failed to render upload progress: %w", uploadDoneErr)
+		return result
+	}
+	if cleanup != nil {
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			result.err = fmt.Errorf("failed to clean up encrypted file for %q: %w", relPath, cleanupErr)
+			return result
+		}
+	}
+	if err != nil {
+		result.err = fmt.Errorf("data upload failed for %q: %w", relPath, err)
+		return result
+	}
+
+	result.sizeMB = formatSizeMB(uploadInfo.Size())
+	return result
 }
 
 func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool) error {
@@ -251,6 +358,15 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	if err != nil {
 		return fmt.Errorf("failed to access upload file: %w", err)
 	}
+	var localChecksum string
+	if checksumEnabled {
+		checksumValue, err := fileSHA256(uploadPath)
+		if err != nil {
+			return fmt.Errorf("failed to compute checksum: %w", err)
+		}
+		localChecksum = "sha256:" + checksumValue
+		metadata["checksum"] = localChecksum
+	}
 	uploadProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Uploading %s", filepath.Base(filePath)), uploadInfo.Size())
 	_, err = uploader.Upload(withUploadProgress(cmd.Context(), func(n int64) {
 		uploadProgress.Add(n)
@@ -269,9 +385,32 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), "File uploaded successfully.")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Size: %d bytes\n", size)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Size: %s\n", formatSizeMB(uploadInfo.Size()))
+	if checksumEnabled {
+		fmt.Fprintf(cmd.OutOrStdout(), "  Checksum: %s\n", localChecksum)
+	}
 
 	return nil
+}
+
+func fileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	return sha256Hex(file)
+}
+
+func formatSizeMB(sizeBytes int64) string {
+	if sizeBytes < 0 {
+		sizeBytes = 0
+	}
+	mb := float64(sizeBytes) / bytesPerMB
+	if math.Round(mb*100)/100 == 0 {
+		return fmt.Sprintf("%d bytes", sizeBytes)
+	}
+	return fmt.Sprintf("%.2f MB", mb)
 }
 
 type uploadFile struct {
