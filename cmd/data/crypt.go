@@ -76,11 +76,11 @@ func uploadCryptConfig(password, salt string) (*cryptConfig, error) {
 	return newCryptConfig(password, salt, nil)
 }
 
-func encryptForUpload(sourcePath string, cryptor *cryptConfig) (string, func() error, error) {
+func encryptForUpload(sourcePath string, cryptor *cryptConfig, onProgress func(int64)) (string, func() error, error) {
 	if cryptor == nil {
 		return sourcePath, nil, nil
 	}
-	return cryptor.encryptToTempFile(sourcePath)
+	return cryptor.encryptToTempFileWithProgress(sourcePath, onProgress)
 }
 
 func encryptedSize(plainSize int64) int64 {
@@ -92,6 +92,10 @@ func encryptedSize(plainSize int64) int64 {
 }
 
 func (c *cryptConfig) encryptToTempFile(sourcePath string) (string, func() error, error) {
+	return c.encryptToTempFileWithProgress(sourcePath, nil)
+}
+
+func (c *cryptConfig) encryptToTempFileWithProgress(sourcePath string, onProgress func(int64)) (string, func() error, error) {
 	tmp, err := os.CreateTemp("", "abc-crypt-*")
 	if err != nil {
 		return "", nil, err
@@ -100,7 +104,7 @@ func (c *cryptConfig) encryptToTempFile(sourcePath string) (string, func() error
 	cleanup := func() error {
 		return os.Remove(tmpPath)
 	}
-	if err := c.encryptToWriter(sourcePath, tmp); err != nil {
+	if err := c.encryptToWriterWithProgress(sourcePath, tmp, onProgress); err != nil {
 		tmp.Close()
 		_ = cleanup()
 		return "", nil, err
@@ -113,11 +117,15 @@ func (c *cryptConfig) encryptToTempFile(sourcePath string) (string, func() error
 }
 
 func (c *cryptConfig) encryptToPath(sourcePath, destPath string) error {
+	return c.encryptToPathWithProgress(sourcePath, destPath, nil)
+}
+
+func (c *cryptConfig) encryptToPathWithProgress(sourcePath, destPath string, onProgress func(int64)) error {
 	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	if err := c.encryptToWriter(sourcePath, out); err != nil {
+	if err := c.encryptToWriterWithProgress(sourcePath, out, onProgress); err != nil {
 		out.Close()
 		_ = os.Remove(destPath)
 		return err
@@ -139,12 +147,16 @@ func (c *cryptConfig) decryptToPath(sourcePath, destPath string) error {
 }
 
 func (c *cryptConfig) encryptToWriter(sourcePath string, out io.Writer) error {
+	return c.encryptToWriterWithProgress(sourcePath, out, nil)
+}
+
+func (c *cryptConfig) encryptToWriterWithProgress(sourcePath string, out io.Writer, onProgress func(int64)) error {
 	in, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
 	}
 	defer in.Close()
-	_, err = c.encryptStream(out, in)
+	_, err = c.encryptStreamWithProgress(out, in, onProgress)
 	return err
 }
 
@@ -159,6 +171,10 @@ func (c *cryptConfig) decryptToWriter(sourcePath string, out io.Writer) error {
 }
 
 func (c *cryptConfig) encryptStream(dst io.Writer, src io.Reader) (int64, error) {
+	return c.encryptStreamWithProgress(dst, src, nil)
+}
+
+func (c *cryptConfig) encryptStreamWithProgress(dst io.Writer, src io.Reader, onProgress func(int64)) (int64, error) {
 	var n nonce
 	if _, err := io.ReadFull(c.rand, n[:]); err != nil {
 		return 0, err
@@ -182,6 +198,9 @@ func (c *cryptConfig) encryptStream(dst io.Writer, src io.Reader) (int64, error)
 			return written, err
 		}
 		if read > 0 {
+			if onProgress != nil {
+				onProgress(int64(read))
+			}
 			sealed := secretbox.Seal(nil, buf[:read], n.pointer(), &c.dataKey)
 			nw, err := writeAll(dst, sealed)
 			written += int64(nw)

@@ -14,6 +14,7 @@ type encryptOptions struct {
 	outputDir     string
 	cryptPassword string
 	cryptSalt     string
+	progress      bool
 }
 
 func newEncryptCmd() *cobra.Command {
@@ -36,6 +37,7 @@ The output is compatible with rclone's crypt backend when configured with the sa
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder encryption")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
+	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption")
 
 	return cmd
 }
@@ -61,24 +63,35 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	}
 
 	if info.IsDir() {
-		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor)
+		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.progress)
 	}
-	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor)
+	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.progress)
 }
 
-func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig) error {
+func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, progressEnabled bool) error {
 	if outputPath == "" {
 		outputPath = sourcePath + rcloneDefaultSuffix
 	}
-	if err := cryptor.encryptToPath(sourcePath, outputPath); err != nil {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return fmt.Errorf("failed to access path %q: %w", sourcePath, err)
+	}
+	progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", filepath.Base(sourcePath)), info.Size())
+	if err := cryptor.encryptToPathWithProgress(sourcePath, outputPath, func(n int64) {
+		progress.Add(n)
+	}); err != nil {
+		_ = progress.Complete()
 		return fmt.Errorf("failed to encrypt %q: %w", sourcePath, err)
+	}
+	if doneErr := progress.Complete(); doneErr != nil {
+		return fmt.Errorf("failed to render encryption progress: %w", doneErr)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "File encrypted successfully.")
 	fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", outputPath)
 	return nil
 }
 
-func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig) error {
+func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, progressEnabled bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -103,8 +116,15 @@ func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
 		}
-		if err := cryptor.encryptToPath(file.path, destPath); err != nil {
+		progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", relPath), file.size)
+		if err := cryptor.encryptToPathWithProgress(file.path, destPath, func(n int64) {
+			progress.Add(n)
+		}); err != nil {
+			_ = progress.Complete()
 			return fmt.Errorf("failed to encrypt %q: %w", relPath, err)
+		}
+		if doneErr := progress.Complete(); doneErr != nil {
+			return fmt.Errorf("failed to render encryption progress: %w", doneErr)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Encrypted %s\n", relPath)
 		fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", destPath)
