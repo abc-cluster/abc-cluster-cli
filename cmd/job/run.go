@@ -278,15 +278,13 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			parts := strings.SplitN(val, "=", 2)
 			envKey := parts[0]
 			envValue := ""
-			hasValue := false
 			if len(parts) == 2 {
 				envValue = parts[1]
-				hasValue = true
 			}
 			if !strings.HasPrefix(envKey, "NOMAD_") {
 				return fmt.Errorf("--env only supports NOMAD_* variables, got %q", envKey)
 			}
-			if !hasValue {
+			if len(parts) != 2 {
 				envValue = fmt.Sprintf("${%s}", envKey)
 			}
 			if spec.Env == nil {

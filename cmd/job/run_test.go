@@ -305,7 +305,7 @@ func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
 	}
 }
 
-func TestJobRun_NomadEnvDirectiveExplicitValueFromABC(t *testing.T) {
+func TestJobRun_NomadEnvDirectiveExplicitValueABC(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --name=env-vars\n#ABC --env=NOMAD_REGION=global\necho hi\n"
 	p := writeTempScript(t, "env_explicit.sh", script)
 	out, err := executeCmd(t, p)
