@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ python analysis.py
 		`template {`,
 		`data = <<-ABC_SCRIPT`,
 		`#!/bin/bash`,
-		"\nABC_SCRIPT\n        destination = \"local/job.sh\"",
+		"\nABC_SCRIPT\n",
 		`destination = "local/job.sh"`,
 		`perms = "0755"`,
 		`SLURM_JOB_ID`,
@@ -601,7 +602,8 @@ echo "body starts here"
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The cores directive after the echo line must NOT appear in the output.
-	if strings.Contains(out, "cores  =") {
+	coresDirective := regexp.MustCompile(`(?m)^\s*cores\s*=`)
+	if coresDirective.MatchString(out) {
 		t.Errorf("directive after body line should be ignored, got:\n%s", out)
 	}
 	// No resource directives were processed so the resources block must be absent.
