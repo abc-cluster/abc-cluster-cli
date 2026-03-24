@@ -92,8 +92,11 @@ func TestDataUpload_Basic(t *testing.T) {
 	if !strings.Contains(out, "File uploaded successfully") {
 		t.Errorf("expected success output, got %q", out)
 	}
-	if !strings.Contains(out, mock.location) {
-		t.Errorf("expected location in output, got %q", out)
+	if strings.Contains(out, mock.location) {
+		t.Errorf("did not expect location in output, got %q", out)
+	}
+	if strings.Contains(out, "Location:") {
+		t.Errorf("did not expect location label in output, got %q", out)
 	}
 }
 

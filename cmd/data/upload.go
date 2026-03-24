@@ -1,8 +1,8 @@
 package data
 
 import (
-	"crypto/sha256"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -27,6 +27,25 @@ type uploadOptions struct {
 	cryptSalt     string
 	token         string
 	checksum      bool
+	progress      bool
+}
+
+type uploadProgressContextKey struct{}
+
+func withUploadProgress(ctx context.Context, onProgress func(int64)) context.Context {
+	if onProgress == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, uploadProgressContextKey{}, onProgress)
+}
+
+func uploadProgressFromContext(ctx context.Context) func(int64) {
+	v := ctx.Value(uploadProgressContextKey{})
+	if v == nil {
+		return nil
+	}
+	onProgress, _ := v.(func(int64))
+	return onProgress
 }
 
 // newUploadCmd returns the "data upload" subcommand.
@@ -60,6 +79,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
 	cmd.Flags().StringVar(&opts.token, "upload-token", os.Getenv("ABC_UPLOAD_TOKEN"), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN); falls back to --access-token")
 	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in tus upload metadata")
+	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
 
 	return cmd
 }
@@ -96,10 +116,10 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	}
 
 	if info.IsDir() {
-		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum)
+		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress)
 	}
 
-	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum)
+	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress)
 }
 
 func resolveEndpoint(endpoint, serverURL, workspace string) (string, error) {
@@ -143,7 +163,7 @@ func applyWorkspace(endpoint, workspace string) (string, error) {
 	return parsed.String(), nil
 }
 
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool) error {
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -163,14 +183,32 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 			"filename":     filepath.Base(file.path),
 			"relativePath": filepath.ToSlash(relPath),
 		}
-		uploadPath, cleanup, err := encryptForUpload(file.path, cryptor)
+		encryptProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), file.size)
+		uploadPath, cleanup, err := encryptForUpload(file.path, cryptor, func(n int64) {
+			encryptProgress.Add(n)
+		})
+		encryptDoneErr := encryptProgress.Complete()
+		if encryptDoneErr != nil {
+			return fmt.Errorf("failed to render encryption progress: %w", encryptDoneErr)
+		}
 		if err != nil {
 			return fmt.Errorf("data encryption failed for %q: %w", relPath, err)
 		}
 		if !checksumEnabled {
 			metadata["checksum"] = ""
 		}
-		location, err := uploader.Upload(cmd.Context(), uploadPath, metadata)
+		uploadInfo, err := os.Stat(uploadPath)
+		if err != nil {
+			return fmt.Errorf("failed to access upload file for %q: %w", relPath, err)
+		}
+		uploadProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Uploading %s", relPath), uploadInfo.Size())
+		_, err = uploader.Upload(withUploadProgress(cmd.Context(), func(n int64) {
+			uploadProgress.Add(n)
+		}), uploadPath, metadata)
+		uploadDoneErr := uploadProgress.Complete()
+		if uploadDoneErr != nil {
+			return fmt.Errorf("failed to render upload progress: %w", uploadDoneErr)
+		}
 		if cleanup != nil {
 			if cleanupErr := cleanup(); cleanupErr != nil {
 				return fmt.Errorf("failed to clean up encrypted file for %q: %w", relPath, cleanupErr)
@@ -181,14 +219,13 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s\n", relPath)
-		fmt.Fprintf(cmd.OutOrStdout(), "  Location: %s\n", location)
 		fmt.Fprintf(cmd.OutOrStdout(), "  Size: %d bytes\n", file.size)
 	}
 
 	return nil
 }
 
-func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool) error {
+func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool) error {
 	metadata := map[string]string{
 		"filename": filepath.Base(filePath),
 	}
@@ -199,11 +236,29 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		metadata["checksum"] = ""
 	}
 
-	uploadPath, cleanup, err := encryptForUpload(filePath, cryptor)
+	encryptProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", filepath.Base(filePath)), size)
+	uploadPath, cleanup, err := encryptForUpload(filePath, cryptor, func(n int64) {
+		encryptProgress.Add(n)
+	})
+	encryptDoneErr := encryptProgress.Complete()
+	if encryptDoneErr != nil {
+		return fmt.Errorf("failed to render encryption progress: %w", encryptDoneErr)
+	}
 	if err != nil {
 		return fmt.Errorf("data encryption failed: %w", err)
 	}
-	location, err := uploader.Upload(cmd.Context(), uploadPath, metadata)
+	uploadInfo, err := os.Stat(uploadPath)
+	if err != nil {
+		return fmt.Errorf("failed to access upload file: %w", err)
+	}
+	uploadProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Uploading %s", filepath.Base(filePath)), uploadInfo.Size())
+	_, err = uploader.Upload(withUploadProgress(cmd.Context(), func(n int64) {
+		uploadProgress.Add(n)
+	}), uploadPath, metadata)
+	uploadDoneErr := uploadProgress.Complete()
+	if uploadDoneErr != nil {
+		return fmt.Errorf("failed to render upload progress: %w", uploadDoneErr)
+	}
 	if cleanup != nil {
 		if cleanupErr := cleanup(); cleanupErr != nil {
 			return fmt.Errorf("failed to clean up encrypted file: %w", cleanupErr)
@@ -214,7 +269,6 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), "File uploaded successfully.")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Location: %s\n", location)
 	fmt.Fprintf(cmd.OutOrStdout(), "  Size: %d bytes\n", size)
 
 	return nil
@@ -278,6 +332,8 @@ func newTusUploader(endpoint, accessToken string) (Uploader, error) {
 }
 
 func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[string]string) (string, error) {
+	const maxResumeAttempts = 3
+
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open file: %w", err)
@@ -321,11 +377,68 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		return "", fmt.Errorf("seek file: %w", err)
 	}
 
-	if _, err := io.Copy(stream, file); err != nil {
-		return "", fmt.Errorf("upload data: %w", err)
+	reader := io.Reader(file)
+	if onProgress := uploadProgressFromContext(ctx); onProgress != nil {
+		reader = &progressReader{reader: file, onRead: onProgress}
+	}
+
+	for attempt := 0; ; attempt++ {
+		if _, err := io.Copy(stream, reader); err == nil {
+			break
+		} else {
+			if attempt >= maxResumeAttempts || !shouldResumeUpload(err) {
+				return "", fmt.Errorf("upload data: %w", err)
+			}
+			if _, syncErr := stream.Sync(); syncErr != nil {
+				return "", fmt.Errorf("resync upload after transient error: %w (original error: %v)", syncErr, err)
+			}
+			if _, seekErr := file.Seek(stream.Tell(), io.SeekStart); seekErr != nil {
+				return "", fmt.Errorf("seek file after transient upload error: %w", seekErr)
+			}
+
+			// Recreate stream to clear any dirty chunk buffer before retrying from synced offset.
+			stream = tusgo.NewUploadStream(client, &upload)
+			if onProgress := uploadProgressFromContext(ctx); onProgress != nil {
+				reader = &progressReader{reader: file, onRead: onProgress}
+			} else {
+				reader = file
+			}
+		}
 	}
 
 	return upload.Location, nil
+}
+
+type progressReader struct {
+	reader io.Reader
+	onRead func(int64)
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 && r.onRead != nil {
+		r.onRead(int64(n))
+	}
+	return n, err
+}
+
+func shouldResumeUpload(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	if errors.Is(err, tusgo.ErrCannotUpload) ||
+		errors.Is(err, tusgo.ErrUploadTooLarge) ||
+		errors.Is(err, tusgo.ErrUploadDoesNotExist) ||
+		errors.Is(err, tusgo.ErrChecksumMismatch) ||
+		errors.Is(err, tusgo.ErrProtocol) {
+		return false
+	}
+
+	return true
 }
 
 func copyMetadata(metadata map[string]string) map[string]string {
