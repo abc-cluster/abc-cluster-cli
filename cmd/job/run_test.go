@@ -304,9 +304,21 @@ func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
 	}
 }
 
-func TestJobRun_NomadEnvDirectiveExplicitValue(t *testing.T) {
+func TestJobRun_NomadEnvDirectiveExplicitValueFromABC(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --name=env-vars\n#ABC --env=NOMAD_REGION=global\necho hi\n"
 	p := writeTempScript(t, "env_explicit.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `NOMAD_REGION = "global"`) {
+		t.Errorf("expected explicit NOMAD_REGION value, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NomadEnvDirectiveExplicitValueFromNomad(t *testing.T) {
+	script := "#!/bin/bash\n#NOMAD --name=env-vars\n#NOMAD --env=NOMAD_REGION=global\necho hi\n"
+	p := writeTempScript(t, "env_explicit_nomad.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
