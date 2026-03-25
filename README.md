@@ -2,7 +2,7 @@
 
 `abc` is the command line interface for the [abc-cluster](https://abc-cluster.io) platform, inspired by the smooth experience offered by the [tower-cli](https://github.com/seqeralabs/tower-cli).
 
-It brings abc-cluster concepts like pipelines to the terminal, enabling you to launch and manage pipeline runs directly from your shell.
+It brings abc-cluster concepts like pipelines and ad-hoc Nomad jobs to the terminal, enabling you to launch and manage computations and automations directly from your shell.
 
 ## Installation
 
