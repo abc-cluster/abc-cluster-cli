@@ -442,7 +442,7 @@ func TestDataUpload_MissingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
-	if !strings.Contains(err.Error(), "failed to access path") {
+	if !strings.Contains(err.Error(), "input error") || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if recorder.endpoint != "" {
@@ -468,7 +468,33 @@ func TestDataUpload_DirectoryWithName(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for directory upload with name")
 	}
-	if !strings.Contains(err.Error(), "--name can only be used") {
+	if !strings.Contains(err.Error(), "input error") || !strings.Contains(err.Error(), "--name can only be used") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.endpoint != "" {
+		t.Fatalf("factory should not be called on invalid args")
+	}
+}
+
+func TestDataUpload_InvalidParallelJobs(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/invalid-jobs"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", dir, "--parallel-jobs", "0")
+	if err == nil {
+		t.Fatal("expected error for invalid parallel job count")
+	}
+	if !strings.Contains(err.Error(), "input error") || !strings.Contains(err.Error(), "--parallel-jobs must be >= 1") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if recorder.endpoint != "" {
@@ -493,7 +519,7 @@ func TestDataUpload_UploaderError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected upload error")
 	}
-	if !strings.Contains(err.Error(), "data upload failed") {
+	if !strings.Contains(err.Error(), "network/server error") || !strings.Contains(err.Error(), "data upload failed") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

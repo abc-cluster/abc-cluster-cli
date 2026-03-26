@@ -1,6 +1,7 @@
 package data
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,10 +46,16 @@ The output is compatible with rclone's crypt backend when configured with the sa
 func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	info, err := os.Stat(opts.inputPath)
 	if err != nil {
-		return fmt.Errorf("failed to access path %q: %w", opts.inputPath, err)
+		if errors.Is(err, os.ErrNotExist) {
+			return inputError("path %q does not exist; verify the path and try again", opts.inputPath)
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return inputError("permission denied while accessing %q; check file permissions", opts.inputPath)
+		}
+		return localIOError("failed to access path %q: %w", opts.inputPath, err)
 	}
 	if opts.cryptPassword == "" {
-		return fmt.Errorf("crypt-password is required for encryption")
+		return inputError("crypt-password is required for encryption")
 	}
 	if opts.outputPath != "" && info.IsDir() {
 		return fmt.Errorf("--output can only be used when encrypting a single file")
