@@ -267,3 +267,128 @@ func TestTusUploader_ResumesAfterTransientPatchFailure(t *testing.T) {
 		t.Fatalf("uploaded payload mismatch: got %d bytes want %d bytes", len(gotPayload), len(payload))
 	}
 }
+
+func TestTusUploader_TooLargeErrorIncludesLimit(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
+	payload := strings.Repeat("x", 32)
+	if err := os.WriteFile(tmpFile, []byte(payload), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			w.Header().Set("Tus-Version", "1.0.0")
+			w.Header().Set("Tus-Extension", "creation")
+			w.Header().Set("Tus-Max-Size", "16")
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	uploader, err := newTusUploader(server.URL+"/files/", "")
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+
+	_, err = uploader.Upload(context.Background(), tmpFile, map[string]string{"filename": "payload.bin"})
+	if err == nil {
+		t.Fatal("expected too-large error")
+	}
+	errText := err.Error()
+	if !strings.Contains(errText, "file is too large") {
+		t.Fatalf("expected helpful too-large message, got %q", errText)
+	}
+	if !strings.Contains(errText, "Tus-Max-Size is 16 bytes") {
+		t.Fatalf("expected Tus-Max-Size detail in error, got %q", errText)
+	}
+}
+
+func TestTusUploader_ResumesUsingStoredLocationForFile(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	tmpFile := filepath.Join(t.TempDir(), "payload.txt")
+	payload := "hello world"
+	if err := os.WriteFile(tmpFile, []byte(payload), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const existingLocation = "/files/upload-existing"
+	resumeOffset := int64(6)
+	var createCalled bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			if r.URL.Path != existingLocation {
+				t.Fatalf("unexpected head path: %s", r.URL.Path)
+			}
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.FormatInt(resumeOffset, 10))
+			w.Header().Set("Upload-Length", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPatch:
+			if got := r.Header.Get("Upload-Offset"); got != strconv.FormatInt(resumeOffset, 10) {
+				t.Fatalf("unexpected patch offset: got %s want %d", got, resumeOffset)
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read patch body: %v", err)
+			}
+			if string(body) != payload[resumeOffset:] {
+				t.Fatalf("expected resumed payload %q, got %q", payload[resumeOffset:], string(body))
+			}
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			createCalled = true
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Location", "/files/unexpected-create")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodOptions:
+			w.Header().Set("Tus-Version", "1.0.0")
+			w.Header().Set("Tus-Extension", "creation")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	resumePath, err := uploadResumeStatePath(server.URL+"/files/", tmpFile, info.Size(), info.ModTime().UnixNano())
+	if err != nil {
+		t.Fatalf("resume path: %v", err)
+	}
+	if err := storeUploadResumeLocation(resumePath, existingLocation); err != nil {
+		t.Fatalf("store resume location: %v", err)
+	}
+
+	uploader, err := newTusUploader(server.URL+"/files/", "")
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+
+	location, err := uploader.Upload(context.Background(), tmpFile, map[string]string{"filename": "payload.txt"})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if createCalled {
+		t.Fatal("expected resume from stored location without creating a new upload")
+	}
+	if location != existingLocation {
+		t.Fatalf("unexpected upload location: got %q want %q", location, existingLocation)
+	}
+	if _, err := os.Stat(resumePath); !os.IsNotExist(err) {
+		t.Fatalf("expected resume state to be cleared, stat err=%v", err)
+	}
+}

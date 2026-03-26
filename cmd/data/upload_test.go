@@ -79,7 +79,7 @@ func TestDataUpload_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if recorder.endpoint != "https://api.example.com/data/uploads" {
+	if recorder.endpoint != "https://api.example.com/data/uploads/" {
 		t.Fatalf("unexpected endpoint: %s", recorder.endpoint)
 	}
 	if recorder.accessToken != accessToken {
@@ -177,7 +177,7 @@ func TestDataUpload_WithWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid endpoint: %v", err)
 	}
-	if parsed.Path != "/v1/data/uploads" {
+	if parsed.Path != "/v1/data/uploads/" {
 		t.Fatalf("unexpected endpoint path: %s", parsed.Path)
 	}
 	if parsed.Query().Get("workspaceId") != "ws-1" {
@@ -211,7 +211,7 @@ func TestDataUpload_CustomEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid endpoint: %v", err)
 	}
-	if parsed.Path != "/files" {
+	if parsed.Path != "/files/" {
 		t.Fatalf("unexpected endpoint path: %s", parsed.Path)
 	}
 	if parsed.Query().Get("workspaceId") != "ws-2" {
@@ -222,6 +222,41 @@ func TestDataUpload_CustomEndpoint(t *testing.T) {
 	}
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 upload call, got %d", len(mock.calls))
+	}
+}
+
+func TestDataUpload_EndpointFromEnvironment(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "https://uploads.example.com/files?region=dev")
+
+	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/3"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := "ws-2"
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsed, err := url.Parse(recorder.endpoint)
+	if err != nil {
+		t.Fatalf("invalid endpoint: %v", err)
+	}
+	if parsed.Path != "/files/" {
+		t.Fatalf("unexpected endpoint path: %s", parsed.Path)
+	}
+	if parsed.Query().Get("workspaceId") != "ws-2" {
+		t.Fatalf("workspaceId missing in query: %s", parsed.RawQuery)
+	}
+	if parsed.Query().Get("region") != "dev" {
+		t.Fatalf("expected region query preserved: %s", parsed.RawQuery)
 	}
 }
 

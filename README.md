@@ -39,6 +39,7 @@ Additional optional environment variables:
 |---------------------|---------------------------------------------------|--------------------------------|
 | `ABC_API_ENDPOINT`  | abc-cluster API URL                               | `https://api.abc-cluster.io`   |
 | `ABC_WORKSPACE_ID`  | Workspace ID to use for operations                | *(user's default workspace)*   |
+| `ABC_UPLOAD_ENDPOINT` | Tus upload endpoint used by `abc data upload` (falls back to `<url>/data/uploads`) | *(unset)* |
 | `ABC_UPLOAD_TOKEN`  | Bearer token used by `abc data upload` for tus auth (falls back to `ABC_ACCESS_TOKEN`) | *(unset)* |
 
 ## Usage
@@ -168,10 +169,12 @@ abc data upload <path> [flags]
 | Flag         | Description                                                |
 |--------------|------------------------------------------------------------|
 | `--name`     | Display name for the uploaded file                         |
-| `--endpoint` | Tus upload endpoint URL (defaults to `<url>/data/uploads`) |
+| `--endpoint` | Tus upload endpoint URL (or set `ABC_UPLOAD_ENDPOINT`; defaults to `<url>/data/uploads`) |
 | `--crypt-password` | rclone crypt password for client-side encryption     |
 | `--crypt-salt`     | rclone crypt salt (password2) for encryption          |
 | `--upload-token` | Bearer token for tus uploads (or set `ABC_UPLOAD_TOKEN`; falls back to `--access-token`) |
+
+`abc data upload` normalizes the endpoint to include a trailing slash if omitted.
 
 
 ### Examples
@@ -182,6 +185,9 @@ abc data upload ./data.csv
 
 # Upload using a dedicated tus bearer token
 ABC_UPLOAD_TOKEN=<tusd-bearer-token> abc data upload ./data.csv
+
+# Upload using a dedicated endpoint from env
+ABC_UPLOAD_ENDPOINT=https://dev.abc-cluster.cloud/files abc data upload ./data.csv
 
 # Upload with a display name
 abc data upload ./data.csv --name sample-data
