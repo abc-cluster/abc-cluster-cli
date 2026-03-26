@@ -22,7 +22,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const bytesPerMB = 1024 * 1024
+const (
+	bytesPerMB         = 1024 * 1024
+	resumeStateSubpath = "abc-cluster-cli/tus-resume"
+)
 
 type uploadOptions struct {
 	filePath      string
@@ -81,7 +84,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&opts.name, "name", "", "display name for the uploaded file")
-	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "tus upload endpoint URL (defaults to <url>/data/uploads)")
+	cmd.Flags().StringVar(&opts.endpoint, "endpoint", os.Getenv("ABC_UPLOAD_ENDPOINT"), "tus upload endpoint URL (or set ABC_UPLOAD_ENDPOINT; defaults to <url>/data/uploads)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
 	cmd.Flags().StringVar(&opts.token, "upload-token", os.Getenv("ABC_UPLOAD_TOKEN"), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN); falls back to --access-token")
@@ -142,7 +145,7 @@ func resolveEndpoint(endpoint, serverURL, workspace string) (string, error) {
 	if endpoint == "" {
 		return buildDefaultEndpoint(serverURL, workspace)
 	}
-	return applyWorkspace(endpoint, workspace)
+	return applyWorkspace(normalizeTusEndpoint(endpoint), workspace)
 }
 
 func buildDefaultEndpoint(serverURL, workspace string) (string, error) {
@@ -152,11 +155,24 @@ func buildDefaultEndpoint(serverURL, workspace string) (string, error) {
 	}
 	trimmedPath := strings.Trim(parsed.Path, "/")
 	if trimmedPath == "" {
-		parsed.Path = "/data/uploads"
+		parsed.Path = "/data/uploads/"
 	} else {
-		parsed.Path = "/" + trimmedPath + "/data/uploads"
+		parsed.Path = "/" + trimmedPath + "/data/uploads/"
 	}
 	return applyWorkspace(parsed.String(), workspace)
+}
+
+func normalizeTusEndpoint(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	} else if !strings.HasSuffix(parsed.Path, "/") {
+		parsed.Path += "/"
+	}
+	return parsed.String()
 }
 
 func applyWorkspace(endpoint, workspace string) (string, error) {
@@ -504,8 +520,35 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 	client := u.client.WithContext(ctx)
 
 	upload := tusgo.Upload{}
-	if _, err := client.CreateUpload(&upload, info.Size(), false, metadataWithChecksum); err != nil {
-		return "", fmt.Errorf("create upload: %w", explainTusUnexpectedResponse(err, client.BaseURL.String()))
+	resumeStatePath, resumePathErr := uploadResumeStatePath(client.BaseURL.String(), filePath, info.Size(), info.ModTime().UnixNano())
+	if resumePathErr != nil {
+		return "", fmt.Errorf("build upload resume state path: %w", resumePathErr)
+	}
+
+	resumed := false
+	if location, ok, err := loadUploadResumeLocation(resumeStatePath); err != nil {
+		return "", fmt.Errorf("load upload resume state: %w", err)
+	} else if ok {
+		upload.Location = location
+		upload.RemoteSize = info.Size()
+		stream := tusgo.NewUploadStream(client, &upload)
+		if _, err := stream.Sync(); err == nil {
+			resumed = true
+		} else if errors.Is(err, tusgo.ErrUploadDoesNotExist) {
+			_ = clearUploadResumeLocation(resumeStatePath)
+			upload = tusgo.Upload{}
+		} else {
+			return "", fmt.Errorf("sync existing upload: %w", err)
+		}
+	}
+
+	if !resumed {
+		if _, err := client.CreateUpload(&upload, info.Size(), false, metadataWithChecksum); err != nil {
+			return "", fmt.Errorf("create upload: %w", explainCreateUploadError(err, client.BaseURL.String(), info.Size(), client.Capabilities))
+		}
+		if err := storeUploadResumeLocation(resumeStatePath, upload.Location); err != nil {
+			return "", fmt.Errorf("store upload resume state: %w", err)
+		}
 	}
 
 	stream := tusgo.NewUploadStream(client, &upload)
@@ -526,7 +569,7 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 			break
 		} else {
 			if attempt >= maxResumeAttempts || !shouldResumeUpload(err) {
-				return "", fmt.Errorf("upload data: %w", err)
+				return "", fmt.Errorf("upload data: %w", explainUploadTransferError(err, client.BaseURL.String(), info.Size(), client.Capabilities))
 			}
 			if _, syncErr := stream.Sync(); syncErr != nil {
 				return "", fmt.Errorf("resync upload after transient error: %w (original error: %v)", syncErr, err)
@@ -543,6 +586,10 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 				reader = file
 			}
 		}
+	}
+
+	if err := clearUploadResumeLocation(resumeStatePath); err != nil {
+		return "", fmt.Errorf("clear upload resume state: %w", err)
 	}
 
 	return upload.Location, nil
@@ -604,4 +651,78 @@ func explainTusUnexpectedResponse(err error, endpoint string) error {
 		return fmt.Errorf("unexpected response from tus endpoint %q; ensure the endpoint points to a tus upload root (often requires a trailing slash) and provide a valid --upload-token/ABC_UPLOAD_TOKEN", endpoint)
 	}
 	return err
+}
+
+func explainCreateUploadError(err error, endpoint string, fileSize int64, capabilities *tusgo.ServerCapabilities) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, tusgo.ErrUploadTooLarge) {
+		if capabilities != nil && capabilities.MaxSize > 0 {
+			return fmt.Errorf("file is too large for tus endpoint %q: file size is %d bytes, Tus-Max-Size is %d bytes", endpoint, fileSize, capabilities.MaxSize)
+		}
+		return fmt.Errorf("file is too large for tus endpoint %q: file size is %d bytes; reduce file size or increase Tus-Max-Size on the server", endpoint, fileSize)
+	}
+	return explainTusUnexpectedResponse(err, endpoint)
+}
+
+func explainUploadTransferError(err error, endpoint string, fileSize int64, capabilities *tusgo.ServerCapabilities) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, tusgo.ErrUploadTooLarge) {
+		if capabilities != nil && capabilities.MaxSize > 0 {
+			return fmt.Errorf("upload exceeds tus limit at %q after transfer started: file size is %d bytes, Tus-Max-Size is %d bytes", endpoint, fileSize, capabilities.MaxSize)
+		}
+		return fmt.Errorf("upload exceeds tus limit at %q after transfer started: file size is %d bytes", endpoint, fileSize)
+	}
+	return explainTusUnexpectedResponse(err, endpoint)
+}
+
+func uploadResumeStatePath(endpoint, filePath string, size int64, modifiedAtUnixNano int64) (string, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", err
+	}
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("%s\n%s\n%d\n%d", endpoint, absPath, size, modifiedAtUnixNano)
+	hash := sha256.Sum256([]byte(key))
+	fileName := hex.EncodeToString(hash[:]) + ".url"
+	return filepath.Join(cacheDir, resumeStateSubpath, fileName), nil
+}
+
+func loadUploadResumeLocation(statePath string) (string, bool, error) {
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	location := strings.TrimSpace(string(raw))
+	if location == "" {
+		return "", false, nil
+	}
+	return location, true, nil
+}
+
+func storeUploadResumeLocation(statePath, location string) error {
+	if strings.TrimSpace(location) == "" {
+		return fmt.Errorf("upload location is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(statePath), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(statePath, []byte(location+"\n"), 0600)
+}
+
+func clearUploadResumeLocation(statePath string) error {
+	err := os.Remove(statePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
