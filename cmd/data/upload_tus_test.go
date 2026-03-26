@@ -516,3 +516,83 @@ func TestTusUploader_ResumesAfterInterruptedProcess(t *testing.T) {
 		t.Fatalf("expected at least 2 patch calls across interrupted + resumed upload, got %d", finalPatchCalls)
 	}
 }
+
+func TestTusUploader_ResumesAfterFileModTimeChange(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
+	payload := bytes.Repeat([]byte("z"), 4*1024*1024)
+	if err := os.WriteFile(tmpFile, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var createCalls int
+	const existingLocation = "/files/upload-modtime"
+	resumeOffset := int64(len(payload) / 2)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			w.Header().Set("Tus-Version", "1.0.0")
+			w.Header().Set("Tus-Extension", "creation")
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			createCalls++
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Location", "/files/unexpected-create")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodHead:
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.FormatInt(resumeOffset, 10))
+			w.Header().Set("Upload-Length", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPatch:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read patch body: %v", err)
+			}
+			if int64(len(body)) != int64(len(payload))-resumeOffset {
+				t.Fatalf("unexpected resumed payload length: got %d want %d", len(body), int64(len(payload))-resumeOffset)
+			}
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	resumePath, err := uploadResumeStatePath(server.URL+"/files/", tmpFile, info.Size(), info.ModTime().UnixNano())
+	if err != nil {
+		t.Fatalf("resume path: %v", err)
+	}
+	if err := storeUploadResumeLocation(resumePath, existingLocation); err != nil {
+		t.Fatalf("store resume location: %v", err)
+	}
+
+	// Touch file to change mtime without changing content.
+	now := time.Now().Add(1 * time.Second)
+	if err := os.Chtimes(tmpFile, now, now); err != nil {
+		t.Fatalf("touch file: %v", err)
+	}
+
+	uploader, err := newTusUploader(server.URL+"/files/", "")
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+	location, err := uploader.Upload(context.Background(), tmpFile, map[string]string{"filename": "payload.bin"})
+	if err != nil {
+		t.Fatalf("resume upload: %v", err)
+	}
+	if location != existingLocation {
+		t.Fatalf("unexpected upload location: got %q want %q", location, existingLocation)
+	}
+	if createCalls != 0 {
+		t.Fatalf("expected no new upload creation, got %d", createCalls)
+	}
+}
