@@ -1,8 +1,13 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
@@ -21,8 +26,10 @@ var (
 
 // rootCmd is the base command for the abc CLI.
 var rootCmd = &cobra.Command{
-	Use:   "abc",
-	Short: "abc-cluster CLI",
+	Use:          "abc",
+	Short:        "abc-cluster CLI",
+	SilenceUsage: true,
+	SilenceErrors: true,
 	Long: `abc is the command line interface for the abc-cluster platform.
 
 It allows you to manage and run pipelines and batch jobs on the abc-cluster platform
@@ -31,10 +38,39 @@ from your terminal.`,
 
 // Execute runs the root command.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			action := cancelledActionFromArgs(os.Args[1:])
+			if action == "" {
+				fmt.Fprintln(os.Stderr, "cancelled")
+			} else {
+				fmt.Fprintf(os.Stderr, "cancelled: %s\n", action)
+			}
+			os.Exit(130)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func cancelledActionFromArgs(args []string) string {
+	actionParts := make([]string, 0, len(args))
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		actionParts = append(actionParts, arg)
+	}
+	if len(actionParts) == 0 {
+		return ""
+	}
+	if len(actionParts) > 2 {
+		actionParts = actionParts[:2]
+	}
+	return strings.Join(actionParts, " ")
 }
 
 func init() {

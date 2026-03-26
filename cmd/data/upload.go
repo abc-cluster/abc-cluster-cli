@@ -520,22 +520,40 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 	client := u.client.WithContext(ctx)
 
 	upload := tusgo.Upload{}
-	resumeStatePath, resumePathErr := uploadResumeStatePath(client.BaseURL.String(), filePath, info.Size(), info.ModTime().UnixNano())
+	resumeStatePath, legacyResumeStatePath, resumePathErr := uploadResumeStatePaths(client.BaseURL.String(), filePath, info.Size(), info.ModTime().UnixNano())
 	if resumePathErr != nil {
 		return "", fmt.Errorf("build upload resume state path: %w", resumePathErr)
 	}
 
 	resumed := false
-	if location, ok, err := loadUploadResumeLocation(resumeStatePath); err != nil {
+	if location, statePathUsed, ok, err := loadUploadResumeLocationFromAny(resumeStatePath, legacyResumeStatePath); err != nil {
 		return "", fmt.Errorf("load upload resume state: %w", err)
 	} else if ok {
 		upload.Location = location
 		upload.RemoteSize = info.Size()
 		stream := tusgo.NewUploadStream(client, &upload)
 		if _, err := stream.Sync(); err == nil {
-			resumed = true
+			if upload.RemoteSize > 0 && upload.RemoteSize != info.Size() {
+				if clearErr := clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath); clearErr != nil {
+					return "", fmt.Errorf("clear stale upload resume state: %w", clearErr)
+				}
+				upload = tusgo.Upload{}
+			} else if upload.RemoteOffset >= info.Size() {
+				if clearErr := clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath); clearErr != nil {
+					return "", fmt.Errorf("clear completed upload resume state: %w", clearErr)
+				}
+				return upload.Location, nil
+			} else {
+				resumed = true
+				if statePathUsed != resumeStatePath {
+					if err := storeUploadResumeLocation(resumeStatePath, location); err != nil {
+						return "", fmt.Errorf("migrate upload resume state: %w", err)
+					}
+					_ = clearUploadResumeLocation(statePathUsed)
+				}
+			}
 		} else if errors.Is(err, tusgo.ErrUploadDoesNotExist) {
-			_ = clearUploadResumeLocation(resumeStatePath)
+			_ = clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath)
 			upload = tusgo.Upload{}
 		} else {
 			return "", fmt.Errorf("sync existing upload: %w", err)
@@ -588,7 +606,7 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		}
 	}
 
-	if err := clearUploadResumeLocation(resumeStatePath); err != nil {
+	if err := clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath); err != nil {
 		return "", fmt.Errorf("clear upload resume state: %w", err)
 	}
 
@@ -680,18 +698,45 @@ func explainUploadTransferError(err error, endpoint string, fileSize int64, capa
 }
 
 func uploadResumeStatePath(endpoint, filePath string, size int64, modifiedAtUnixNano int64) (string, error) {
+	primary, _, err := uploadResumeStatePaths(endpoint, filePath, size, modifiedAtUnixNano)
+	return primary, err
+}
+
+func uploadResumeStatePaths(endpoint, filePath string, size int64, modifiedAtUnixNano int64) (string, string, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	key := fmt.Sprintf("%s\n%s\n%d\n%d", endpoint, absPath, size, modifiedAtUnixNano)
-	hash := sha256.Sum256([]byte(key))
-	fileName := hex.EncodeToString(hash[:]) + ".url"
-	return filepath.Join(cacheDir, resumeStateSubpath, fileName), nil
+	primaryKey := fmt.Sprintf("%s\n%s", endpoint, absPath)
+	primaryHash := sha256.Sum256([]byte(primaryKey))
+	primaryName := hex.EncodeToString(primaryHash[:]) + ".url"
+
+	legacyKey := fmt.Sprintf("%s\n%s\n%d\n%d", endpoint, absPath, size, modifiedAtUnixNano)
+	legacyHash := sha256.Sum256([]byte(legacyKey))
+	legacyName := hex.EncodeToString(legacyHash[:]) + ".url"
+
+	baseDir := filepath.Join(cacheDir, resumeStateSubpath)
+	return filepath.Join(baseDir, primaryName), filepath.Join(baseDir, legacyName), nil
+}
+
+func loadUploadResumeLocationFromAny(statePaths ...string) (string, string, bool, error) {
+	for _, statePath := range statePaths {
+		if strings.TrimSpace(statePath) == "" {
+			continue
+		}
+		location, ok, err := loadUploadResumeLocation(statePath)
+		if err != nil {
+			return "", "", false, err
+		}
+		if ok {
+			return location, statePath, true, nil
+		}
+	}
+	return "", "", false, nil
 }
 
 func loadUploadResumeLocation(statePath string) (string, bool, error) {
@@ -723,6 +768,18 @@ func clearUploadResumeLocation(statePath string) error {
 	err := os.Remove(statePath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	return nil
+}
+
+func clearUploadResumeLocations(statePaths ...string) error {
+	for _, statePath := range statePaths {
+		if strings.TrimSpace(statePath) == "" {
+			continue
+		}
+		if err := clearUploadResumeLocation(statePath); err != nil {
+			return err
+		}
 	}
 	return nil
 }
