@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bdragon300/tusgo"
 	"github.com/spf13/cobra"
@@ -525,25 +526,35 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		return "", fmt.Errorf("build upload resume state path: %w", resumePathErr)
 	}
 
+	// stream is declared here so the resume-check block and the upload loop share
+	// the same instance.  When resuming, the stream from the inner Sync is reused
+	// directly, avoiding a redundant HEAD request.
+	var stream *tusgo.UploadStream
+
 	resumed := false
 	if location, statePathUsed, ok, err := loadUploadResumeLocationFromAny(resumeStatePath, legacyResumeStatePath); err != nil {
 		return "", fmt.Errorf("load upload resume state: %w", err)
 	} else if ok {
 		upload.Location = location
 		upload.RemoteSize = info.Size()
-		stream := tusgo.NewUploadStream(client, &upload)
+		stream = tusgo.NewUploadStream(client, &upload)
 		if _, err := stream.Sync(); err == nil {
 			if upload.RemoteSize > 0 && upload.RemoteSize != info.Size() {
+				// Remote Upload-Length differs from local file size: the stored URL
+				// belongs to a different version of the file.  Clear and restart.
 				if clearErr := clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath); clearErr != nil {
 					return "", fmt.Errorf("clear stale upload resume state: %w", clearErr)
 				}
 				upload = tusgo.Upload{}
+				stream = nil
 			} else if upload.RemoteOffset >= info.Size() {
+				// Server already has the complete file; nothing left to transfer.
 				if clearErr := clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath); clearErr != nil {
 					return "", fmt.Errorf("clear completed upload resume state: %w", clearErr)
 				}
 				return upload.Location, nil
 			} else {
+				// Partial upload found; resume from the server's current offset.
 				resumed = true
 				if statePathUsed != resumeStatePath {
 					if err := storeUploadResumeLocation(resumeStatePath, location); err != nil {
@@ -552,10 +563,16 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 					_ = clearUploadResumeLocation(statePathUsed)
 				}
 			}
-		} else if errors.Is(err, tusgo.ErrUploadDoesNotExist) {
+		} else if isStaleTusUpload(err) {
+			// The server rejected or could not find the upload (expired, deleted,
+			// auth failure, or protocol violation).  Clear stale state and fall
+			// through to create a fresh upload below.
 			_ = clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath)
 			upload = tusgo.Upload{}
+			stream = nil
 		} else {
+			// Network-level or context error: preserve state so the next invocation
+			// can attempt to resume again once connectivity is restored.
 			return "", fmt.Errorf("sync existing upload: %w", err)
 		}
 	}
@@ -567,12 +584,16 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		if err := storeUploadResumeLocation(resumeStatePath, upload.Location); err != nil {
 			return "", fmt.Errorf("store upload resume state: %w", err)
 		}
+		// Sync the freshly created upload to confirm the server is at offset 0
+		// before we start writing.
+		stream = tusgo.NewUploadStream(client, &upload)
+		if _, err := stream.Sync(); err != nil {
+			return "", fmt.Errorf("sync upload: %w", err)
+		}
 	}
 
-	stream := tusgo.NewUploadStream(client, &upload)
-	if _, err := stream.Sync(); err != nil {
-		return "", fmt.Errorf("sync upload: %w", err)
-	}
+	// Seek the file to the server's confirmed offset.  For a resumed upload this
+	// is the offset returned by the inner Sync above; for a fresh upload it is 0.
 	if _, err := file.Seek(stream.Tell(), io.SeekStart); err != nil {
 		return "", fmt.Errorf("seek file: %w", err)
 	}
@@ -589,6 +610,20 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 			if attempt >= maxResumeAttempts || !shouldResumeUpload(err) {
 				return "", fmt.Errorf("upload data: %w", explainUploadTransferError(err, client.BaseURL.String(), info.Size(), client.Capabilities))
 			}
+
+			// Exponential backoff before retrying: 1 s → 2 s → 4 s (capped at 30 s).
+			// The select respects context cancellation so the caller is not blocked
+			// beyond the deadline.
+			backoff := time.Duration(1<<uint(attempt)) * time.Second
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return "", fmt.Errorf("upload cancelled during retry backoff: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+
 			if _, syncErr := stream.Sync(); syncErr != nil {
 				return "", fmt.Errorf("resync upload after transient error: %w (original error: %v)", syncErr, err)
 			}
@@ -596,7 +631,8 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 				return "", fmt.Errorf("seek file after transient upload error: %w", seekErr)
 			}
 
-			// Recreate stream to clear any dirty chunk buffer before retrying from synced offset.
+			// Recreate stream to discard any dirty chunk buffer and start cleanly
+			// from the synced offset.
 			stream = tusgo.NewUploadStream(client, &upload)
 			if onProgress := uploadProgressFromContext(ctx); onProgress != nil {
 				reader = &progressReader{reader: file, onRead: onProgress}
@@ -638,11 +674,25 @@ func shouldResumeUpload(err error) bool {
 		errors.Is(err, tusgo.ErrUploadTooLarge) ||
 		errors.Is(err, tusgo.ErrUploadDoesNotExist) ||
 		errors.Is(err, tusgo.ErrChecksumMismatch) ||
-		errors.Is(err, tusgo.ErrProtocol) {
+		errors.Is(err, tusgo.ErrProtocol) ||
+		errors.Is(err, tusgo.ErrUnexpectedResponse) {
+		// ErrUnexpectedResponse covers auth failures (401/403) and other definitive
+		// server rejections that will not resolve on an immediate retry.
 		return false
 	}
 
 	return true
+}
+
+// isStaleTusUpload returns true for errors that indicate the stored resume URL is
+// no longer usable (upload not found, expired, access denied, or a protocol
+// violation).  In these cases the caller should clear the resume state and
+// create a fresh upload rather than returning an unrecoverable error.
+func isStaleTusUpload(err error) bool {
+	return errors.Is(err, tusgo.ErrUploadDoesNotExist) ||
+		errors.Is(err, tusgo.ErrUnexpectedResponse) ||
+		errors.Is(err, tusgo.ErrCannotUpload) ||
+		errors.Is(err, tusgo.ErrProtocol)
 }
 
 func copyMetadata(metadata map[string]string) map[string]string {
