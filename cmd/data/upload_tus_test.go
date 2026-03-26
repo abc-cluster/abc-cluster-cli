@@ -1,6 +1,7 @@
 package data
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bdragon300/tusgo"
 )
@@ -390,5 +392,127 @@ func TestTusUploader_ResumesUsingStoredLocationForFile(t *testing.T) {
 	}
 	if _, err := os.Stat(resumePath); !os.IsNotExist(err) {
 		t.Fatalf("expected resume state to be cleared, stat err=%v", err)
+	}
+}
+
+func TestTusUploader_ResumesAfterInterruptedProcess(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
+	payload := bytes.Repeat([]byte("x"), 8*1024*1024)
+	if err := os.WriteFile(tmpFile, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	uploadOffset := int64(0)
+	uploadLength := int64(len(payload))
+	patchCalls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			w.Header().Set("Tus-Version", "1.0.0")
+			w.Header().Set("Tus-Extension", "creation")
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Location", "/files/upload-interrupted")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodHead:
+			mu.Lock()
+			offset := uploadOffset
+			mu.Unlock()
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.FormatInt(offset, 10))
+			w.Header().Set("Upload-Length", strconv.FormatInt(uploadLength, 10))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPatch:
+			mu.Lock()
+			expectedOffset := uploadOffset
+			mu.Unlock()
+
+			if got := r.Header.Get("Upload-Offset"); got != strconv.FormatInt(expectedOffset, 10) {
+				t.Fatalf("unexpected patch offset: got %s want %d", got, expectedOffset)
+			}
+
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read patch body: %v", err)
+			}
+
+			mu.Lock()
+			patchCalls++
+			call := patchCalls
+			uploadOffset += int64(len(body))
+			offset := uploadOffset
+			mu.Unlock()
+
+			if call == 1 {
+				// Delay first response long enough for client context timeout,
+				// leaving remote offset advanced and resumable from next invocation.
+				time.Sleep(300 * time.Millisecond)
+			}
+
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.FormatInt(offset, 10))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	resumePath, err := uploadResumeStatePath(server.URL+"/files/", tmpFile, info.Size(), info.ModTime().UnixNano())
+	if err != nil {
+		t.Fatalf("resume path: %v", err)
+	}
+
+	uploader, err := newTusUploader(server.URL+"/files/", "")
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = uploader.Upload(ctx, tmpFile, map[string]string{"filename": "payload.bin"})
+	if err == nil {
+		t.Fatal("expected interrupted upload error")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected context timeout error, got %v", err)
+	}
+	if _, statErr := os.Stat(resumePath); statErr != nil {
+		t.Fatalf("expected resume state file to exist after interruption: %v", statErr)
+	}
+
+	secondUploader, err := newTusUploader(server.URL+"/files/", "")
+	if err != nil {
+		t.Fatalf("new second uploader: %v", err)
+	}
+	location, err := secondUploader.Upload(context.Background(), tmpFile, map[string]string{"filename": "payload.bin"})
+	if err != nil {
+		t.Fatalf("resume upload: %v", err)
+	}
+	if location != "/files/upload-interrupted" {
+		t.Fatalf("unexpected upload location: %q", location)
+	}
+	if _, statErr := os.Stat(resumePath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected resume state file to be removed after success, stat err=%v", statErr)
+	}
+
+	mu.Lock()
+	finalOffset := uploadOffset
+	finalPatchCalls := patchCalls
+	mu.Unlock()
+	if finalOffset != uploadLength {
+		t.Fatalf("expected final offset %d, got %d", uploadLength, finalOffset)
+	}
+	if finalPatchCalls < 2 {
+		t.Fatalf("expected at least 2 patch calls across interrupted + resumed upload, got %d", finalPatchCalls)
 	}
 }

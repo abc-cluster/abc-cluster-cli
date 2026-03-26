@@ -63,6 +63,9 @@ func buildCmd(serverURL, accessToken, workspace *string, factory data.ClientFact
 }
 
 func TestDataUpload_Basic(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
 	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
 	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
 		t.Fatal(err)
@@ -112,6 +115,9 @@ func TestDataUpload_Basic(t *testing.T) {
 }
 
 func TestDataUpload_UsesAccessTokenByDefault(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
 	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
 	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
 		t.Fatal(err)
@@ -156,6 +162,9 @@ func TestDataUpload_UploadTokenOverridesAccessToken(t *testing.T) {
 }
 
 func TestDataUpload_WithWorkspace(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
 	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
 	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
