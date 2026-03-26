@@ -43,6 +43,22 @@ type uploadOptions struct {
 
 type uploadProgressContextKey struct{}
 
+func inputError(format string, args ...interface{}) error {
+	return fmt.Errorf("input error: "+format, args...)
+}
+
+func authError(format string, args ...interface{}) error {
+	return fmt.Errorf("auth/config error: "+format, args...)
+}
+
+func networkError(format string, args ...interface{}) error {
+	return fmt.Errorf("network/server error: "+format, args...)
+}
+
+func localIOError(format string, args ...interface{}) error {
+	return fmt.Errorf("local io error: "+format, args...)
+}
+
 func withUploadProgress(ctx context.Context, onProgress func(int64)) context.Context {
 	if onProgress == nil {
 		return ctx
@@ -99,25 +115,33 @@ Examples:
 
 func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, workspace string, factory ClientFactory) error {
 	if strings.TrimSpace(opts.filePath) == "" {
-		return fmt.Errorf("upload path is empty; provide a local file or directory path")
+		return inputError("upload path is empty; provide a local file or directory path")
 	}
 
 	info, err := os.Stat(opts.filePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("path %q does not exist; verify the path and try again", opts.filePath)
+			return inputError("path %q does not exist; verify the path and try again", opts.filePath)
 		}
 		if errors.Is(err, os.ErrPermission) {
-			return fmt.Errorf("permission denied while accessing %q; check file permissions", opts.filePath)
+			return inputError("permission denied while accessing %q; check file permissions", opts.filePath)
 		}
-		return fmt.Errorf("failed to access path %q: %w", opts.filePath, err)
+		return localIOError("failed to access path %q: %w", opts.filePath, err)
 	}
 	if !info.IsDir() && !info.Mode().IsRegular() {
-		return fmt.Errorf("path %q is not a regular file; only files and directories are supported", opts.filePath)
+		return inputError("path %q is not a regular file; only files and directories are supported", opts.filePath)
 	}
-	if info.IsDir() {
+	isDir := info.IsDir()
+	if isDir {
 		if opts.name != "" {
-			return fmt.Errorf("--name can only be used when uploading a single file")
+			return inputError("--name can only be used when uploading a single file")
+		}
+		jobs := opts.parallelJobs
+		if !opts.parallel {
+			jobs = 1
+		}
+		if jobs < 1 {
+			return inputError("--parallel-jobs must be >= 1")
 		}
 	}
 
@@ -142,13 +166,10 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 		return fmt.Errorf("failed to initialize upload client: %w", err)
 	}
 
-	if info.IsDir() {
+	if isDir {
 		jobs := opts.parallelJobs
 		if !opts.parallel {
 			jobs = 1
-		}
-		if jobs < 1 {
-			return fmt.Errorf("--parallel-jobs must be >= 1")
 		}
 		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs)
 	}
@@ -166,7 +187,7 @@ func resolveEndpoint(endpoint, serverURL, workspace string) (string, error) {
 func buildDefaultEndpoint(serverURL, workspace string) (string, error) {
 	parsed, err := url.Parse(serverURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid server URL %q: %w", serverURL, err)
+		return "", inputError("invalid server URL %q: %w", serverURL, err)
 	}
 	trimmedPath := strings.Trim(parsed.Path, "/")
 	if trimmedPath == "" {
@@ -196,7 +217,7 @@ func applyWorkspace(endpoint, workspace string) (string, error) {
 	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("invalid upload endpoint %q: %w", endpoint, err)
+		return "", inputError("invalid upload endpoint %q: %w", endpoint, err)
 	}
 	q := parsed.Query()
 	if existing := q.Get("workspaceId"); existing != "" {
@@ -300,7 +321,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 	result := uploadResult{}
 	relPath, err := filepath.Rel(dir, file.path)
 	if err != nil {
-		result.err = fmt.Errorf("failed to resolve path for %q: %w", file.path, err)
+		result.err = localIOError("failed to resolve path for %q: %w", file.path, err)
 		return result
 	}
 	result.relPath = relPath
@@ -319,7 +340,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 		return result
 	}
 	if err != nil {
-		result.err = fmt.Errorf("data encryption failed for %q: %w", relPath, err)
+		result.err = localIOError("data encryption failed for %q: %w", relPath, err)
 		return result
 	}
 	if !checksumEnabled {
@@ -327,13 +348,13 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 	}
 	uploadInfo, err := os.Stat(uploadPath)
 	if err != nil {
-		result.err = fmt.Errorf("failed to access upload file for %q: %w", relPath, err)
+		result.err = localIOError("failed to access upload file for %q: %w", relPath, err)
 		return result
 	}
 	if checksumEnabled {
 		checksumValue, err := fileSHA256(uploadPath)
 		if err != nil {
-			result.err = fmt.Errorf("failed to compute checksum for %q: %w", relPath, err)
+			result.err = localIOError("failed to compute checksum for %q: %w", relPath, err)
 			return result
 		}
 		result.checksum = "sha256:" + checksumValue
@@ -412,7 +433,7 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("data upload failed: %w", err)
+		return networkError("data upload failed: %w", err)
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), "File uploaded successfully.")
