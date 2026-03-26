@@ -98,9 +98,22 @@ Examples:
 }
 
 func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, workspace string, factory ClientFactory) error {
+	if strings.TrimSpace(opts.filePath) == "" {
+		return fmt.Errorf("upload path is empty; provide a local file or directory path")
+	}
+
 	info, err := os.Stat(opts.filePath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("path %q does not exist; verify the path and try again", opts.filePath)
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("permission denied while accessing %q; check file permissions", opts.filePath)
+		}
 		return fmt.Errorf("failed to access path %q: %w", opts.filePath, err)
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return fmt.Errorf("path %q is not a regular file; only files and directories are supported", opts.filePath)
 	}
 	if info.IsDir() {
 		if opts.name != "" {
@@ -122,6 +135,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	if authToken == "" {
 		authToken = accessToken
 	}
+	authToken = strings.TrimSpace(authToken)
 
 	uploader, err := factory(endpoint, authToken)
 	if err != nil {
@@ -134,7 +148,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 			jobs = 1
 		}
 		if jobs < 1 {
-			return fmt.Errorf("parallel-jobs must be >= 1")
+			return fmt.Errorf("--parallel-jobs must be >= 1")
 		}
 		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs)
 	}
