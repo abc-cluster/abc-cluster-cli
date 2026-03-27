@@ -11,3 +11,4 @@ abc-cluster-cli
 go.work
 go.work.sum
 .tmp
+*.bin

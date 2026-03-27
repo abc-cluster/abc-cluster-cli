@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,12 @@ type uploadOptions struct {
 	progress      bool
 	parallel      bool
 	parallelJobs  int
+	rawChunkSize  string   // e.g. "64MB"
+	rawMaxRate    string   // e.g. "50MB/s"
+	meta          []string // e.g. ["key1=val1"]
+	noResume      bool
+	status        bool // show stored resume state; skip actual upload
+	clear         bool // clear stored resume state; skip actual upload
 }
 
 type uploadProgressContextKey struct{}
@@ -75,6 +82,45 @@ func uploadProgressFromContext(ctx context.Context) func(int64) {
 	return onProgress
 }
 
+type uploadOutputContextKey struct{}
+
+func withUploadOutput(ctx context.Context, w io.Writer) context.Context {
+	if w == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, uploadOutputContextKey{}, w)
+}
+
+func uploadOutputFromContext(ctx context.Context) io.Writer {
+	v := ctx.Value(uploadOutputContextKey{})
+	if v == nil {
+		return nil
+	}
+	w, _ := v.(io.Writer)
+	return w
+}
+
+// uploadPrintfContextKey carries a print function that routes messages through
+// the bubbletea program (via program.Printf) so they appear above the TUI bar
+// rather than being overwritten on the next render cycle.
+type uploadPrintfContextKey struct{}
+
+func withUploadPrintf(ctx context.Context, fn func(string, ...interface{})) context.Context {
+	if fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, uploadPrintfContextKey{}, fn)
+}
+
+func uploadPrintfFromContext(ctx context.Context) func(string, ...interface{}) {
+	v := ctx.Value(uploadPrintfContextKey{})
+	if v == nil {
+		return nil
+	}
+	fn, _ := v.(func(string, ...interface{}))
+	return fn
+}
+
 // newUploadCmd returns the "data upload" subcommand.
 func newUploadCmd(serverURL, accessToken, workspace *string, factory ClientFactory) *cobra.Command {
 	opts := &uploadOptions{}
@@ -109,6 +155,12 @@ Examples:
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
 	cmd.Flags().BoolVar(&opts.parallel, "parallel", true, "upload directory files in parallel")
 	cmd.Flags().IntVar(&opts.parallelJobs, "parallel-jobs", runtime.NumCPU(), "number of parallel upload workers when --parallel=true")
+	cmd.Flags().StringVar(&opts.rawChunkSize, "chunk-size", "", `upload chunk size (e.g. 64MB, 2MiB); default is the library default (~2 MB)`)
+	cmd.Flags().StringVar(&opts.rawMaxRate, "max-rate", "", `maximum upload throughput (e.g. 50MB/s, 10MiB/s); default is unlimited`)
+	cmd.Flags().StringArrayVar(&opts.meta, "meta", nil, `additional tus upload metadata as key=value (repeatable, e.g. --meta project=abc)`)
+	cmd.Flags().BoolVar(&opts.noResume, "no-resume", false, "ignore stored resume state and always start a fresh upload")
+	cmd.Flags().BoolVar(&opts.status, "status", false, "show stored tus resume state for the file (does not upload)")
+	cmd.Flags().BoolVar(&opts.clear, "clear", false, "clear stored tus resume state for the file (does not upload)")
 
 	return cmd
 }
@@ -116,6 +168,42 @@ Examples:
 func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, workspace string, factory ClientFactory) error {
 	if strings.TrimSpace(opts.filePath) == "" {
 		return inputError("upload path is empty; provide a local file or directory path")
+	}
+
+	if opts.status && opts.clear {
+		return inputError("--status and --clear cannot be used together")
+	}
+
+	if opts.status || opts.clear {
+		endpoint, err := resolveEndpoint(opts.endpoint, serverURL, workspace)
+		if err != nil {
+			return err
+		}
+		statePath, err := uploadResumeStatePrimaryPath(endpoint, opts.filePath)
+		if err != nil {
+			return fmt.Errorf("build resume state path: %w", err)
+		}
+		if opts.clear {
+			if err := clearUploadResumeLocation(statePath); err != nil {
+				return fmt.Errorf("clear resume state: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Resume state cleared for %q\n", opts.filePath)
+			return nil
+		}
+		// --status
+		location, ok, err := loadUploadResumeLocation(statePath)
+		if err != nil {
+			return fmt.Errorf("load resume state: %w", err)
+		}
+		if !ok {
+			fmt.Fprintf(cmd.OutOrStdout(), "No resume state found for %q\n", opts.filePath)
+			return nil
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "File:       %s\n", opts.filePath)
+		fmt.Fprintf(cmd.OutOrStdout(), "Endpoint:   %s\n", endpoint)
+		fmt.Fprintf(cmd.OutOrStdout(), "Resume URL: %s\n", location)
+		fmt.Fprintf(cmd.OutOrStdout(), "State file: %s\n", statePath)
+		return nil
 	}
 
 	info, err := os.Stat(opts.filePath)
@@ -161,7 +249,36 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	}
 	authToken = strings.TrimSpace(authToken)
 
-	uploader, err := factory(endpoint, authToken)
+	var chunkSize int64
+	if opts.rawChunkSize != "" {
+		var parseErr error
+		chunkSize, parseErr = parseByteCount(opts.rawChunkSize)
+		if parseErr != nil {
+			return inputError("invalid --chunk-size %q: %w", opts.rawChunkSize, parseErr)
+		}
+	}
+
+	var maxRate int64
+	if opts.rawMaxRate != "" {
+		var parseErr error
+		maxRate, parseErr = parseMaxRate(opts.rawMaxRate)
+		if parseErr != nil {
+			return inputError("invalid --max-rate %q: %w", opts.rawMaxRate, parseErr)
+		}
+	}
+
+	extraMeta, err := parseMetaFlags(opts.meta)
+	if err != nil {
+		return inputError("invalid --meta flag: %w", err)
+	}
+
+	uploaderOpts := UploaderOptions{
+		ChunkSize: chunkSize,
+		MaxRate:   maxRate,
+		NoResume:  opts.noResume,
+	}
+
+	uploader, err := factory(endpoint, authToken, uploaderOpts)
 	if err != nil {
 		return fmt.Errorf("failed to initialize upload client: %w", err)
 	}
@@ -171,10 +288,10 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 		if !opts.parallel {
 			jobs = 1
 		}
-		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs)
+		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs, extraMeta)
 	}
 
-	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress)
+	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress, extraMeta)
 }
 
 func resolveEndpoint(endpoint, serverURL, workspace string) (string, error) {
@@ -238,7 +355,7 @@ type uploadResult struct {
 	err      error
 }
 
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, jobs int) error {
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, jobs int, extraMeta map[string]string) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -250,7 +367,7 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 	fmt.Fprintf(cmd.OutOrStdout(), "Uploading %d files...\n", len(files))
 	if jobs <= 1 {
 		for _, file := range files {
-			result := uploadDirectoryFile(cmd.Context(), cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, progressEnabled)
+			result := uploadDirectoryFile(cmd.Context(), cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, progressEnabled, extraMeta)
 			if result.err != nil {
 				return result.err
 			}
@@ -274,7 +391,7 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 		go func() {
 			defer wg.Done()
 			for file := range jobsCh {
-				result := uploadDirectoryFile(ctx, cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, false)
+				result := uploadDirectoryFile(ctx, cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, false, extraMeta)
 				if result.err != nil {
 					cancel()
 				}
@@ -317,7 +434,7 @@ submitLoop:
 	return nil
 }
 
-func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, dir string, file uploadFile, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool) uploadResult {
+func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, dir string, file uploadFile, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) uploadResult {
 	result := uploadResult{}
 	relPath, err := filepath.Rel(dir, file.path)
 	if err != nil {
@@ -326,10 +443,12 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 	}
 	result.relPath = relPath
 
-	metadata := map[string]string{
-		"filename":     filepath.Base(file.path),
-		"relativePath": filepath.ToSlash(relPath),
+	metadata := make(map[string]string, len(extraMeta)+3)
+	for k, v := range extraMeta {
+		metadata[k] = v
 	}
+	metadata["filename"] = filepath.Base(file.path)
+	metadata["relativePath"] = filepath.ToSlash(relPath)
 	encryptProgress := newProgressReporter(out, progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), file.size)
 	uploadPath, cleanup, err := encryptForUpload(file.path, cryptor, func(n int64) {
 		encryptProgress.Add(n)
@@ -361,7 +480,13 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 		metadata["checksum"] = result.checksum
 	}
 	uploadProgress := newProgressReporter(out, progressEnabled, fmt.Sprintf("Uploading %s", relPath), uploadInfo.Size())
-	_, err = uploader.Upload(withUploadProgress(ctx, func(n int64) {
+	uploadCtx := withUploadOutput(ctx, out)
+	if uploadProgress.enabled {
+		uploadCtx = withUploadPrintf(uploadCtx, func(format string, args ...interface{}) {
+			uploadProgress.Printf(format, args...)
+		})
+	}
+	_, err = uploader.Upload(withUploadProgress(uploadCtx, func(n int64) {
 		uploadProgress.Add(n)
 	}), uploadPath, metadata)
 	uploadDoneErr := uploadProgress.Complete()
@@ -384,10 +509,12 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 	return result
 }
 
-func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool) error {
-	metadata := map[string]string{
-		"filename": filepath.Base(filePath),
+func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) error {
+	metadata := make(map[string]string, len(extraMeta)+3)
+	for k, v := range extraMeta {
+		metadata[k] = v
 	}
+	metadata["filename"] = filepath.Base(filePath)
 	if name != "" {
 		metadata["name"] = name
 	}
@@ -420,7 +547,13 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		metadata["checksum"] = localChecksum
 	}
 	uploadProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Uploading %s", filepath.Base(filePath)), uploadInfo.Size())
-	_, err = uploader.Upload(withUploadProgress(cmd.Context(), func(n int64) {
+	uploadCtx := withUploadOutput(cmd.Context(), cmd.OutOrStdout())
+	if uploadProgress.enabled {
+		uploadCtx = withUploadPrintf(uploadCtx, func(format string, args ...interface{}) {
+			uploadProgress.Printf(format, args...)
+		})
+	}
+	_, err = uploader.Upload(withUploadProgress(uploadCtx, func(n int64) {
 		uploadProgress.Add(n)
 	}), uploadPath, metadata)
 	uploadDoneErr := uploadProgress.Complete()
@@ -500,9 +633,10 @@ func collectFiles(root string) ([]uploadFile, error) {
 
 type tusUploader struct {
 	client *tusgo.Client
+	opts   UploaderOptions
 }
 
-func newTusUploader(endpoint, accessToken string) (Uploader, error) {
+func newTusUploader(endpoint, accessToken string, opts UploaderOptions) (Uploader, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("invalid upload endpoint %q: %w", endpoint, err)
@@ -519,7 +653,7 @@ func newTusUploader(endpoint, accessToken string) (Uploader, error) {
 			return req, nil
 		}
 	}
-	return &tusUploader{client: client}, nil
+	return &tusUploader{client: client, opts: opts}, nil
 }
 
 func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[string]string) (string, error) {
@@ -561,18 +695,44 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		return "", fmt.Errorf("build upload resume state path: %w", resumePathErr)
 	}
 
+	// makeStream creates a new UploadStream with the configured chunk size applied.
+	makeStream := func() *tusgo.UploadStream {
+		s := tusgo.NewUploadStream(client, &upload)
+		if u.opts.ChunkSize > 0 {
+			s.ChunkSize = u.opts.ChunkSize
+		}
+		return s
+	}
+
+	// makeReader builds a reader chain: optional rate limiter → optional progress tracker.
+	makeReader := func() io.Reader {
+		var r io.Reader = file
+		if u.opts.MaxRate > 0 {
+			r = &rateLimitedReader{reader: r, maxRate: u.opts.MaxRate, ctx: ctx}
+		}
+		if onProgress := uploadProgressFromContext(ctx); onProgress != nil {
+			r = &progressReader{reader: r, onRead: onProgress}
+		}
+		return r
+	}
+
 	// stream is declared here so the resume-check block and the upload loop share
 	// the same instance.  When resuming, the stream from the inner Sync is reused
 	// directly, avoiding a redundant HEAD request.
 	var stream *tusgo.UploadStream
 
 	resumed := false
-	if location, statePathUsed, ok, err := loadUploadResumeLocationFromAny(resumeStatePath, legacyResumeStatePath); err != nil {
+
+	if u.opts.NoResume {
+		// Clear any stored state so this invocation and subsequent ones always
+		// start fresh (until another interrupted upload creates a new state file).
+		_ = clearUploadResumeLocations(resumeStatePath, legacyResumeStatePath)
+	} else if location, statePathUsed, ok, err := loadUploadResumeLocationFromAny(resumeStatePath, legacyResumeStatePath); err != nil {
 		return "", fmt.Errorf("load upload resume state: %w", err)
 	} else if ok {
 		upload.Location = location
 		upload.RemoteSize = info.Size()
-		stream = tusgo.NewUploadStream(client, &upload)
+		stream = makeStream()
 		if _, err := stream.Sync(); err == nil {
 			if upload.RemoteSize > 0 && upload.RemoteSize != info.Size() {
 				// Remote Upload-Length differs from local file size: the stored URL
@@ -621,9 +781,27 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		}
 		// Sync the freshly created upload to confirm the server is at offset 0
 		// before we start writing.
-		stream = tusgo.NewUploadStream(client, &upload)
+		stream = makeStream()
 		if _, err := stream.Sync(); err != nil {
 			return "", fmt.Errorf("sync upload: %w", err)
+		}
+	}
+
+	// Notify the caller that we are resuming an interrupted upload and
+	// pre-advance the progress bar to the server's confirmed offset so the
+	// bar does not start at 0% on a resumed transfer.
+	if resumed {
+		offset := stream.Tell()
+		if onProgress := uploadProgressFromContext(ctx); onProgress != nil {
+			onProgress(offset)
+		}
+		msg := fmt.Sprintf("Resuming upload from %s...\n", formatSizeMB(offset))
+		if fn := uploadPrintfFromContext(ctx); fn != nil {
+			// TUI is running: route through program.Printf so the message
+			// appears above the progress bar instead of being overwritten.
+			fn("%s", msg)
+		} else if w := uploadOutputFromContext(ctx); w != nil {
+			fmt.Fprint(w, msg)
 		}
 	}
 
@@ -633,10 +811,7 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		return "", fmt.Errorf("seek file: %w", err)
 	}
 
-	reader := io.Reader(file)
-	if onProgress := uploadProgressFromContext(ctx); onProgress != nil {
-		reader = &progressReader{reader: file, onRead: onProgress}
-	}
+	reader := makeReader()
 
 	for attempt := 0; ; attempt++ {
 		if _, err := io.Copy(stream, reader); err == nil {
@@ -668,12 +843,8 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 
 			// Recreate stream to discard any dirty chunk buffer and start cleanly
 			// from the synced offset.
-			stream = tusgo.NewUploadStream(client, &upload)
-			if onProgress := uploadProgressFromContext(ctx); onProgress != nil {
-				reader = &progressReader{reader: file, onRead: onProgress}
-			} else {
-				reader = file
-			}
+			stream = makeStream()
+			reader = makeReader()
 		}
 	}
 
@@ -693,6 +864,30 @@ func (r *progressReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if n > 0 && r.onRead != nil {
 		r.onRead(int64(n))
+	}
+	return n, err
+}
+
+// rateLimitedReader wraps a reader and throttles throughput to maxRate bytes/sec.
+// It respects context cancellation during sleep intervals.
+type rateLimitedReader struct {
+	reader  io.Reader
+	maxRate int64 // bytes per second
+	ctx     context.Context
+}
+
+func (r *rateLimitedReader) Read(p []byte) (int, error) {
+	start := time.Now()
+	n, err := r.reader.Read(p)
+	if n > 0 && r.maxRate > 0 {
+		expected := time.Duration(float64(n) / float64(r.maxRate) * float64(time.Second))
+		if sleep := expected - time.Since(start); sleep > 0 {
+			select {
+			case <-r.ctx.Done():
+				return n, r.ctx.Err()
+			case <-time.After(sleep):
+			}
+		}
 	}
 	return n, err
 }
@@ -867,4 +1062,106 @@ func clearUploadResumeLocations(statePaths ...string) error {
 		}
 	}
 	return nil
+}
+
+// parseByteCount parses a human-readable byte count such as "64MB", "2MiB", "1GB".
+// Supported suffixes (case-insensitive): K/KB/KiB, M/MB/MiB, G/GB/GiB.
+// The iB variants use powers of 1024; all others use powers of 1000.
+func parseByteCount(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty value")
+	}
+
+	upper := strings.ToUpper(s)
+	var multiplier int64 = 1
+	rest := s
+
+	switch {
+	case strings.HasSuffix(upper, "GIB"):
+		multiplier = 1024 * 1024 * 1024
+		rest = s[:len(s)-3]
+	case strings.HasSuffix(upper, "MIB"):
+		multiplier = 1024 * 1024
+		rest = s[:len(s)-3]
+	case strings.HasSuffix(upper, "KIB"):
+		multiplier = 1024
+		rest = s[:len(s)-3]
+	case strings.HasSuffix(upper, "GB"):
+		multiplier = 1000 * 1000 * 1000
+		rest = s[:len(s)-2]
+	case strings.HasSuffix(upper, "MB"):
+		multiplier = 1000 * 1000
+		rest = s[:len(s)-2]
+	case strings.HasSuffix(upper, "KB"):
+		multiplier = 1000
+		rest = s[:len(s)-2]
+	case strings.HasSuffix(upper, "G"):
+		multiplier = 1000 * 1000 * 1000
+		rest = s[:len(s)-1]
+	case strings.HasSuffix(upper, "M"):
+		multiplier = 1000 * 1000
+		rest = s[:len(s)-1]
+	case strings.HasSuffix(upper, "K"):
+		multiplier = 1000
+		rest = s[:len(s)-1]
+	}
+
+	n, parseErr := strconv.ParseInt(strings.TrimSpace(rest), 10, 64)
+	if parseErr != nil {
+		return 0, fmt.Errorf("invalid byte count %q: %w", s, parseErr)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("byte count must be positive, got %d", n)
+	}
+	return n * multiplier, nil
+}
+
+// parseMaxRate parses a rate string such as "50MB/s" or "10MiB/s".
+// The "/s" suffix is stripped before delegating to parseByteCount.
+func parseMaxRate(s string) (int64, error) {
+	trimmed := strings.TrimSpace(s)
+	if strings.HasSuffix(strings.ToLower(trimmed), "/s") {
+		trimmed = trimmed[:len(trimmed)-2]
+	}
+	return parseByteCount(trimmed)
+}
+
+// parseMetaFlags converts a slice of "key=value" strings into a map.
+// Built-in metadata keys set by the uploader always take precedence over values
+// provided here.
+func parseMetaFlags(meta []string) (map[string]string, error) {
+	result := make(map[string]string, len(meta))
+	for _, kv := range meta {
+		idx := strings.IndexByte(kv, '=')
+		if idx < 0 {
+			return nil, fmt.Errorf("metadata entry %q must be in key=value format", kv)
+		}
+		k := strings.TrimSpace(kv[:idx])
+		v := kv[idx+1:]
+		if k == "" {
+			return nil, fmt.Errorf("metadata key must not be empty in %q", kv)
+		}
+		result[k] = v
+	}
+	return result, nil
+}
+
+// uploadResumeStatePrimaryPath returns the primary resume state file path for a
+// given endpoint and local file path.  Unlike uploadResumeStatePaths, this helper
+// does not require the file's size or modification time, making it suitable for
+// status/clear operations that may be invoked after the file has been moved or deleted.
+func uploadResumeStatePrimaryPath(endpoint, filePath string) (string, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", err
+	}
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("%s\n%s", endpoint, absPath)
+	hash := sha256.Sum256([]byte(key))
+	name := hex.EncodeToString(hash[:]) + ".url"
+	return filepath.Join(cacheDir, resumeStateSubpath, name), nil
 }

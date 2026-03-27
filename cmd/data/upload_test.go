@@ -39,12 +39,14 @@ type factoryRecorder struct {
 	uploader    *mockUploader
 	endpoint    string
 	accessToken string
+	opts        data.UploaderOptions
 	err         error
 }
 
-func (f *factoryRecorder) factory(endpoint, accessToken string) (data.Uploader, error) {
+func (f *factoryRecorder) factory(endpoint, accessToken string, opts data.UploaderOptions) (data.Uploader, error) {
 	f.endpoint = endpoint
 	f.accessToken = accessToken
+	f.opts = opts
 	return f.uploader, f.err
 }
 
@@ -547,4 +549,166 @@ func TestDataUpload_CryptSaltWithoutPassword(t *testing.T) {
 	if recorder.endpoint != "" {
 		t.Fatalf("factory should not be called on invalid encryption args")
 	}
+}
+
+func TestDataUpload_ChunkSizeFlagPropagated(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/cs"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--chunk-size", "4MB")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.opts.ChunkSize != 4_000_000 {
+		t.Fatalf("expected ChunkSize=4000000, got %d", recorder.opts.ChunkSize)
+	}
+}
+
+func TestDataUpload_MaxRateFlagPropagated(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/mr"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--max-rate", "10MB/s")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.opts.MaxRate != 10_000_000 {
+		t.Fatalf("expected MaxRate=10000000, got %d", recorder.opts.MaxRate)
+	}
+}
+
+func TestDataUpload_MetaFlagMergedIntoMetadata(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/meta"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--meta", "project=myproject", "--meta", "owner=alice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 upload call, got %d", len(mock.calls))
+	}
+	if mock.calls[0].metadata["project"] != "myproject" {
+		t.Fatalf("expected project metadata, got %q", mock.calls[0].metadata["project"])
+	}
+	if mock.calls[0].metadata["owner"] != "alice" {
+		t.Fatalf("expected owner metadata, got %q", mock.calls[0].metadata["owner"])
+	}
+	// Built-in key must not be overridden by --meta.
+	if mock.calls[0].metadata["filename"] != "sample.txt" {
+		t.Fatalf("expected filename to be sample.txt, got %q", mock.calls[0].metadata["filename"])
+	}
+}
+
+func TestDataUpload_MetaFlagInvalidFormat(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/meta-bad"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--meta", "badformat")
+	if err == nil {
+		t.Fatal("expected error for invalid meta format")
+	}
+	if !strings.Contains(err.Error(), "key=value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = recorder
+}
+
+func TestDataUpload_NoResumeFlagPropagated(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/nr"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--no-resume")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !recorder.opts.NoResume {
+		t.Fatal("expected NoResume=true in factory opts")
+	}
+}
+
+func TestDataUpload_ChunkSizeInvalidFormat(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/cs-bad"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile, "--chunk-size", "notabytes")
+	if err == nil {
+		t.Fatal("expected error for invalid chunk-size")
+	}
+	if !strings.Contains(err.Error(), "chunk-size") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = recorder
 }
