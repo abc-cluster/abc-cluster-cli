@@ -24,6 +24,7 @@ type progressModel struct {
 func newProgressModel(label string, total int64) progressModel {
 	bar := bubblesprogress.New(
 		bubblesprogress.WithScaledGradient("#3AA675", "#9BD8A7"),
+		bubblesprogress.WithoutPercentage(),
 	)
 	bar.Width = 40
 	return progressModel{label: label, total: total, bar: bar}
@@ -97,6 +98,16 @@ func (p *progressReporter) Add(n int64) {
 		return
 	}
 	p.program.Send(progressAdvanceMsg(n))
+}
+
+// Printf prints a message above the progress bar without disrupting the TUI.
+// When progress is not enabled this is a no-op; callers should fall back to
+// their normal output writer in that case.
+func (p *progressReporter) Printf(format string, args ...interface{}) {
+	if !p.enabled {
+		return
+	}
+	p.program.Printf(format, args...)
 }
 
 func (p *progressReporter) Complete() error {

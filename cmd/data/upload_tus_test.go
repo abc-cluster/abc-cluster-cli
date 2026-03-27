@@ -62,7 +62,7 @@ func TestTusUploader_CreateUploadIncludesChecksumMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	uploader, err := newTusUploader(server.URL+"/files/", "")
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestTusUploader_ChecksumCanBeDisabledViaMetadataMarker(t *testing.T) {
 	}))
 	defer server.Close()
 
-	uploader, err := newTusUploader(server.URL+"/files/", "")
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestTusUploader_ResumesAfterTransientPatchFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	uploader, err := newTusUploader(server.URL+"/files/", "")
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestTusUploader_TooLargeErrorIncludesLimit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	uploader, err := newTusUploader(server.URL+"/files/", "")
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestTusUploader_ResumesUsingStoredLocationForFile(t *testing.T) {
 		t.Fatalf("store resume location: %v", err)
 	}
 
-	uploader, err := newTusUploader(server.URL+"/files/", "")
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -472,7 +472,7 @@ func TestTusUploader_ResumesAfterInterruptedProcess(t *testing.T) {
 		t.Fatalf("resume path: %v", err)
 	}
 
-	uploader, err := newTusUploader(server.URL+"/files/", "")
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestTusUploader_ResumesAfterInterruptedProcess(t *testing.T) {
 		t.Fatalf("expected resume state file to exist after interruption: %v", statErr)
 	}
 
-	secondUploader, err := newTusUploader(server.URL+"/files/", "")
+	secondUploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new second uploader: %v", err)
 	}
@@ -581,7 +581,7 @@ func TestTusUploader_ResumesAfterFileModTimeChange(t *testing.T) {
 		t.Fatalf("touch file: %v", err)
 	}
 
-	uploader, err := newTusUploader(server.URL+"/files/", "")
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -594,5 +594,147 @@ func TestTusUploader_ResumesAfterFileModTimeChange(t *testing.T) {
 	}
 	if createCalls != 0 {
 		t.Fatalf("expected no new upload creation, got %d", createCalls)
+	}
+}
+
+func TestTusUploader_ChunkSizeIsRespected(t *testing.T) {
+	const chunkSize = 512
+	payload := strings.Repeat("y", chunkSize*4) // 4 chunks worth of data
+	tmpFile := filepath.Join(t.TempDir(), "payload.txt")
+	if err := os.WriteFile(tmpFile, []byte(payload), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var patchSizes []int
+	uploadOffset := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			w.Header().Set("Tus-Version", "1.0.0")
+			w.Header().Set("Tus-Extension", "creation")
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Location", "/files/upload-chunked")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodHead:
+			mu.Lock()
+			offset := uploadOffset
+			mu.Unlock()
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.Itoa(offset))
+			w.Header().Set("Upload-Length", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPatch:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read patch body: %v", err)
+			}
+			mu.Lock()
+			patchSizes = append(patchSizes, len(body))
+			uploadOffset += len(body)
+			offset := uploadOffset
+			mu.Unlock()
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.Itoa(offset))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{ChunkSize: chunkSize})
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+
+	_, err = uploader.Upload(context.Background(), tmpFile, map[string]string{"filename": "payload.txt"})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+
+	mu.Lock()
+	sizes := make([]int, len(patchSizes))
+	copy(sizes, patchSizes)
+	mu.Unlock()
+
+	for i, sz := range sizes {
+		if sz > chunkSize {
+			t.Fatalf("patch %d: size %d exceeds chunk size %d", i, sz, chunkSize)
+		}
+	}
+	if len(sizes) < 4 {
+		t.Fatalf("expected at least 4 patch calls for 4-chunk payload, got %d", len(sizes))
+	}
+}
+
+func TestTusUploader_NoResumeIgnoresStoredState(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	tmpFile := filepath.Join(t.TempDir(), "payload.txt")
+	payload := "hello world"
+	if err := os.WriteFile(tmpFile, []byte(payload), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	const staleLocation = "/files/upload-stale"
+	var createCalled bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			w.Header().Set("Tus-Version", "1.0.0")
+			w.Header().Set("Tus-Extension", "creation")
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			createCalled = true
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Location", "/files/upload-fresh")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodHead:
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", "0")
+			w.Header().Set("Upload-Length", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPatch:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read patch body: %v", err)
+			}
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	// Pre-store a stale resume URL.
+	statePath, err := uploadResumeStatePrimaryPath(server.URL+"/files/", tmpFile)
+	if err != nil {
+		t.Fatalf("state path: %v", err)
+	}
+	if err := storeUploadResumeLocation(statePath, staleLocation); err != nil {
+		t.Fatalf("store stale location: %v", err)
+	}
+
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{NoResume: true})
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+
+	location, err := uploader.Upload(context.Background(), tmpFile, map[string]string{"filename": "payload.txt"})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if !createCalled {
+		t.Fatal("expected a fresh upload to be created when NoResume=true")
+	}
+	if location == staleLocation {
+		t.Fatal("expected location to differ from stale location")
 	}
 }
