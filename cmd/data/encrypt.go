@@ -84,7 +84,7 @@ func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 		return fmt.Errorf("failed to access path %q: %w", sourcePath, err)
 	}
 	progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", filepath.Base(sourcePath)), info.Size())
-	if err := cryptor.encryptToPathWithProgress(sourcePath, outputPath, func(n int64) {
+	if err := cryptor.encryptToPathWithProgress(cmd.Context(), sourcePath, outputPath, func(n int64) {
 		progress.Add(n)
 	}); err != nil {
 		_ = progress.Complete()
@@ -124,7 +124,7 @@ func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
 		}
 		progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", relPath), file.size)
-		if err := cryptor.encryptToPathWithProgress(file.path, destPath, func(n int64) {
+		if err := cryptor.encryptToPathWithProgress(cmd.Context(), file.path, destPath, func(n int64) {
 			progress.Add(n)
 		}); err != nil {
 			_ = progress.Complete()

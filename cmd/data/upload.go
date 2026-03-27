@@ -27,6 +27,12 @@ import (
 const (
 	bytesPerMB         = 1024 * 1024
 	resumeStateSubpath = "abc-cluster-cli/tus-resume"
+
+	// defaultUploadChunkSize is the tus chunk size used when the caller does
+	// not provide --chunk-size.  64 MiB gives ~1,600 PATCH requests for a
+	// 100 GiB file, balancing request overhead against server buffer pressure.
+	// Small files (<64 MiB) will be sent as a single chunk.
+	defaultUploadChunkSize = 64 * 1024 * 1024
 )
 
 type uploadOptions struct {
@@ -450,7 +456,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 	metadata["filename"] = filepath.Base(file.path)
 	metadata["relativePath"] = filepath.ToSlash(relPath)
 	encryptProgress := newProgressReporter(out, progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), file.size)
-	uploadPath, cleanup, err := encryptForUpload(file.path, cryptor, func(n int64) {
+	uploadPath, cleanup, err := encryptForUpload(ctx, file.path, cryptor, func(n int64) {
 		encryptProgress.Add(n)
 	})
 	encryptDoneErr := encryptProgress.Complete()
@@ -471,7 +477,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 		return result
 	}
 	if checksumEnabled {
-		checksumValue, err := fileSHA256(uploadPath)
+		checksumValue, err := fileSHA256(ctx, uploadPath)
 		if err != nil {
 			result.err = localIOError("failed to compute checksum for %q: %w", relPath, err)
 			return result
@@ -523,7 +529,7 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	}
 
 	encryptProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", filepath.Base(filePath)), size)
-	uploadPath, cleanup, err := encryptForUpload(filePath, cryptor, func(n int64) {
+	uploadPath, cleanup, err := encryptForUpload(cmd.Context(), filePath, cryptor, func(n int64) {
 		encryptProgress.Add(n)
 	})
 	encryptDoneErr := encryptProgress.Complete()
@@ -539,7 +545,7 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	}
 	var localChecksum string
 	if checksumEnabled {
-		checksumValue, err := fileSHA256(uploadPath)
+		checksumValue, err := fileSHA256(cmd.Context(), uploadPath)
 		if err != nil {
 			return fmt.Errorf("failed to compute checksum: %w", err)
 		}
@@ -578,13 +584,13 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	return nil
 }
 
-func fileSHA256(filePath string) (string, error) {
+func fileSHA256(ctx context.Context, filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
-	return sha256Hex(file)
+	return sha256Hex(ctx, file)
 }
 
 func formatSizeMB(sizeBytes int64) string {
@@ -677,7 +683,7 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 			delete(metadataWithChecksum, "checksum")
 		}
 	} else {
-		checksumValue, err := sha256Hex(file)
+		checksumValue, err := sha256Hex(ctx, file)
 		if err != nil {
 			return "", fmt.Errorf("compute checksum: %w", err)
 		}
@@ -695,12 +701,16 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 		return "", fmt.Errorf("build upload resume state path: %w", resumePathErr)
 	}
 
-	// makeStream creates a new UploadStream with the configured chunk size applied.
+	// makeStream creates a new UploadStream with the effective chunk size applied.
+	// When the caller did not specify --chunk-size the 64 MiB default is used,
+	// which keeps request count manageable for files up to 100 GiB.
 	makeStream := func() *tusgo.UploadStream {
 		s := tusgo.NewUploadStream(client, &upload)
-		if u.opts.ChunkSize > 0 {
-			s.ChunkSize = u.opts.ChunkSize
+		chunkSize := u.opts.ChunkSize
+		if chunkSize <= 0 {
+			chunkSize = defaultUploadChunkSize
 		}
+		s.ChunkSize = chunkSize
 		return s
 	}
 
@@ -869,23 +879,55 @@ func (r *progressReader) Read(p []byte) (int, error) {
 }
 
 // rateLimitedReader wraps a reader and throttles throughput to maxRate bytes/sec.
-// It respects context cancellation during sleep intervals.
+//
+// Sleep debt is accumulated across reads and only a single timer is allocated
+// and reused for the lifetime of the reader, avoiding per-read allocations at
+// high chunk rates (e.g. 64 MiB chunks → ~1,600 reads for a 100 GiB file).
+// Context cancellation is honoured during each sleep interval.
 type rateLimitedReader struct {
 	reader  io.Reader
-	maxRate int64 // bytes per second
+	maxRate int64 // bytes per second; 0 means unlimited
 	ctx     context.Context
+	debt    time.Duration  // accumulated un-slept time
+	timer   *time.Timer    // reused across reads; nil until first sleep
 }
+
+// minRateLimitSleep is the minimum accumulated debt before we actually sleep.
+// Keeping this above OS timer resolution (~1 ms on most platforms) avoids
+// spinning on tiny sleeps for high-rate limits with small reads.
+const minRateLimitSleep = 5 * time.Millisecond
 
 func (r *rateLimitedReader) Read(p []byte) (int, error) {
 	start := time.Now()
 	n, err := r.reader.Read(p)
 	if n > 0 && r.maxRate > 0 {
+		// How long should this many bytes have taken at the target rate?
 		expected := time.Duration(float64(n) / float64(r.maxRate) * float64(time.Second))
-		if sleep := expected - time.Since(start); sleep > 0 {
+		// Accumulate positive debt; clamp to zero when we're already slow
+		// (negative debt) so we never "speed up" to compensate for a slow read.
+		if elapsed := time.Since(start); elapsed < expected {
+			r.debt += expected - elapsed
+		}
+		if r.debt >= minRateLimitSleep {
+			sleep := r.debt
+			r.debt = 0
+			if r.timer == nil {
+				r.timer = time.NewTimer(sleep)
+			} else {
+				r.timer.Reset(sleep)
+			}
 			select {
 			case <-r.ctx.Done():
+				// Stop the timer and drain its channel so the next Reset is safe.
+				if !r.timer.Stop() {
+					select {
+					case <-r.timer.C:
+					default:
+					}
+				}
 				return n, r.ctx.Err()
-			case <-time.After(sleep):
+			case <-r.timer.C:
+				// Timer fired normally; channel is now empty — Reset is safe.
 			}
 		}
 	}
@@ -933,10 +975,26 @@ func copyMetadata(metadata map[string]string) map[string]string {
 	return result
 }
 
-func sha256Hex(r io.Reader) (string, error) {
+// sha256Hex hashes r and returns the hex-encoded SHA-256 digest.  ctx is
+// checked between 32 KiB reads so that a cancellation or deadline propagates
+// without waiting for the entire stream to finish.
+func sha256Hex(ctx context.Context, r io.Reader) (string, error) {
 	h := sha256.New()
-	if _, err := io.Copy(h, r); err != nil {
-		return "", err
+	buf := make([]byte, 32*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		n, readErr := r.Read(buf)
+		if n > 0 {
+			h.Write(buf[:n])
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return "", readErr
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
