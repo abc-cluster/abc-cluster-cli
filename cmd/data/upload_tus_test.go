@@ -472,7 +472,13 @@ func TestTusUploader_ResumesAfterInterruptedProcess(t *testing.T) {
 		t.Fatalf("resume path: %v", err)
 	}
 
-	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
+	// Use a 1 MiB chunk so the 8 MiB file requires multiple PATCH calls and
+	// the test can observe an interrupted upload followed by a resumed one.
+	// The default 64 MiB chunk would send the whole file in one PATCH, making
+	// it impossible to interrupt mid-way with the 100 ms timeout used below.
+	smallChunk := UploaderOptions{ChunkSize: 1 * 1024 * 1024}
+
+	uploader, err := newTusUploader(server.URL+"/files/", "", smallChunk)
 	if err != nil {
 		t.Fatalf("new uploader: %v", err)
 	}
@@ -490,7 +496,7 @@ func TestTusUploader_ResumesAfterInterruptedProcess(t *testing.T) {
 		t.Fatalf("expected resume state file to exist after interruption: %v", statErr)
 	}
 
-	secondUploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
+	secondUploader, err := newTusUploader(server.URL+"/files/", "", smallChunk)
 	if err != nil {
 		t.Fatalf("new second uploader: %v", err)
 	}
@@ -668,6 +674,71 @@ func TestTusUploader_ChunkSizeIsRespected(t *testing.T) {
 	}
 	if len(sizes) < 4 {
 		t.Fatalf("expected at least 4 patch calls for 4-chunk payload, got %d", len(sizes))
+	}
+}
+
+func TestTusUploader_DefaultChunkSizeIs64MB(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	payload := strings.Repeat("z", 32) // small payload; we just care about the chunk-size header
+	tmpFile := filepath.Join(t.TempDir(), "payload.txt")
+	if err := os.WriteFile(tmpFile, []byte(payload), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotChunkSize int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			w.Header().Set("Tus-Version", "1.0.0")
+			w.Header().Set("Tus-Extension", "creation")
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Location", "/files/upload-default-chunk")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodHead:
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", "0")
+			w.Header().Set("Upload-Length", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPatch:
+			// Upload-Length on PATCH body may be capped by file size, but the
+			// Upload-Offset header lets us derive the chunk boundary.
+			body, _ := io.ReadAll(r.Body)
+			gotChunkSize = int64(len(body))
+			w.Header().Set("Tus-Resumable", "1.0.0")
+			w.Header().Set("Upload-Offset", strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	// Construct uploader with no explicit ChunkSize — default should apply.
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+	tus := uploader.(*tusUploader)
+
+	stream := tusgo.NewUploadStream(tus.client.WithContext(context.Background()), &tusgo.Upload{})
+	// makeStream is a closure so we can't call it directly, but we can verify
+	// that the defaultUploadChunkSize constant matches our expectation.
+	if defaultUploadChunkSize != 64*1024*1024 {
+		t.Fatalf("defaultUploadChunkSize = %d, want 64 MiB (%d)", defaultUploadChunkSize, 64*1024*1024)
+	}
+	_ = stream // used only to confirm tusgo import is present
+
+	_, err = uploader.Upload(context.Background(), tmpFile, map[string]string{"filename": "payload.txt"})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	// The file is tiny (32 bytes) so it fits in one chunk; verify the server
+	// saw all bytes (chunk was not artificially limited below file size).
+	if gotChunkSize != int64(len(payload)) {
+		t.Fatalf("patch body size = %d, want %d", gotChunkSize, len(payload))
 	}
 }
 

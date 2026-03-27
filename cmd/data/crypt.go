@@ -1,11 +1,13 @@
 package data
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/scrypt"
@@ -76,11 +78,36 @@ func uploadCryptConfig(password, salt string) (*cryptConfig, error) {
 	return newCryptConfig(password, salt, nil)
 }
 
-func encryptForUpload(sourcePath string, cryptor *cryptConfig, onProgress func(int64)) (string, func() error, error) {
+// uploadTempDir returns the directory to use for encrypted upload temp files.
+// It respects the ABC_DATA_UPLOAD_TMPDIR environment variable; if unset it
+// defaults to $HOME/.abc/tmpdir.  The directory is created with 0700 permissions
+// if it does not already exist.
+func uploadTempDir() (string, error) {
+	if dir := os.Getenv("ABC_DATA_UPLOAD_TMPDIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", fmt.Errorf("create upload temp dir %q: %w", dir, err)
+		}
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	dir := filepath.Join(home, ".abc", "tmpdir")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("create upload temp dir %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// encryptForUpload encrypts sourcePath to a temp file when a cryptConfig is
+// provided, returning the path to upload and a cleanup function.  When cryptor
+// is nil the original path is returned unchanged.
+func encryptForUpload(ctx context.Context, sourcePath string, cryptor *cryptConfig, onProgress func(int64)) (string, func() error, error) {
 	if cryptor == nil {
 		return sourcePath, nil, nil
 	}
-	return cryptor.encryptToTempFileWithProgress(sourcePath, onProgress)
+	return cryptor.encryptToTempFileWithProgress(ctx, sourcePath, onProgress)
 }
 
 func encryptedSize(plainSize int64) int64 {
@@ -92,11 +119,19 @@ func encryptedSize(plainSize int64) int64 {
 }
 
 func (c *cryptConfig) encryptToTempFile(sourcePath string) (string, func() error, error) {
-	return c.encryptToTempFileWithProgress(sourcePath, nil)
+	return c.encryptToTempFileWithProgress(context.Background(), sourcePath, nil)
 }
 
-func (c *cryptConfig) encryptToTempFileWithProgress(sourcePath string, onProgress func(int64)) (string, func() error, error) {
-	tmp, err := os.CreateTemp("", "abc-crypt-*")
+// encryptToTempFileWithProgress encrypts sourcePath to a new temp file under
+// uploadTempDir and returns the temp file path together with a cleanup func.
+// The cleanup func removes the temp file; callers must call it once the temp
+// file is no longer needed (after a successful upload or on any error path).
+func (c *cryptConfig) encryptToTempFileWithProgress(ctx context.Context, sourcePath string, onProgress func(int64)) (string, func() error, error) {
+	tmpDir, err := uploadTempDir()
+	if err != nil {
+		return "", nil, err
+	}
+	tmp, err := os.CreateTemp(tmpDir, "abc-crypt-*")
 	if err != nil {
 		return "", nil, err
 	}
@@ -104,7 +139,7 @@ func (c *cryptConfig) encryptToTempFileWithProgress(sourcePath string, onProgres
 	cleanup := func() error {
 		return os.Remove(tmpPath)
 	}
-	if err := c.encryptToWriterWithProgress(sourcePath, tmp, onProgress); err != nil {
+	if err := c.encryptToWriterWithProgress(ctx, sourcePath, tmp, onProgress); err != nil {
 		tmp.Close()
 		_ = cleanup()
 		return "", nil, err
@@ -117,15 +152,15 @@ func (c *cryptConfig) encryptToTempFileWithProgress(sourcePath string, onProgres
 }
 
 func (c *cryptConfig) encryptToPath(sourcePath, destPath string) error {
-	return c.encryptToPathWithProgress(sourcePath, destPath, nil)
+	return c.encryptToPathWithProgress(context.Background(), sourcePath, destPath, nil)
 }
 
-func (c *cryptConfig) encryptToPathWithProgress(sourcePath, destPath string, onProgress func(int64)) error {
+func (c *cryptConfig) encryptToPathWithProgress(ctx context.Context, sourcePath, destPath string, onProgress func(int64)) error {
 	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	if err := c.encryptToWriterWithProgress(sourcePath, out, onProgress); err != nil {
+	if err := c.encryptToWriterWithProgress(ctx, sourcePath, out, onProgress); err != nil {
 		out.Close()
 		_ = os.Remove(destPath)
 		return err
@@ -147,16 +182,16 @@ func (c *cryptConfig) decryptToPath(sourcePath, destPath string) error {
 }
 
 func (c *cryptConfig) encryptToWriter(sourcePath string, out io.Writer) error {
-	return c.encryptToWriterWithProgress(sourcePath, out, nil)
+	return c.encryptToWriterWithProgress(context.Background(), sourcePath, out, nil)
 }
 
-func (c *cryptConfig) encryptToWriterWithProgress(sourcePath string, out io.Writer, onProgress func(int64)) error {
+func (c *cryptConfig) encryptToWriterWithProgress(ctx context.Context, sourcePath string, out io.Writer, onProgress func(int64)) error {
 	in, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
 	}
 	defer in.Close()
-	_, err = c.encryptStreamWithProgress(out, in, onProgress)
+	_, err = c.encryptStreamWithProgress(ctx, out, in, onProgress)
 	return err
 }
 
@@ -171,10 +206,13 @@ func (c *cryptConfig) decryptToWriter(sourcePath string, out io.Writer) error {
 }
 
 func (c *cryptConfig) encryptStream(dst io.Writer, src io.Reader) (int64, error) {
-	return c.encryptStreamWithProgress(dst, src, nil)
+	return c.encryptStreamWithProgress(context.Background(), dst, src, nil)
 }
 
-func (c *cryptConfig) encryptStreamWithProgress(dst io.Writer, src io.Reader, onProgress func(int64)) (int64, error) {
+// encryptStreamWithProgress encrypts src into dst using NaCl secretbox in
+// 64 KiB blocks.  ctx is checked between blocks so that a cancellation or
+// deadline propagates without waiting for the entire stream to finish.
+func (c *cryptConfig) encryptStreamWithProgress(ctx context.Context, dst io.Writer, src io.Reader, onProgress func(int64)) (int64, error) {
 	var n nonce
 	if _, err := io.ReadFull(c.rand, n[:]); err != nil {
 		return 0, err
@@ -190,6 +228,11 @@ func (c *cryptConfig) encryptStreamWithProgress(dst io.Writer, src io.Reader, on
 	}
 	buf := make([]byte, rcloneBlockDataSize)
 	for {
+		// Honour context cancellation between blocks rather than forcing
+		// the caller to wait for the entire stream to drain.
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
 		read, err := io.ReadFull(src, buf)
 		if err == io.EOF {
 			break
