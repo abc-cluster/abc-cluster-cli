@@ -51,6 +51,7 @@
 | `ABC_CONFIG_FILE` | Override config file path (default: `~/.abc/config.yaml`) |
 | `ABC_CRYPT_PASSWORD` | rclone crypt password |
 | `ABC_CRYPT_SALT` | rclone crypt salt |
+| `ABC_DATA_UPLOAD_TMPDIR` | Directory for encrypted upload temp files (default: `~/.abc/tmpdir`) |
 
 ---
 
@@ -63,18 +64,20 @@ abc
 ├── context     list · show · add · use · remove
 ├── workspace   list · show · create · delete · use · members (list/add/remove)
 ├── status
+├── secret      list · show · create · delete · logs
+├── ssh         connect to (or print SSH command for) an accessible node; filter by datacenter or pool
 ├── pipeline    run · list · show · cancel · resume · delete · logs · params (show/validate)
 ├── job         run · list · show · stop · dispatch · logs · status
 ├── data        upload · download · list · show · delete · move · stat · logs · encrypt · decrypt
 ├── automation  list · show · create · enable · disable · delete · logs · runs · triggers
-├── storage     buckets (list/create/delete/stat) · objects (list/get/put/delete/stat)
+├── storage     buckets (list/create/delete/stat) · objects (list/get/put/delete/stat) * nodes
 ├── compute     nodes (list/show/drain/undrain) · datacenters (list/show)
 │               allocations (list/show/logs) · hpc (list/status/jobs)
 ├── policy      list · show · validate · audit · logs · residency
 ├── budget      summary · list · show · report · logs
 ├── compliance  status · audit · residency · dta (list/show/validate) · report
 ├── admin       users (list/create/delete/token) · health · audit · backup · version
-├── join
+├── join        add the current node to the cluster; runs node probe automatically, or accepts a pre-issued --token to skip the probe
 ├── chat
 └── version
 ```
@@ -399,7 +402,186 @@ Flags:
 
 ---
 
-### 5.6 `abc pipeline`
+### 5.6 `abc secret`
+
+Manage named secrets stored in the ABC-cluster Vault backend. Access is scoped to the authenticated user's workspace. Secret values are masked by default in all terminal output.
+
+> **Backend note:** Secrets are stored in Vault and accessed through the ABC API layer. The CLI never communicates with Vault directly.
+
+#### `abc secret list`
+
+```
+$ abc secret list
+
+  NAME                  CREATED               UPDATED
+  db-password           2024-10-01 08:12:00   2024-11-01 09:00:00
+  api-key-ncbi          2024-09-15 14:30:00   2024-10-30 09:12:44
+  gcp-service-account   2024-10-20 11:45:00   2024-10-25 07:22:00
+
+  3 secrets in ws-za-01
+```
+
+#### `abc secret show <name>`
+
+```
+$ abc secret show api-key-ncbi
+
+  Name      api-key-ncbi
+  Version   3
+  Created   2024-09-15 14:30:00
+  Updated   2024-10-30 09:12:44
+  Value     ••••••••••••••••  (use --reveal to display)
+
+$ abc secret show api-key-ncbi --reveal
+
+  Name      api-key-ncbi
+  Version   3
+  Created   2024-09-15 14:30:00
+  Updated   2024-10-30 09:12:44
+  Value     ABCD1234XYZ-secret-value
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--reveal` | Print the secret value in plaintext instead of masking it |
+| `--version <n>` | Show a specific historical version |
+
+#### `abc secret create <name>`
+
+Creates a new secret, or rotates (adds a new version of) an existing one.
+
+```
+$ abc secret create db-password --value=S3cr3t!
+  ✓ Secret db-password created  (version 1)
+
+$ echo "S3cr3t!" | abc secret create db-password
+  ✓ Secret db-password rotated  (version 2)
+
+$ abc secret create gcp-service-account --from-file=./sa.json
+  ✓ Secret gcp-service-account created  (version 1)
+
+$ abc secret create ncbi-key --from-env=NCBI_API_KEY
+  ✓ Secret ncbi-key created  (version 1)
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--value <v>` | Secret value inline (prefer stdin pipe for sensitive values) |
+| `--from-file <path>` | Read value from a local file |
+| `--from-env <VAR>` | Capture current value of a local environment variable |
+| `--dry-run` | Validate input without writing |
+
+#### `abc secret delete <name>`
+
+Deletes a secret and all its versions.
+
+```
+$ abc secret delete db-password
+
+  Delete secret db-password and all 2 versions? [y/N]: y
+
+  ✓ Secret db-password deleted
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--confirm` | Skip the confirmation prompt |
+| `--dry-run` | Show what would be deleted without deleting |
+
+#### `abc secret logs <name>`
+
+Combined audit and rotation log for a single secret — access events (READ, USE) and lifecycle events (CREATE, ROTATE, DELETE) in one stream.
+
+```
+$ abc secret logs api-key-ncbi
+
+  TIMESTAMP             EVENT    VERSION   ACTOR                      SOURCE IP
+  2024-11-01 09:14:02   READ     3         admin@za-site.example      100.104.12.88
+  2024-10-30 09:12:44   ROTATE   3         admin@za-site.example      100.104.12.88
+  2024-10-15 07:00:11   READ     2         pipeline-runner@internal   —
+  2024-09-15 14:30:00   CREATE   1         admin@za-site.example      100.104.12.88
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--limit <n>` | Number of entries to return (default: 50) |
+| `--since <time>` | Show events since a point in time (e.g. `2024-10-01`, `24h`, `7d`) |
+| `--event <type>` | Filter by event type: `READ`, `ROTATE`, `CREATE`, `DELETE` |
+| `--follow` | Stream new events as they arrive |
+
+---
+
+### 5.7 `abc ssh`
+
+Opens an interactive SSH session to a node the user has access to, or prints the equivalent SSH command for scripting. Node discovery is via the ABC API.
+
+When a TTY is present the CLI replaces itself with the SSH process (`exec`), giving the terminal fully to SSH — window resize, `Ctrl-C`, and all signals work natively. When stdout is not a TTY, the SSH command is printed instead.
+
+> **Prerequisite:** Nodes are only reachable via Tailscale. Ensure `tailscale status` shows the target node as reachable before connecting. SSH key authorization is out of scope — the user's `~/.ssh` keys must already be authorised on target nodes.
+
+#### Connect (auto-select when one node matches)
+
+```
+$ abc ssh --datacenter za-cpt-dc2 --pool gpu-nodes
+
+  Connecting to za-node-104  (100.104.12.88)...
+  [ssh session begins]
+```
+
+#### Interactive node selector (multiple matches)
+
+```
+$ abc ssh
+
+  Select a node:
+  > za-node-104   za-cpt-dc2   gpu-nodes    ready
+    za-node-105   za-cpt-dc2   gpu-nodes    ready
+    ke-node-012   ke-nbi-dc1   compute      ready
+
+  [↑↓ to move, Enter to select, / to filter, q to quit]
+```
+
+#### Connect to a named node directly
+
+```
+$ abc ssh za-node-104
+
+  Connecting to za-node-104  (100.104.12.88)...
+  [ssh session begins]
+```
+
+#### Print command (non-TTY / `--print` flag)
+
+```
+$ abc ssh za-node-104 --print
+ssh ubuntu@100.104.12.88
+
+$ abc ssh za-node-104 --print | pbcopy   # copy to clipboard
+```
+
+When stdout is not a TTY (e.g. piped to a script), `--print` behaviour is the default regardless of the flag.
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--datacenter <dc>` | Filter candidate nodes by datacenter |
+| `--pool <pool>` | Filter candidate nodes by node pool |
+| `--print` | Print SSH command to stdout instead of executing it |
+| `--user <u>` | Override the SSH username (default: from API node record) |
+| `--port <p>` | Override the SSH port (default: from API node record, usually 22) |
+
+---
+
+### 5.8 `abc pipeline`
 
 #### `abc pipeline run`
 
@@ -562,7 +744,7 @@ $ abc pipeline params validate nf-core/viralrecon \
 
 ---
 
-### 5.7 `abc job`
+### 5.9 `abc job`
 
 #### `abc job run <script>`
 
@@ -659,7 +841,7 @@ $ abc job status viralrecon-batch-47
 
 ---
 
-### 5.8 `abc data`
+### 5.10 `abc data`
 
 #### `abc data upload <path>`
 
@@ -825,7 +1007,7 @@ $ abc data decrypt ./fastq/ZA-2024-001_R1.fastq.gz.encrypted \
 
 ---
 
-### 5.9 `abc automation`
+### 5.11 `abc automation`
 
 Umbrella command group for all scheduled, event-triggered, and DAG-orchestrated workflows active on the user's profile. Corresponds to the Control plugin backend.
 
@@ -993,7 +1175,7 @@ $ abc automation triggers
 
 ---
 
-### 5.10 `abc storage`
+### 5.12 `abc storage`
 
 #### `abc storage buckets list`
 
@@ -1071,7 +1253,7 @@ $ abc storage objects stat genomics-raw-seq ZA-2024/ZA-2024-001_R1.fastq.gz
 
 ---
 
-### 5.11 `abc compute`
+### 5.13 `abc compute`
 
 #### `abc compute nodes list`
 
@@ -1213,7 +1395,7 @@ $ abc compute hpc jobs za-hpc-primary
 
 ---
 
-### 5.12 `abc policy`
+### 5.14 `abc policy`
 
 #### `abc policy list`
 
@@ -1393,7 +1575,7 @@ $ abc policy residency ds-001abc
 
 ---
 
-### 5.13 `abc budget`
+### 5.15 `abc budget`
 
 #### `abc budget summary`
 
@@ -1503,7 +1685,7 @@ Flags:
 
 ---
 
-### 5.14 `abc compliance`
+### 5.16 `abc compliance`
 
 #### `abc compliance status`
 
@@ -1637,7 +1819,7 @@ $ abc compliance report \
 
 ---
 
-### 5.15 `abc admin`
+### 5.17 `abc admin`
 
 #### `abc admin users list`
 
@@ -1748,7 +1930,7 @@ $ abc admin version
 
 ---
 
-### 5.16 `abc join`
+### 5.18 `abc join`
 
 Onboards the current machine into the operator's ABC-cluster. Runs `abc-node-probe` checks automatically, presents a full health report, and — if the operator confirms — registers the node with Nomad, establishes a Tailscale connection, and configures the appropriate task driver.
 
@@ -1816,6 +1998,40 @@ $ abc join \
     abc compute nodes show za-node-104
 ```
 
+#### Using a pre-issued token
+
+An admin can pre-generate a join token from the web UI or `abc admin`. When `--token` is provided the node probe is skipped and the token is applied directly. The token is single-use, short-lived (1 hour), and embeds the allowed datacenter and region — mismatches are rejected by the API.
+
+```
+$ abc join --token=tskey-auth-abc123XYZ \
+    --datacenter za-cpt-dc2 \
+    --region za-cpt \
+    --jurisdiction ZA
+
+  ════════════════════════════════════════════════════════════════
+  ABC Node Join — Using Pre-issued Token
+  Host: za-node-104.za-cpt-dc2.example  |  Region: za-cpt  |  DC: za-cpt-dc2
+  ════════════════════════════════════════════════════════════════
+
+  ✓ Token accepted by API
+  ✓ Tailscale connected  (100.104.12.88 / cluster.ts.net)
+  ✓ Nomad client config written to /etc/nomad.d/client.hcl
+  ✓ nomad.service started and enabled
+  ✓ Node registered with Nomad
+
+  Node ID       za-node-104
+  Datacenter    za-cpt-dc2
+  Region        za-cpt
+  Jurisdiction  ZA  (POPIA)
+  Drivers       exec2, hpc-bridge
+  Status        ready
+
+  Verify with:
+    abc compute nodes show za-node-104
+```
+
+> **Note:** `abc join --token` still requires `--jurisdiction` and will fail if `tailscaled` is not running. To obtain a token, contact your Platform Engineer or use `abc admin token issue --node za-node-104`.
+
 The `--probe-only` flag runs checks without committing to join:
 
 ```
@@ -1848,6 +2064,7 @@ Flags:
 
 | Flag | Description |
 |---|---|
+| `--token <tok>` | Pre-issued join token; skips the node probe entirely |
 | `--datacenter` | Target Nomad datacenter (**required** unless `--probe-only`) |
 | `--region` | Target Nomad region (**required** unless `--probe-only`) |
 | `--jurisdiction` | Jurisdiction code: `ZA`, `KE`, `MZ`, `BE` (**required** — never inferred) |
@@ -1858,11 +2075,13 @@ Flags:
 | `--skip-tailscale` | Skip Tailscale setup (node must already be on the tailnet) |
 | `--dry-run` | Show what would be written and started without making changes |
 
-Exit codes: `0` (joined or probe passed), `1` (probe failed), `2` (usage error), `3` (auth error)
+> **Privilege note:** `tailscale up` and Nomad service configuration require root on Linux. If not running as root, `abc join` will print `"requires root: re-run with sudo"` and exit with code 2.
+
+Exit codes: `0` (joined or probe passed), `1` (probe failed or token rejected), `2` (usage/privilege error), `3` (auth error)
 
 ---
 
-### 5.17 `abc chat`
+### 5.19 `abc chat`
 
 An AI assistant embedded in the CLI, available to users on the **Pro plan and above**. Scoped strictly to the authenticated user's own profile — the assistant has read access to the user's runs, data objects, compliance posture, automations, and budget. It cannot access other users' data.
 
@@ -1949,7 +2168,7 @@ Scope refusal:
 
 ---
 
-### 5.18 `abc version`
+### 5.20 `abc version`
 
 ```
 $ abc version
@@ -1996,6 +2215,13 @@ abc compliance dta validate ds-004jkl ke-nbi && \
 # Probe only before committing to join
 abc join --probe-only --jurisdiction ZA && \
   abc join --datacenter za-cpt-dc2 --region za-cpt --jurisdiction ZA
+
+# Join with a pre-issued token (skips probe)
+abc join --token=tskey-auth-abc123XYZ \
+  --datacenter za-cpt-dc2 --region za-cpt --jurisdiction ZA
+
+# SSH into a specific pool, copy the command without connecting
+abc ssh --pool gpu-nodes --print
 
 # Stream logs for the most recent automation run
 RUN_ID=$(abc automation runs auto-001 --limit 1 --output json | jq -r '.[0].id')
