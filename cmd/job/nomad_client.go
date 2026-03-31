@@ -46,14 +46,15 @@ func newNomadClient(addr, token, region string) *nomadClient {
 
 // NomadJobStub is one entry from GET /v1/jobs.
 type NomadJobStub struct {
-	ID          string `json:"ID"`
-	Name        string `json:"Name"`
-	Type        string `json:"Type"`
-	Status      string `json:"Status"`
-	Namespace   string `json:"Namespace"`
+	ID          string   `json:"ID"`
+	Name        string   `json:"Name"`
+	Type        string   `json:"Type"`
+	Status      string   `json:"Status"`
+	Namespace   string   `json:"Namespace"`
+	Region      string   `json:"Region"`
 	Datacenters []string `json:"Datacenters"`
-	SubmitTime  int64  `json:"SubmitTime"` // Unix nanoseconds
-	// CreateTime and ModifyTime are also available if needed
+	SubmitTime  int64    `json:"SubmitTime"` // Unix nanoseconds
+	ModifyTime  int64    `json:"ModifyTime"` // Unix nanoseconds; updated when job stops
 }
 
 // NomadJob is the full job object from GET /v1/job/{id}.
@@ -74,8 +75,15 @@ type NomadJob struct {
 
 // NomadTaskGroup holds the task group summary inside a job.
 type NomadTaskGroup struct {
-	Name  string `json:"Name"`
-	Count int    `json:"Count"`
+	Name  string      `json:"Name"`
+	Count int         `json:"Count"`
+	Tasks []NomadTask `json:"Tasks"`
+}
+
+// NomadTask holds the minimal task fields used for display.
+type NomadTask struct {
+	Name   string `json:"Name"`
+	Driver string `json:"Driver"`
 }
 
 // NomadAllocStub is one entry from GET /v1/job/{id}/allocations.
@@ -88,7 +96,8 @@ type NomadAllocStub struct {
 	TaskGroup     string            `json:"TaskGroup"`
 	ClientStatus  string            `json:"ClientStatus"`  // pending, running, complete, failed, lost
 	DesiredStatus string            `json:"DesiredStatus"` // run, stop
-	CreateTime    int64             `json:"CreateTime"`    // Unix nanoseconds
+	CreateTime    int64                     `json:"CreateTime"`  // Unix nanoseconds
+	ModifyTime    int64                     `json:"ModifyTime"`  // Unix nanoseconds
 	TaskStates    map[string]NomadTaskState `json:"TaskStates"`
 }
 
