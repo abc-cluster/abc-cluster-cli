@@ -25,7 +25,6 @@ func executeCmd(t *testing.T, args ...string) (string, error) {
 	return buf.String(), err
 }
 
-// writeTempScript writes content to a temp file and returns its path.
 func writeTempScript(t *testing.T, name, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
@@ -50,10 +49,9 @@ python analysis.py
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	checks := []string{
 		`job "serial-python"`,
-		`type = "batch"`,
+		`type     = "batch"`,
 		`count = 1`,
 		`cores  = 4`,
 		`memory = 8192`,
@@ -64,7 +62,7 @@ python analysis.py
 		`#!/bin/bash`,
 		"\nABC_SCRIPT\n",
 		`destination = "local/job.sh"`,
-		`perms = "0755"`,
+		`perms       = "0755"`,
 		`SLURM_JOB_ID`,
 		`PBS_JOBID`,
 	}
@@ -90,7 +88,6 @@ mpirun -np 112 ./ocean_model
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	checks := []string{
 		`job "ocean-model"`,
 		`namespace = "hpc"`,
@@ -107,7 +104,7 @@ mpirun -np 112 ./ocean_model
 	}
 }
 
-// ── Happy-path: #ABC preamble ────────────────────────────────────────────────
+// ── Happy-path: #ABC scheduler directives ────────────────────────────────────
 
 func TestJobRun_ABCPreambleBasic(t *testing.T) {
 	script := `#!/bin/bash
@@ -122,13 +119,7 @@ python train.py
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	checks := []string{
-		`job "abc-serial"`,
-		`count = 2`,
-		`cores  = 8`,
-		`memory = 16384`,
-	}
+	checks := []string{`job "abc-serial"`, `count = 2`, `cores  = 8`, `memory = 16384`}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output\ngot:\n%s", want, out)
@@ -136,10 +127,224 @@ python train.py
 	}
 }
 
+func TestJobRun_RegionAndDCScheduler(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=regional-job
+#ABC --region=za-cpt
+#ABC --dc=za-cpt-dc1
+#ABC --dc=za-cpt-dc2
+echo hello
+`
+	p := writeTempScript(t, "regional.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `region   = "za-cpt"`) {
+		t.Errorf("expected region in HCL, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"za-cpt-dc1"`) || !strings.Contains(out, `"za-cpt-dc2"`) {
+		t.Errorf("expected both datacenters in HCL, got:\n%s", out)
+	}
+}
+
+func TestJobRun_Priority(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=hipri\n#ABC --priority=80\necho hi\n"
+	p := writeTempScript(t, "hipri.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "priority = 80") {
+		t.Errorf("expected priority=80, got:\n%s", out)
+	}
+}
+
+func TestJobRun_DefaultPriority50(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=default-pri\necho hi\n"
+	p := writeTempScript(t, "pri.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "priority = 50") {
+		t.Errorf("expected default priority=50, got:\n%s", out)
+	}
+}
+
+// ── Meta directives ──────────────────────────────────────────────────────────
+
+func TestJobRun_MetaDirective(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=meta-job
+#ABC --meta=sample_id=ZA-INST-2024-001
+#ABC --meta=batch=48
+#ABC --meta=pipeline_run=run-a1b2c3
+echo hi
+`
+	p := writeTempScript(t, "meta.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	checks := []string{
+		`meta {`,
+		`batch = "48"`,
+		`pipeline_run = "run-a1b2c3"`,
+		`sample_id = "ZA-INST-2024-001"`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in meta block, got:\n%s", want, out)
+		}
+	}
+}
+
+// ── Port (network) directives ────────────────────────────────────────────────
+
+func TestJobRun_PortDirective(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=mpi-job\n#ABC --port=mpi\necho hi\n"
+	p := writeTempScript(t, "mpi.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `network {`) {
+		t.Errorf("expected network block, got:\n%s", out)
+	}
+	if !strings.Contains(out, `port "mpi" {}`) {
+		t.Errorf("expected port directive, got:\n%s", out)
+	}
+	if !strings.Contains(out, "NOMAD_IP_MPI") {
+		t.Errorf("expected NOMAD_IP_MPI in env, got:\n%s", out)
+	}
+	if !strings.Contains(out, "NOMAD_PORT_MPI") {
+		t.Errorf("expected NOMAD_PORT_MPI in env, got:\n%s", out)
+	}
+	if !strings.Contains(out, "NOMAD_ADDR_MPI") {
+		t.Errorf("expected NOMAD_ADDR_MPI in env, got:\n%s", out)
+	}
+}
+
+// ── Runtime-exposure boolean flags ───────────────────────────────────────────
+
+func TestJobRun_RuntimeExposureFlags(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=expose-test
+#ABC --alloc_id
+#ABC --short_alloc_id
+#ABC --alloc_name
+#ABC --alloc_index
+#ABC --job_id
+#ABC --job_name
+#ABC --parent_job_id
+#ABC --group_name
+#ABC --task_name
+#ABC --cpu_limit
+#ABC --cpu_cores
+#ABC --mem_limit
+#ABC --mem_max_limit
+#ABC --alloc_dir
+#ABC --task_dir
+#ABC --secrets_dir
+echo hi
+`
+	p := writeTempScript(t, "expose.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// All these should appear in the "explicitly requested" section.
+	exposed := []string{
+		"NOMAD_ALLOC_ID",
+		"NOMAD_SHORT_ALLOC_ID",
+		"NOMAD_ALLOC_NAME",
+		"NOMAD_ALLOC_INDEX",
+		"NOMAD_JOB_ID",
+		"NOMAD_JOB_NAME",
+		"NOMAD_JOB_PARENT_ID",
+		"NOMAD_GROUP_NAME",
+		"NOMAD_TASK_NAME",
+		"NOMAD_CPU_LIMIT",
+		"NOMAD_CPU_CORES",
+		"NOMAD_MEMORY_LIMIT",
+		"NOMAD_MEMORY_MAX_LIMIT",
+		"NOMAD_ALLOC_DIR",
+		"NOMAD_TASK_DIR",
+		"NOMAD_SECRETS_DIR",
+	}
+	// Find the "explicitly requested" section.
+	section := out
+	if idx := strings.Index(out, "Explicitly requested"); idx >= 0 {
+		section = out[idx:]
+	}
+	for _, want := range exposed {
+		if !strings.Contains(section, want) {
+			t.Errorf("expected %q in runtime-exposure section, got:\n%s", want, section)
+		}
+	}
+}
+
+func TestJobRun_BareNamespaceFlagExposesEnv(t *testing.T) {
+	// bare --namespace (no =value) → expose NOMAD_NAMESPACE runtime var
+	script := "#!/bin/bash\n#ABC --name=ns-expose\n#ABC --namespace\necho hi\n"
+	p := writeTempScript(t, "ns.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "NOMAD_NAMESPACE") {
+		t.Errorf("expected NOMAD_NAMESPACE in env, got:\n%s", out)
+	}
+	// Must NOT set namespace = in the job block
+	if strings.Contains(out, `namespace = "`) {
+		t.Errorf("bare --namespace should not set scheduler namespace, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NamespaceWithValueSetsScheduler(t *testing.T) {
+	// --namespace=hpc → scheduler placement (appears in job block)
+	script := "#!/bin/bash\n#ABC --name=ns-sched\n#ABC --namespace=hpc\necho hi\n"
+	p := writeTempScript(t, "ns2.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `namespace = "hpc"`) {
+		t.Errorf("expected namespace=hpc in HCL job block, got:\n%s", out)
+	}
+}
+
+func TestJobRun_BareDCFlagExposesEnv(t *testing.T) {
+	// bare --dc → expose NOMAD_DC runtime var
+	script := "#!/bin/bash\n#ABC --name=dc-expose\n#ABC --dc\necho hi\n"
+	p := writeTempScript(t, "dc.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "NOMAD_DC") {
+		t.Errorf("expected NOMAD_DC in env, got:\n%s", out)
+	}
+}
+
+func TestJobRun_DCWithValueSetsScheduler(t *testing.T) {
+	// --dc=za-cpt-dc1 → scheduler placement (datacenters = [])
+	script := "#!/bin/bash\n#ABC --name=dc-sched\n#ABC --dc=za-cpt-dc1\necho hi\n"
+	p := writeTempScript(t, "dc2.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `"za-cpt-dc1"`) {
+		t.Errorf("expected za-cpt-dc1 in datacenters, got:\n%s", out)
+	}
+}
+
 // ── Priority: #ABC overrides #NOMAD ─────────────────────────────────────────
 
 func TestJobRun_ABCOverridesNOMAD(t *testing.T) {
-	// Both markers present; #ABC values must win for every field.
 	script := `#!/bin/bash
 #NOMAD --name=nomad-name
 #NOMAD --nodes=2
@@ -156,8 +361,6 @@ echo hello
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// ABC values
 	if !strings.Contains(out, `job "abc-name"`) {
 		t.Errorf("expected #ABC name to win, got:\n%s", out)
 	}
@@ -170,45 +373,15 @@ echo hello
 	if !strings.Contains(out, "memory = 32768") {
 		t.Errorf("expected #ABC mem=32G=32768 MiB, got:\n%s", out)
 	}
-
-	// NOMAD values must NOT appear
 	if strings.Contains(out, `job "nomad-name"`) {
 		t.Errorf("expected #NOMAD name to be overridden by #ABC, got:\n%s", out)
 	}
 }
 
-func TestJobRun_ABCPartialOverridesNOMAD(t *testing.T) {
-	// #ABC only sets name; #NOMAD sets the resource fields.
-	script := `#!/bin/bash
-#NOMAD --name=nomad-name
-#NOMAD --cores=4
-#NOMAD --mem=8G
-#ABC --name=abc-name
-echo hello
-`
-	p := writeTempScript(t, "partial.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(out, `job "abc-name"`) {
-		t.Errorf("expected #ABC name to win, got:\n%s", out)
-	}
-	// #NOMAD resource fields still present
-	if !strings.Contains(out, "cores  = 4") {
-		t.Errorf("expected #NOMAD cores to remain, got:\n%s", out)
-	}
-	if !strings.Contains(out, "memory = 8192") {
-		t.Errorf("expected #NOMAD memory to remain, got:\n%s", out)
-	}
-}
-
-// ── Priority: NOMAD env vars as fallback ────────────────────────────────────
+// ── NOMAD env var fallback ────────────────────────────────────────────────────
 
 func TestJobRun_NomadEnvVarFallback_Name(t *testing.T) {
 	t.Setenv("NOMAD_JOB_NAME", "env-job-name")
-	// Script has no #ABC or #NOMAD --name directive.
 	script := "#!/bin/bash\n#NOMAD --cores=4\necho hi\n"
 	p := writeTempScript(t, "env_name.sh", script)
 	out, err := executeCmd(t, p)
@@ -241,207 +414,28 @@ func TestJobRun_NomadEnvVarFallback_Resources(t *testing.T) {
 	}
 }
 
-func TestJobRun_NomadEnvVarFallback_Namespace(t *testing.T) {
-	t.Setenv("NOMAD_NAMESPACE", "env-namespace")
-	script := "#!/bin/bash\n#NOMAD --name=ns-job\necho hi\n"
-	p := writeTempScript(t, "ns.sh", script)
+// ── HPC compat env vars always present ───────────────────────────────────────
+
+func TestJobRun_HPCCompatVarsAlwaysPresent(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=hpc-test\necho hi\n"
+	p := writeTempScript(t, "hpc.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `namespace = "env-namespace"`) {
-		t.Errorf("expected NOMAD_NAMESPACE from env, got:\n%s", out)
+	keys := []string{
+		`SLURM_JOB_ID`, `PBS_JOBID`,
+		`SLURM_JOB_NAME`, `PBS_JOBNAME`,
+		`SLURM_SUBMIT_DIR`, `PBS_O_WORKDIR`,
+		`SLURM_ARRAY_TASK_ID`, `PBS_ARRAYID`,
+		`SLURM_NTASKS`, `PBS_NP`,
+		`SLURMD_NODENAME`, `PBS_O_HOST`,
+		`SLURM_CPUS_ON_NODE`, `PBS_NUM_PPN`,
+		`SLURM_MEM_PER_NODE`, `PBS_MEM`,
 	}
-}
-
-func TestJobRun_NomadPreambleOverridesEnvVar(t *testing.T) {
-	// #NOMAD preamble must override env var.
-	t.Setenv("NOMAD_JOB_NAME", "env-name")
-	t.Setenv("NOMAD_CPU_CORES", "2")
-	script := "#!/bin/bash\n#NOMAD --name=preamble-name\n#NOMAD --cores=12\necho hi\n"
-	p := writeTempScript(t, "prio.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `job "preamble-name"`) {
-		t.Errorf("expected #NOMAD preamble name to win over env var, got:\n%s", out)
-	}
-	if !strings.Contains(out, "cores  = 12") {
-		t.Errorf("expected #NOMAD preamble cores to win over env var, got:\n%s", out)
-	}
-}
-
-func TestJobRun_ABCOverridesEnvVar(t *testing.T) {
-	// #ABC must override env vars.
-	t.Setenv("NOMAD_JOB_NAME", "env-name")
-	t.Setenv("NOMAD_CPU_CORES", "2")
-	script := "#!/bin/bash\n#ABC --name=abc-final\n#ABC --cores=24\necho hi\n"
-	p := writeTempScript(t, "abc_prio.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `job "abc-final"`) {
-		t.Errorf("expected #ABC name to win over env var, got:\n%s", out)
-	}
-	if !strings.Contains(out, "cores  = 24") {
-		t.Errorf("expected #ABC cores to win over env var, got:\n%s", out)
-	}
-}
-
-// ── NOMAD env directive ──────────────────────────────────────────────────────
-
-func TestJobRun_NomadEnvDirectiveDefaultsToRuntimeValue(t *testing.T) {
-	script := `#!/bin/bash
-#NOMAD --name=env-vars
-#NOMAD --env=NOMAD_ALLOC_ID
-#NOMAD --env=NOMAD_REGION
-#NOMAD --env=NOMAD_TASK_DIR
-echo hi
-`
-	p := writeTempScript(t, "env_vars.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	checks := []string{
-		`NOMAD_ALLOC_ID = "${NOMAD_ALLOC_ID}"`,
-		`NOMAD_REGION = "${NOMAD_REGION}"`,
-		`NOMAD_TASK_DIR = "${NOMAD_TASK_DIR}"`,
-	}
-	for _, want := range checks {
-		if !strings.Contains(out, want) {
-			t.Errorf("expected %q in output\ngot:\n%s", want, out)
-		}
-	}
-}
-
-func TestJobRun_NomadEnvDirectiveExplicitValue(t *testing.T) {
-	script := `#!/bin/bash
-#ABC --name=env-vars
-#ABC --env=NOMAD_REGION=global
-echo hi
-`
-	p := writeTempScript(t, "env_explicit.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `NOMAD_REGION = "global"`) {
-		t.Errorf("expected explicit NOMAD_REGION value, got:\n%s", out)
-	}
-}
-
-func TestJobRun_NomadEnvDirectiveExplicitValueWithNomadMarker(t *testing.T) {
-	script := `#!/bin/bash
-#NOMAD --name=env-vars
-#NOMAD --env=NOMAD_REGION=global
-echo hi
-`
-	p := writeTempScript(t, "env_explicit_nomad.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `NOMAD_REGION = "global"`) {
-		t.Errorf("expected explicit NOMAD_REGION value, got:\n%s", out)
-	}
-}
-
-func TestJobRun_NomadEnvDirectiveABCOverridesNomad(t *testing.T) {
-	script := `#!/bin/bash
-#NOMAD --name=env-vars
-#NOMAD --env=NOMAD_REGION=global
-#ABC --env=NOMAD_REGION=local
-echo hi
-`
-	p := writeTempScript(t, "env_override.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `NOMAD_REGION = "local"`) {
-		t.Errorf("expected #ABC env override, got:\n%s", out)
-	}
-	if strings.Contains(out, `NOMAD_REGION = "global"`) {
-		t.Errorf("expected #NOMAD env to be overridden, got:\n%s", out)
-	}
-}
-
-func TestJobRun_NomadEnvDirectiveRejectsNonNomad(t *testing.T) {
-	script := `#!/bin/bash
-#ABC --name=env-vars
-#ABC --env=FOO=bar
-echo hi
-`
-	p := writeTempScript(t, "env_bad.sh", script)
-	_, err := executeCmd(t, p)
-	if err == nil {
-		t.Fatal("expected error for non-NOMAD env var")
-	}
-	if !strings.Contains(err.Error(), "NOMAD_*") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-// ── GPU, chdir, depend directives ───────────────────────────────────────────
-
-func TestJobRun_GPUDirective(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=gpu-train\n#ABC --gpus=2\npython train.py\n"
-	p := writeTempScript(t, "gpu.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	checks := []string{`device "nvidia/gpu"`, `count = 2`}
-	for _, want := range checks {
-		if !strings.Contains(out, want) {
-			t.Errorf("expected %q in output\ngot:\n%s", want, out)
-		}
-	}
-}
-
-func TestJobRun_ChdirDirective(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=chdir-job\n#ABC --chdir=/scratch/user/project\n./run.sh\n"
-	p := writeTempScript(t, "chdir.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `work_dir = "/scratch/user/project"`) {
-		t.Errorf("expected work_dir in output\ngot:\n%s", out)
-	}
-}
-
-func TestJobRun_DriverDirective(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=driver-job\n#ABC --driver=raw_exec\necho hi\n"
-	p := writeTempScript(t, "driver.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `driver = "raw_exec"`) {
-		t.Errorf("expected driver override in output\ngot:\n%s", out)
-	}
-}
-
-func TestJobRun_DependDirective(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=dep-job\n#ABC --depend=after:job-abc123\n./step2.sh\n"
-	p := writeTempScript(t, "dep.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	checks := []string{
-		`task "wait-dependency"`,
-		`hook    = "prestart"`,
-		`sidecar = false`,
-		`after:job-abc123`,
-	}
-	for _, want := range checks {
-		if !strings.Contains(out, want) {
-			t.Errorf("expected %q in output\ngot:\n%s", want, out)
+	for _, key := range keys {
+		if !strings.Contains(out, key) {
+			t.Errorf("expected HPC compat key %q in output\ngot:\n%s", key, out)
 		}
 	}
 }
@@ -449,14 +443,14 @@ func TestJobRun_DependDirective(t *testing.T) {
 // ── Memory parsing ───────────────────────────────────────────────────────────
 
 func TestJobRun_MemGigabytes(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=j\n#ABC --mem=16G\necho hi\n"
+	script := "#!/bin/bash\n#ABC --name=j\n#ABC --mem=2G\necho hi\n"
 	p := writeTempScript(t, "j.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "memory = 16384") {
-		t.Errorf("expected memory=16384, got:\n%s", out)
+	if !strings.Contains(out, "memory = 2048") {
+		t.Errorf("expected memory=2048, got:\n%s", out)
 	}
 }
 
@@ -481,18 +475,6 @@ func TestJobRun_MemKilobytes(t *testing.T) {
 	}
 	if !strings.Contains(out, "memory = 4") {
 		t.Errorf("expected memory=4 MiB, got:\n%s", out)
-	}
-}
-
-func TestJobRun_MemNoSuffix(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=j\n#ABC --mem=256\necho hi\n"
-	p := writeTempScript(t, "j.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, "memory = 256") {
-		t.Errorf("expected memory=256, got:\n%s", out)
 	}
 }
 
@@ -522,54 +504,6 @@ func TestJobRun_DefaultNodes1(t *testing.T) {
 	}
 }
 
-func TestJobRun_NoDirectivesAtAll(t *testing.T) {
-	script := "#!/bin/bash\n# plain comment\necho hello\n"
-	p := writeTempScript(t, "plain.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, `job "plain"`) {
-		t.Errorf("expected job name 'plain', got:\n%s", out)
-	}
-	if !strings.Contains(out, "count = 1") {
-		t.Errorf("expected count=1, got:\n%s", out)
-	}
-}
-
-// ── Env-var mapping always present ──────────────────────────────────────────
-
-func TestJobRun_EnvVarMappingAlwaysPresent(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=env-test\necho hi\n"
-	p := writeTempScript(t, "env.sh", script)
-	out, err := executeCmd(t, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	keys := []string{
-		`SLURM_JOB_ID`, `PBS_JOBID`,
-		`SLURM_JOB_NAME`, `PBS_JOBNAME`,
-		`SLURM_SUBMIT_DIR`, `PBS_O_WORKDIR`,
-		`SLURM_ARRAY_TASK_ID`, `PBS_ARRAYID`,
-		`SLURM_NTASKS`, `PBS_NP`,
-		`SLURMD_NODENAME`, `PBS_O_HOST`,
-		`SLURM_CPUS_ON_NODE`, `PBS_NUM_PPN`,
-		`SLURM_MEM_PER_NODE`, `PBS_MEM`,
-		`NOMAD_ALLOC_ID`, `NOMAD_JOB_NAME`,
-		`NOMAD_TASK_DIR`, `NOMAD_ALLOC_INDEX`,
-		`NOMAD_GROUP_COUNT`, `NOMAD_ALLOC_HOST`,
-		`NOMAD_CPU_CORES`, `NOMAD_MEMORY_LIMIT`,
-	}
-	for _, key := range keys {
-		if !strings.Contains(out, key) {
-			t.Errorf("expected env key %q in output\ngot:\n%s", key, out)
-		}
-	}
-}
-
-// ── Resources block omitted when none specified ──────────────────────────────
-
 func TestJobRun_ResourcesBlockOmittedWhenEmpty(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --name=no-res\necho hi\n"
 	p := writeTempScript(t, "no_res.sh", script)
@@ -585,7 +519,6 @@ func TestJobRun_ResourcesBlockOmittedWhenEmpty(t *testing.T) {
 // ── Walltime ─────────────────────────────────────────────────────────────────
 
 func TestJobRun_WalltimeConvertedToSeconds(t *testing.T) {
-	// 01:30:00 = 5400 seconds
 	script := "#!/bin/bash\n#ABC --name=timed\n#ABC --time=01:30:00\n./run.sh\n"
 	p := writeTempScript(t, "timed.sh", script)
 	out, err := executeCmd(t, p)
@@ -613,16 +546,10 @@ echo "body starts here"
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// The cores directive after the echo line must NOT appear in the output.
 	coresDirective := regexp.MustCompile(`(?m)^\s*cores\s*=`)
 	if coresDirective.MatchString(out) {
 		t.Errorf("directive after body line should be ignored, got:\n%s", out)
 	}
-	// No resource directives were processed so the resources block must be absent.
-	if strings.Contains(out, "resources {") {
-		t.Errorf("expected no resources block when body-line directives are ignored, got:\n%s", out)
-	}
-	// Only the preamble name directive was processed.
 	if !strings.Contains(out, `job "boundary-test"`) {
 		t.Errorf("expected preamble name directive to be applied, got:\n%s", out)
 	}
@@ -659,18 +586,6 @@ func TestJobRun_InvalidABCDirectiveFormat(t *testing.T) {
 	}
 }
 
-func TestJobRun_InvalidNOMADDirectiveFormat(t *testing.T) {
-	script := "#!/bin/bash\n#NOMAD --name=ok\n#NOMAD badformat\necho hi\n"
-	p := writeTempScript(t, "bad.sh", script)
-	_, err := executeCmd(t, p)
-	if err == nil {
-		t.Fatal("expected error for invalid #NOMAD directive format")
-	}
-	if !strings.Contains(err.Error(), "#NOMAD") {
-		t.Errorf("expected #NOMAD in error message, got: %v", err)
-	}
-}
-
 func TestJobRun_UnknownABCDirective(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --unknown=value\necho hi\n"
 	p := writeTempScript(t, "unk.sh", script)
@@ -679,18 +594,6 @@ func TestJobRun_UnknownABCDirective(t *testing.T) {
 		t.Fatal("expected error for unknown #ABC directive")
 	}
 	if !strings.Contains(err.Error(), "unknown #ABC directive") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestJobRun_UnknownNOMADDirective(t *testing.T) {
-	script := "#!/bin/bash\n#NOMAD --unknown=value\necho hi\n"
-	p := writeTempScript(t, "unk.sh", script)
-	_, err := executeCmd(t, p)
-	if err == nil {
-		t.Fatal("expected error for unknown #NOMAD directive")
-	}
-	if !strings.Contains(err.Error(), "unknown #NOMAD directive") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -725,16 +628,23 @@ func TestJobRun_InvalidTime(t *testing.T) {
 	}
 }
 
+func TestJobRun_MetaRequiresKeyEqualsValue(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=j\n#ABC --meta=justkey\necho hi\n"
+	p := writeTempScript(t, "j.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error for --meta without =value")
+	}
+}
+
 func TestJobRun_MalformedNomadEnvVarIgnored(t *testing.T) {
-	// Non-integer NOMAD_CPU_CORES should be silently ignored.
 	t.Setenv("NOMAD_CPU_CORES", "not-a-number")
 	script := "#!/bin/bash\n#ABC --name=robust\necho hi\n"
 	p := writeTempScript(t, "robust.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
-		t.Fatalf("unexpected error (malformed env var should be ignored): %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	// No resources block because only malformed env var was provided.
 	if strings.Contains(out, "resources {") {
 		t.Errorf("expected no resources block when env var is malformed, got:\n%s", out)
 	}

@@ -98,6 +98,8 @@ abc
 ├── config      init · set · get · list · unset
 ├── context     list · show · add · use · remove
 ├── workspace   list · show · create · delete · use · members (list/add/remove)
+├── secret      list · show · create · delete · logs
+├── ssh         connect to (or print SSH command for) an accessible node; filter by datacenter or pool
 ├── status
 ├── pipeline    run · list · show · cancel · resume · delete · logs · params (show/validate)
 ├── job         run [--submit|--dry-run] · list · show · stop · dispatch · logs · status
@@ -377,6 +379,186 @@ $ abc workspace members remove student@org-a.example
   Remove student@org-a.example from ws-org-a-01? [y/N]: y
   ✓ Removed
 ```
+
+
+### 5.6 `abc secret`
+
+Manage named secrets stored in the ABC-cluster Vault backend. Access is scoped to the authenticated user's workspace. Secret values are masked by default in all terminal output.
+
+> **Backend note:** Secrets are stored in Vault and accessed through the ABC API layer. The CLI never communicates with Vault directly.
+
+#### `abc secret list`
+
+```
+$ abc secret list
+
+  NAME                  CREATED               UPDATED
+  db-password           2024-10-01 08:12:00   2024-11-01 09:00:00
+  api-key-ncbi          2024-09-15 14:30:00   2024-10-30 09:12:44
+  gcp-service-account   2024-10-20 11:45:00   2024-10-25 07:22:00
+
+  3 secrets in ws-za-01
+```
+
+#### `abc secret show <name>`
+
+```
+$ abc secret show api-key-ncbi
+
+  Name      api-key-ncbi
+  Version   3
+  Created   2024-09-15 14:30:00
+  Updated   2024-10-30 09:12:44
+  Value     ••••••••••••••••  (use --reveal to display)
+
+$ abc secret show api-key-ncbi --reveal
+
+  Name      api-key-ncbi
+  Version   3
+  Created   2024-09-15 14:30:00
+  Updated   2024-10-30 09:12:44
+  Value     ABCD1234XYZ-secret-value
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--reveal` | Print the secret value in plaintext instead of masking it |
+| `--version <n>` | Show a specific historical version |
+
+#### `abc secret create <name>`
+
+Creates a new secret, or rotates (adds a new version of) an existing one.
+
+```
+$ abc secret create db-password --value=S3cr3t!
+  ✓ Secret db-password created  (version 1)
+
+$ echo "S3cr3t!" | abc secret create db-password
+  ✓ Secret db-password rotated  (version 2)
+
+$ abc secret create gcp-service-account --from-file=./sa.json
+  ✓ Secret gcp-service-account created  (version 1)
+
+$ abc secret create ncbi-key --from-env=NCBI_API_KEY
+  ✓ Secret ncbi-key created  (version 1)
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--value <v>` | Secret value inline (prefer stdin pipe for sensitive values) |
+| `--from-file <path>` | Read value from a local file |
+| `--from-env <VAR>` | Capture current value of a local environment variable |
+| `--dry-run` | Validate input without writing |
+
+#### `abc secret delete <name>`
+
+Deletes a secret and all its versions.
+
+```
+$ abc secret delete db-password
+
+  Delete secret db-password and all 2 versions? [y/N]: y
+
+  ✓ Secret db-password deleted
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--confirm` | Skip the confirmation prompt |
+| `--dry-run` | Show what would be deleted without deleting |
+
+#### `abc secret logs <name>`
+
+Combined audit and rotation log for a single secret — access events (READ, USE) and lifecycle events (CREATE, ROTATE, DELETE) in one stream.
+
+```
+$ abc secret logs api-key-ncbi
+
+  TIMESTAMP             EVENT    VERSION   ACTOR                      SOURCE IP
+  2024-11-01 09:14:02   READ     3         admin@za-site.example      100.104.12.88
+  2024-10-30 09:12:44   ROTATE   3         admin@za-site.example      100.104.12.88
+  2024-10-15 07:00:11   READ     2         pipeline-runner@internal   —
+  2024-09-15 14:30:00   CREATE   1         admin@za-site.example      100.104.12.88
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--limit <n>` | Number of entries to return (default: 50) |
+| `--since <time>` | Show events since a point in time (e.g. `2024-10-01`, `24h`, `7d`) |
+| `--event <type>` | Filter by event type: `READ`, `ROTATE`, `CREATE`, `DELETE` |
+| `--follow` | Stream new events as they arrive |
+
+---
+
+### 5.7 `abc ssh`
+
+Opens an interactive SSH session to a node the user has access to, or prints the equivalent SSH command for scripting. Node discovery is via the ABC API.
+
+When a TTY is present the CLI replaces itself with the SSH process (`exec`), giving the terminal fully to SSH — window resize, `Ctrl-C`, and all signals work natively. When stdout is not a TTY, the SSH command is printed instead.
+
+> **Prerequisite:** Nodes are only reachable via Tailscale. Ensure `tailscale status` shows the target node as reachable before connecting. SSH key authorization is out of scope — the user's `~/.ssh` keys must already be authorised on target nodes.
+
+#### Connect (auto-select when one node matches)
+
+```
+$ abc ssh --datacenter za-cpt-dc2 --pool gpu-nodes
+
+  Connecting to za-node-104  (100.104.12.88)...
+  [ssh session begins]
+```
+
+#### Interactive node selector (multiple matches)
+
+```
+$ abc ssh
+
+  Select a node:
+  > za-node-104   za-cpt-dc2   gpu-nodes    ready
+    za-node-105   za-cpt-dc2   gpu-nodes    ready
+    ke-node-012   ke-nbi-dc1   compute      ready
+
+  [↑↓ to move, Enter to select, / to filter, q to quit]
+```
+
+#### Connect to a named node directly
+
+```
+$ abc ssh za-node-104
+
+  Connecting to za-node-104  (100.104.12.88)...
+  [ssh session begins]
+```
+
+#### Print command (non-TTY / `--print` flag)
+
+```
+$ abc ssh za-node-104 --print
+ssh ubuntu@100.104.12.88
+
+$ abc ssh za-node-104 --print | pbcopy   # copy to clipboard
+```
+
+When stdout is not a TTY (e.g. piped to a script), `--print` behaviour is the default regardless of the flag.
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--datacenter <dc>` | Filter candidate nodes by datacenter |
+| `--pool <pool>` | Filter candidate nodes by node pool |
+| `--print` | Print SSH command to stdout instead of executing it |
+| `--user <u>` | Override the SSH username (default: from API node record) |
+| `--port <p>` | Override the SSH port (default: from API node record, usually 22) |
+
+---
 
 ---
 
