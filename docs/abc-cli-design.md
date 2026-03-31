@@ -1,5 +1,9 @@
 # `abc` CLI — Command Design Specification v5
 
+TODO: 
+-  `abc job run --submit` to be `abc script run` i.e. the `--submit` should be the default behaviour
+
+
 > **Status:** Design draft — no implementation
 > **Prototype baseline:** v0.1.4 (`pipeline run`, `job run`, `data upload/encrypt/decrypt`)
 > **Language:** Go (Cobra + Viper)
