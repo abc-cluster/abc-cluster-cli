@@ -410,7 +410,7 @@ func resolveSpec(abcDirs, nomadDirs []string, envSpec *jobSpec, defaultName stri
 		spec.Nodes = 1
 	}
 	if spec.Driver == "" {
-		spec.Driver = "exec2"
+		spec.Driver = "exec"
 	}
 	if spec.Priority == 0 {
 		spec.Priority = 50

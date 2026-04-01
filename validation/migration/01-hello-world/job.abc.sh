@@ -11,7 +11,7 @@
 #ABC --cores=1               # 1 CPU core
 #ABC --mem=256M              # Memory (K/M/G suffix — no 'b')
 #ABC --time=00:05:00         # Walltime limit (HH:MM:SS)
-#ABC --driver=raw_exec       # Run directly on host (no container)
+#ABC --driver=exec           # Run directly on host (no container)
 
 # ── Runtime exposure (replaces PBS_JOBID / SLURM_JOB_ID) ─────────────────────
 #ABC --alloc_id              # Full allocation UUID  → NOMAD_ALLOC_ID
