@@ -65,6 +65,7 @@ type jobSpec struct {
 	RescheduleMaxDelay string
 	OutputLog        string
 	ErrorLog         string
+	NoNetwork        bool
 	Constraints      []nomadConstraint
 	Affinities       []nomadAffinity
 
@@ -784,6 +785,8 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 	if spec.Driver == "" {
 		spec.Driver = "exec"
 	}
+	// Enforce network isolation for all generated jobs.
+	spec.NoNetwork = true
 	if spec.Priority == 0 {
 		spec.Priority = 50
 	}
@@ -815,6 +818,9 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 		if spec.ErrorLog != "" {
 			spec.Meta["abc_error"] = spec.ErrorLog
 		}
+	}
+	if spec.NoNetwork && len(spec.Ports) > 0 {
+		return nil, fmt.Errorf("no-network cannot be combined with port mapping")
 	}
 	if spec.Name == "" {
 		return nil, fmt.Errorf("job name is required: set #ABC --name=<n>, #NOMAD --name=<n>, or NOMAD_JOB_NAME")
@@ -1017,7 +1023,15 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			if !hasValue || val == "" {
 				return fmt.Errorf("#%s --port requires a label value", marker)
 			}
+			if spec.NoNetwork {
+				return fmt.Errorf("#%s --port cannot be used with --no-network", marker)
+			}
 			spec.Ports = append(spec.Ports, val)
+		case "no-network":
+			if hasValue {
+				return fmt.Errorf("#%s --no-network does not accept a value", marker)
+			}
+			spec.NoNetwork = true
 
 		// ── Runtime-exposure boolean flags ───────────────────────────────────
 		case "alloc_id":
@@ -1154,7 +1168,12 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	fmt.Fprintf(&b, "  group \"main\" {\n")
 	fmt.Fprintf(&b, "    count = %d\n", spec.Nodes)
 
-	if len(spec.Ports) > 0 {
+	if spec.NoNetwork {
+		fmt.Fprintln(&b)
+		fmt.Fprintf(&b, "    network {\n")
+		fmt.Fprintf(&b, "      mode = \"none\"\n")
+		fmt.Fprintf(&b, "    }\n")
+	} else if len(spec.Ports) > 0 {
 		fmt.Fprintln(&b)
 		fmt.Fprintf(&b, "    network {\n")
 		for _, p := range spec.Ports {
