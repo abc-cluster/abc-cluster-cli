@@ -349,13 +349,13 @@ func (c *nomadClient) DispatchJob(ctx context.Context, jobID string, meta map[st
 // StreamLogs streams log frames for a task in an allocation.
 // It writes to w until the context is cancelled or the stream ends.
 // logType must be "stdout" or "stderr". origin is "start" or "end".
-func (c *nomadClient) StreamLogs(ctx context.Context, allocID, task, logType, origin string, offset int64, w io.Writer) error {
+func (c *nomadClient) StreamLogs(ctx context.Context, allocID, task, logType, origin string, offset int64, follow bool, w io.Writer) error {
 	q := url.Values{
 		"task":   {task},
 		"type":   {logType},
 		"origin": {origin},
 		"offset": {fmt.Sprintf("%d", offset)},
-		"follow": {"true"},
+		"follow": {fmt.Sprintf("%t", follow)},
 	}
 
 	// Use a streaming client with no timeout for log following.

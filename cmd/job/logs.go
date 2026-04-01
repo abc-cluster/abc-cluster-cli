@@ -81,11 +81,17 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		origin = "end"
 	}
 
+	if follow && target.ClientStatus != "running" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Allocation %s is %s; showing completed logs and exiting.\n\n", target.ID[:8], target.ClientStatus)
+		follow = false
+		origin = "start"
+	}
+
 	out := cmd.OutOrStdout()
 	if follow {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Streaming logs for alloc %s (task: %s)...\n\n",
 			target.ID[:8], task)
 	}
 
-	return nc.StreamLogs(cmd.Context(), target.ID, task, logType, origin, 0, out)
+	return nc.StreamLogs(cmd.Context(), target.ID, task, logType, origin, 0, follow, out)
 }

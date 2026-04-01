@@ -93,6 +93,7 @@ func init() {
 	rootCmd.AddCommand(pipeline.NewCmd(&ServerURL, &AccessToken, &Workspace))
 	rootCmd.AddCommand(data.NewCmd(&ServerURL, &AccessToken, &Workspace))
 	rootCmd.AddCommand(job.NewCmd())
+	rootCmd.AddCommand(job.NewLogsCmd())
 }
 
 // getEnvOrDefault returns the value of the environment variable or the given default.

@@ -44,6 +44,11 @@ func NewCmd() *cobra.Command {
 	return cmd
 }
 
+// NewLogsCmd exports a top-level "logs" command variant.
+func NewLogsCmd() *cobra.Command {
+	return newLogsCmd()
+}
+
 // nomadClientFromCmd builds a nomadClient from persistent flags.
 func nomadClientFromCmd(cmd *cobra.Command) *nomadClient {
 	addr, _ := cmd.Flags().GetString("nomad-addr")
