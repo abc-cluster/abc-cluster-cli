@@ -17,7 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/spf13/cobra"
+	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1134,179 +1136,159 @@ func parseAffinity(specExpr string) (nomadAffinity, error) {
 // ── HCL generator ─────────────────────────────────────────────────────────────
 
 func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
-	var b strings.Builder
+	f := hclwrite.NewEmptyFile()
+	root := f.Body()
 
-	fmt.Fprintf(&b, "job %q {\n", spec.Name)
-	fmt.Fprintf(&b, "  type     = \"batch\"\n")
-	fmt.Fprintf(&b, "  priority = %d\n", spec.Priority)
+	jobBlock := root.AppendNewBlock("job", []string{spec.Name})
+	jobBody := jobBlock.Body()
+	jobBody.SetAttributeValue("type", cty.StringVal("batch"))
+	jobBody.SetAttributeValue("priority", cty.NumberIntVal(int64(spec.Priority)))
 	if spec.Region != "" {
-		fmt.Fprintf(&b, "  region   = %q\n", spec.Region)
+		jobBody.SetAttributeValue("region", cty.StringVal(spec.Region))
 	}
 	if spec.Namespace != "" {
-		fmt.Fprintf(&b, "  namespace = %q\n", spec.Namespace)
+		jobBody.SetAttributeValue("namespace", cty.StringVal(spec.Namespace))
 	}
 	if len(spec.Datacenters) > 0 {
-		dcs := make([]string, len(spec.Datacenters))
+		dcs := make([]cty.Value, len(spec.Datacenters))
 		for i, dc := range spec.Datacenters {
-			dcs[i] = fmt.Sprintf("%q", dc)
+			dcs[i] = cty.StringVal(dc)
 		}
-		fmt.Fprintf(&b, "  datacenters = [%s]\n", strings.Join(dcs, ", "))
+		jobBody.SetAttributeValue("datacenters", cty.ListVal(dcs))
 	}
 	for _, c := range spec.Constraints {
-		fmt.Fprintf(&b, "  constraint {\n")
-		fmt.Fprintf(&b, "    attribute = %q\n", c.Attribute)
-		fmt.Fprintf(&b, "    operator  = %q\n", c.Operator)
-		fmt.Fprintf(&b, "    value     = %q\n", c.Value)
-		fmt.Fprintf(&b, "  }\n")
+		constraintBlock := jobBody.AppendNewBlock("constraint", nil)
+		constraintBody := constraintBlock.Body()
+		constraintBody.SetAttributeValue("attribute", cty.StringVal(c.Attribute))
+		constraintBody.SetAttributeValue("operator", cty.StringVal(c.Operator))
+		constraintBody.SetAttributeValue("value", cty.StringVal(c.Value))
 	}
 	for _, a := range spec.Affinities {
-		fmt.Fprintf(&b, "  affinity {\n")
-		fmt.Fprintf(&b, "    attribute = %q\n", a.Attribute)
-		fmt.Fprintf(&b, "    operator  = %q\n", a.Operator)
-		fmt.Fprintf(&b, "    value     = %q\n", a.Value)
-		fmt.Fprintf(&b, "    weight    = %d\n", a.Weight)
-		fmt.Fprintf(&b, "  }\n")
+		affinityBlock := jobBody.AppendNewBlock("affinity", nil)
+		affinityBody := affinityBlock.Body()
+		affinityBody.SetAttributeValue("attribute", cty.StringVal(a.Attribute))
+		affinityBody.SetAttributeValue("operator", cty.StringVal(a.Operator))
+		affinityBody.SetAttributeValue("value", cty.StringVal(a.Value))
+		affinityBody.SetAttributeValue("weight", cty.NumberIntVal(int64(a.Weight)))
 	}
-	fmt.Fprintln(&b)
 
 	if len(spec.Meta) > 0 {
-		fmt.Fprintf(&b, "  meta {\n")
+		metaBlock := jobBody.AppendNewBlock("meta", nil)
+		metaBody := metaBlock.Body()
 		for _, k := range sortedKeys(spec.Meta) {
-			fmt.Fprintf(&b, "    %s = %q\n", k, spec.Meta[k])
+			metaBody.SetAttributeValue(k, cty.StringVal(spec.Meta[k]))
 		}
-		fmt.Fprintf(&b, "  }\n\n")
 	}
 
-	fmt.Fprintf(&b, "  group \"main\" {\n")
-	fmt.Fprintf(&b, "    count = %d\n", spec.Nodes)
+	groupBlock := jobBody.AppendNewBlock("group", []string{"main"})
+	groupBody := groupBlock.Body()
+	groupBody.SetAttributeValue("count", cty.NumberIntVal(int64(spec.Nodes)))
 
 	if spec.NoNetwork {
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "    network {\n")
-		fmt.Fprintf(&b, "      mode = \"none\"\n")
-		fmt.Fprintf(&b, "    }\n")
+		networkBlock := groupBody.AppendNewBlock("network", nil)
+		networkBlock.Body().SetAttributeValue("mode", cty.StringVal("none"))
 	} else if len(spec.Ports) > 0 {
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "    network {\n")
+		networkBlock := groupBody.AppendNewBlock("network", nil)
 		for _, p := range spec.Ports {
-			fmt.Fprintf(&b, "      port %q {}\n", p)
+			portBlock := networkBlock.Body().AppendNewBlock("port", []string{p})
+			_ = portBlock
 		}
-		fmt.Fprintf(&b, "    }\n")
 	}
 
 	if spec.Depend != "" {
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "    task \"wait-dependency\" {\n")
-		fmt.Fprintf(&b, "      driver = %q\n", spec.Driver)
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "      lifecycle {\n")
-		fmt.Fprintf(&b, "        hook    = \"prestart\"\n")
-		fmt.Fprintf(&b, "        sidecar = false\n")
-		fmt.Fprintf(&b, "      }\n\n")
-		fmt.Fprintf(&b, "      config {\n")
-		fmt.Fprintf(&b, "        command = \"/bin/sh\"\n")
-		fmt.Fprintf(&b, "        args    = [\"-c\", \"echo Waiting for dependency: %s\"]\n", spec.Depend)
-		fmt.Fprintf(&b, "      }\n")
-		fmt.Fprintf(&b, "    }\n")
+		waitTask := groupBody.AppendNewBlock("task", []string{"wait-dependency"})
+		waitBody := waitTask.Body()
+		waitBody.SetAttributeValue("driver", cty.StringVal(spec.Driver))
+
+		lifecycle := waitBody.AppendNewBlock("lifecycle", nil)
+		lifecycle.Body().SetAttributeValue("hook", cty.StringVal("prestart"))
+		lifecycle.Body().SetAttributeValue("sidecar", cty.BoolVal(false))
+
+		cfg := waitBody.AppendNewBlock("config", nil)
+		cfg.Body().SetAttributeValue("command", cty.StringVal("/bin/sh"))
+		cfg.Body().SetAttributeValue("args", cty.ListVal([]cty.Value{cty.StringVal("-c"), cty.StringVal(fmt.Sprintf("echo Waiting for dependency: %s", spec.Depend))}))
 	}
 
-	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "    task \"main\" {\n")
-	fmt.Fprintf(&b, "      driver = %q\n", spec.Driver)
-	fmt.Fprintln(&b)
+	mainTask := groupBody.AppendNewBlock("task", []string{"main"})
+	mainBody := mainTask.Body()
+	mainBody.SetAttributeValue("driver", cty.StringVal(spec.Driver))
 
-	fmt.Fprintf(&b, "      config {\n")
-	var cmdExpr string
+	config := mainBody.AppendNewBlock("config", nil)
+
+	cmdExpr := fmt.Sprintf("/bin/bash local/%s", scriptName)
 	if spec.WalltimeSecs > 0 {
 		cmdExpr = fmt.Sprintf("timeout %d /bin/bash local/%s", spec.WalltimeSecs, scriptName)
-	} else {
-		cmdExpr = fmt.Sprintf("/bin/bash local/%s", scriptName)
 	}
 
 	if spec.OutputLog != "" || spec.ErrorLog != "" {
-		// Preserve default stdout/stderr (Nomad log capture), while also writing copies.
-		redirectCmd := cmdExpr
 		if spec.OutputLog != "" {
-			redirectCmd = fmt.Sprintf("%s 1> >(tee -a \"${NOMAD_TASK_DIR}/%s\")", redirectCmd, spec.OutputLog)
+			cmdExpr = fmt.Sprintf("%s 1> >(tee -a \"${NOMAD_TASK_DIR}/%s\")", cmdExpr, spec.OutputLog)
 		}
 		if spec.ErrorLog != "" {
-			redirectCmd = fmt.Sprintf("%s 2> >(tee -a \"${NOMAD_TASK_DIR}/%s\" >&2)", redirectCmd, spec.ErrorLog)
+			cmdExpr = fmt.Sprintf("%s 2> >(tee -a \"${NOMAD_TASK_DIR}/%s\" >&2)", cmdExpr, spec.ErrorLog)
 		}
-		fmt.Fprintf(&b, "        command  = \"/bin/bash\"\n")
-		fmt.Fprintf(&b, "        args     = [\"-lc\", %q]\n", redirectCmd)
+		config.Body().SetAttributeValue("command", cty.StringVal("/bin/bash"))
+		config.Body().SetAttributeValue("args", cty.ListVal([]cty.Value{cty.StringVal("-lc"), cty.StringVal(cmdExpr)}))
 	} else {
 		if spec.WalltimeSecs > 0 {
-			fmt.Fprintf(&b, "        command  = \"timeout\"\n")
-			fmt.Fprintf(&b, "        args     = [\"%d\", \"/bin/bash\", \"local/%s\"]\n", spec.WalltimeSecs, scriptName)
+			config.Body().SetAttributeValue("command", cty.StringVal("timeout"))
+			config.Body().SetAttributeValue("args", cty.ListVal([]cty.Value{cty.StringVal(fmt.Sprintf("%d", spec.WalltimeSecs)), cty.StringVal("/bin/bash"), cty.StringVal(fmt.Sprintf("local/%s", scriptName))}))
 		} else {
-			fmt.Fprintf(&b, "        command  = \"/bin/bash\"\n")
-			fmt.Fprintf(&b, "        args     = [\"local/%s\"]\n", scriptName)
+			config.Body().SetAttributeValue("command", cty.StringVal("/bin/bash"))
+			config.Body().SetAttributeValue("args", cty.ListVal([]cty.Value{cty.StringVal(fmt.Sprintf("local/%s", scriptName))}))
 		}
 	}
+
 	if spec.ChDir != "" {
-		fmt.Fprintf(&b, "        work_dir = %q\n", spec.ChDir)
+		config.Body().SetAttributeValue("work_dir", cty.StringVal(spec.ChDir))
 	}
+
 	for _, k := range sortedKeys(spec.DriverConfig) {
 		v := strings.TrimSpace(spec.DriverConfig[k])
-		if isHCLLiteral(v) {
-			fmt.Fprintf(&b, "        %s = %s\n", k, v)
-		} else {
-			fmt.Fprintf(&b, "        %s = %q\n", k, v)
-		}
+		config.Body().SetAttributeValue(k, cty.StringVal(v))
 	}
-	fmt.Fprintf(&b, "      }\n\n")
 
-	delimiter := heredocDelimiter(scriptContent)
-	fmt.Fprintf(&b, "      template {\n")
-	fmt.Fprintf(&b, "        data = <<-%s\n", delimiter)
-	fmt.Fprint(&b, scriptContent)
-	if !strings.HasSuffix(scriptContent, "\n") {
-		fmt.Fprintln(&b)
-	}
-	fmt.Fprintf(&b, "%s\n", delimiter)
-	fmt.Fprintf(&b, "        destination = %q\n", filepath.ToSlash(filepath.Join("local", scriptName)))
-	fmt.Fprintf(&b, "        perms       = \"0755\"\n")
-	fmt.Fprintf(&b, "      }\n")
+	template := mainBody.AppendNewBlock("template", nil)
+	templateBody := template.Body()
+	templateBody.SetAttributeValue("data", cty.StringVal(scriptContent))
+	templateBody.SetAttributeValue("destination", cty.StringVal(filepath.ToSlash(filepath.Join("local", scriptName))))
+	templateBody.SetAttributeValue("perms", cty.StringVal("0755"))
 
 	if spec.Cores > 0 || spec.MemoryMB > 0 || spec.GPUs > 0 {
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "      resources {\n")
+		resources := mainBody.AppendNewBlock("resources", nil)
+		resourcesBody := resources.Body()
 		if spec.Cores > 0 {
-			fmt.Fprintf(&b, "        cores  = %d\n", spec.Cores)
+			resourcesBody.SetAttributeValue("cores", cty.NumberIntVal(int64(spec.Cores)))
 		}
 		if spec.MemoryMB > 0 {
-			fmt.Fprintf(&b, "        memory = %d\n", spec.MemoryMB)
+			resourcesBody.SetAttributeValue("memory", cty.NumberIntVal(int64(spec.MemoryMB)))
 		}
 		if spec.GPUs > 0 {
-			fmt.Fprintln(&b)
-			fmt.Fprintf(&b, "        device \"nvidia/gpu\" {\n")
-			fmt.Fprintf(&b, "          count = %d\n", spec.GPUs)
-			fmt.Fprintf(&b, "        }\n")
+			device := resourcesBody.AppendNewBlock("device", []string{"nvidia/gpu"})
+			device.Body().SetAttributeValue("count", cty.NumberIntVal(int64(spec.GPUs)))
 		}
-		fmt.Fprintf(&b, "      }\n")
 	}
 
-	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "      env {\n")
+	env := mainBody.AppendNewBlock("env", nil)
+	envBody := env.Body()
 
 	// HPC compatibility layer — always emitted.
-	fmt.Fprintf(&b, "        # HPC compat: PBS/SLURM aliases\n")
-	fmt.Fprintf(&b, "        SLURM_JOB_ID        = \"${NOMAD_ALLOC_ID}\"\n")
-	fmt.Fprintf(&b, "        PBS_JOBID           = \"${NOMAD_ALLOC_ID}\"\n")
-	fmt.Fprintf(&b, "        SLURM_JOB_NAME      = \"${NOMAD_JOB_NAME}\"\n")
-	fmt.Fprintf(&b, "        PBS_JOBNAME         = \"${NOMAD_JOB_NAME}\"\n")
-	fmt.Fprintf(&b, "        SLURM_SUBMIT_DIR    = \"${NOMAD_TASK_DIR}\"\n")
-	fmt.Fprintf(&b, "        PBS_O_WORKDIR       = \"${NOMAD_TASK_DIR}\"\n")
-	fmt.Fprintf(&b, "        SLURM_ARRAY_TASK_ID = \"${NOMAD_ALLOC_INDEX}\"\n")
-	fmt.Fprintf(&b, "        PBS_ARRAYID         = \"${NOMAD_ALLOC_INDEX}\"\n")
-	fmt.Fprintf(&b, "        SLURM_NTASKS        = \"${NOMAD_GROUP_COUNT}\"\n")
-	fmt.Fprintf(&b, "        PBS_NP              = \"${NOMAD_GROUP_COUNT}\"\n")
-	fmt.Fprintf(&b, "        SLURMD_NODENAME     = \"${NOMAD_ALLOC_HOST}\"\n")
-	fmt.Fprintf(&b, "        PBS_O_HOST          = \"${NOMAD_ALLOC_HOST}\"\n")
-	fmt.Fprintf(&b, "        SLURM_CPUS_ON_NODE  = \"${NOMAD_CPU_CORES}\"\n")
-	fmt.Fprintf(&b, "        PBS_NUM_PPN         = \"${NOMAD_CPU_CORES}\"\n")
-	fmt.Fprintf(&b, "        SLURM_MEM_PER_NODE  = \"${NOMAD_MEMORY_LIMIT}\"\n")
-	fmt.Fprintf(&b, "        PBS_MEM             = \"${NOMAD_MEMORY_LIMIT}\"\n")
+	envBody.SetAttributeValue("SLURM_JOB_ID", cty.StringVal("${NOMAD_ALLOC_ID}"))
+	envBody.SetAttributeValue("PBS_JOBID", cty.StringVal("${NOMAD_ALLOC_ID}"))
+	envBody.SetAttributeValue("SLURM_JOB_NAME", cty.StringVal("${NOMAD_JOB_NAME}"))
+	envBody.SetAttributeValue("PBS_JOBNAME", cty.StringVal("${NOMAD_JOB_NAME}"))
+	envBody.SetAttributeValue("SLURM_SUBMIT_DIR", cty.StringVal("${NOMAD_TASK_DIR}"))
+	envBody.SetAttributeValue("PBS_O_WORKDIR", cty.StringVal("${NOMAD_TASK_DIR}"))
+	envBody.SetAttributeValue("SLURM_ARRAY_TASK_ID", cty.StringVal("${NOMAD_ALLOC_INDEX}"))
+	envBody.SetAttributeValue("PBS_ARRAYID", cty.StringVal("${NOMAD_ALLOC_INDEX}"))
+	envBody.SetAttributeValue("SLURM_NTASKS", cty.StringVal("${NOMAD_GROUP_COUNT}"))
+	envBody.SetAttributeValue("PBS_NP", cty.StringVal("${NOMAD_GROUP_COUNT}"))
+	envBody.SetAttributeValue("SLURMD_NODENAME", cty.StringVal("${NOMAD_ALLOC_HOST}"))
+	envBody.SetAttributeValue("PBS_O_HOST", cty.StringVal("${NOMAD_ALLOC_HOST}"))
+	envBody.SetAttributeValue("SLURM_CPUS_ON_NODE", cty.StringVal("${NOMAD_CPU_CORES}"))
+	envBody.SetAttributeValue("PBS_NUM_PPN", cty.StringVal("${NOMAD_CPU_CORES}"))
+	envBody.SetAttributeValue("SLURM_MEM_PER_NODE", cty.StringVal("${NOMAD_MEMORY_LIMIT}"))
+	envBody.SetAttributeValue("PBS_MEM", cty.StringVal("${NOMAD_MEMORY_LIMIT}"))
 
 	type runtimeVar struct {
 		flag bool
@@ -1332,39 +1314,22 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 		{spec.ExposeTaskDir, "NOMAD_TASK_DIR"},
 		{spec.ExposeSecretsDir, "NOMAD_SECRETS_DIR"},
 	}
-	hasExposures := false
 	for _, e := range exposures {
 		if e.flag {
-			hasExposures = true
-			break
-		}
-	}
-	if hasExposures {
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "        # Explicitly requested runtime variables\n")
-		for _, e := range exposures {
-			if e.flag {
-				fmt.Fprintf(&b, "        %-28s = \"${%s}\"\n", e.env, e.env)
-			}
+			envBody.SetAttributeValue(e.env, cty.StringVal(fmt.Sprintf("${%s}", e.env)))
 		}
 	}
 
 	if len(spec.Ports) > 0 {
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "        # Network port variables\n")
 		for _, p := range spec.Ports {
 			up := strings.ToUpper(p)
-			fmt.Fprintf(&b, "        NOMAD_IP_%-19s = \"${NOMAD_IP_%s}\"\n", up, p)
-			fmt.Fprintf(&b, "        NOMAD_PORT_%-17s = \"${NOMAD_PORT_%s}\"\n", up, p)
-			fmt.Fprintf(&b, "        NOMAD_ADDR_%-17s = \"${NOMAD_ADDR_%s}\"\n", up, p)
+			envBody.SetAttributeValue(fmt.Sprintf("NOMAD_IP_%s", up), cty.StringVal(fmt.Sprintf("${NOMAD_IP_%s}", p)))
+			envBody.SetAttributeValue(fmt.Sprintf("NOMAD_PORT_%s", up), cty.StringVal(fmt.Sprintf("${NOMAD_PORT_%s}", p)))
+			envBody.SetAttributeValue(fmt.Sprintf("NOMAD_ADDR_%s", up), cty.StringVal(fmt.Sprintf("${NOMAD_ADDR_%s}", p)))
 		}
 	}
 
-	fmt.Fprintf(&b, "      }\n")
-	fmt.Fprintf(&b, "    }\n")
-	fmt.Fprintf(&b, "  }\n")
-	fmt.Fprintf(&b, "}\n")
-	return b.String()
+	return string(f.Bytes())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
