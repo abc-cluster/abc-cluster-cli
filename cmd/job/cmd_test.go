@@ -38,3 +38,17 @@ func TestNomadTokenEnvPriority(t *testing.T) {
 		t.Fatalf("expected ABC_TOKEN to be prioritized, got %q", nc.token)
 	}
 }
+
+func TestNewLogsCmd_TypeFlag(t *testing.T) {
+	cmd := NewLogsCmd()
+	if cmd == nil {
+		t.Fatalf("expected NewLogsCmd() to return a command")
+	}
+	flag := cmd.Flags().Lookup("type")
+	if flag == nil {
+		t.Fatal("expected --type flag on logs command")
+	}
+	if flag.DefValue != "stdout" {
+		t.Fatalf("expected default --type stdout, got %q", flag.DefValue)
+	}
+}

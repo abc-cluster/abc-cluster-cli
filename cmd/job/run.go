@@ -305,7 +305,7 @@ func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string,
 					task = t
 					break
 				}
-				return nc.StreamLogs(ctx, a.ID, task, "stdout", "start", 0, w)
+				return nc.StreamLogs(ctx, a.ID, task, "stdout", "start", 0, true, w)
 			}
 		}
 		select {
