@@ -334,7 +334,16 @@ func runJob(cmd *cobra.Command, args []string) error {
 	if spec.Meta == nil {
 		spec.Meta = map[string]string{}
 	}
-	spec.Meta["abc_submission_id"] = newSubmissionID()
+	submissionID := newSubmissionID()
+	spec.Meta["abc_submission_id"] = submissionID
+	spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
+	if spec.Name != "" {
+		baseName := spec.Name
+		if !strings.HasPrefix(baseName, "script-job-") {
+			baseName = "script-job-" + baseName
+		}
+		spec.Name = fmt.Sprintf("%s-%s", baseName, submissionID[:8])
+	}
 
 	hcl := generateHCL(spec, scriptBase, string(scriptBytes))
 
