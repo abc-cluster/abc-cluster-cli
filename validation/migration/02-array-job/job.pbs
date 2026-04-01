@@ -1,0 +1,39 @@
+#!/bin/bash
+# ── PBS / Torque — Array Job ──────────────────────────────────────────────────
+# Submits N independent tasks, one per sample in samplesheet.csv.
+#
+# Submit:   qsub -t 1-48 job.pbs
+#   or:     qsub job.pbs   (uses #PBS -t below)
+# Status:   qstat -t <JOBID>
+# Output:   array-align.o<JOBID>-<INDEX>
+
+#PBS -N array-align
+#PBS -l nodes=1:ppn=8        # Each task: 1 node, 8 cores
+#PBS -l mem=32gb             # Memory per task
+#PBS -l walltime=04:00:00
+#PBS -t 1-48                 # Submit 48 tasks; $PBS_ARRAYID = 1..48
+#PBS -o array-align.o        # PBS appends .<JOBID>-<INDEX>
+#PBS -e array-align.e
+#PBS -j n
+
+# ── MISSING in PBS ────────────────────────────────────────────────────────────
+# Limit concurrent tasks:  #PBS -t 1-48%8   (run max 8 at a time)
+# In ABC: no equivalent — Nomad uses resource-based scheduling
+
+SAMPLESHEET="${PBS_O_WORKDIR}/samplesheet.csv"
+REFERENCE="${PBS_O_WORKDIR}/reference/genome.fa"
+
+# PBS_ARRAYID is 1-based; sed picks line N
+SAMPLE=$(sed -n "${PBS_ARRAYID}p" "$SAMPLESHEET")
+
+echo "[PBS] Task $PBS_ARRAYID / sample: $SAMPLE"
+echo "  Cores: $PBS_NP"
+echo "  Host:  $(hostname)"
+
+bwa mem -t "$PBS_NP" \
+  "$REFERENCE" \
+  "${PBS_O_WORKDIR}/fastq/${SAMPLE}_R1.fastq.gz" \
+  "${PBS_O_WORKDIR}/fastq/${SAMPLE}_R2.fastq.gz" \
+  > "${PBS_O_WORKDIR}/output/${SAMPLE}.sam"
+
+echo "[PBS] Done: $SAMPLE"

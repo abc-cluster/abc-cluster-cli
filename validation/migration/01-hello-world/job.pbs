@@ -1,0 +1,30 @@
+#!/bin/bash
+# ── PBS / Torque — Hello World ────────────────────────────────────────────────
+# Submit:  qsub job.pbs
+# Status:  qstat -j <JOBID>
+# Output:  hello-world.o<JOBID>  hello-world.e<JOBID>
+
+#PBS -N hello-world          # Job name
+#PBS -l nodes=1:ppn=1        # 1 node, 1 core
+#PBS -l mem=256mb            # Memory
+#PBS -l walltime=00:05:00    # Max runtime
+#PBS -o hello-world.out      # Stdout file
+#PBS -e hello-world.err      # Stderr file
+#PBS -j n                    # Do NOT merge stdout/stderr
+
+# Move to submission directory
+cd "$PBS_O_WORKDIR"
+
+echo "=== PBS Hello World ==="
+echo "  Host        : $(hostname)"
+echo "  Job ID      : $PBS_JOBID"
+echo "  Job name    : $PBS_JOBNAME"
+echo "  Queue       : $PBS_QUEUE"
+echo "  Work dir    : $PBS_O_WORKDIR"
+echo "  Start time  : $(date)"
+echo
+
+echo "Hello, world from PBS!"
+
+echo
+echo "  End time    : $(date)"

@@ -1,0 +1,35 @@
+#!/bin/bash
+# ── PBS / Torque — GPU Job ────────────────────────────────────────────────────
+# Example: Kraken2 taxonomic classification using GPU-accelerated model.
+#
+# Submit:  qsub job.pbs
+# Note:    GPU support in PBS/Torque depends on the site's configuration.
+#          Common approaches: -l gpus=2  or  -l nodes=1:ppn=8:gpus=2
+
+#PBS -N gpu-kraken2
+#PBS -l nodes=1:ppn=8:gpus=2  # 1 node, 8 CPUs, 2 GPUs
+#PBS -l mem=64gb
+#PBS -l walltime=02:00:00
+#PBS -o gpu-kraken2.out
+#PBS -e gpu-kraken2.err
+#PBS -j n
+
+# Activate GPU environment
+module load cuda/11.8
+module load kraken2/2.1.3
+
+cd "$PBS_O_WORKDIR"
+
+echo "[PBS] GPU job: $PBS_JOBID"
+echo "  Host  : $(hostname)"
+echo "  GPUs  : $(nvidia-smi --list-gpus | wc -l)"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
+kraken2 \
+  --threads 8 \
+  --db "${PBS_O_WORKDIR}/krakendb" \
+  --output "${PBS_O_WORKDIR}/output/classified.tsv" \
+  --report "${PBS_O_WORKDIR}/output/report.txt" \
+  "${PBS_O_WORKDIR}/input/reads.fastq.gz"
+
+echo "[PBS] Done"

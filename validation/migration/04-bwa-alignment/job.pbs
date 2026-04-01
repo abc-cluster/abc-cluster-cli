@@ -1,0 +1,51 @@
+#!/bin/bash
+# ── PBS / Torque — BWA-MEM Alignment Pipeline (realistic) ────────────────────
+# Full short-read alignment for a cohort of WGS samples.
+# Assumes samplesheet.csv has one sample ID per line.
+# Run as an array job: one PBS task per sample.
+#
+# Submit:  qsub -t 1-96 job.pbs
+# Monitor: qstat -t <JOBID>
+# Cancel:  qdel <JOBID>[]
+
+#PBS -N bwa-align
+#PBS -l nodes=1:ppn=16
+#PBS -l mem=64gb
+#PBS -l walltime=08:00:00
+#PBS -t 1-96
+#PBS -o bwa-align.o
+#PBS -e bwa-align.e
+#PBS -j n
+#PBS -m ae                       # Email on abort/end   ← ABC gap
+#PBS -M user@institution.ac.za   # Email address         ← ABC gap
+
+set -euo pipefail
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+WORKDIR="$PBS_O_WORKDIR"
+SAMPLESHEET="$WORKDIR/samplesheet.csv"
+REF="$WORKDIR/reference/GRCh38/GRCh38.fa"
+FASTQ_DIR="$WORKDIR/fastq"
+OUT_DIR="$WORKDIR/output"
+
+SAMPLE=$(sed -n "${PBS_ARRAYID}p" "$SAMPLESHEET")
+mkdir -p "$OUT_DIR"
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+echo "[PBS] Sample $PBS_ARRAYID: $SAMPLE  host: $(hostname)"
+
+# Alignment
+bwa mem \
+  -t "$PBS_NP" \
+  -R "@RG\tID:${SAMPLE}\tSM:${SAMPLE}\tPL:ILLUMINA\tLB:${SAMPLE}_lib1" \
+  "$REF" \
+  "${FASTQ_DIR}/${SAMPLE}_R1.fastq.gz" \
+  "${FASTQ_DIR}/${SAMPLE}_R2.fastq.gz" \
+  | samtools sort -@ 4 -m 4G \
+  -o "${OUT_DIR}/${SAMPLE}.sorted.bam"
+
+samtools index "${OUT_DIR}/${SAMPLE}.sorted.bam"
+samtools flagstat "${OUT_DIR}/${SAMPLE}.sorted.bam" \
+  > "${OUT_DIR}/${SAMPLE}.flagstat.txt"
+
+echo "[PBS] Done: ${SAMPLE} -> ${OUT_DIR}/${SAMPLE}.sorted.bam"
