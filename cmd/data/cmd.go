@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 
+	"github.com/abc-cluster/abc-cluster-cli/api"
 	"github.com/spf13/cobra"
 )
 
@@ -26,14 +27,30 @@ func defaultClientFactory(endpoint, accessToken string, opts UploaderOptions) (U
 	return newTusUploader(endpoint, accessToken, opts)
 }
 
+// PipelineRunner is the interface for submitting a pipeline run.
+type PipelineRunner interface {
+	SubmitPipelineRun(req *api.PipelineRunRequest) (*api.PipelineRunResponse, error)
+}
+
+// PipelineClientFactory creates a PipelineRunner from connection parameters.
+type PipelineClientFactory func(serverURL, accessToken, workspace string) PipelineRunner
+
+// defaultPipelineClientFactory creates a real API client.
+func defaultPipelineClientFactory(serverURL, accessToken, workspace string) PipelineRunner {
+	return api.NewClient(serverURL, accessToken, workspace)
+}
+
+// PipelineFactory is used by data download command and can be replaced in tests.
+var PipelineFactory = defaultPipelineClientFactory
+
 // NewCmd returns the "data" subcommand group.
 // serverURL, accessToken, and workspace are pointers to the root command's persistent flags
 // so that they are evaluated after flag parsing.
 // If factory is nil, the default uploader factory is used.
-func NewCmd(serverURL, accessToken, workspace *string, factory ...ClientFactory) *cobra.Command {
+func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFactory) *cobra.Command {
 	f := defaultClientFactory
-	if len(factory) > 0 && factory[0] != nil {
-		f = factory[0]
+	if len(dataFactory) > 0 && dataFactory[0] != nil {
+		f = dataFactory[0]
 	}
 
 	cmd := &cobra.Command{
@@ -44,5 +61,6 @@ func NewCmd(serverURL, accessToken, workspace *string, factory ...ClientFactory)
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
+	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
 	return cmd
 }
