@@ -280,6 +280,18 @@ func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string,
 
 // ── Preamble parser ───────────────────────────────────────────────────────────
 
+// stripInlineComment removes a trailing shell comment from a directive string.
+// A comment begins at the first occurrence of " #" (space then hash).
+// This allows annotated lines such as:
+//
+//	#ABC --cores=8    # 8 cores per task
+func stripInlineComment(s string) string {
+	if i := strings.Index(s, " #"); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
 func parsePreamble(r io.Reader) (abcDirs, nomadDirs []string, err error) {
 	scanner := bufio.NewScanner(r)
 	first := true
@@ -298,11 +310,13 @@ func parsePreamble(r io.Reader) (abcDirs, nomadDirs []string, err error) {
 		switch {
 		case strings.HasPrefix(trimmed, "#ABC"):
 			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#ABC"))
+			rest = stripInlineComment(rest)
 			if rest != "" {
 				abcDirs = append(abcDirs, rest)
 			}
 		case strings.HasPrefix(trimmed, "#NOMAD"):
 			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#NOMAD"))
+			rest = stripInlineComment(rest)
 			if rest != "" {
 				nomadDirs = append(nomadDirs, rest)
 			}

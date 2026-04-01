@@ -1,0 +1,28 @@
+#!/bin/bash
+# ── PBS — Job Dependency: Step 1 (alignment) ─────────────────────────────────
+# Submit this first, then use its JOBID in the step 2 submission.
+#
+# Submit chain:
+#   STEP1=$(qsub job-step1.pbs)
+#   echo "Step 1 job: $STEP1"
+#   qsub -W depend=afterok:$STEP1 job-step2.pbs
+
+#PBS -N wgs-step1-align
+#PBS -l nodes=1:ppn=16
+#PBS -l mem=64gb
+#PBS -l walltime=08:00:00
+#PBS -t 1-24
+#PBS -o wgs-step1.o
+#PBS -e wgs-step1.e
+
+cd "$PBS_O_WORKDIR"
+
+SAMPLE=$(sed -n "${PBS_ARRAYID}p" samplesheet.csv)
+echo "[step1] Aligning: $SAMPLE"
+
+bwa mem -t "$PBS_NP" reference/GRCh38.fa \
+  "fastq/${SAMPLE}_R1.fastq.gz" "fastq/${SAMPLE}_R2.fastq.gz" \
+  | samtools sort -o "bam/${SAMPLE}.sorted.bam"
+
+samtools index "bam/${SAMPLE}.sorted.bam"
+echo "[step1] Done: $SAMPLE"

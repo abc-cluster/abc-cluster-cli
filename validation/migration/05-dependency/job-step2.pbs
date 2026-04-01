@@ -1,0 +1,33 @@
+#!/bin/bash
+# ── PBS — Job Dependency: Step 2 (variant calling) ───────────────────────────
+# Runs after all step 1 array tasks complete successfully (afterok).
+#
+# Submit:  qsub -W depend=afterok:$STEP1 job-step2.pbs
+#
+# PBS dependency types:
+#   afterok  — start only if all listed jobs completed with exit 0
+#   afterany — start after listed jobs end (regardless of exit code)
+#   afternotok — start only if listed jobs failed
+
+#PBS -N wgs-step2-variantcall
+#PBS -l nodes=1:ppn=16
+#PBS -l mem=128gb
+#PBS -l walltime=12:00:00
+#PBS -o wgs-step2.o
+#PBS -e wgs-step2.e
+
+cd "$PBS_O_WORKDIR"
+
+echo "[step2] Running GATK HaplotypeCaller on all BAMs"
+
+# Collect all BAMs produced by step 1
+BAMS=$(ls bam/*.sorted.bam | tr '\n' ' ')
+
+gatk HaplotypeCaller \
+  --java-options "-Xmx120G" \
+  -R reference/GRCh38.fa \
+  $(for b in $BAMS; do echo "-I $b"; done) \
+  -O output/cohort.g.vcf.gz \
+  -ERC GVCF
+
+echo "[step2] Done: output/cohort.g.vcf.gz"
