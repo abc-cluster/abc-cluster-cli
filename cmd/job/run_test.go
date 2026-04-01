@@ -2,6 +2,7 @@ package job_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,6 +25,14 @@ func executeCmd(t *testing.T, args ...string) (string, error) {
 	_, err := root.ExecuteC()
 	return buf.String(), err
 }
+
+func assertJobNamePrefix(t *testing.T, out, namePrefix string) {
+	t.Helper()
+	if !strings.Contains(out, fmt.Sprintf("job \"script-job-%s-", namePrefix)) {
+		t.Fatalf("expected job name prefix %q in output, got:\n%s", "script-job-"+namePrefix, out)
+	}
+}
+
 
 func writeTempScript(t *testing.T, name, content string) string {
 	t.Helper()
@@ -49,8 +58,8 @@ python analysis.py
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	assertJobNamePrefix(t, out, "serial-python")
 	checks := []string{
-		`job "serial-python"`,
 		`type     = "batch"`,
 		`count = 1`,
 		`cores  = 4`,
@@ -147,9 +156,7 @@ sleep 1
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `job "cli-name"`) {
-		t.Errorf("expected cli-name, got:\n%s", out)
-	}
+	assertJobNamePrefix(t, out, "cli-name")
 	if !strings.Contains(out, `cores  = 6`) {
 		t.Errorf("expected cores=6, got:\n%s", out)
 	}
@@ -221,8 +228,8 @@ mpirun -np 112 ./ocean_model
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	assertJobNamePrefix(t, out, "ocean-model")
 	checks := []string{
-		`job "ocean-model"`,
 		`namespace = "hpc"`,
 		`count = 4`,
 		`cores  = 28`,
@@ -252,7 +259,8 @@ python train.py
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	checks := []string{`job "abc-serial"`, `count = 2`, `cores  = 8`, `memory = 16384`}
+	assertJobNamePrefix(t, out, "abc-serial")
+	checks := []string{`count = 2`, `cores  = 8`, `memory = 16384`}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output\ngot:\n%s", want, out)
@@ -509,9 +517,7 @@ echo hello
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `job "abc-name"`) {
-		t.Errorf("expected #ABC name to win, got:\n%s", out)
-	}
+	assertJobNamePrefix(t, out, "abc-name")
 	if !strings.Contains(out, "count = 8") {
 		t.Errorf("expected #ABC nodes=8, got:\n%s", out)
 	}
@@ -536,9 +542,7 @@ func TestJobRun_NomadEnvVarFallback_Name(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `job "env-job-name"`) {
-		t.Errorf("expected env var name to be used, got:\n%s", out)
-	}
+	assertJobNamePrefix(t, out, "env-job-name")
 }
 
 func TestJobRun_NomadEnvVarFallback_Resources(t *testing.T) {
@@ -635,9 +639,7 @@ func TestJobRun_DefaultNameFromFilename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `job "my-analysis"`) {
-		t.Errorf("expected job name from filename, got:\n%s", out)
-	}
+	assertJobNamePrefix(t, out, "my-analysis")
 }
 
 func TestJobRun_DefaultNodes1(t *testing.T) {
@@ -698,9 +700,7 @@ echo "body starts here"
 	if coresDirective.MatchString(out) {
 		t.Errorf("directive after body line should be ignored, got:\n%s", out)
 	}
-	if !strings.Contains(out, `job "boundary-test"`) {
-		t.Errorf("expected preamble name directive to be applied, got:\n%s", out)
-	}
+	assertJobNamePrefix(t, out, "boundary-test")
 }
 
 // ── Error cases ──────────────────────────────────────────────────────────────
