@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -53,12 +55,17 @@ type jobSpec struct {
 	WalltimeSecs int
 	ChDir        string
 	Depend       string
-	Driver       string
-	DriverConfig map[string]string
-	OutputLog    string
-	ErrorLog     string
-	Constraints  []nomadConstraint
-	Affinities   []nomadAffinity
+	Driver           string
+	DriverConfig     map[string]string
+	RescheduleMode   string
+	RescheduleAttempts int
+	RescheduleInterval string
+	RescheduleDelay    string
+	RescheduleMaxDelay string
+	OutputLog        string
+	ErrorLog         string
+	Constraints      []nomadConstraint
+	Affinities       []nomadAffinity
 
 	// ── Meta directives ───────────────────────────────────────────────────────
 	Meta map[string]string
@@ -167,6 +174,11 @@ EXAMPLES
 	cmd.Flags().String("chdir", "", "Working directory")
 	cmd.Flags().String("depend", "", "Dependency spec (complete:<job-id>)")
 	cmd.Flags().String("driver", "", "Task driver")
+	cmd.Flags().String("reschedule-mode", "", "Job reschedule mode (e.g. delay, fail)")
+	cmd.Flags().Int("reschedule-attempts", 0, "Job max reschedule attempts")
+	cmd.Flags().String("reschedule-interval", "", "Reschedule interval (e.g. 30s)")
+	cmd.Flags().String("reschedule-delay", "", "Reschedule delay (e.g. 5s)")
+	cmd.Flags().String("reschedule-max-delay", "", "Reschedule max delay (e.g. 1m)")
 	cmd.Flags().String("output", "", "Logical stdout file path in metadata")
 	cmd.Flags().String("error", "", "Logical stderr file path in metadata")
 	cmd.Flags().StringToString("meta", nil, "Job meta key=value")
@@ -226,6 +238,21 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if v, _ := cmd.Flags().GetString("driver"); v != "" {
 		spec.Driver = v
+	}
+	if v, _ := cmd.Flags().GetString("reschedule-mode"); v != "" {
+		spec.RescheduleMode = v
+	}
+	if v, _ := cmd.Flags().GetInt("reschedule-attempts"); v != 0 {
+		spec.RescheduleAttempts = v
+	}
+	if v, _ := cmd.Flags().GetString("reschedule-interval"); v != "" {
+		spec.RescheduleInterval = v
+	}
+	if v, _ := cmd.Flags().GetString("reschedule-delay"); v != "" {
+		spec.RescheduleDelay = v
+	}
+	if v, _ := cmd.Flags().GetString("reschedule-max-delay"); v != "" {
+		spec.RescheduleMaxDelay = v
 	}
 	if v, _ := cmd.Flags().GetString("output"); v != "" {
 		spec.OutputLog = v
@@ -297,6 +324,11 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if spec.Meta == nil {
+		spec.Meta = map[string]string{}
+	}
+	spec.Meta["abc_submission_id"] = newSubmissionID()
+
 	hcl := generateHCL(spec, scriptBase, string(scriptBytes))
 
 	submit, _ := cmd.Flags().GetBool("submit")
@@ -361,6 +393,14 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 	fmt.Fprintf(out, "    abc job logs %s --follow\n", spec.Name)
 	fmt.Fprintf(out, "    abc job show %s\n", spec.Name)
 	return nil
+}
+
+func newSubmissionID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("sub-%d", os.Getpid())
+	}
+	return hex.EncodeToString(b)
 }
 
 func isHCLLiteral(val string) bool {
@@ -732,6 +772,24 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 	if spec.Priority == 0 {
 		spec.Priority = 50
 	}
+	if spec.RescheduleMode != "" || spec.RescheduleAttempts != 0 || spec.RescheduleInterval != "" || spec.RescheduleDelay != "" || spec.RescheduleMaxDelay != "" {
+		if spec.Meta == nil {
+			spec.Meta = map[string]string{}
+		}
+		spec.Meta["abc_reschedule_mode"] = spec.RescheduleMode
+		if spec.RescheduleAttempts != 0 {
+			spec.Meta["abc_reschedule_attempts"] = fmt.Sprintf("%d", spec.RescheduleAttempts)
+		}
+		if spec.RescheduleInterval != "" {
+			spec.Meta["abc_reschedule_interval"] = spec.RescheduleInterval
+		}
+		if spec.RescheduleDelay != "" {
+			spec.Meta["abc_reschedule_delay"] = spec.RescheduleDelay
+		}
+		if spec.RescheduleMaxDelay != "" {
+			spec.Meta["abc_reschedule_max_delay"] = spec.RescheduleMaxDelay
+		}
+	}
 	if spec.OutputLog != "" || spec.ErrorLog != "" {
 		if spec.Meta == nil {
 			spec.Meta = map[string]string{}
@@ -867,6 +925,35 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --driver requires a value", marker)
 			}
 			spec.Driver = val
+		case "reschedule-mode":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --reschedule-mode requires a value", marker)
+			}
+			spec.RescheduleMode = val
+		case "reschedule-attempts":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --reschedule-attempts requires a value", marker)
+			}
+			n, err := strconv.Atoi(val)
+			if err != nil || n < 0 {
+				return fmt.Errorf("--reschedule-attempts must be non-negative, got %q", val)
+			}
+			spec.RescheduleAttempts = n
+		case "reschedule-interval":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --reschedule-interval requires a value", marker)
+			}
+			spec.RescheduleInterval = val
+		case "reschedule-delay":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --reschedule-delay requires a value", marker)
+			}
+			spec.RescheduleDelay = val
+		case "reschedule-max-delay":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --reschedule-max-delay requires a value", marker)
+			}
+			spec.RescheduleMaxDelay = val
 		case "output":
 			if !hasValue {
 				return fmt.Errorf("#%s --output requires a value", marker)
