@@ -55,6 +55,8 @@ type jobSpec struct {
 	Depend       string
 	Driver       string
 	DriverConfig map[string]string
+	OutputLog    string
+	ErrorLog     string
 	Constraints  []nomadConstraint
 	Affinities   []nomadAffinity
 
@@ -165,9 +167,11 @@ EXAMPLES
 	cmd.Flags().String("chdir", "", "Working directory")
 	cmd.Flags().String("depend", "", "Dependency spec (complete:<job-id>)")
 	cmd.Flags().String("driver", "", "Task driver")
+	cmd.Flags().String("output", "", "Logical stdout file path in metadata")
+	cmd.Flags().String("error", "", "Logical stderr file path in metadata")
 	cmd.Flags().StringToString("meta", nil, "Job meta key=value")
 	cmd.Flags().StringSlice("port", nil, "Named network ports")
-	cmd.Flags().String("params-file", "", "Param file path (key=value lines)")
+	cmd.Flags().String("params-file", "", "Param file path (YAML).")
 	cmd.Flags().Bool("submit", false, "Submit job to Nomad instead of printing HCL")
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
 	cmd.Flags().Bool("watch", false, "Stream logs after --submit")
@@ -222,6 +226,12 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if v, _ := cmd.Flags().GetString("driver"); v != "" {
 		spec.Driver = v
+	}
+	if v, _ := cmd.Flags().GetString("output"); v != "" {
+		spec.OutputLog = v
+	}
+	if v, _ := cmd.Flags().GetString("error"); v != "" {
+		spec.ErrorLog = v
 	}
 	if m, _ := cmd.Flags().GetStringToString("meta"); len(m) > 0 {
 		if spec.Meta == nil {
@@ -400,15 +410,26 @@ func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string,
 		if err != nil {
 			return err
 		}
+		var chosen *NomadAllocStub
 		for _, a := range allocs {
-			if a.ClientStatus == "running" {
-				task := "main"
-				for t := range a.TaskStates {
-					task = t
-					break
-				}
-				return nc.StreamLogs(ctx, a.ID, task, "stdout", "start", 0, true, w)
+			if chosen == nil || a.CreateTime > chosen.CreateTime {
+				chosen = &a
 			}
+			if a.ClientStatus == "running" {
+				chosen = &a
+				break
+			}
+		}
+		if chosen != nil {
+			 task := "main"
+			for t := range chosen.TaskStates {
+				task = t
+				break
+			}
+			if chosen.ClientStatus == "running" {
+				return nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, true, w)
+			}
+			return nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, false, w)
 		}
 		select {
 		case <-ctx.Done():
@@ -711,6 +732,17 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 	if spec.Priority == 0 {
 		spec.Priority = 50
 	}
+	if spec.OutputLog != "" || spec.ErrorLog != "" {
+		if spec.Meta == nil {
+			spec.Meta = map[string]string{}
+		}
+		if spec.OutputLog != "" {
+			spec.Meta["abc_output"] = spec.OutputLog
+		}
+		if spec.ErrorLog != "" {
+			spec.Meta["abc_error"] = spec.ErrorLog
+		}
+	}
 	if spec.Name == "" {
 		return nil, fmt.Errorf("job name is required: set #ABC --name=<n>, #NOMAD --name=<n>, or NOMAD_JOB_NAME")
 	}
@@ -835,6 +867,16 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --driver requires a value", marker)
 			}
 			spec.Driver = val
+		case "output":
+			if !hasValue {
+				return fmt.Errorf("#%s --output requires a value", marker)
+			}
+			spec.OutputLog = val
+		case "error":
+			if !hasValue {
+				return fmt.Errorf("#%s --error requires a value", marker)
+			}
+			spec.ErrorLog = val
 		case "constraint":
 			if !hasValue {
 				return fmt.Errorf("#%s --constraint requires a value", marker)
@@ -1041,12 +1083,29 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	fmt.Fprintln(&b)
 
 	fmt.Fprintf(&b, "      config {\n")
-	if spec.WalltimeSecs > 0 {
-		fmt.Fprintf(&b, "        command  = \"timeout\"\n")
-		fmt.Fprintf(&b, "        args     = [\"%d\", \"/bin/bash\", \"local/%s\"]\n", spec.WalltimeSecs, scriptName)
-	} else {
+	if spec.OutputLog != "" || spec.ErrorLog != "" {
+		cmdExpr := ""
+		if spec.WalltimeSecs > 0 {
+			cmdExpr = fmt.Sprintf("timeout %d /bin/bash local/%s", spec.WalltimeSecs, scriptName)
+		} else {
+			cmdExpr = fmt.Sprintf("/bin/bash local/%s", scriptName)
+		}
+		if spec.OutputLog != "" {
+			cmdExpr = fmt.Sprintf("%s > \"${NOMAD_TASK_DIR}/%s\"", cmdExpr, spec.OutputLog)
+		}
+		if spec.ErrorLog != "" {
+			cmdExpr = fmt.Sprintf("%s 2> \"${NOMAD_TASK_DIR}/%s\"", cmdExpr, spec.ErrorLog)
+		}
 		fmt.Fprintf(&b, "        command  = \"/bin/bash\"\n")
-		fmt.Fprintf(&b, "        args     = [\"local/%s\"]\n", scriptName)
+		fmt.Fprintf(&b, "        args     = [\"-lc\", %q]\n", cmdExpr)
+	} else {
+		if spec.WalltimeSecs > 0 {
+			fmt.Fprintf(&b, "        command  = \"timeout\"\n")
+			fmt.Fprintf(&b, "        args     = [\"%d\", \"/bin/bash\", \"local/%s\"]\n", spec.WalltimeSecs, scriptName)
+		} else {
+			fmt.Fprintf(&b, "        command  = \"/bin/bash\"\n")
+			fmt.Fprintf(&b, "        args     = [\"local/%s\"]\n", scriptName)
+		}
 	}
 	if spec.ChDir != "" {
 		fmt.Fprintf(&b, "        work_dir = %q\n", spec.ChDir)

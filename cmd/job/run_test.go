@@ -155,6 +155,22 @@ sleep 1
 	}
 }
 
+func TestJobRun_OutputErrorPreamble(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --output=job.out
+#ABC --error=job.err
+sleep 1
+`
+	p := writeTempScript(t, "outerr.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `meta {`) || !strings.Contains(out, `abc_output = "job.out"`) || !strings.Contains(out, `abc_error = "job.err"`) {
+		t.Fatalf("expected abc_output/abc_error metadata, got:\n%s", out)
+	}
+}
+
 func TestJobRun_MultiNodeMPIJob(t *testing.T) {
 	script := `#!/bin/bash
 #NOMAD --name=ocean-model
