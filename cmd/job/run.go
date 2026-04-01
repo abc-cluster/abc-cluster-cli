@@ -151,6 +151,7 @@ Class 3 - Meta (Nomad meta block, readable as NOMAD_META_<KEY>):
 
 Network:
   --port=<label>         Dynamic port; injects NOMAD_IP/PORT/ADDR_<label>
+  --no-network          Disable all network access (nomad network mode = "none")
 
 PRECEDENCE: #ABC > #NOMAD > NOMAD_* env vars
   --dc=<n>  sets scheduler placement
@@ -186,6 +187,7 @@ EXAMPLES
 	cmd.Flags().StringToString("meta", nil, "Job meta key=value")
 	cmd.Flags().StringSlice("port", nil, "Named network ports")
 	cmd.Flags().String("params-file", "", "Param file path (YAML).")
+	cmd.Flags().Bool("no-network", false, "Disable network access for this job")
 	cmd.Flags().Bool("submit", false, "Submit job to Nomad instead of printing HCL")
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
 	cmd.Flags().Bool("watch", false, "Stream logs after --submit")
@@ -272,6 +274,9 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if ps, _ := cmd.Flags().GetStringSlice("port"); len(ps) > 0 {
 		spec.Ports = ps
+	}
+	if v, _ := cmd.Flags().GetBool("no-network"); v {
+		spec.NoNetwork = true
 	}
 	return nil
 }
@@ -785,8 +790,6 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 	if spec.Driver == "" {
 		spec.Driver = "exec"
 	}
-	// Enforce network isolation for all generated jobs.
-	spec.NoNetwork = true
 	if spec.Priority == 0 {
 		spec.Priority = 50
 	}
@@ -1204,21 +1207,24 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	fmt.Fprintln(&b)
 
 	fmt.Fprintf(&b, "      config {\n")
+	var cmdExpr string
+	if spec.WalltimeSecs > 0 {
+		cmdExpr = fmt.Sprintf("timeout %d /bin/bash local/%s", spec.WalltimeSecs, scriptName)
+	} else {
+		cmdExpr = fmt.Sprintf("/bin/bash local/%s", scriptName)
+	}
+
 	if spec.OutputLog != "" || spec.ErrorLog != "" {
-		cmdExpr := ""
-		if spec.WalltimeSecs > 0 {
-			cmdExpr = fmt.Sprintf("timeout %d /bin/bash local/%s", spec.WalltimeSecs, scriptName)
-		} else {
-			cmdExpr = fmt.Sprintf("/bin/bash local/%s", scriptName)
-		}
+		// Preserve default stdout/stderr (Nomad log capture), while also writing copies.
+		redirectCmd := cmdExpr
 		if spec.OutputLog != "" {
-			cmdExpr = fmt.Sprintf("%s > \"${NOMAD_TASK_DIR}/%s\"", cmdExpr, spec.OutputLog)
+			redirectCmd = fmt.Sprintf("%s 1> >(tee -a \"${NOMAD_TASK_DIR}/%s\")", redirectCmd, spec.OutputLog)
 		}
 		if spec.ErrorLog != "" {
-			cmdExpr = fmt.Sprintf("%s 2> \"${NOMAD_TASK_DIR}/%s\"", cmdExpr, spec.ErrorLog)
+			redirectCmd = fmt.Sprintf("%s 2> >(tee -a \"${NOMAD_TASK_DIR}/%s\" >&2)", redirectCmd, spec.ErrorLog)
 		}
 		fmt.Fprintf(&b, "        command  = \"/bin/bash\"\n")
-		fmt.Fprintf(&b, "        args     = [\"-lc\", %q]\n", cmdExpr)
+		fmt.Fprintf(&b, "        args     = [\"-lc\", %q]\n", redirectCmd)
 	} else {
 		if spec.WalltimeSecs > 0 {
 			fmt.Fprintf(&b, "        command  = \"timeout\"\n")
