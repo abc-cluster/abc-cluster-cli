@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -386,7 +387,7 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 	watch, _ := cmd.Flags().GetBool("watch")
 	if watch {
 		fmt.Fprintln(cmd.ErrOrStderr(), "\n  Waiting for allocation...")
-		return watchJobLogs(ctx, nc, spec.Name, spec.Namespace, out)
+		return watchJobLogs(ctx, nc, spec.Name, spec.Namespace, out, watchDelay, watchTimeout)
 	}
 
 	fmt.Fprintf(out, "\n  Track progress:\n")
@@ -441,40 +442,54 @@ func printPlan(cmd *cobra.Command, hcl string, plan *NomadPlanResponse) {
 	fmt.Fprintf(out, "\n  ✓ Dry-run complete. Use --submit to register.\n")
 }
 
-func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string, w io.Writer) error {
+const (
+	watchDelay = 10 * time.Second
+	watchTimeout = 5 * time.Minute
+)
+
+func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string, w io.Writer, delay, timeout time.Duration) error {
+	start := time.Now()
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
+		if timeout > 0 && time.Since(start) > timeout {
+			return fmt.Errorf("watch timeout after %s", timeout)
+		}
+
 		allocs, err := nc.GetJobAllocs(ctx, jobID, namespace, false)
 		if err != nil {
 			return err
 		}
+
 		var chosen *NomadAllocStub
 		for _, a := range allocs {
-			if chosen == nil || a.CreateTime > chosen.CreateTime {
-				chosen = &a
-			}
 			if a.ClientStatus == "running" {
 				chosen = &a
 				break
 			}
+			if chosen == nil || a.CreateTime > chosen.CreateTime {
+				chosen = &a
+			}
 		}
+
 		if chosen != nil {
-			 task := "main"
+			task := "main"
 			for t := range chosen.TaskStates {
 				task = t
 				break
 			}
+
 			if chosen.ClientStatus == "running" {
 				return nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, true, w)
 			}
 			return nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, false, w)
 		}
+
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-sleepCh(2):
+		case <-sleepCh(int(delay.Seconds())):
 		}
 	}
 }
