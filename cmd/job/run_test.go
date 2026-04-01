@@ -73,6 +73,64 @@ python analysis.py
 	}
 }
 
+func TestJobRun_DriverConfigDirective(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --driver=docker
+#ABC --driver.config.image="docker.io/library/nginx:1.27-alpine"
+#ABC --driver.config.volumes=["local/index.html:/usr/share/nginx/html/index.html"]
+exit 0
+`
+	p := writeTempScript(t, "driver_config.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `driver = "docker"`) {
+		t.Fatalf("expected docker driver, got:\n%s", out)
+	}
+	if !strings.Contains(out, `image = "docker.io/library/nginx:1.27-alpine"`) {
+		t.Fatalf("expected driver.image directive in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, `volumes = ["local/index.html:/usr/share/nginx/html/index.html"]`) {
+		t.Fatalf("expected driver.volumes directive in output, got:\n%s", out)
+	}
+}
+
+func TestJobRun_ConstraintAffinityDirectives(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=affinity-test
+#ABC --constraint=region==us-east
+#ABC --affinity=datacenter==c1,weight=75
+exit 0
+`
+	p := writeTempScript(t, "affinity.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "constraint {") {
+		t.Fatalf("expected constraint block in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "attribute = \"region\"") {
+		t.Fatalf("expected constraint attribute in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "operator  = \"==\"") {
+		t.Fatalf("expected constraint operator in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"us-east\"") {
+		t.Fatalf("expected constraint value in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "affinity {") {
+		t.Fatalf("expected affinity block in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "attribute = \"datacenter\"") {
+		t.Fatalf("expected affinity attribute in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "weight    = 75") {
+		t.Fatalf("expected affinity weight in output, got:\n%s", out)
+	}
+}
+
 func TestJobRun_MultiNodeMPIJob(t *testing.T) {
 	script := `#!/bin/bash
 #NOMAD --name=ocean-model
