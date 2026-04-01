@@ -171,6 +171,41 @@ sleep 1
 	}
 }
 
+func TestJobRun_ReschedulePreamble(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=resched-job
+#ABC --reschedule-mode=delay
+#ABC --reschedule-attempts=3
+#ABC --reschedule-interval=30s
+#ABC --reschedule-delay=10s
+#ABC --reschedule-max-delay=2m
+sleep 1
+`
+	p := writeTempScript(t, "resched.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_reschedule_mode = "delay"`) {
+		t.Fatalf("expected reschedule mode metadata, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_submission_id = "`) {
+		t.Fatalf("expected abc_submission_id metadata, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_reschedule_attempts = "3"`) {
+		t.Fatalf("expected reschedule attempts metadata, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_reschedule_interval = "30s"`) {
+		t.Fatalf("expected reschedule interval metadata, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_reschedule_delay = "10s"`) {
+		t.Fatalf("expected reschedule delay metadata, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_reschedule_max_delay = "2m"`) {
+		t.Fatalf("expected reschedule max delay metadata, got:\n%s", out)
+	}
+}
+
 func TestJobRun_MultiNodeMPIJob(t *testing.T) {
 	script := `#!/bin/bash
 #NOMAD --name=ocean-model
