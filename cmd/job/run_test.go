@@ -131,6 +131,30 @@ exit 0
 	}
 }
 
+func TestJobRun_ParamsAndCLIOverridePriority(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=preamble-name
+#ABC --cores=2
+sleep 1
+`
+	p := writeTempScript(t, "override.sh", script)
+	paramsPath := filepath.Join(t.TempDir(), "params.yaml")
+	if err := os.WriteFile(paramsPath, []byte("name: params-name\ncores: 4\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := executeCmd(t, p, "--params-file", paramsPath, "--name", "cli-name", "--cores", "6")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `job "cli-name"`) {
+		t.Errorf("expected cli-name, got:\n%s", out)
+	}
+	if !strings.Contains(out, `cores  = 6`) {
+		t.Errorf("expected cores=6, got:\n%s", out)
+	}
+}
+
 func TestJobRun_MultiNodeMPIJob(t *testing.T) {
 	script := `#!/bin/bash
 #NOMAD --name=ocean-model
