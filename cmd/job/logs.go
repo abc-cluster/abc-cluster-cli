@@ -2,6 +2,7 @@ package job
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +22,8 @@ func newLogsCmd() *cobra.Command {
 	cmd.Flags().String("type", "stdout", "Log type: stdout or stderr")
 	cmd.Flags().String("namespace", "", "Nomad namespace")
 	cmd.Flags().String("since", "", "Show logs since this timestamp (RFC3339)")
+	cmd.Flags().String("output", "", "Write stdout logs to file")
+	cmd.Flags().String("error", "", "Write stderr logs to file")
 	return cmd
 }
 
@@ -91,6 +94,39 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	if follow {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Streaming logs for alloc %s (task: %s)...\n\n",
 			target.ID[:8], task)
+	}
+
+	outputPath, _ := cmd.Flags().GetString("output")
+	errorPath, _ := cmd.Flags().GetString("error")
+
+	if outputPath != "" || errorPath != "" {
+		if outputPath != "" {
+			if logType != "stdout" {
+				return fmt.Errorf("--output requires --type stdout")
+			}
+			f, err := os.Create(outputPath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if err := nc.StreamLogs(cmd.Context(), target.ID, task, "stdout", origin, 0, follow, f); err != nil {
+				return err
+			}
+		}
+		if errorPath != "" {
+			if logType != "stderr" {
+				return fmt.Errorf("--error requires --type stderr")
+			}
+			f, err := os.Create(errorPath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if err := nc.StreamLogs(cmd.Context(), target.ID, task, "stderr", origin, 0, follow, f); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	return nc.StreamLogs(cmd.Context(), target.ID, task, logType, origin, 0, follow, out)

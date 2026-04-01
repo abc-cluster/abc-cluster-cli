@@ -39,6 +39,20 @@ func TestNomadTokenEnvPriority(t *testing.T) {
 	}
 }
 
+func TestJobLogsCommandFlags(t *testing.T) {
+	cmd := NewCmd()
+	logsCmd, _, err := cmd.Find([]string{"logs"})
+	if err != nil {
+		t.Fatalf("expected logs command to exist: %v", err)
+	}
+	if logsCmd.Flags().Lookup("output") == nil {
+		t.Fatal("expected --output flag on job logs command")
+	}
+	if logsCmd.Flags().Lookup("error") == nil {
+		t.Fatal("expected --error flag on job logs command")
+	}
+}
+
 func TestNewLogsCmd_TypeFlag(t *testing.T) {
 	cmd := NewLogsCmd()
 	if cmd == nil {

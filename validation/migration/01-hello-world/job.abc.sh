@@ -12,6 +12,8 @@
 #ABC --mem=256M              # Memory (K/M/G suffix — no 'b')
 #ABC --time=00:05:00         # Walltime limit (HH:MM:SS)
 #ABC --driver=exec           # Run directly on host (no container)
+#ABC --output=job.out        # Logical stdout file path in metadata
+#ABC --error=job.err         # Logical stderr file path in metadata
 
 # ── Runtime exposure (replaces PBS_JOBID / SLURM_JOB_ID) ─────────────────────
 #ABC --alloc_id              # Full allocation UUID  → NOMAD_ALLOC_ID
@@ -40,6 +42,7 @@ echo "  Host        : $(hostname)"
 echo "  Alloc ID    : ${NOMAD_ALLOC_ID}"
 echo "  Alloc name  : ${NOMAD_ALLOC_NAME}"
 echo "  Job ID      : ${NOMAD_JOB_ID}"
+echo "  Task dir    : ${NOMAD_TASK_DIR}"
 echo "  Start time  : $(date)"
 echo
 

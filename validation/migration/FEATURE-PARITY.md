@@ -224,6 +224,15 @@ abc job logs my-job --alloc a1b2c3d4 --type stdout
 abc job logs my-job > job.log
 ```
 
+### Workarounds for ABC preamble features
+
+- constraints: use `#ABC --constraint=<attr><op><value>` or `#ABC --affinity=<attr><op><value>,weight=<n>` directly in script. For site-specific single-node behavior, use `#ABC --dc=<datacenter>`/`--region=<region>` and cluster-side job context.
+- output/errors (stdout+stderr): use `#ABC --output=<name>` and `#ABC --error=<name>` in script; job generator now emits redirect into `${NOMAD_TASK_DIR}` from task shell running command.
+- if you need explicit filesystem log file paths, in script set:
+  - `echo ... >> "${NOMAD_TASK_DIR}/${ABC_OUTPUT:-job.out}"` and similarly for error using `2>>`.
+- if ACL or token config is missing, use `--nomad-addr`, `--nomad-token`, `--region` from CLI or env to avoid `127.0.0.1:4646` local default.
+- For preamble validation failure, use `abc job run --dry-run` first to inspect generated HCL and correct block structure.
+
 ---
 
 ## Command reference
