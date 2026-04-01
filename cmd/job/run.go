@@ -17,6 +17,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// nomadConstraint holds a simple Nomad constraint item.
+type nomadConstraint struct {
+	Attribute string
+	Operator  string
+	Value     string
+}
+
+// nomadAffinity holds a simple Nomad affinity item.
+type nomadAffinity struct {
+	Attribute string
+	Operator  string
+	Value     string
+	Weight    int
+}
+
 // jobSpec holds the configuration for a Nomad batch job.
 //
 // Scheduler directives set placement fields (Region, Datacenters, Priority…).
@@ -38,6 +53,9 @@ type jobSpec struct {
 	ChDir        string
 	Depend       string
 	Driver       string
+	DriverConfig map[string]string
+	Constraints  []nomadConstraint
+	Affinities   []nomadAffinity
 
 	// ── Meta directives ───────────────────────────────────────────────────────
 	Meta map[string]string
@@ -233,6 +251,26 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 	return nil
 }
 
+func isHCLLiteral(val string) bool {
+	if val == "" {
+		return false
+	}
+	trim := strings.TrimSpace(val)
+	if trim == "true" || trim == "false" {
+		return true
+	}
+	if _, err := strconv.ParseFloat(trim, 64); err == nil {
+		return true
+	}
+	if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
+		return true
+	}
+	if strings.HasPrefix(trim, "{") && strings.HasSuffix(trim, "}") {
+		return true
+	}
+	return false
+}
+
 func printPlan(cmd *cobra.Command, hcl string, plan *NomadPlanResponse) {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "  --- GENERATED HCL ---\n%s  ---------------------\n\n", hcl)
@@ -393,7 +431,19 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 		hasValue := len(kv) == 2
 		val := ""
 		if hasValue {
-			val = kv[1]
+			val = strings.TrimSpace(kv[1])
+			val = strings.Trim(val, "'\"")
+		}
+
+		if strings.HasPrefix(key, "driver.config.") {
+			if !hasValue || strings.TrimSpace(val) == "" {
+				return fmt.Errorf("#%s --%s requires a value", marker, key)
+			}
+			if spec.DriverConfig == nil {
+				spec.DriverConfig = make(map[string]string)
+			}
+			spec.DriverConfig[strings.TrimPrefix(key, "driver.config.")] = val
+			continue
 		}
 
 		switch key {
@@ -489,6 +539,24 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --driver requires a value", marker)
 			}
 			spec.Driver = val
+		case "constraint":
+			if !hasValue {
+				return fmt.Errorf("#%s --constraint requires a value", marker)
+			}
+			c, err := parseConstraint(val)
+			if err != nil {
+				return err
+			}
+			spec.Constraints = append(spec.Constraints, c)
+		case "affinity":
+			if !hasValue {
+				return fmt.Errorf("#%s --affinity requires a value", marker)
+			}
+			a, err := parseAffinity(val)
+			if err != nil {
+				return err
+			}
+			spec.Affinities = append(spec.Affinities, a)
 
 		// ── Meta directive ───────────────────────────────────────────────────
 		case "meta":
@@ -552,6 +620,51 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 	return nil
 }
 
+func parseConstraint(expr string) (nomadConstraint, error) {
+	expr = strings.TrimSpace(expr)
+	ops := []string{"==", "!=", "=~", "!~", "<", "<=", ">", ">="}
+	for _, op := range ops {
+		if idx := strings.Index(expr, op); idx >= 0 {
+			attr := strings.TrimSpace(expr[:idx])
+			val := strings.TrimSpace(expr[idx+len(op):])
+			if attr == "" || val == "" {
+				return nomadConstraint{}, fmt.Errorf("invalid constraint expression %q", expr)
+			}
+			val = strings.Trim(val, "'\"")
+			return nomadConstraint{Attribute: attr, Operator: op, Value: val}, nil
+		}
+	}
+	return nomadConstraint{}, fmt.Errorf("invalid constraint expression %q", expr)
+}
+
+func parseAffinity(specExpr string) (nomadAffinity, error) {
+	specExpr = strings.TrimSpace(specExpr)
+	weight := 50
+	parts := strings.Split(specExpr, ",")
+	if len(parts) == 0 {
+		return nomadAffinity{}, fmt.Errorf("invalid affinity expression %q", specExpr)
+	}
+	main := strings.TrimSpace(parts[0])
+	if main == "" {
+		return nomadAffinity{}, fmt.Errorf("invalid affinity expression %q", specExpr)
+	}
+	c, err := parseConstraint(main)
+	if err != nil {
+		return nomadAffinity{}, err
+	}
+	for _, p := range parts[1:] {
+		if strings.HasPrefix(strings.TrimSpace(p), "weight=") {
+			wStr := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(p), "weight="))
+			w, err := strconv.Atoi(wStr)
+			if err != nil || w < 0 {
+				return nomadAffinity{}, fmt.Errorf("invalid affinity weight %q", wStr)
+			}
+			weight = w
+		}
+	}
+	return nomadAffinity{Attribute: c.Attribute, Operator: c.Operator, Value: c.Value, Weight: weight}, nil
+}
+
 // ── HCL generator ─────────────────────────────────────────────────────────────
 
 func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
@@ -572,6 +685,21 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 			dcs[i] = fmt.Sprintf("%q", dc)
 		}
 		fmt.Fprintf(&b, "  datacenters = [%s]\n", strings.Join(dcs, ", "))
+	}
+	for _, c := range spec.Constraints {
+		fmt.Fprintf(&b, "  constraint {\n")
+		fmt.Fprintf(&b, "    attribute = %q\n", c.Attribute)
+		fmt.Fprintf(&b, "    operator  = %q\n", c.Operator)
+		fmt.Fprintf(&b, "    value     = %q\n", c.Value)
+		fmt.Fprintf(&b, "  }\n")
+	}
+	for _, a := range spec.Affinities {
+		fmt.Fprintf(&b, "  affinity {\n")
+		fmt.Fprintf(&b, "    attribute = %q\n", a.Attribute)
+		fmt.Fprintf(&b, "    operator  = %q\n", a.Operator)
+		fmt.Fprintf(&b, "    value     = %q\n", a.Value)
+		fmt.Fprintf(&b, "    weight    = %d\n", a.Weight)
+		fmt.Fprintf(&b, "  }\n")
 	}
 	fmt.Fprintln(&b)
 
@@ -626,6 +754,14 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	}
 	if spec.ChDir != "" {
 		fmt.Fprintf(&b, "        work_dir = %q\n", spec.ChDir)
+	}
+	for _, k := range sortedKeys(spec.DriverConfig) {
+		v := strings.TrimSpace(spec.DriverConfig[k])
+		if isHCLLiteral(v) {
+			fmt.Fprintf(&b, "        %s = %s\n", k, v)
+		} else {
+			fmt.Fprintf(&b, "        %s = %q\n", k, v)
+		}
 	}
 	fmt.Fprintf(&b, "      }\n\n")
 
