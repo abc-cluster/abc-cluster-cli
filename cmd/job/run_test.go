@@ -338,24 +338,27 @@ echo hi
 func TestJobRun_PortDirective(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --name=mpi-job\n#ABC --port=mpi\necho hi\n"
 	p := writeTempScript(t, "mpi.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatalf("expected error due to enforced no-network, got nil")
+	}
+	if !strings.Contains(err.Error(), "no-network cannot be combined with port mapping") {
+		t.Fatalf("expected no-network conflict error, got: %v", err)
+	}
+}
+
+func TestJobRun_NoNetworkEnforced(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=no-network-job\necho hi\n"
+	p := writeTempScript(t, "no-network.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `network {`) {
-		t.Errorf("expected network block, got:\n%s", out)
+	if !strings.Contains(out, "network {") {
+		t.Fatalf("expected network block, got:\n%s", out)
 	}
-	if !strings.Contains(out, `port "mpi" {}`) {
-		t.Errorf("expected port directive, got:\n%s", out)
-	}
-	if !strings.Contains(out, "NOMAD_IP_MPI") {
-		t.Errorf("expected NOMAD_IP_MPI in env, got:\n%s", out)
-	}
-	if !strings.Contains(out, "NOMAD_PORT_MPI") {
-		t.Errorf("expected NOMAD_PORT_MPI in env, got:\n%s", out)
-	}
-	if !strings.Contains(out, "NOMAD_ADDR_MPI") {
-		t.Errorf("expected NOMAD_ADDR_MPI in env, got:\n%s", out)
+	if !strings.Contains(out, "mode = \"none\"") {
+		t.Fatalf("expected network mode=none, got:\n%s", out)
 	}
 }
 
