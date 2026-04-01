@@ -101,11 +101,67 @@ abc --url https://api.my-cluster.example.com \
 ### `job run`
 
 Generate a Nomad HCL batch job from an annotated Bash script and optionally pipe
-it directly to Nomad.
+it directly to Nomad. Supports preamble directives, params file, environment
+overrides, and submission with watch options.
+
+Usage:
 
 ```bash
-abc job run <script> | nomad job run -
+# render HCL and print
+abc job run myjob.sh
+
+# submit to configured Nomad and wait up to 5m
+abc job run myjob.sh --submit --watch
+
+# custom watch timing
+abc job run myjob.sh --submit --watch --watch-delay 20s --watch-timeout 3m
+
+# use YAML params file
+abc job run myjob.sh --params-file job-params.yaml --submit
 ```
+
+Allowed preamble directives include:
+- `#ABC --name=<name>`
+- `#ABC --nodes=<n>`
+- `#ABC --cores=<n>`
+- `#ABC --mem=<size>`
+- `#ABC --time=<HH:MM:SS>`
+- `#ABC --namespace=<ns>`
+- `#ABC --dc=<datacenter>`
+- `#ABC --driver=<exec|docker|...>`
+- `#ABC --output=<file>` (redirect stdout to `${NOMAD_TASK_DIR}/<file>`)
+- `#ABC --error=<file>` (redirect stderr to `${NOMAD_TASK_DIR}/<file>`)
+- `#ABC --reschedule-mode=<delay|fail>` and related reschedule fields
+
+---
+
+### `data upload`
+
+Upload a local file or folder to the abc-cluster data service using tus resumable uploads.
+
+Usage:
+
+```bash
+# upload a file with default endpoint + token
+abc data upload ./local-data.tar.gz
+
+# upload with explicit endpoint / token
+ABC_UPLOAD_ENDPOINT=https://dev.abc-cluster.cloud/files \
+  ABC_UPLOAD_TOKEN=abctoken \
+  abc data upload ./local-data.tar.gz
+
+# upload with advanced options
+abc data upload ./local-data.tar.gz --name sample-data --crypt-password secret --crypt-salt pepper
+```
+
+Flags:
+
+- `--endpoint`: customer tus endpoint URL (`ABC_UPLOAD_ENDPOINT` fallback)
+- `--upload-token`: token for upload (`ABC_UPLOAD_TOKEN` fallback)
+- `--name`: display name for the upload
+- `--crypt-password`, `--crypt-salt`: optional client-side encrypt
+
+---
 
 Scripts can include a preamble of `#ABC` or `#NOMAD` directives. `#ABC` entries
 override `#NOMAD`, and both override NOMAD_* environment variables read at CLI
