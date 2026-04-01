@@ -1,12 +1,22 @@
 package job
 
 import (
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 )
 
 // NewCmd returns the "job" subcommand group.
+func envOrDefault(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "job",
@@ -15,12 +25,12 @@ func NewCmd() *cobra.Command {
 	}
 
 	// Persistent flags shared across all job sub-commands that call Nomad.
-	cmd.PersistentFlags().String("nomad-addr", "http://127.0.0.1:4646",
-		"Nomad API address (or set NOMAD_ADDR)")
-	cmd.PersistentFlags().String("nomad-token", "",
-		"Nomad ACL token (or set NOMAD_TOKEN)")
-	cmd.PersistentFlags().String("region", "",
-		"Nomad region (or set ABC_REGION)")
+	cmd.PersistentFlags().String("nomad-addr", envOrDefault("ABC_ADDR", "NOMAD_ADDR"),
+		"Nomad API address (or set ABC_ADDR/NOMAD_ADDR; defaults to http://127.0.0.1:4646)")
+	cmd.PersistentFlags().String("nomad-token", envOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
+		"Nomad ACL token (or set ABC_TOKEN/NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("region", envOrDefault("ABC_REGION", "NOMAD_REGION"),
+		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
 
 	cmd.AddCommand(
 		newRunCmd(),
