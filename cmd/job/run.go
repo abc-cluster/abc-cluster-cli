@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // nomadConstraint holds a simple Nomad constraint item.
@@ -151,11 +152,89 @@ EXAMPLES
 		Args: cobra.ExactArgs(1),
 		RunE: runJob,
 	}
+	cmd.Flags().String("name", "", "Job name")
+	cmd.Flags().String("namespace", "", "Nomad namespace")
+	cmd.Flags().String("region", "", "Nomad region")
+	cmd.Flags().StringSlice("dc", nil, "Target datacenter(s)")
+	cmd.Flags().Int("priority", 0, "Scheduler priority")
+	cmd.Flags().Int("nodes", 0, "Number of group instances")
+	cmd.Flags().Int("cores", 0, "CPU cores per task")
+	cmd.Flags().String("mem", "", "Memory per task (e.g. 8G)")
+	cmd.Flags().Int("gpus", 0, "GPU count")
+	cmd.Flags().String("time", "", "Walltime limit HH:MM:SS")
+	cmd.Flags().String("chdir", "", "Working directory")
+	cmd.Flags().String("depend", "", "Dependency spec (complete:<job-id>)")
+	cmd.Flags().String("driver", "", "Task driver")
+	cmd.Flags().StringToString("meta", nil, "Job meta key=value")
+	cmd.Flags().StringSlice("port", nil, "Named network ports")
+	cmd.Flags().String("params-file", "", "Param file path (key=value lines)")
 	cmd.Flags().Bool("submit", false, "Submit job to Nomad instead of printing HCL")
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
 	cmd.Flags().Bool("watch", false, "Stream logs after --submit")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
 	return cmd
+}
+
+func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
+	if v, _ := cmd.Flags().GetString("name"); v != "" {
+		spec.Name = v
+	}
+	if v, _ := cmd.Flags().GetString("namespace"); v != "" {
+		spec.Namespace = v
+	}
+	if v, _ := cmd.Flags().GetString("region"); v != "" {
+		spec.Region = v
+	}
+	if v, _ := cmd.Flags().GetStringSlice("dc"); len(v) > 0 {
+		spec.Datacenters = v
+	}
+	if v, _ := cmd.Flags().GetInt("priority"); v != 0 {
+		spec.Priority = v
+	}
+	if v, _ := cmd.Flags().GetInt("nodes"); v != 0 {
+		spec.Nodes = v
+	}
+	if v, _ := cmd.Flags().GetInt("cores"); v != 0 {
+		spec.Cores = v
+	}
+	if v, _ := cmd.Flags().GetString("mem"); v != "" {
+		mb, err := parseMemoryMB(v)
+		if err != nil {
+			return err
+		}
+		spec.MemoryMB = mb
+	}
+	if v, _ := cmd.Flags().GetInt("gpus"); v != 0 {
+		spec.GPUs = v
+	}
+	if v, _ := cmd.Flags().GetString("time"); v != "" {
+		secs, err := walltimeToSeconds(v)
+		if err != nil {
+			return err
+		}
+		spec.WalltimeSecs = secs
+	}
+	if v, _ := cmd.Flags().GetString("chdir"); v != "" {
+		spec.ChDir = v
+	}
+	if v, _ := cmd.Flags().GetString("depend"); v != "" {
+		spec.Depend = v
+	}
+	if v, _ := cmd.Flags().GetString("driver"); v != "" {
+		spec.Driver = v
+	}
+	if m, _ := cmd.Flags().GetStringToString("meta"); len(m) > 0 {
+		if spec.Meta == nil {
+			spec.Meta = map[string]string{}
+		}
+		for k, val := range m {
+			spec.Meta[k] = val
+		}
+	}
+	if ps, _ := cmd.Flags().GetStringSlice("port"); len(ps) > 0 {
+		spec.Ports = ps
+	}
+	return nil
 }
 
 func runJob(cmd *cobra.Command, args []string) error {
@@ -180,8 +259,31 @@ func runJob(cmd *cobra.Command, args []string) error {
 	scriptBase := filepath.Base(scriptPath)
 	defaultName := strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
 
-	spec, err := resolveSpec(abcDirs, nomadDirs, readNomadEnvVars(), defaultName)
+	scriptSpec, err := resolveSpec(abcDirs, nomadDirs, defaultName)
 	if err != nil {
+		return err
+	}
+
+	// env overrides script preamble
+	envSpec := readNomadEnvVars()
+	spec := mergeSpec(scriptSpec, envSpec)
+
+	paramsFile, _ := cmd.Flags().GetString("params-file")
+	if paramsFile != "" {
+		params, err := loadParamsFile(paramsFile)
+		if err != nil {
+			return err
+		}
+		paramsSpec := &jobSpec{}
+		for _, p := range params {
+			if err := applyDirective(paramsSpec, p, "PARAMS"); err != nil {
+				return err
+			}
+		}
+		spec = mergeSpec(spec, paramsSpec)
+	}
+
+	if err := applyCLIFlags(cmd, spec); err != nil {
 		return err
 	}
 
@@ -388,11 +490,205 @@ func readNomadEnvVars() *jobSpec {
 	return spec
 }
 
-func resolveSpec(abcDirs, nomadDirs []string, envSpec *jobSpec, defaultName string) (*jobSpec, error) {
-	spec := envSpec
-	if spec == nil {
-		spec = &jobSpec{}
+func mergeSpec(base, override *jobSpec) *jobSpec {
+	if base == nil {
+		base = &jobSpec{}
 	}
+	if override == nil {
+		return base
+	}
+	if override.Name != "" {
+		base.Name = override.Name
+	}
+	if override.Namespace != "" {
+		base.Namespace = override.Namespace
+	}
+	if override.Region != "" {
+		base.Region = override.Region
+	}
+	if len(override.Datacenters) > 0 {
+		base.Datacenters = append([]string(nil), override.Datacenters...)
+	}
+	if override.Priority != 0 {
+		base.Priority = override.Priority
+	}
+	if override.Nodes != 0 {
+		base.Nodes = override.Nodes
+	}
+	if override.Cores != 0 {
+		base.Cores = override.Cores
+	}
+	if override.MemoryMB != 0 {
+		base.MemoryMB = override.MemoryMB
+	}
+	if override.GPUs != 0 {
+		base.GPUs = override.GPUs
+	}
+	if override.WalltimeSecs != 0 {
+		base.WalltimeSecs = override.WalltimeSecs
+	}
+	if override.ChDir != "" {
+		base.ChDir = override.ChDir
+	}
+	if override.Depend != "" {
+		base.Depend = override.Depend
+	}
+	if override.Driver != "" {
+		base.Driver = override.Driver
+	}
+	if override.DriverConfig != nil {
+		if base.DriverConfig == nil {
+			base.DriverConfig = map[string]string{}
+		}
+		for k, v := range override.DriverConfig {
+			base.DriverConfig[k] = v
+		}
+	}
+	if override.Meta != nil {
+		if base.Meta == nil {
+			base.Meta = map[string]string{}
+		}
+		for k, v := range override.Meta {
+			base.Meta[k] = v
+		}
+	}
+	if len(override.Ports) > 0 {
+		base.Ports = append([]string(nil), override.Ports...)
+	}
+	// strategy: set bool flags if true (explicit true wins)
+	if override.ExposeAllocID {
+		base.ExposeAllocID = true
+	}
+	if override.ExposeShortAllocID {
+		base.ExposeShortAllocID = true
+	}
+	if override.ExposeAllocName {
+		base.ExposeAllocName = true
+	}
+	if override.ExposeAllocIndex {
+		base.ExposeAllocIndex = true
+	}
+	if override.ExposeJobID {
+		base.ExposeJobID = true
+	}
+	if override.ExposeJobName {
+		base.ExposeJobName = true
+	}
+	if override.ExposeParentJobID {
+		base.ExposeParentJobID = true
+	}
+	if override.ExposeGroupName {
+		base.ExposeGroupName = true
+	}
+	if override.ExposeTaskName {
+		base.ExposeTaskName = true
+	}
+	if override.ExposeNamespaceEnv {
+		base.ExposeNamespaceEnv = true
+	}
+	if override.ExposeDCEnv {
+		base.ExposeDCEnv = true
+	}
+	if override.ExposeCPULimit {
+		base.ExposeCPULimit = true
+	}
+	if override.ExposeCPUCores {
+		base.ExposeCPUCores = true
+	}
+	if override.ExposeMemLimit {
+		base.ExposeMemLimit = true
+	}
+	if override.ExposeMemMaxLimit {
+		base.ExposeMemMaxLimit = true
+	}
+	if override.ExposeAllocDir {
+		base.ExposeAllocDir = true
+	}
+	if override.ExposeTaskDir {
+		base.ExposeTaskDir = true
+	}
+	if override.ExposeSecretsDir {
+		base.ExposeSecretsDir = true
+	}
+	return base
+}
+
+func flattenParams(prefix string, value any, out *[]string) error {
+	switch v := value.(type) {
+	case map[string]any:
+		for k, x := range v {
+			newKey := k
+			if prefix != "" {
+				newKey = prefix + "." + k
+			}
+			if err := flattenParams(newKey, x, out); err != nil {
+				return err
+			}
+		}
+	case map[string]string:
+		for k, x := range v {
+			newKey := k
+			if prefix != "" {
+				newKey = prefix + "." + k
+			}
+			if err := flattenParams(newKey, x, out); err != nil {
+				return err
+			}
+		}
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, x := range v {
+			parts = append(parts, fmt.Sprintf("%v", x))
+		}
+		*out = append(*out, fmt.Sprintf("--%s=[%s]", prefix, strings.Join(parts, ",")))
+	case []string:
+		parts := make([]string, len(v))
+		for i, x := range v {
+			parts[i] = fmt.Sprintf("\"%s\"", x)
+		}
+		*out = append(*out, fmt.Sprintf("--%s=[%s]", prefix, strings.Join(parts, ",")))
+	case bool:
+		if v {
+			*out = append(*out, fmt.Sprintf("--%s", prefix))
+		}
+	case nil:
+		// ignore
+	default:
+		val := fmt.Sprintf("%v", v)
+		// quote strings containing whitespace or special chars
+		if s, ok := v.(string); ok {
+			if strings.ContainsAny(s, " \",:[]{}") {
+				val = fmt.Sprintf("\"%s\"", s)
+			}
+		}
+		*out = append(*out, fmt.Sprintf("--%s=%s", prefix, val))
+	}
+	return nil
+}
+
+func loadParamsFile(path string) ([]string, error) {
+	if path == "" {
+		return nil, nil
+	}
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var data map[string]any
+	if err := yaml.Unmarshal(bytes, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse params file as YAML: %w", err)
+	}
+	out := []string{}
+	for k, v := range data {
+		if err := flattenParams(k, v, &out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, error) {
+	spec := &jobSpec{}
 	for _, d := range nomadDirs {
 		if err := applyDirective(spec, d, "NOMAD"); err != nil {
 			return nil, err
