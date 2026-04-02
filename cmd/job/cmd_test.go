@@ -34,8 +34,8 @@ func TestNomadTokenEnvPriority(t *testing.T) {
 
 	runCmd := resolveRunCmd(t)
 	nc := nomadClientFromCmd(runCmd)
-	if nc.token != "abc-token" {
-		t.Fatalf("expected ABC_TOKEN to be prioritized, got %q", nc.token)
+	if nc.Token() != "abc-token" {
+		t.Fatalf("expected ABC_TOKEN to be prioritized, got %q", nc.Token())
 	}
 }
 

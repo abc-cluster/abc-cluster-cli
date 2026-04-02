@@ -2,26 +2,21 @@ package job
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 )
 
 // loadParamsFile reads a YAML params file and converts it to a slice of
 // "--key=value" directive strings compatible with applyDirective. Nested keys
-// are flattened with dot notation: foo.bar=baz → --foo.bar=baz.
+// are dot-flattened: foo.bar=baz → --foo.bar=baz.
 func loadParamsFile(path string) ([]string, error) {
 	if path == "" {
 		return nil, nil
 	}
-	data, err := os.ReadFile(path)
+	raw, err := utils.LoadParamsFile(path)
 	if err != nil {
 		return nil, err
-	}
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse params file as YAML: %w", err)
 	}
 	var out []string
 	for k, v := range raw {
