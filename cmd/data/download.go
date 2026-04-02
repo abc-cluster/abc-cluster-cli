@@ -255,11 +255,19 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace st
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("mkdir -p %s\n", shellEscape(dest)))
+
+	// Task 1: download using selected tool
+	sb.WriteString("echo '=== TASK 1: Downloading files with chosen tool ==='\n")
 	sb.WriteString(cmdLine + "\n")
 
-	uploadCmd := fmt.Sprintf("abc data upload --url=%s --access-token=%s --workspace=%s", shellEscape(serverURL), shellEscape(accessToken), shellEscape(workspace))
-	sb.WriteString("echo 'Uploading downloaded artifacts to tusd endpoint...'\n")
-	sb.WriteString(fmt.Sprintf("find %s -type f -print0 | while IFS= read -r -d '' f; do %s \"$f\"; done\n", shellEscape(dest), uploadCmd))
+	// Task 2: upload to TUS endpoint (optional, only if destination is non-empty)
+	if opts.destination != "" {
+		uploadCmd := fmt.Sprintf("abc data upload --url=%s --access-token=%s --workspace=%s", shellEscape(serverURL), shellEscape(accessToken), shellEscape(workspace))
+		sb.WriteString("echo '=== TASK 2: Uploading downloaded artifacts to tusd endpoint ==='\n")
+		sb.WriteString(fmt.Sprintf("find %s -type f -print0 | while IFS= read -r -d '' f; do %s \"$f\"; done\n", shellEscape(dest), uploadCmd))
+	} else {
+		sb.WriteString("echo '=== TASK 2: No destination provided, skipping upload ==='\n")
+	}
 
 	return sb.String(), nil
 }
