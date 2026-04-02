@@ -34,6 +34,7 @@ func NewCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newRunCmd(),
+		newTranslateCmd(),
 		newListCmd(),
 		newShowCmd(),
 		newStopCmd(),
