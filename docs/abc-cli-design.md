@@ -1216,11 +1216,27 @@ Flags:
 | Flag | Description |
 |---|---|
 | `--tool` | Download tool to use: `nextflow` (default), `aria2`, `rclone`, `wget`, `s5cmd` |
+| `--driver` | `exec` (host) or `docker` (container) |
 | `--source` | Source URI (HTTP(s), S3 path, or bucket prefix) |
 | `--dest` | Destination path inside task container (for non-nextflow tools) |
 | `--url-file` | Local path containing newline-separated source URLs |
 | `--parallel` | Parallelism (worker/task-level concurrency) |
 | `--tool-args` | Extra tool-specific flags passed through to the selected download program |
+
+##### Docker image mapping (pinned)
+
+- `aria2` => `quay.io/biocontainers/aria2:1.36.0--he1b5a44_0`
+- `rclone` => `quay.io/rclone/rclone:1.77.0`
+- `wget` => `busybox:1.36.0`
+- `s5cmd` => `quay.io/s5cmd/s5cmd:2.1.0`
+- `nextflow` => `nextflow/nextflow:25.10.4`
+
+##### Resume/retry design for aria2
+
+- When using `aria2`, the command includes a reusable destination like `/tmp/abc-data-download` and can apply resume flags.
+- To enable resume across Nomad retries, use a volume/host mount that preserves download artifacts between re-schedules.
+- Enable/force `aria2` options: `--continue=true --auto-file-renaming=false --allow-overwrite=true`.
+- A Nomad job retry policy (`--reschedule-mode=delay --reschedule-attempts=3 --reschedule-interval=30s`) helps restart after transient failure.
 
 #### `abc data list [prefix]`
 
