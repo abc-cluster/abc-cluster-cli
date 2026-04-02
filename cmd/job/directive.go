@@ -106,7 +106,7 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 			spec.Meta["abc_reschedule_max_delay"] = spec.RescheduleMaxDelay
 		}
 	}
-	if spec.OutputLog != "" || spec.ErrorLog != "" {
+	if spec.OutputLog != "" || spec.ErrorLog != "" || spec.Conda != "" {
 		if spec.Meta == nil {
 			spec.Meta = map[string]string{}
 		}
@@ -115,6 +115,9 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 		}
 		if spec.ErrorLog != "" {
 			spec.Meta["abc_error"] = spec.ErrorLog
+		}
+		if spec.Conda != "" {
+			spec.Meta["abc_conda"] = spec.Conda
 		}
 	}
 	if spec.NoNetwork && len(spec.Ports) > 0 {
@@ -281,6 +284,15 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			}
 			spec.OutputLog = val
 		case "error":
+			if !hasValue {
+				return fmt.Errorf("#%s --error requires a value", marker)
+			}
+			spec.ErrorLog = val
+		case "conda":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --conda requires a value", marker)
+			}
+			spec.Conda = val
 			if !hasValue {
 				return fmt.Errorf("#%s --error requires a value", marker)
 			}

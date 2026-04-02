@@ -57,7 +57,8 @@ type jobSpec struct {
 	Affinities         []nomadAffinity
 
 	// ── Meta directives ───────────────────────────────────────────────────────
-	Meta map[string]string
+	Meta         map[string]string
+	Conda       string
 
 	// ── Network directives ────────────────────────────────────────────────────
 	Ports []string

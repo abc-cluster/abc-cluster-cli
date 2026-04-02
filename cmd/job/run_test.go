@@ -266,6 +266,37 @@ python train.py
 	}
 }
 
+func TestJobRun_ABCPreambleConda(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=conda-job
+#ABC --conda=environment.yml
+python -c "print(\"hello\")"
+`
+	p := writeTempScript(t, "conda.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_conda`) || !strings.Contains(out, `environment.yml`) {
+		t.Fatalf("expected abc_conda metadata in output, got:\n%s", out)
+	}
+}
+
+func TestJobRun_CLIConda(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=conda-cli-job
+python -c "print(\"hello\")"
+`
+	p := writeTempScript(t, "conda-cli.sh", script)
+	out, err := executeCmd(t, p, "--conda", "env.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_conda`) || !strings.Contains(out, `env.yaml`) {
+		t.Fatalf("expected abc_conda metadata in output, got:\n%s", out)
+	}
+}
+
 func TestJobRun_RegionAndDCScheduler(t *testing.T) {
 	script := `#!/bin/bash
 #ABC --name=regional-job

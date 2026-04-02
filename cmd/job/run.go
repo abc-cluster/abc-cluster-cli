@@ -162,6 +162,7 @@ EXAMPLES
 	cmd.Flags().String("driver", "", "Task driver (exec, hpc-bridge, docker)")
 	cmd.Flags().String("output", "", "Tee stdout to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("error", "", "Tee stderr to $NOMAD_TASK_DIR/<filename>")
+	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
 	cmd.Flags().Bool("no-network", false, "Disable network access for this job")
 	cmd.Flags().StringSlice("port", nil, "Named network ports")
 
@@ -248,6 +249,13 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if v, _ := cmd.Flags().GetString("error"); v != "" {
 		spec.ErrorLog = v
+	}
+	if v, _ := cmd.Flags().GetString("conda"); v != "" {
+		spec.Conda = v
+		if spec.Meta == nil {
+			spec.Meta = map[string]string{}
+		}
+		spec.Meta["abc_conda"] = v
 	}
 	if m, _ := cmd.Flags().GetStringToString("meta"); len(m) > 0 {
 		if spec.Meta == nil {
