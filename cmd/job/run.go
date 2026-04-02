@@ -173,6 +173,7 @@ EXAMPLES
 
 	// Meta + params
 	cmd.Flags().StringToString("meta", nil, "Meta key=value (repeatable)")
+	cmd.Flags().StringToString("driver.config", nil, "Driver config key=value (repeatable)")
 	cmd.Flags().String("params-file", "", "YAML params file path")
 
 	return cmd
@@ -253,6 +254,14 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 		}
 		for k, v := range m {
 			spec.Meta[k] = v
+		}
+	}
+	if dc, _ := cmd.Flags().GetStringToString("driver.config"); len(dc) > 0 {
+		if spec.DriverConfig == nil {
+			spec.DriverConfig = map[string]string{}
+		}
+		for k, v := range dc {
+			spec.DriverConfig[k] = v
 		}
 	}
 	if ps, _ := cmd.Flags().GetStringSlice("port"); len(ps) > 0 {

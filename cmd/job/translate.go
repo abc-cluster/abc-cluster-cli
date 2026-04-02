@@ -121,11 +121,11 @@ func translateScript(content, scriptName, executor string) (string, []string, er
 			}
 			if len(notes) > 0 {
 				for _, note := range notes {
-					preservedLines = append(preservedLines, fmt.Sprintf("# NOTE: %s", note))
+					preservedLines = append(preservedLines, fmt.Sprintf("# NOTE: [abc job translate] %s", note))
 				}
 			}
 			if len(mapped) == 0 {
-				preservedLines = append(preservedLines, fmt.Sprintf("# NOTE: unmapped directive from %s, preserved", translator.Name()))
+				preservedLines = append(preservedLines, fmt.Sprintf("# NOTE: [abc job translate] unmapped directive from %s, preserved", translator.Name()))
 				preservedLines = append(preservedLines, trim)
 				unmapped = append(unmapped, strings.TrimSpace(trim))
 			}
@@ -133,6 +133,7 @@ func translateScript(content, scriptName, executor string) (string, []string, er
 		}
 		preservedLines = append(preservedLines, l)
 	}
+
 
 	outLines := []string{}
 	if shebang != "" {
