@@ -177,6 +177,30 @@ type NomadVariable struct {
 	ModifyIndex uint64            `json:"ModifyIndex"`
 }
 
+// NomadNodeResource holds per-node resource values.
+type NomadNodeResource struct {
+	CPU      int `json:"CPU"`
+	MemoryMB int `json:"MemoryMB"`
+	DiskMB   int `json:"DiskMB"`
+	IOPS     int `json:"IOPS"`
+}
+
+// NomadNode represents Nomad node details captured from /v1/node/<id>.
+type NomadNode struct {
+	ID                string            `json:"ID"`
+	Name              string            `json:"Name"`
+	Datacenter        string            `json:"Datacenter"`
+	Region            string            `json:"Region"`
+	Class             string            `json:"Class"`
+	Status            string            `json:"Status"`
+	Drain             bool              `json:"Drain"`
+	Availability      string            `json:"Availability"`
+	Namespace         string            `json:"Namespace"`
+	Attributes        map[string]string `json:"Attributes"`
+	Resources         NomadNodeResource `json:"Resources"`
+	ReservedResources NomadNodeResource `json:"ReservedResources"`
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 func (c *NomadClient) url(path string, query url.Values) string {
@@ -421,6 +445,18 @@ func (c *NomadClient) GetVariable(ctx context.Context, path, namespace string) (
 	}
 	var out NomadVariable
 	return &out, c.get(ctx, "/v1/var/"+url.PathEscape(path), q, &out)
+}
+
+// ListNodes returns Nomad node summaries.
+func (c *NomadClient) ListNodes(ctx context.Context) ([]NomadNode, error) {
+	var out []NomadNode
+	return out, c.get(ctx, "/v1/nodes", nil, &out)
+}
+
+// GetNode returns detailed node resource information.
+func (c *NomadClient) GetNode(ctx context.Context, nodeID string) (*NomadNode, error) {
+	var out NomadNode
+	return &out, c.get(ctx, "/v1/node/"+url.PathEscape(nodeID), nil, &out)
 }
 
 // PutVariable creates or updates a variable at the given path.

@@ -1,6 +1,6 @@
 # `abc` CLI — Command Design Specification v5
 
-TODO: 
+TODO:
 -  `abc job run --submit` to be `abc script run` i.e. the `--submit` should be the default behaviour
 
 
@@ -1197,6 +1197,31 @@ $ abc data download ds-002def ./local/batch-48.csv
   ✓ Checksum verified  sha256:3a7f...c921
 ```
 
+#### `abc data download --tool=<tool> --source=<uri> --dest=<path> [--url-file=<list>]`
+
+```
+$ abc data download --tool=aria2 --source=https://example.com/large-file.fastq --dest=/tmp/data --parallel=16
+
+  Submitting aria2 download job...
+  Job submitted: run-xxxxxxxx
+
+$ abc data download --tool=rclone --source=s3://my-bucket/corpus --dest=/mnt/corpus --parallel=64
+
+  Submitting rclone download job...
+  Job submitted: run-yyyyyyyy
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--tool` | Download tool to use: `nextflow` (default), `aria2`, `rclone`, `wget`, `s5cmd` |
+| `--source` | Source URI (HTTP(s), S3 path, or bucket prefix) |
+| `--dest` | Destination path inside task container (for non-nextflow tools) |
+| `--url-file` | Local path containing newline-separated source URLs |
+| `--parallel` | Parallelism (worker/task-level concurrency) |
+| `--tool-args` | Extra tool-specific flags passed through to the selected download program |
+
 #### `abc data list [prefix]`
 
 ```
@@ -1569,6 +1594,38 @@ $ abc storage objects stat consortium-raw-seq \
   Legal hold    ON  (POLICY-01 raw sequence lock)
   Region        za-cpt
 ```
+
+#### `abc storage size [--servers|--buckets|--all]`
+
+```
+$ abc storage size --servers
+
+  SERVER STORAGE:
+  hpc-a-node-001: 12.1 TB used / 16.0 TB total (3.9 TB free)
+  hpc-a-node-007:  9.7 TB used / 16.0 TB total (6.3 TB free)
+
+$ abc storage size --buckets
+
+  BUCKET STORAGE:
+  consortium-raw-seq: 41.8 TB used / 100.0 TB total
+  consortium-work: 14.2 TB used / 80.0 TB total
+
+$ abc storage size --all
+
+  (both server and bucket sections shown)
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--servers` | Show host/node storage usage and capacity |
+| `--buckets` | Show bucket storage usage and capacity |
+| `--all` | Show both categories (default if none specified) |
+| `--nomad-addr` | Nomad API endpoint |
+| `--nomad-token` | Nomad ACL token |
+| `--region` | Nomad region |
+| `--namespace` | Nomad namespace |
 
 ---
 
