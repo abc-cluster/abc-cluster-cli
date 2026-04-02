@@ -12,6 +12,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -86,6 +87,7 @@ func init() {
 
 	rootCmd.AddCommand(pipeline.NewCmd())
 	rootCmd.AddCommand(data.NewCmd(&serverURL, &accessToken, &workspace))
+	rootCmd.AddCommand(storage.NewCmd())
 	rootCmd.AddCommand(job.NewCmd())
 	rootCmd.AddCommand(job.NewLogsCmd())
 }
