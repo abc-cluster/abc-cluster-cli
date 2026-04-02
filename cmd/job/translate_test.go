@@ -92,7 +92,7 @@ echo bye
 	if len(unmapped) != 1 {
 		t.Fatalf("expected unmapped count 1, got %d", len(unmapped))
 	}
-	if !strings.Contains(out, "# NOTE: unmapped directive") {
+	if !strings.Contains(out, "# NOTE: [abc job translate] unmapped directive") {
 		t.Fatalf("expected note about unmapped directive; got: %s", out)
 	}
 	if !strings.Contains(out, "#SBATCH --gres=gpu:2") {
@@ -130,7 +130,7 @@ func TestTranslateJobScript_ExecutorOverride(t *testing.T) {
 
 echo override
 `
-	
+
 	cmd := newTranslateCmd()
 	bufOut := &strings.Builder{}
 	bufErr := &strings.Builder{}
