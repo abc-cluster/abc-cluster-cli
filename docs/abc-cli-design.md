@@ -477,6 +477,49 @@ Flags:
 | `--confirm` | Skip the confirmation prompt |
 | `--dry-run` | Show what would be deleted without deleting |
 
+---
+
+## 6. `abc job run` Conda support design
+
+### 6.1 Requirement
+
+- Add support for cluster users to request Conda-managed environments from the job run interface.
+- Support both:
+  - a path to an existing Conda `environment.yml`, and
+  - a generic `conda` package spec (comma-separated packages, or a conda env YAML string).
+
+### 6.2 CLI and preamble syntax
+
+- New CLI flag: `--conda <value>`
+- New preamble directive: `#ABC --conda=<value>`
+
+### 6.3 jobSpec fields
+
+- `jobSpec.Conda string` holds the incoming value.
+
+### 6.4 metadata mapping
+
+- The CLI sets `meta["abc_conda"]` with the provided value.
+- This metadata is emitted in Nomad job spec `meta` block, enabling downstream control plane behavior.
+
+### 6.5 Control plane responsibility comment
+
+- The CLI and scheduler path terminate at Nomad job submission — they only package user intent and environment metadata.
+- The control plane (ABC-cluster server / executor) is responsible for:
+  - detecting `abc_conda` metadata on received jobs,
+  - selecting or building the container image (e.g., via Seqera Wave service for Docker),
+  - injecting appropriate runtime configuration into worker task spec,
+  - and ensuring the user script executes inside the chosen Conda-enabled container.
+
+- The worker-side job task is responsible for script execution, not metadata interpretation.
+
+### 6.6 Expected behavior
+
+- `abc job run --conda=python=3.12,pandas,scipy` should submit with `meta.abc_conda` and no local transformer.
+- `abc job run --conda=path/to/environment.yml` should submit with `meta.abc_conda` pointing to YAML path.
+- ABC control plane implements an optional “graphs” path for resolving the value into a container image and then running the Nomad job with that image.
+
+
 #### `abc secret logs <name>`
 
 Combined audit and rotation log for a single secret — access events (READ, USE) and lifecycle events (CREATE, ROTATE, DELETE) in one stream.
