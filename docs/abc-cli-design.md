@@ -1235,7 +1235,14 @@ Flags:
 
 `abc data download` submits a data job that effectively has two steps:
 1. tool task — run language specific downloader (`aria2`, `rclone`, `wget`, `s5cmd`, or `nextflow`) to local destination
-2. upload task — locate downloaded files in same workspace and upload to TUS endpoint via `abc data upload`
+2. upload task — optional logic based on destination
+
+Upload task route:
+- no `--dest`: no upload.
+- `--dest abc-bucket`: upload via `abc data upload` against TUS endpoint.
+- `--dest <bucket|server|cluster>` (no slash, no URL scheme): dynamic `rclone` config + `rclone copy` to target.
+  - config is injected by the ABC control plane (from `abc-node-probe` / `abc-control-plan`) and passed into the Nomad job as env/secret, not stored in user-local script.
+- otherwise: not supported yet; prints skip message.
 
 In the current implementation this is a single Nomad task script with ordered commands, but it is architected to evolve into a true two-task Nomad group (download + upload) in the cluster job spec.
 
