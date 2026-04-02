@@ -1,137 +1,226 @@
 package pipeline
 
 import (
-"encoding/json"
-"fmt"
-"os"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+	"time"
 
-"github.com/abc-cluster/abc-cluster-cli/api"
-"github.com/spf13/cobra"
-"gopkg.in/yaml.v3"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/spf13/cobra"
 )
 
-// runOptions holds the flags for the "pipeline run" command.
-type runOptions struct {
-pipeline   string
-runName    string
-revision   string
-profile    string
-workDir    string
-configFile string
-paramsFile string
+const (
+	watchDelay   = 10 * time.Second
+	watchTimeout = 5 * time.Minute
+)
+
+func newRunCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run <name-or-url>",
+		Short: "Submit a Nextflow pipeline head job to Nomad",
+		Long: `Submit a Nextflow pipeline as a head job to the ABC Nomad cluster.
+
+<name-or-url> can be:
+  - A saved pipeline name (stored in Nomad Variables via "abc pipeline add")
+  - A Nextflow pipeline repository path  e.g. nextflow-io/hello
+  - A full GitHub/GitLab URL             e.g. https://github.com/nf-core/rnaseq
+
+CLI flags override any defaults saved for the named pipeline.
+
+EXAMPLES
+
+  # Ad-hoc run of a public pipeline
+  abc pipeline run nextflow-io/hello --profile hello
+
+  # Run a saved pipeline with default parameters
+  abc pipeline run rnaseq
+
+  # Override params on a saved pipeline
+  abc pipeline run rnaseq --params-file custom-params.yaml --revision 3.14.0
+
+  # Dry-run: print generated HCL without submitting
+  abc pipeline run nextflow-io/hello --dry-run
+
+  # Submit and stream head job logs
+  abc pipeline run rnaseq --wait --logs`,
+		Args: cobra.ExactArgs(1),
+		RunE: runPipeline,
+	}
+
+	// Nextflow run options
+	cmd.Flags().String("params-file", "", "YAML/JSON file with Nextflow pipeline parameters")
+	cmd.Flags().String("revision", "", "Pipeline revision (branch, tag, or commit SHA)")
+	cmd.Flags().String("profile", "", "Nextflow config profile(s), comma-separated")
+	cmd.Flags().String("config", "", "Extra nextflow config file to merge")
+	cmd.Flags().String("work-dir", "", "Shared host volume path (default: /work/nextflow-work)")
+
+	// Nomad placement
+	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
+
+	// Head job resource overrides
+	cmd.Flags().String("nf-version", "", "Nextflow Docker image tag (default: 25.10.4)")
+	cmd.Flags().String("nf-plugin-version", "", "nf-nomad plugin version (default: 0.4.0-edge3)")
+	cmd.Flags().Int("cpu", 0, "Head job CPU in MHz (default: 1000)")
+	cmd.Flags().Int("memory", 0, "Head job memory in MB (default: 2048)")
+
+	// Job identity
+	cmd.Flags().String("name", "", "Override Nomad job name (default: nextflow-head)")
+
+	// Behaviour
+	cmd.Flags().Bool("wait", false, "Block until the head job completes")
+	cmd.Flags().Bool("logs", false, "Stream head job logs after submit")
+	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
+
+	return cmd
 }
 
-// newRunCmd returns the "pipeline run" subcommand.
-func newRunCmd(serverURL, accessToken, workspace *string, factory ClientFactory) *cobra.Command {
-opts := &runOptions{}
+func runPipeline(cmd *cobra.Command, args []string) error {
+	nameOrURL := args[0]
+	ns := namespaceFromCmd(cmd)
 
-cmd := &cobra.Command{
-Use:   "run",
-Short: "Submit a pipeline run",
-Long: `Submit a pipeline for execution on the abc-cluster platform.
+	nc := nomadClientFromCmd(cmd)
 
-Examples:
-  # Run a pipeline by URL
-  abc pipeline run --pipeline https://github.com/org/my-pipeline
+	// Try loading a saved pipeline; treat as ad-hoc URL if not found.
+	saved, err := loadPipeline(cmd.Context(), nc, nameOrURL, ns)
+	if err != nil {
+		return err
+	}
+	base := saved
+	if base == nil {
+		base = &PipelineSpec{Repository: nameOrURL}
+	}
 
-  # Run with a specific revision and profile
-  abc pipeline run --pipeline my-pipeline --revision main --profile test
+	// Build CLI override spec from flags.
+	override := &PipelineSpec{}
+	if v, _ := cmd.Flags().GetString("name"); v != "" {
+		override.Name = v
+	}
+	if v, _ := cmd.Flags().GetString("revision"); v != "" {
+		override.Revision = v
+	}
+	if v, _ := cmd.Flags().GetString("profile"); v != "" {
+		override.Profile = v
+	}
+	if v, _ := cmd.Flags().GetString("work-dir"); v != "" {
+		override.WorkDir = v
+	}
+	if v, _ := cmd.Flags().GetStringSlice("datacenter"); len(v) > 0 {
+		override.Datacenters = v
+	}
+	if v, _ := cmd.Flags().GetString("nf-version"); v != "" {
+		override.NfVersion = v
+	}
+	if v, _ := cmd.Flags().GetString("nf-plugin-version"); v != "" {
+		override.NfPluginVersion = v
+	}
+	if v, _ := cmd.Flags().GetInt("cpu"); v != 0 {
+		override.CPU = v
+	}
+	if v, _ := cmd.Flags().GetInt("memory"); v != 0 {
+		override.MemoryMB = v
+	}
+	if configPath, _ := cmd.Flags().GetString("config"); configPath != "" {
+		data, err := readFile(configPath)
+		if err != nil {
+			return fmt.Errorf("reading --config %q: %w", configPath, err)
+		}
+		override.ExtraConfig = string(data)
+	}
+	if paramsFile, _ := cmd.Flags().GetString("params-file"); paramsFile != "" {
+		params, err := utils.LoadParamsFile(paramsFile)
+		if err != nil {
+			return fmt.Errorf("reading --params-file: %w", err)
+		}
+		override.Params = params
+	}
+	if ns != "" {
+		override.Namespace = ns
+	}
 
-  # Run with a params file
-  abc pipeline run --pipeline my-pipeline --params-file params.yaml`,
-RunE: func(cmd *cobra.Command, args []string) error {
-return runPipeline(cmd, opts, *serverURL, *accessToken, *workspace, factory)
-},
+	spec := mergeSpec(base, override)
+	spec.defaults()
+
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	// Read Nomad connection details for embedding in the head job env block.
+	nomadAddr, _ := cmd.Flags().GetString("nomad-addr")
+	if nomadAddr == "" {
+		nomadAddr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
+	}
+	if nomadAddr == "" {
+		nomadAddr = "http://127.0.0.1:4646"
+	}
+	nomadToken, _ := cmd.Flags().GetString("nomad-token")
+	if nomadToken == "" {
+		nomadToken, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
+	}
+
+	runUUID := newRunUUID()
+	hcl := generateHeadJobHCL(spec, nomadAddr, nomadToken, runUUID)
+
+	if dryRun {
+		fmt.Fprint(cmd.OutOrStdout(), hcl)
+		return nil
+	}
+
+	return submitAndWatch(cmd.Context(), cmd, nc, spec, hcl)
 }
 
-cmd.Flags().StringVarP(&opts.pipeline, "pipeline", "p", "", "pipeline name or URL to run (required)")
-cmd.Flags().StringVar(&opts.runName, "name", "", "custom name for this run")
-cmd.Flags().StringVar(&opts.revision, "revision", "", "pipeline revision (branch, tag, or commit SHA)")
-cmd.Flags().StringVar(&opts.profile, "profile", "", "Nextflow config profile(s) to use (comma-separated)")
-cmd.Flags().StringVar(&opts.workDir, "work-dir", "", "work directory for pipeline execution")
-cmd.Flags().StringVar(&opts.configFile, "config", "", "path to a Nextflow config file to use for this run")
-cmd.Flags().StringVar(&opts.paramsFile, "params-file", "", "path to a YAML or JSON file with pipeline parameters")
+func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClient, spec *PipelineSpec, hcl string) error {
+	fmt.Fprintf(cmd.ErrOrStderr(), "  Parsing HCL via Nomad...\n")
+	jobJSON, err := nc.ParseHCL(ctx, hcl)
+	if err != nil {
+		return fmt.Errorf("nomad HCL parse: %w", err)
+	}
 
-_ = cmd.MarkFlagRequired("pipeline")
+	jobName := "nextflow-head"
+	if spec.Name != "" {
+		jobName = spec.Name
+	}
 
-return cmd
-}
+	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting pipeline head job to Nomad...\n")
+	resp, err := nc.RegisterJob(ctx, jobJSON)
+	if err != nil {
+		return fmt.Errorf("nomad register: %w", err)
+	}
 
-// runPipeline executes the pipeline run logic.
-func runPipeline(cmd *cobra.Command, opts *runOptions, serverURL, accessToken, workspace string, factory ClientFactory) error {
-params, err := loadParamsFile(opts.paramsFile)
-if err != nil {
-return fmt.Errorf("failed to load params file: %w", err)
-}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "\n  Pipeline submitted\n")
+	fmt.Fprintf(out, "  Job        %s\n", jobName)
+	fmt.Fprintf(out, "  Eval ID    %s\n", resp.EvalID)
+	if resp.Warnings != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Warnings: %s\n", resp.Warnings)
+	}
 
-configText, err := loadTextFile(opts.configFile)
-if err != nil {
-return fmt.Errorf("failed to load config file: %w", err)
-}
+	wait, _ := cmd.Flags().GetBool("wait")
+	streamLogs, _ := cmd.Flags().GetBool("logs")
 
-req := &api.PipelineRunRequest{
-Pipeline:   opts.pipeline,
-RunName:    opts.runName,
-Revision:   opts.revision,
-Profile:    opts.profile,
-WorkDir:    opts.workDir,
-ConfigText: configText,
-Params:     params,
-}
+	if wait || streamLogs {
+		fmt.Fprintln(cmd.ErrOrStderr(), "\n  Waiting for allocation...")
+		var w io.Writer = io.Discard
+		if streamLogs {
+			w = out
+		}
+		if err := utils.WatchJobLogs(ctx, nc, jobName, spec.Namespace, w, watchDelay, watchTimeout); err != nil {
+			return err
+		}
+		return nil
+	}
 
-client := factory(serverURL, accessToken, workspace)
-resp, err := client.SubmitPipelineRun(req)
-if err != nil {
-return fmt.Errorf("pipeline run submission failed: %w", err)
-}
-
-fmt.Fprintf(cmd.OutOrStdout(), "Pipeline run submitted successfully.\n")
-fmt.Fprintf(cmd.OutOrStdout(), "  Run ID:   %s\n", resp.RunID)
-fmt.Fprintf(cmd.OutOrStdout(), "  Run Name: %s\n", resp.RunName)
-if resp.WorkflowID != "" {
-fmt.Fprintf(cmd.OutOrStdout(), "  Workflow: %s\n", resp.WorkflowID)
-}
-
-return nil
+	fmt.Fprintf(out, "\n  Track progress:\n")
+	fmt.Fprintf(out, "    abc job logs %s --follow\n", jobName)
+	fmt.Fprintf(out, "    abc job show %s\n", jobName)
+	return nil
 }
 
-// loadParamsFile reads and parses a YAML or JSON parameters file.
-// Returns nil if paramsFile is empty.
-func loadParamsFile(paramsFile string) (map[string]any, error) {
-if paramsFile == "" {
-return nil, nil
-}
-
-data, err := os.ReadFile(paramsFile)
-if err != nil {
-return nil, fmt.Errorf("could not read params file %q: %w", paramsFile, err)
-}
-
-var params map[string]any
-
-// Try JSON first, then YAML.
-if json.Valid(data) {
-if err := json.Unmarshal(data, &params); err != nil {
-return nil, fmt.Errorf("invalid JSON in params file: %w", err)
-}
-} else {
-if err := yaml.Unmarshal(data, &params); err != nil {
-return nil, fmt.Errorf("invalid YAML in params file: %w", err)
-}
-}
-
-return params, nil
-}
-
-// loadTextFile reads the content of a file as a string.
-// Returns an empty string if path is empty.
-func loadTextFile(path string) (string, error) {
-if path == "" {
-return "", nil
-}
-data, err := os.ReadFile(path)
-if err != nil {
-return "", fmt.Errorf("could not read file %q: %w", path, err)
-}
-return string(data), nil
+func newRunUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("run-%d", os.Getpid())
+	}
+	return hex.EncodeToString(b)
 }

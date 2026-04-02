@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -424,47 +425,7 @@ const (
 
 func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string,
 	w io.Writer, delay, timeout time.Duration) error {
-	start := time.Now()
-	for {
-		if ctx.Err() != nil {
-			return nil
-		}
-		if timeout > 0 && time.Since(start) > timeout {
-			return fmt.Errorf("watch timeout after %s", timeout)
-		}
-
-		allocs, err := nc.GetJobAllocs(ctx, jobID, namespace, false)
-		if err != nil {
-			return err
-		}
-
-		var chosen *NomadAllocStub
-		for _, a := range allocs {
-			if a.ClientStatus == "running" {
-				chosen = &a
-				break
-			}
-			if chosen == nil || a.CreateTime > chosen.CreateTime {
-				chosen = &a
-			}
-		}
-
-		if chosen != nil {
-			task := "main"
-			for t := range chosen.TaskStates {
-				task = t
-				break
-			}
-			follow := chosen.ClientStatus == "running"
-			return nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, follow, w)
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-sleepCh(int(delay.Seconds())):
-		}
-	}
+	return utils.WatchJobLogs(ctx, nc, jobID, namespace, w, delay, timeout)
 }
 
 func newSubmissionID() string {

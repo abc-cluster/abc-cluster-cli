@@ -3,10 +3,9 @@ package job
 import (
 	"fmt"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -218,66 +217,8 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec *jobSpec) {
 	}
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers (delegating to shared utils) ─────────────────────────────────────
 
-func parseMemoryMB(s string) (int, error) {
-	upper := strings.ToUpper(strings.TrimSpace(s))
-	if upper == "" {
-		return 0, fmt.Errorf("empty memory value")
-	}
-	switch {
-	case strings.HasSuffix(upper, "G"):
-		n, err := strconv.Atoi(upper[:len(upper)-1])
-		if err != nil || n < 1 {
-			return 0, fmt.Errorf("invalid memory value %q", s)
-		}
-		return n * 1024, nil
-	case strings.HasSuffix(upper, "M"):
-		n, err := strconv.Atoi(upper[:len(upper)-1])
-		if err != nil || n < 1 {
-			return 0, fmt.Errorf("invalid memory value %q", s)
-		}
-		return n, nil
-	case strings.HasSuffix(upper, "K"):
-		n, err := strconv.Atoi(upper[:len(upper)-1])
-		if err != nil || n < 1 {
-			return 0, fmt.Errorf("invalid memory value %q", s)
-		}
-		return (n + 1023) / 1024, nil
-	default:
-		n, err := strconv.Atoi(upper)
-		if err != nil || n < 1 {
-			return 0, fmt.Errorf("invalid memory value %q", s)
-		}
-		return n, nil
-	}
-}
-
-func walltimeToSeconds(t string) (int, error) {
-	parts := strings.Split(t, ":")
-	if len(parts) != 3 {
-		return 0, fmt.Errorf("invalid --time value %q: expected HH:MM:SS", t)
-	}
-	h, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, fmt.Errorf("invalid --time value %q: %w", t, err)
-	}
-	m, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, fmt.Errorf("invalid --time value %q: %w", t, err)
-	}
-	sec, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return 0, fmt.Errorf("invalid --time value %q: %w", t, err)
-	}
-	return h*3600 + m*60 + sec, nil
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
+func parseMemoryMB(s string) (int, error)    { return utils.ParseMemoryMB(s) }
+func walltimeToSeconds(t string) (int, error) { return utils.WalltimeToSeconds(t) }
+func sortedKeys(m map[string]string) []string { return utils.SortedKeys(m) }
