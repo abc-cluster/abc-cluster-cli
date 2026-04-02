@@ -242,6 +242,20 @@ func buildToolCommand(opts *downloadOptions) (string, error) {
 	return cmd, nil
 }
 
+func isClusterOrBucketTarget(dest string) bool {
+	// For this MVP, treat non-filesystem path string as cluster/bucket/remote target.
+	if dest == "" {
+		return false
+	}
+	if strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "./") || strings.HasPrefix(dest, "../") {
+		return false
+	}
+	if strings.Contains(dest, "://") {
+		return false
+	}
+	return true
+}
+
 func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace string) (string, error) {
 	cmdLine, err := buildToolCommand(opts)
 	if err != nil {
@@ -260,15 +274,28 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace st
 	sb.WriteString("echo '=== TASK 1: Downloading files with chosen tool ==='\n")
 	sb.WriteString(cmdLine + "\n")
 
-	// Task 2: upload to TUS endpoint (optional, only if destination is non-empty)
-	if opts.destination != "" {
-		uploadCmd := fmt.Sprintf("abc data upload --url=%s --access-token=%s --workspace=%s", shellEscape(serverURL), shellEscape(accessToken), shellEscape(workspace))
-		sb.WriteString("echo '=== TASK 2: Uploading downloaded artifacts to tusd endpoint ==='\n")
-		sb.WriteString(fmt.Sprintf("find %s -type f -print0 | while IFS= read -r -d '' f; do %s \"$f\"; done\n", shellEscape(dest), uploadCmd))
-	} else {
+	// Task 2: upload driver behavior
+	if opts.destination == "" {
 		sb.WriteString("echo '=== TASK 2: No destination provided, skipping upload ==='\n")
+		return sb.String(), nil
 	}
 
+	if opts.destination == "abc-bucket" {
+		uploadCmd := fmt.Sprintf("abc data upload --url=%s --access-token=%s --workspace=%s", shellEscape(serverURL), shellEscape(accessToken), shellEscape(workspace))
+		sb.WriteString("echo '=== TASK 2: Uploading to TUS (abc-bucket) ==='\n")
+		sb.WriteString(fmt.Sprintf("find %s -type f -print0 | while IFS= read -r -d '' f; do %s \"$f\"; done\n", shellEscape(dest), uploadCmd))
+		return sb.String(), nil
+	}
+
+	if isClusterOrBucketTarget(opts.destination) {
+		sb.WriteString("echo '=== TASK 2: Uploading via rclone dynamic target ==='\n")
+		sb.WriteString("cat > /tmp/rclone.conf <<'EOF'\n")
+		sb.WriteString("[target]\ntype = s3\nendpoint = https://example-s3-endpoint\naccess_key_id = $RCLONE_ACCESS_KEY\nsecret_access_key = $RCLONE_SECRET_KEY\nregion = us-east-1\n\nEOF\n")
+		sb.WriteString(fmt.Sprintf("rclone --config /tmp/rclone.conf copy %s target:%s --progress\n", shellEscape(dest), shellEscape(opts.destination)))
+		return sb.String(), nil
+	}
+
+	sb.WriteString("echo '=== TASK 2: Destination type not supported for upload, skipping ==='\n")
 	return sb.String(), nil
 }
 
