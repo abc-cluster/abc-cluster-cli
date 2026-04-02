@@ -1231,6 +1231,14 @@ Flags:
 - `s5cmd` => `quay.io/s5cmd/s5cmd:2.1.0`
 - `nextflow` => `nextflow/nextflow:25.10.4`
 
+##### Two-stage job flow (tool + upload)
+
+`abc data download` submits a data job that effectively has two steps:
+1. tool task — run language specific downloader (`aria2`, `rclone`, `wget`, `s5cmd`, or `nextflow`) to local destination
+2. upload task — locate downloaded files in same workspace and upload to TUS endpoint via `abc data upload`
+
+In the current implementation this is a single Nomad task script with ordered commands, but it is architected to evolve into a true two-task Nomad group (download + upload) in the cluster job spec.
+
 ##### Resume/retry design for aria2
 
 - When using `aria2`, the command includes a reusable destination like `/tmp/abc-data-download` and can apply resume flags.
@@ -1535,6 +1543,12 @@ $ abc automation triggers
 ---
 
 ### 5.10 `abc storage`
+
+`abc storage size` relies on ABC control plane inventory services:
+- `abc-node-probe` to collect compute node/local disk capacity and usage.
+- central control plane / node metadata table to maintain per-node remaining space.
+- `rclone size` (or equivalent bucket enumeration) for connected buckets to compute `used/total` and sync to control plane inventory.
+- internal merged table used by `abc storage size` on CLI query.
 
 #### `abc storage buckets list`
 
