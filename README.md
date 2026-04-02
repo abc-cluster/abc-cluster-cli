@@ -120,6 +120,23 @@ abc job run myjob.sh --submit --watch --watch-delay 20s --watch-timeout 3m
 abc job run myjob.sh --params-file job-params.yaml --submit
 ```
 
+### `job translate`
+
+Translate a SLURM or PBS script into an ABC-annotated script. Preserves unmapped directives with notes.
+
+Usage:
+
+```bash
+# convert a SLURM script
+abc job translate myjob.slurm.sh > myjob.abc.sh
+
+# force executor type
+abc job translate --executor pbs myjob.pbs.sh > myjob.abc.sh
+
+# strict mode fails on unmapped directives
+abc job translate --strict myjob.slurm.sh
+```
+
 Allowed preamble directives include:
 - `#ABC --name=<name>`
 - `#ABC --nodes=<n>`

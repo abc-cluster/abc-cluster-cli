@@ -106,7 +106,7 @@ abc
 ├── ssh         connect to (or print SSH command for) an accessible node; filter by datacenter or pool
 ├── status
 ├── pipeline    run · list · show · cancel · resume · delete · logs · params (show/validate)
-├── job         run [--submit|--dry-run] · list · show · stop · dispatch · logs · status
+├── job         run [--submit|--dry-run] · translate · list · show · stop · dispatch · logs · status
 ├── data        upload · download · list · show · delete · move · stat · logs · encrypt · decrypt
 ├── automation  list · show · create · enable · disable · delete · logs · runs · triggers
 ├── storage     buckets (list/create/delete/stat) · objects (list/get/put/delete/stat)
@@ -884,6 +884,19 @@ $ abc job run scripts/bwa-align.sh --submit --region za-cpt
   ✓ Job submitted
   Nomad job ID   bwa-align-batch
   Evaluation ID  b3c4d5e6-f789-0abc-def1-234567890abc
+```
+
+#### `abc job translate <script>`
+
+Translate a dedicated scheduler script (SLURM/PBS) into an ABC script containing
+`#ABC` directives. Unknown directives are preserved with notes to avoid data loss.
+
+```
+# from SLURM
+abc job translate --executor slurm scripts/bwa-align.slurm.sh > scripts/bwa-align.abc.sh
+
+# preserve unmapped directives for manual audit
+abc job translate --strict scripts/bwa-align.slurm.sh
 ```
 
 Dry-run (no submission — uses `Jobs().Plan()` only):
