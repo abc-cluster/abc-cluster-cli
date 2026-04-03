@@ -10,8 +10,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// generateHCL builds a Nomad HCL job spec from spec, embedding scriptContent
-// as a Nomad template so the driver can execute it from local/<scriptName>.
+// generateHCL builds a Nomad HCL job spec from spec.
 func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	f := hclwrite.NewEmptyFile()
 	root := f.Body()
@@ -84,14 +83,18 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	mainBody.SetAttributeValue("driver", cty.StringVal(spec.Driver))
 
 	cfgBody := mainBody.AppendNewBlock("config", nil).Body()
-	appendTaskConfig(cfgBody, spec, scriptName)
+	appendTaskConfig(cfgBody, spec, scriptName, scriptContent)
 
-	// Embed the script as a Nomad template so it's available at local/<name>.
-	tmplBody := mainBody.AppendNewBlock("template", nil).Body()
-	tmplBody.SetAttributeValue("data", cty.StringVal(scriptContent))
-	tmplBody.SetAttributeValue("destination", cty.StringVal(
-		filepath.ToSlash(filepath.Join("local", scriptName))))
-	tmplBody.SetAttributeValue("perms", cty.StringVal("0755"))
+	// Non-slurm drivers execute from local/<scriptName>, so render the script to
+	// the task local directory. For slurm, we execute script content inline in
+	// config.args to avoid depending on local/<script> visibility in Slurm nodes.
+	if spec.Driver != "slurm" {
+		tmplBody := mainBody.AppendNewBlock("template", nil).Body()
+		tmplBody.SetAttributeValue("data", cty.StringVal(scriptContent))
+		tmplBody.SetAttributeValue("destination", cty.StringVal(
+			filepath.ToSlash(filepath.Join("local", scriptName))))
+		tmplBody.SetAttributeValue("perms", cty.StringVal("0755"))
+	}
 
 	if spec.Cores > 0 || spec.MemoryMB > 0 || spec.GPUs > 0 {
 		resBody := mainBody.AppendNewBlock("resources", nil).Body()
@@ -114,12 +117,14 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 
 // appendTaskConfig writes the config block for the main task, handling
 // walltime wrapping and optional stdout/stderr file redirection.
-func appendTaskConfig(cfgBody *hclwrite.Body, spec *jobSpec, scriptName string) {
+func appendTaskConfig(cfgBody *hclwrite.Body, spec *jobSpec, scriptName, scriptContent string) {
 	scriptArg := fmt.Sprintf("local/%s", scriptName)
 	if spec.Driver == "slurm" {
+		inlineScript := escapeNomadInterpolation(scriptContent)
 		cfgBody.SetAttributeValue("command", cty.StringVal("/bin/bash"))
 		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
-			cty.StringVal(scriptArg),
+			cty.StringVal("-c"),
+			cty.StringVal(inlineScript),
 		}))
 		if spec.SlurmPartition != "" {
 			cfgBody.SetAttributeValue("queue", cty.StringVal(spec.SlurmPartition))
@@ -205,6 +210,12 @@ func secondsToWalltime(seconds int) string {
 	minutes := (seconds % 3600) / 60
 	secs := seconds % 60
 	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, secs)
+}
+
+func escapeNomadInterpolation(s string) string {
+	s = strings.ReplaceAll(s, "${", "$${")
+	s = strings.ReplaceAll(s, "%{", "%%{")
+	return s
 }
 
 // appendEnvBlock emits the env block containing the HPC compatibility layer

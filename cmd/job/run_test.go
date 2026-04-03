@@ -63,6 +63,15 @@ echo hello
 	if strings.Contains(out, `command = "timeout"`) {
 		t.Fatalf("expected slurm walltime to be configured without timeout wrapper, got:\n%s", out)
 	}
+	if !regexp.MustCompile(`args\s*=\s*\["-c",`).MatchString(out) {
+		t.Fatalf("expected slurm task to execute inline script content via bash -c, got:\n%s", out)
+	}
+	if strings.Contains(out, `local/legacy.slurm.sh`) {
+		t.Fatalf("did not expect slurm task to reference local script path, got:\n%s", out)
+	}
+	if strings.Contains(out, `template {`) {
+		t.Fatalf("did not expect slurm driver path to emit a local template block, got:\n%s", out)
+	}
 }
 
 func TestJobRun_SlurmPreambleMapsOutputErrorAndChdir(t *testing.T) {
@@ -86,6 +95,24 @@ echo hello
 	}
 	if !regexp.MustCompile(`work_dir\s*=\s*"/shared/work"`).MatchString(out) {
 		t.Fatalf("expected work_dir mapping, got:\n%s", out)
+	}
+}
+
+func TestJobRun_SlurmInlineScriptEscapesNomadInterpolation(t *testing.T) {
+	script := `#!/bin/bash
+#SBATCH --job-name=legacy-escape
+echo "${SLURM_JOB_ID:-unknown}"
+`
+	p := writeTempScript(t, "legacy-escape.slurm.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !regexp.MustCompile(`args\s*=\s*\["-c",`).MatchString(out) {
+		t.Fatalf("expected slurm inline script in args, got:\n%s", out)
+	}
+	if !strings.Contains(out, `$${SLURM_JOB_ID:-unknown}`) {
+		t.Fatalf("expected Nomad interpolation to be escaped in slurm inline script, got:\n%s", out)
 	}
 }
 
