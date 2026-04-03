@@ -22,7 +22,7 @@ func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run <script>",
 		Short: "Generate (or submit) a Nomad HCL batch job from an annotated script",
-		Long: `Parse #ABC/#NOMAD preamble directives from a script and produce a Nomad
+		Long: `Parse #ABC/#NOMAD/#SBATCH preamble directives from a script and produce a Nomad
 HCL job spec. Without --submit the HCL is printed to stdout; with --submit it
 is registered directly with Nomad.
 
@@ -43,7 +43,7 @@ CLASS 1 — SCHEDULER  (configure HCL stanza fields)
   --gpus=<int>                 GPU count (nvidia/gpu device plugin)
   --time=<HH:MM:SS>            Walltime limit; wraps command in timeout(1)
   --chdir=<path>               Working directory inside task sandbox
-  --driver=<string>            Task driver: exec (default), hpc-bridge, docker
+  --driver=<string>            Task driver: exec (default), slurm, hpc-bridge, docker
   --depend=<complete:job-id>   Block on another job via prestart lifecycle hook
   --output=<filename>          Tee stdout to $NOMAD_TASK_DIR/<filename>
   --error=<filename>           Tee stderr to $NOMAD_TASK_DIR/<filename>
@@ -145,6 +145,7 @@ EXAMPLES
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
 	cmd.Flags().Bool("watch", false, "Stream logs after --submit")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
+	cmd.Flags().String("preamble-mode", "auto", "Preamble interpretation mode: auto, abc, slurm, hybrid")
 
 	// Scheduler overrides (mirror preamble Class 1)
 	cmd.Flags().String("name", "", "Job name")
@@ -159,7 +160,7 @@ EXAMPLES
 	cmd.Flags().String("time", "", "Walltime limit HH:MM:SS")
 	cmd.Flags().String("chdir", "", "Working directory inside task sandbox")
 	cmd.Flags().String("depend", "", "Dependency spec (complete:<job-id>)")
-	cmd.Flags().String("driver", "", "Task driver (exec, hpc-bridge, docker)")
+	cmd.Flags().String("driver", "", "Task driver (exec, slurm, hpc-bridge, docker)")
 	cmd.Flags().String("output", "", "Tee stdout to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("error", "", "Tee stderr to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
@@ -296,15 +297,20 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot read script %q: %w", scriptPath, err)
 	}
 
-	abcDirs, nomadDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
+	abcDirs, nomadDirs, slurmDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
 	if err != nil {
 		return fmt.Errorf("failed to parse script preamble: %w", err)
 	}
 
 	scriptBase := filepath.Base(scriptPath)
 	defaultName := strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
+	requestedMode, _ := cmd.Flags().GetString("preamble-mode")
+	preambleMode, err := resolvePreambleMode(requestedMode, abcDirs, nomadDirs, slurmDirs)
+	if err != nil {
+		return err
+	}
 
-	scriptSpec, err := resolveSpec(abcDirs, nomadDirs, defaultName)
+	scriptSpec, err := resolveSpecForRun(abcDirs, nomadDirs, slurmDirs, preambleMode, defaultName)
 	if err != nil {
 		return err
 	}
@@ -359,6 +365,30 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprint(cmd.OutOrStdout(), hcl)
 	return nil
+}
+
+func resolvePreambleMode(requested string, abcDirs, nomadDirs, slurmDirs []string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(requested))
+	if mode == "" {
+		mode = "auto"
+	}
+	switch mode {
+	case "auto":
+		hasABC := len(abcDirs) > 0 || len(nomadDirs) > 0
+		hasSlurm := len(slurmDirs) > 0
+		switch {
+		case hasABC && hasSlurm:
+			return "hybrid", nil
+		case hasSlurm:
+			return "slurm", nil
+		default:
+			return "abc", nil
+		}
+	case "abc", "slurm", "hybrid":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid --preamble-mode %q (expected one of: auto, abc, slurm, hybrid)", requested)
+	}
 }
 
 func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl string, submit, dryRun bool) error {

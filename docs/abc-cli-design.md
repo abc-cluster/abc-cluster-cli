@@ -903,7 +903,39 @@ There are three classes of directive, each with distinct semantics:
 
 **Network directives:** Declare named ports for MPI inter-node communication or sidecar patterns. Uncommon for batch bioinformatics jobs. `--port <label>` emits a `network { port "<label>" {} }` stanza and injects `NOMAD_IP_<label>`, `NOMAD_PORT_<label>`, and `NOMAD_ADDR_<label>`. `HOST_IP`, `HOST_PORT`, `HOST_ADDR`, and `ALLOC_PORT` variants are Docker-specific and not supported.
 
-**Precedence:** `#ABC` overrides `#NOMAD`, which overrides `NOMAD_*` env vars read at CLI invocation time.
+**Precedence (`--preamble-mode=abc`):** `#ABC` overrides `#NOMAD`, which overrides `NOMAD_*` env vars read at CLI invocation time.
+
+**Preamble interpretation modes (`abc job run`):**
+
+| Mode | Interpretation | Driver default |
+|---|---|---|
+| `auto` | Detect from preamble content: `#SBATCH` only ⇒ `slurm`; `#ABC/#NOMAD` + `#SBATCH` ⇒ `hybrid`; otherwise ⇒ `abc` | derived from selected mode |
+| `abc` | Parse `#ABC/#NOMAD` directives only; ignore `#SBATCH` | `exec` unless explicitly overridden |
+| `slurm` | Parse `#SBATCH` directives only; fail if no `#SBATCH` directives exist | `slurm` unless explicitly overridden |
+| `hybrid` | Parse `#SBATCH` first, then apply `#NOMAD`, then `#ABC` | `slurm` unless explicitly overridden |
+
+**Hybrid scripts (`#ABC` + `#SBATCH`) — scenarios to model explicitly:**
+
+| Scenario | Example | Expected behavior target | Design risk if unresolved |
+|---|---|---|---|
+| Resource override collision | `#SBATCH --cpus-per-task=4` + `#ABC --cores=8` | Clear field-level precedence and deterministic final resources | Silent override surprises users and causes hard-to-debug under/over-allocation |
+| Driver mismatch | `#SBATCH --partition=compute` + `#ABC --driver=exec` | Explicitly define whether SLURM-only fields are ignored, translated, or hard-error | User assumes partition still applies when it does not |
+| Output path collision | `#SBATCH --output=/shared/a.out` + `#ABC --output=job.out` | Single source of truth for log path and metadata | UI/metadata can drift from actual scheduler log path |
+| Working-dir collision | `#SBATCH --chdir=/shared/w` + `#ABC --chdir=/tmp/w` | One consistent precedence rule for `work_dir` | Runtime behavior differs from user intent if precedence is implicit |
+| Array/parallel width mismatch | `#SBATCH --array=1-48` + `#ABC --nodes=96` | Explicit rule on which shape wins and how index semantics map | Incorrect sharding logic and non-portable script assumptions |
+| Time grammar mismatch | `#SBATCH --time=2:00` + `#ABC --time=01:00:00` | Normalize/validate slurm-style and ABC-style time formats predictably | Ambiguous walltime parsing and accidental short jobs |
+| Partial SLURM coverage | `#SBATCH --gres`, `--qos`, `--exclusive` | Decide pass-through strategy (`extra_args`) vs strict reject | Important scheduler intent can be silently dropped |
+
+**Design decisions we must lock before moving forward:**
+
+1. **Canonical field-level precedence map** for hybrid mode (not just source-level precedence).
+2. **Conflict policy**: warn, fail, or silent override for conflicting directives.
+3. **Unknown `#SBATCH` directive policy**: strict failure vs preservation/pass-through with warning.
+4. **SLURM-only directive support boundary** (`--gres`, QoS, topology, exclusivity, licenses, etc.).
+5. **Array semantics contract** (index base, fan-out mapping, compatibility with `NOMAD_ALLOC_INDEX`).
+6. **Log and metadata consistency contract** so scheduler output paths, Nomad paths, and CLI metadata agree.
+7. **Time normalization contract** across SLURM and ABC formats with deterministic parsing rules.
+8. **User-facing diagnostics** for hybrid scripts (effective config preview and conflict explanation).
 
 ---
 
@@ -933,6 +965,8 @@ $ abc job run scripts/bwa-align.sh --submit --region za-cpt
 
 Translate a dedicated scheduler script (SLURM/PBS) into an ABC script containing
 `#ABC` directives. Unknown directives are preserved with notes to avoid data loss.
+
+For low-friction migration, users can also submit legacy `#SBATCH` scripts directly with `abc job run` using `--preamble-mode=auto` (default), `--preamble-mode=slurm`, or `--preamble-mode=hybrid`.
 
 ```
 # from SLURM
@@ -1012,6 +1046,7 @@ Flags:
 |---|---|
 | `--submit` | Submit directly via `Jobs().Register()` instead of printing HCL to stdout |
 | `--dry-run` | Run `Jobs().Plan()` and print placement feasibility + estimated cost; do not submit |
+| `--preamble-mode` | Preamble interpretation strategy: `auto`, `abc`, `slurm`, or `hybrid` |
 | `--region` | Override `--region` scheduler directive from preamble |
 | `--output-file` | Write generated HCL to a file instead of stdout |
 | `--watch` | After `--submit`, stream logs immediately (equivalent to piping to `abc job logs --follow`) |

@@ -33,6 +33,137 @@ func assertJobNamePrefix(t *testing.T, out, namePrefix string) {
 	}
 }
 
+func TestJobRun_SlurmPreambleAutoModeUsesSlurmDriver(t *testing.T) {
+	script := `#!/bin/bash
+#SBATCH --job-name=legacy-slurm
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=8G
+#SBATCH --time=01:00:00
+#SBATCH --partition=compute
+echo hello
+`
+	p := writeTempScript(t, "legacy.slurm.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertJobNamePrefix(t, out, "legacy-slurm")
+	if !strings.Contains(out, `driver = "slurm"`) {
+		t.Fatalf("expected slurm driver in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, `cores  = 4`) {
+		t.Fatalf("expected cores=4 in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, `memory = 8192`) {
+		t.Fatalf("expected memory=8192 in output, got:\n%s", out)
+	}
+	if !regexp.MustCompile(`queue\s*=\s*"compute"`).MatchString(out) {
+		t.Fatalf("expected slurm partition mapped to queue, got:\n%s", out)
+	}
+	if strings.Contains(out, `command = "timeout"`) {
+		t.Fatalf("expected slurm walltime to be configured without timeout wrapper, got:\n%s", out)
+	}
+}
+
+func TestJobRun_SlurmPreambleMapsOutputErrorAndChdir(t *testing.T) {
+	script := `#!/bin/bash
+#SBATCH --job-name=legacy-io
+#SBATCH --output=/shared/results/slurm.out
+#SBATCH --error=/shared/results/slurm.err
+#SBATCH --chdir=/shared/work
+echo hello
+`
+	p := writeTempScript(t, "legacy-io.slurm.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !regexp.MustCompile(`stdout_file\s*=\s*"/shared/results/slurm\.out"`).MatchString(out) {
+		t.Fatalf("expected stdout_file mapping, got:\n%s", out)
+	}
+	if !regexp.MustCompile(`stderr_file\s*=\s*"/shared/results/slurm\.err"`).MatchString(out) {
+		t.Fatalf("expected stderr_file mapping, got:\n%s", out)
+	}
+	if !regexp.MustCompile(`work_dir\s*=\s*"/shared/work"`).MatchString(out) {
+		t.Fatalf("expected work_dir mapping, got:\n%s", out)
+	}
+}
+
+func TestJobRun_HybridPreambleABCOverridesSlurmResources(t *testing.T) {
+	script := `#!/bin/bash
+#SBATCH --job-name=hybrid-job
+#SBATCH --cpus-per-task=2
+#ABC --cores=6
+echo hello
+`
+	p := writeTempScript(t, "hybrid.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertJobNamePrefix(t, out, "hybrid-job")
+	if !strings.Contains(out, `driver = "slurm"`) {
+		t.Fatalf("expected hybrid auto mode to default to slurm driver, got:\n%s", out)
+	}
+	if !regexp.MustCompile(`cores\s*=\s*6`).MatchString(out) {
+		t.Fatalf("expected #ABC cores override, got:\n%s", out)
+	}
+	if !regexp.MustCompile(`cpus_per_task\s*=\s*6`).MatchString(out) {
+		t.Fatalf("expected slurm cpus_per_task to follow overridden cores, got:\n%s", out)
+	}
+}
+
+func TestJobRun_HybridAllowsABCDriverOverride(t *testing.T) {
+	script := `#!/bin/bash
+#SBATCH --job-name=hybrid-driver
+#SBATCH --partition=compute
+#ABC --driver=exec
+echo hello
+`
+	p := writeTempScript(t, "hybrid-driver.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertJobNamePrefix(t, out, "hybrid-driver")
+	if !strings.Contains(out, `driver = "exec"`) {
+		t.Fatalf("expected #ABC driver override to exec, got:\n%s", out)
+	}
+	if regexp.MustCompile(`queue\s*=\s*"compute"`).MatchString(out) {
+		t.Fatalf("did not expect slurm-only queue config when driver is exec, got:\n%s", out)
+	}
+}
+
+func TestJobRun_PreambleModeABCIgnoresSlurmDirectives(t *testing.T) {
+	script := `#!/bin/bash
+#SBATCH --job-name=slurm-name
+echo hello
+`
+	p := writeTempScript(t, "abc-mode.sh", script)
+	out, err := executeCmd(t, p, "--preamble-mode", "abc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertJobNamePrefix(t, out, "abc-mode")
+	if !strings.Contains(out, `driver = "exec"`) {
+		t.Fatalf("expected abc preamble mode to keep default exec driver, got:\n%s", out)
+	}
+}
+
+func TestJobRun_PreambleModeSlurmRequiresSBATCH(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --name=abc-only
+echo hello
+`
+	p := writeTempScript(t, "abc-only.sh", script)
+	_, err := executeCmd(t, p, "--preamble-mode", "slurm")
+	if err == nil {
+		t.Fatal("expected error when slurm preamble mode is selected without #SBATCH directives")
+	}
+	if !strings.Contains(err.Error(), "requires at least one #SBATCH directive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
 func writeTempScript(t *testing.T, name, content string) string {
 	t.Helper()
