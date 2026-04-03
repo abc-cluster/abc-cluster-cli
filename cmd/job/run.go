@@ -67,7 +67,8 @@ RESCHEDULE  (stored as abc_reschedule_* meta keys)
 CLASS 2 — RUNTIME EXPOSURE  (inject NOMAD_* vars into task env block)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Note: NOMAD_REGION is always injected by Nomad automatically.
-PBS_* and SLURM_* compatibility aliases are always emitted.
+PBS_* and SLURM_* compatibility aliases are opt-in via:
+  --hpc-compat-env (CLI) or #ABC/#NOMAD --hpc_compat_env (preamble)
 
   Task identity
     --alloc_id         NOMAD_ALLOC_ID        (unique per execution)
@@ -166,6 +167,7 @@ EXAMPLES
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
 	cmd.Flags().Bool("no-network", false, "Disable network access for this job")
 	cmd.Flags().StringSlice("port", nil, "Named network ports")
+	cmd.Flags().Bool("hpc-compat-env", false, "Inject SLURM_*/PBS_* compatibility aliases into task env")
 
 	// Reschedule
 	cmd.Flags().String("reschedule-mode", "", "Reschedule mode (delay, fail)")
@@ -279,6 +281,9 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if v, _ := cmd.Flags().GetBool("no-network"); v {
 		spec.NoNetwork = true
+	}
+	if v, _ := cmd.Flags().GetBool("hpc-compat-env"); v {
+		spec.IncludeHPCCompatEnv = true
 	}
 	return nil
 }

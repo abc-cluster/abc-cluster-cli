@@ -228,13 +228,14 @@ python analysis.py
 		`data        = "#!/bin/bash`,
 		`destination = "local/job.sh"`,
 		`perms       = "0755"`,
-		`SLURM_JOB_ID`,
-		`PBS_JOBID`,
 	}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output\ngot:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "SLURM_JOB_ID") || strings.Contains(out, "PBS_JOBID") {
+		t.Errorf("did not expect HPC compatibility env aliases by default, got:\n%s", out)
 	}
 }
 
@@ -397,6 +398,42 @@ mpirun -np 112 ./ocean_model
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output\ngot:\n%s", want, out)
 		}
+	}
+}
+
+func TestJobRun_HPCCompatVarsEnabledByDirective(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=hpc-test\n#ABC --hpc_compat_env\necho hi\n"
+	p := writeTempScript(t, "hpc_directive.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	keys := []string{
+		`SLURM_JOB_ID`, `PBS_JOBID`,
+		`SLURM_JOB_NAME`, `PBS_JOBNAME`,
+		`SLURM_SUBMIT_DIR`, `PBS_O_WORKDIR`,
+		`SLURM_ARRAY_TASK_ID`, `PBS_ARRAYID`,
+		`SLURM_NTASKS`, `PBS_NP`,
+		`SLURMD_NODENAME`, `PBS_O_HOST`,
+		`SLURM_CPUS_ON_NODE`, `PBS_NUM_PPN`,
+		`SLURM_MEM_PER_NODE`, `PBS_MEM`,
+	}
+	for _, key := range keys {
+		if !strings.Contains(out, key) {
+			t.Errorf("expected HPC compat key %q in output when enabled\ngot:\n%s", key, out)
+		}
+	}
+}
+
+func TestJobRun_HPCCompatVarsEnabledByCLIFlag(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=hpc-test\necho hi\n"
+	p := writeTempScript(t, "hpc_cli_flag.sh", script)
+	out, err := executeCmd(t, p, "--hpc-compat-env")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `SLURM_JOB_ID`) || !strings.Contains(out, `PBS_JOBID`) {
+		t.Fatalf("expected HPC compat aliases when --hpc-compat-env is set, got:\n%s", out)
 	}
 }
 
@@ -753,9 +790,9 @@ func TestJobRun_NomadEnvVarFallback_Resources(t *testing.T) {
 	}
 }
 
-// ── HPC compat env vars always present ───────────────────────────────────────
+// ── HPC compat env vars are opt-in ───────────────────────────────────────────
 
-func TestJobRun_HPCCompatVarsAlwaysPresent(t *testing.T) {
+func TestJobRun_HPCCompatVarsDisabledByDefault(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --name=hpc-test\necho hi\n"
 	p := writeTempScript(t, "hpc.sh", script)
 	out, err := executeCmd(t, p)
@@ -773,8 +810,8 @@ func TestJobRun_HPCCompatVarsAlwaysPresent(t *testing.T) {
 		`SLURM_MEM_PER_NODE`, `PBS_MEM`,
 	}
 	for _, key := range keys {
-		if !strings.Contains(out, key) {
-			t.Errorf("expected HPC compat key %q in output\ngot:\n%s", key, out)
+		if strings.Contains(out, key) {
+			t.Errorf("did not expect HPC compat key %q in output by default\ngot:\n%s", key, out)
 		}
 	}
 }

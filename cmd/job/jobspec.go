@@ -70,24 +70,25 @@ type jobSpec struct {
 	Ports []string
 
 	// ── Runtime-exposure boolean flags ────────────────────────────────────────
-	ExposeAllocID      bool
-	ExposeShortAllocID bool
-	ExposeAllocName    bool
-	ExposeAllocIndex   bool
-	ExposeJobID        bool
-	ExposeJobName      bool
-	ExposeParentJobID  bool
-	ExposeGroupName    bool
-	ExposeTaskName     bool
-	ExposeNamespaceEnv bool
-	ExposeDCEnv        bool
-	ExposeCPULimit     bool
-	ExposeCPUCores     bool
-	ExposeMemLimit     bool
-	ExposeMemMaxLimit  bool
-	ExposeAllocDir     bool
-	ExposeTaskDir      bool
-	ExposeSecretsDir   bool
+	IncludeHPCCompatEnv bool
+	ExposeAllocID       bool
+	ExposeShortAllocID  bool
+	ExposeAllocName     bool
+	ExposeAllocIndex    bool
+	ExposeJobID         bool
+	ExposeJobName       bool
+	ExposeParentJobID   bool
+	ExposeGroupName     bool
+	ExposeTaskName      bool
+	ExposeNamespaceEnv  bool
+	ExposeDCEnv         bool
+	ExposeCPULimit      bool
+	ExposeCPUCores      bool
+	ExposeMemLimit      bool
+	ExposeMemMaxLimit   bool
+	ExposeAllocDir      bool
+	ExposeTaskDir       bool
+	ExposeSecretsDir    bool
 }
 
 // readNomadEnvVars seeds a jobSpec from NOMAD_* environment variables present
@@ -201,6 +202,9 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 		base.Ports = append([]string(nil), override.Ports...)
 	}
 	// Boolean expose flags: true wins.
+	if override.IncludeHPCCompatEnv {
+		base.IncludeHPCCompatEnv = true
+	}
 	if override.ExposeAllocID {
 		base.ExposeAllocID = true
 	}
