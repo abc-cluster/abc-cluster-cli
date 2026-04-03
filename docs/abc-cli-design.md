@@ -859,11 +859,13 @@ There are three classes of directive, each with distinct semantics:
 **Class 2 — Runtime exposure directives:** Boolean flags whose presence tells the HCL generator to inject the corresponding Nomad runtime variable into the task `env` block. These are readable by the script at execution time.
 
 `NOMAD_REGION` is always injected automatically by Nomad — no directive needed.
+Legacy `SLURM_*` / `PBS_*` aliases are opt-in via `--hpc-compat-env` (CLI) or `--hpc_compat_env` in preamble and are disabled by default.
 
 *Task identity*
 
 | Directive | Injects | Notes |
 |---|---|---|
+| `--hpc_compat_env` | `SLURM_*`, `PBS_*` aliases | Optional migration shim for legacy scripts; disabled by default |
 | `--alloc_id` | `NOMAD_ALLOC_ID` | Full allocation UUID — use as a unique output path component |
 | `--short_alloc_id` | `NOMAD_SHORT_ALLOC_ID` | 8-character short ID — use in log prefixes |
 | `--alloc_name` | `NOMAD_ALLOC_NAME` | `<job>.<group>[<index>]` — human-readable alloc label |
@@ -1047,6 +1049,7 @@ Flags:
 | `--submit` | Submit directly via `Jobs().Register()` instead of printing HCL to stdout |
 | `--dry-run` | Run `Jobs().Plan()` and print placement feasibility + estimated cost; do not submit |
 | `--preamble-mode` | Preamble interpretation strategy: `auto`, `abc`, `slurm`, or `hybrid` |
+| `--hpc-compat-env` | Inject `SLURM_*` / `PBS_*` compatibility aliases into task `env` |
 | `--region` | Override `--region` scheduler directive from preamble |
 | `--output-file` | Write generated HCL to a file instead of stdout |
 | `--watch` | After `--submit`, stream logs immediately (equivalent to piping to `abc job logs --follow`) |

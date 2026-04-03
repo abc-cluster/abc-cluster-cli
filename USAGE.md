@@ -115,6 +115,7 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--depend`                      | `--depend=<complete:job-id>`        | Block on another job via prestart lifecycle hook                  |
 | `--output`                      | `--output=<filename>`               | Tee stdout to `$NOMAD_TASK_DIR/<filename>`                        |
 | `--error`                       | `--error=<filename>`                | Tee stderr to `$NOMAD_TASK_DIR/<filename>`                        |
+| `--hpc-compat-env`              | `--hpc_compat_env`                  | Inject legacy `SLURM_*` / `PBS_*` compatibility aliases           |
 | `--no-network`                  | `--no-network`                      | Disable network access (Nomad mode = `"none"`)                    |
 | `--port`                        | `--port=<label>`                    | Named dynamic port; injects `NOMAD_IP/PORT/ADDR_<label>`          |
 | `--constraint=<attr><op><val>`  | `--constraint=<attr><op><val>`      | Nomad placement constraint (repeatable). Ops: `== != =~ !~ < <= > >=` |
@@ -133,12 +134,13 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 
 ### Runtime-exposure flags (Class 2)
 
-These preamble directives inject the corresponding `NOMAD_*` variable into the task's environment block so the script can read the value at execution time. `NOMAD_REGION` is always injected automatically by Nomad. PBS and SLURM compatibility aliases are always emitted.
+These preamble directives inject the corresponding `NOMAD_*` variable into the task's environment block so the script can read the value at execution time. `NOMAD_REGION` is always injected automatically by Nomad. PBS and SLURM compatibility aliases are opt-in via `--hpc-compat-env` (CLI) or `--hpc_compat_env` in preamble.
 
 #### Task identity
 
 | Preamble directive  | Env var injected      | Notes                                    |
 |---------------------|-----------------------|------------------------------------------|
+| `--hpc_compat_env`  | `SLURM_*`, `PBS_*` aliases | Opt-in migration shim for legacy scripts |
 | `--alloc_id`        | `NOMAD_ALLOC_ID`      | Unique per execution                     |
 | `--short_alloc_id`  | `NOMAD_SHORT_ALLOC_ID`|                                          |
 | `--alloc_name`      | `NOMAD_ALLOC_NAME`    | `<job>.<group>[<index>]`                 |

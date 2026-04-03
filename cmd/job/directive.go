@@ -405,6 +405,8 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			spec.NoNetwork = true
 
 		// ── Runtime-exposure boolean flags ───────────────────────────────────
+		case "hpc_compat_env", "hpc-compat-env":
+			spec.IncludeHPCCompatEnv = true
 		case "alloc_id":
 			spec.ExposeAllocID = true
 		case "short_alloc_id":

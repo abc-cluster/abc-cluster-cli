@@ -218,30 +218,33 @@ func escapeNomadInterpolation(s string) string {
 	return s
 }
 
-// appendEnvBlock emits the env block containing the HPC compatibility layer
-// (PBS_*/SLURM_* aliases always present) plus any explicitly requested
-// NOMAD_* runtime-exposure variables.
+// appendEnvBlock emits the env block containing optional PBS_*/SLURM_* aliases
+// plus any explicitly requested NOMAD_* runtime-exposure variables.
 func appendEnvBlock(taskBody *hclwrite.Body, spec *jobSpec) {
+	if !spec.IncludeHPCCompatEnv && !hasExplicitRuntimeExposure(spec) && len(spec.Ports) == 0 {
+		return
+	}
 	envBody := taskBody.AppendNewBlock("env", nil).Body()
 
-	// HPC compatibility layer — always emitted so existing PBS/SLURM scripts
-	// can read familiar environment variables without changes.
-	envBody.SetAttributeValue("SLURM_JOB_ID", cty.StringVal("${NOMAD_ALLOC_ID}"))
-	envBody.SetAttributeValue("PBS_JOBID", cty.StringVal("${NOMAD_ALLOC_ID}"))
-	envBody.SetAttributeValue("SLURM_JOB_NAME", cty.StringVal("${NOMAD_JOB_NAME}"))
-	envBody.SetAttributeValue("PBS_JOBNAME", cty.StringVal("${NOMAD_JOB_NAME}"))
-	envBody.SetAttributeValue("SLURM_SUBMIT_DIR", cty.StringVal("${NOMAD_TASK_DIR}"))
-	envBody.SetAttributeValue("PBS_O_WORKDIR", cty.StringVal("${NOMAD_TASK_DIR}"))
-	envBody.SetAttributeValue("SLURM_ARRAY_TASK_ID", cty.StringVal("${NOMAD_ALLOC_INDEX}"))
-	envBody.SetAttributeValue("PBS_ARRAYID", cty.StringVal("${NOMAD_ALLOC_INDEX}"))
-	envBody.SetAttributeValue("SLURM_NTASKS", cty.StringVal("${NOMAD_GROUP_COUNT}"))
-	envBody.SetAttributeValue("PBS_NP", cty.StringVal("${NOMAD_GROUP_COUNT}"))
-	envBody.SetAttributeValue("SLURMD_NODENAME", cty.StringVal("${NOMAD_ALLOC_HOST}"))
-	envBody.SetAttributeValue("PBS_O_HOST", cty.StringVal("${NOMAD_ALLOC_HOST}"))
-	envBody.SetAttributeValue("SLURM_CPUS_ON_NODE", cty.StringVal("${NOMAD_CPU_CORES}"))
-	envBody.SetAttributeValue("PBS_NUM_PPN", cty.StringVal("${NOMAD_CPU_CORES}"))
-	envBody.SetAttributeValue("SLURM_MEM_PER_NODE", cty.StringVal("${NOMAD_MEMORY_LIMIT}"))
-	envBody.SetAttributeValue("PBS_MEM", cty.StringVal("${NOMAD_MEMORY_LIMIT}"))
+	// Optional HPC compatibility layer for legacy PBS/SLURM scripts.
+	if spec.IncludeHPCCompatEnv {
+		envBody.SetAttributeValue("SLURM_JOB_ID", cty.StringVal("${NOMAD_ALLOC_ID}"))
+		envBody.SetAttributeValue("PBS_JOBID", cty.StringVal("${NOMAD_ALLOC_ID}"))
+		envBody.SetAttributeValue("SLURM_JOB_NAME", cty.StringVal("${NOMAD_JOB_NAME}"))
+		envBody.SetAttributeValue("PBS_JOBNAME", cty.StringVal("${NOMAD_JOB_NAME}"))
+		envBody.SetAttributeValue("SLURM_SUBMIT_DIR", cty.StringVal("${NOMAD_TASK_DIR}"))
+		envBody.SetAttributeValue("PBS_O_WORKDIR", cty.StringVal("${NOMAD_TASK_DIR}"))
+		envBody.SetAttributeValue("SLURM_ARRAY_TASK_ID", cty.StringVal("${NOMAD_ALLOC_INDEX}"))
+		envBody.SetAttributeValue("PBS_ARRAYID", cty.StringVal("${NOMAD_ALLOC_INDEX}"))
+		envBody.SetAttributeValue("SLURM_NTASKS", cty.StringVal("${NOMAD_GROUP_COUNT}"))
+		envBody.SetAttributeValue("PBS_NP", cty.StringVal("${NOMAD_GROUP_COUNT}"))
+		envBody.SetAttributeValue("SLURMD_NODENAME", cty.StringVal("${NOMAD_ALLOC_HOST}"))
+		envBody.SetAttributeValue("PBS_O_HOST", cty.StringVal("${NOMAD_ALLOC_HOST}"))
+		envBody.SetAttributeValue("SLURM_CPUS_ON_NODE", cty.StringVal("${NOMAD_CPU_CORES}"))
+		envBody.SetAttributeValue("PBS_NUM_PPN", cty.StringVal("${NOMAD_CPU_CORES}"))
+		envBody.SetAttributeValue("SLURM_MEM_PER_NODE", cty.StringVal("${NOMAD_MEMORY_LIMIT}"))
+		envBody.SetAttributeValue("PBS_MEM", cty.StringVal("${NOMAD_MEMORY_LIMIT}"))
+	}
 
 	// Explicit runtime-exposure directives.
 	type runtimeVar struct {
@@ -279,6 +282,27 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec *jobSpec) {
 		envBody.SetAttributeValue("NOMAD_PORT_"+up, cty.StringVal(fmt.Sprintf("${NOMAD_PORT_%s}", p)))
 		envBody.SetAttributeValue("NOMAD_ADDR_"+up, cty.StringVal(fmt.Sprintf("${NOMAD_ADDR_%s}", p)))
 	}
+}
+
+func hasExplicitRuntimeExposure(spec *jobSpec) bool {
+	return spec.ExposeAllocID ||
+		spec.ExposeShortAllocID ||
+		spec.ExposeAllocName ||
+		spec.ExposeAllocIndex ||
+		spec.ExposeJobID ||
+		spec.ExposeJobName ||
+		spec.ExposeParentJobID ||
+		spec.ExposeGroupName ||
+		spec.ExposeTaskName ||
+		spec.ExposeNamespaceEnv ||
+		spec.ExposeDCEnv ||
+		spec.ExposeCPULimit ||
+		spec.ExposeCPUCores ||
+		spec.ExposeMemLimit ||
+		spec.ExposeMemMaxLimit ||
+		spec.ExposeAllocDir ||
+		spec.ExposeTaskDir ||
+		spec.ExposeSecretsDir
 }
 
 // ── Helpers (delegating to shared utils) ─────────────────────────────────────

@@ -27,6 +27,7 @@ identifies gaps, and provides the recommended migration pattern for each.
 ---
 
 ## Runtime variable mapping
+By default, ABC scripts should use `NOMAD_*` runtime variables. Legacy `SLURM_*` / `PBS_*` aliases are available only when compatibility mode is enabled with `#ABC --hpc_compat_env` (or CLI `--hpc-compat-env`).
 
 | What | PBS variable | SLURM variable | ABC variable |
 |---|---|---|---|
