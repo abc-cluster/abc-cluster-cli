@@ -116,8 +116,51 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 // walltime wrapping and optional stdout/stderr file redirection.
 func appendTaskConfig(cfgBody *hclwrite.Body, spec *jobSpec, scriptName string) {
 	scriptArg := fmt.Sprintf("local/%s", scriptName)
-
-	if spec.OutputLog != "" || spec.ErrorLog != "" {
+	if spec.Driver == "slurm" {
+		cfgBody.SetAttributeValue("command", cty.StringVal("/bin/bash"))
+		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
+			cty.StringVal(scriptArg),
+		}))
+		if spec.SlurmPartition != "" {
+			cfgBody.SetAttributeValue("queue", cty.StringVal(spec.SlurmPartition))
+		}
+		if spec.SlurmAccount != "" {
+			cfgBody.SetAttributeValue("account", cty.StringVal(spec.SlurmAccount))
+		}
+		workDir := spec.SlurmWorkDir
+		if workDir == "" && spec.ChDir != "" {
+			workDir = spec.ChDir
+		}
+		if workDir != "" {
+			cfgBody.SetAttributeValue("work_dir", cty.StringVal(workDir))
+		}
+		stdoutFile := spec.SlurmStdoutFile
+		if stdoutFile == "" && spec.OutputLog != "" {
+			stdoutFile = spec.OutputLog
+		}
+		if stdoutFile != "" {
+			cfgBody.SetAttributeValue("stdout_file", cty.StringVal(stdoutFile))
+		}
+		stderrFile := spec.SlurmStderrFile
+		if stderrFile == "" && spec.ErrorLog != "" {
+			stderrFile = spec.ErrorLog
+		}
+		if stderrFile != "" {
+			cfgBody.SetAttributeValue("stderr_file", cty.StringVal(stderrFile))
+		}
+		if spec.SlurmNTasks > 0 {
+			cfgBody.SetAttributeValue("ntasks", cty.NumberIntVal(int64(spec.SlurmNTasks)))
+		}
+		if spec.Cores > 0 {
+			cfgBody.SetAttributeValue("cpus_per_task", cty.NumberIntVal(int64(spec.Cores)))
+		}
+		if spec.MemoryMB > 0 {
+			cfgBody.SetAttributeValue("memory", cty.NumberIntVal(int64(spec.MemoryMB)))
+		}
+		if spec.WalltimeSecs > 0 {
+			cfgBody.SetAttributeValue("walltime", cty.StringVal(secondsToWalltime(spec.WalltimeSecs)))
+		}
+	} else if spec.OutputLog != "" || spec.ErrorLog != "" {
 		cmd := fmt.Sprintf("/bin/bash %s", scriptArg)
 		if spec.WalltimeSecs > 0 {
 			cmd = fmt.Sprintf("timeout %d %s", spec.WalltimeSecs, cmd)
@@ -146,12 +189,22 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec *jobSpec, scriptName string) 
 		}))
 	}
 
-	if spec.ChDir != "" {
+	if spec.Driver != "slurm" && spec.ChDir != "" {
 		cfgBody.SetAttributeValue("work_dir", cty.StringVal(spec.ChDir))
 	}
 	for _, k := range sortedKeys(spec.DriverConfig) {
 		cfgBody.SetAttributeValue(k, cty.StringVal(strings.TrimSpace(spec.DriverConfig[k])))
 	}
+}
+
+func secondsToWalltime(seconds int) string {
+	if seconds <= 0 {
+		return "00:00:00"
+	}
+	hours := seconds / 3600
+	minutes := (seconds % 3600) / 60
+	secs := seconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, secs)
 }
 
 // appendEnvBlock emits the env block containing the HPC compatibility layer
@@ -219,6 +272,6 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec *jobSpec) {
 
 // ── Helpers (delegating to shared utils) ─────────────────────────────────────
 
-func parseMemoryMB(s string) (int, error)    { return utils.ParseMemoryMB(s) }
+func parseMemoryMB(s string) (int, error)     { return utils.ParseMemoryMB(s) }
 func walltimeToSeconds(t string) (int, error) { return utils.WalltimeToSeconds(t) }
 func sortedKeys(m map[string]string) []string { return utils.SortedKeys(m) }

@@ -55,10 +55,16 @@ type jobSpec struct {
 	NoNetwork          bool
 	Constraints        []nomadConstraint
 	Affinities         []nomadAffinity
+	SlurmPartition     string
+	SlurmAccount       string
+	SlurmWorkDir       string
+	SlurmStdoutFile    string
+	SlurmStderrFile    string
+	SlurmNTasks        int
 
 	// ── Meta directives ───────────────────────────────────────────────────────
-	Meta         map[string]string
-	Conda       string
+	Meta  map[string]string
+	Conda string
 
 	// ── Network directives ────────────────────────────────────────────────────
 	Ports []string
@@ -156,6 +162,24 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.Driver != "" {
 		base.Driver = override.Driver
+	}
+	if override.SlurmPartition != "" {
+		base.SlurmPartition = override.SlurmPartition
+	}
+	if override.SlurmAccount != "" {
+		base.SlurmAccount = override.SlurmAccount
+	}
+	if override.SlurmWorkDir != "" {
+		base.SlurmWorkDir = override.SlurmWorkDir
+	}
+	if override.SlurmStdoutFile != "" {
+		base.SlurmStdoutFile = override.SlurmStdoutFile
+	}
+	if override.SlurmStderrFile != "" {
+		base.SlurmStderrFile = override.SlurmStderrFile
+	}
+	if override.SlurmNTasks != 0 {
+		base.SlurmNTasks = override.SlurmNTasks
 	}
 	if override.DriverConfig != nil {
 		if base.DriverConfig == nil {
