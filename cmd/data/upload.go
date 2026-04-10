@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +28,7 @@ import (
 const (
 	bytesPerMB         = 1024 * 1024
 	resumeStateSubpath = "abc-cluster-cli/tus-resume"
+	preflightTimeout   = 5 * time.Second
 
 	// defaultUploadChunkSize is the tus chunk size used when the caller does
 	// not provide --chunk-size.  64 MiB gives ~1,600 PATCH requests for a
@@ -125,6 +127,10 @@ func uploadPrintfFromContext(ctx context.Context) func(string, ...interface{}) {
 	}
 	fn, _ := v.(func(string, ...interface{}))
 	return fn
+}
+
+type uploadPreflightChecker interface {
+	PreflightNetwork(ctx context.Context) error
 }
 
 // newUploadCmd returns the "data upload" subcommand.
@@ -287,6 +293,11 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	uploader, err := factory(endpoint, authToken, uploaderOpts)
 	if err != nil {
 		return fmt.Errorf("failed to initialize upload client: %w", err)
+	}
+	if checker, ok := uploader.(uploadPreflightChecker); ok {
+		if err := checker.PreflightNetwork(cmd.Context()); err != nil {
+			return networkError("pre-flight network check failed: %w", err)
+		}
 	}
 
 	if isDir {
@@ -638,8 +649,10 @@ func collectFiles(root string) ([]uploadFile, error) {
 }
 
 type tusUploader struct {
-	client *tusgo.Client
-	opts   UploaderOptions
+	client      *tusgo.Client
+	opts        UploaderOptions
+	endpoint    string
+	accessToken string
 }
 
 func newTusUploader(endpoint, accessToken string, opts UploaderOptions) (Uploader, error) {
@@ -659,7 +672,129 @@ func newTusUploader(endpoint, accessToken string, opts UploaderOptions) (Uploade
 			return req, nil
 		}
 	}
-	return &tusUploader{client: client, opts: opts}, nil
+	return &tusUploader{
+		client:      client,
+		opts:        opts,
+		endpoint:    parsed.String(),
+		accessToken: accessToken,
+	}, nil
+}
+
+func (u *tusUploader) PreflightNetwork(ctx context.Context) error {
+	endpoint := strings.TrimSpace(u.endpoint)
+	if endpoint == "" {
+		return fmt.Errorf("upload endpoint is empty; provide --endpoint or ABC_UPLOAD_ENDPOINT")
+	}
+
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid upload endpoint %q: %w", endpoint, err)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return fmt.Errorf("upload endpoint %q is missing a host", endpoint)
+	}
+
+	port := parsed.Port()
+	switch parsed.Scheme {
+	case "http":
+		if port == "" {
+			port = "80"
+		}
+	case "https":
+		if port == "" {
+			port = "443"
+		}
+	default:
+		return fmt.Errorf("upload endpoint %q uses unsupported scheme %q; use http or https", endpoint, parsed.Scheme)
+	}
+
+	checkCtx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+
+	if ip := net.ParseIP(host); ip == nil && !strings.EqualFold(host, "localhost") {
+		if _, err := net.DefaultResolver.LookupHost(checkCtx, host); err != nil {
+			return explainPreflightNetworkError("DNS lookup", endpoint, host, err)
+		}
+	}
+
+	address := net.JoinHostPort(host, port)
+	conn, err := (&net.Dialer{}).DialContext(checkCtx, "tcp", address)
+	if err != nil {
+		return explainPreflightNetworkError("TCP connect", endpoint, address, err)
+	}
+	_ = conn.Close()
+
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodOptions, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build OPTIONS request for upload endpoint %q: %w", endpoint, err)
+	}
+	req.Header.Set("Tus-Resumable", "1.0.0")
+	if token := strings.TrimSpace(u.accessToken); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return explainPreflightNetworkError("OPTIONS request", endpoint, endpoint, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("upload endpoint %q rejected authentication (HTTP %d); provide a valid --upload-token/ABC_UPLOAD_TOKEN or --access-token", endpoint, resp.StatusCode)
+	case http.StatusNotFound:
+		return fmt.Errorf("upload endpoint %q returned HTTP 404 for OPTIONS; ensure --endpoint/ABC_UPLOAD_ENDPOINT points to a tus upload root (often with a trailing slash)", endpoint)
+	}
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return fmt.Errorf("upload endpoint %q returned HTTP %d during OPTIONS; the upload service may be unavailable", endpoint, resp.StatusCode)
+	}
+	if strings.TrimSpace(resp.Header.Get("Tus-Version")) == "" {
+		return fmt.Errorf("upload endpoint %q is reachable but did not return Tus-Version on OPTIONS; ensure this is a tus upload endpoint", endpoint)
+	}
+
+	return nil
+}
+
+func explainPreflightNetworkError(operation, endpoint, target string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	rootErr := err
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		rootErr = urlErr.Err
+	}
+
+	if errors.Is(rootErr, context.DeadlineExceeded) {
+		return fmt.Errorf("%s to %q timed out while checking %q; verify network connectivity, VPN/proxy settings, and endpoint reachability", operation, target, endpoint)
+	}
+	if errors.Is(rootErr, context.Canceled) {
+		return rootErr
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(rootErr, &dnsErr) {
+		host := strings.TrimSpace(dnsErr.Name)
+		if host == "" {
+			host = target
+		}
+		return fmt.Errorf("cannot resolve upload host %q from endpoint %q: %v; verify --endpoint/ABC_UPLOAD_ENDPOINT and DNS settings", host, endpoint, dnsErr)
+	}
+
+	low := strings.ToLower(rootErr.Error())
+	if strings.Contains(low, "connection refused") {
+		return fmt.Errorf("cannot connect to upload endpoint %q (%s): connection refused; verify host/port and that the upload service is running", endpoint, target)
+	}
+	if strings.Contains(low, "no route to host") || strings.Contains(low, "network is unreachable") {
+		return fmt.Errorf("cannot route traffic to upload endpoint %q (%s): %v; verify network routes, VPN, and firewall rules", endpoint, target, rootErr)
+	}
+	if strings.Contains(low, "tls") {
+		return fmt.Errorf("TLS handshake failed for upload endpoint %q: %v; verify https certificate trust and endpoint scheme", endpoint, rootErr)
+	}
+
+	return fmt.Errorf("%s failed for upload endpoint %q (%s): %v; verify --endpoint/ABC_UPLOAD_ENDPOINT and network access", operation, endpoint, target, rootErr)
 }
 
 func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[string]string) (string, error) {
@@ -888,8 +1023,8 @@ type rateLimitedReader struct {
 	reader  io.Reader
 	maxRate int64 // bytes per second; 0 means unlimited
 	ctx     context.Context
-	debt    time.Duration  // accumulated un-slept time
-	timer   *time.Timer    // reused across reads; nil until first sleep
+	debt    time.Duration // accumulated un-slept time
+	timer   *time.Timer   // reused across reads; nil until first sleep
 }
 
 // minRateLimitSleep is the minimum accumulated debt before we actually sleep.

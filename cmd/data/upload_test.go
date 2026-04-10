@@ -17,10 +17,12 @@ import (
 )
 
 type mockUploader struct {
-	mu       sync.Mutex
-	calls    []uploadCall
-	location string
-	err      error
+	mu            sync.Mutex
+	calls         []uploadCall
+	location      string
+	err           error
+	preflightErr  error
+	preflightRuns int
 }
 
 type uploadCall struct {
@@ -33,6 +35,13 @@ func (m *mockUploader) Upload(_ context.Context, filePath string, metadata map[s
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, uploadCall{filePath: filePath, metadata: metadata})
 	return m.location, m.err
+}
+
+func (m *mockUploader) PreflightNetwork(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.preflightRuns++
+	return m.preflightErr
 }
 
 type factoryRecorder struct {
@@ -501,6 +510,39 @@ func TestDataUpload_InvalidParallelJobs(t *testing.T) {
 	}
 	if recorder.endpoint != "" {
 		t.Fatalf("factory should not be called on invalid args")
+	}
+}
+
+func TestDataUpload_PreflightNetworkError(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{
+		preflightErr: fmt.Errorf("cannot resolve upload host \"dev.abc-cluster.cloud\" from endpoint \"http://dev.abc-cluster.cloud/files/\""),
+	}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "token"
+	workspace := ""
+
+	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile)
+	if err == nil {
+		t.Fatal("expected preflight network error")
+	}
+	if !strings.Contains(err.Error(), "network/server error") || !strings.Contains(err.Error(), "pre-flight network check failed") {
+		t.Fatalf("unexpected preflight error prefix: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cannot resolve upload host") {
+		t.Fatalf("expected informative DNS error details, got: %v", err)
+	}
+	if len(mock.calls) != 0 {
+		t.Fatalf("upload should not start when preflight fails, got %d upload calls", len(mock.calls))
+	}
+	if mock.preflightRuns != 1 {
+		t.Fatalf("expected exactly one preflight run, got %d", mock.preflightRuns)
 	}
 }
 
