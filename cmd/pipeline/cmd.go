@@ -64,7 +64,9 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 	if region == "" {
 		region, _ = cmd.Root().PersistentFlags().GetString("region")
 	}
-	return utils.NewNomadClient(addr, token, region).WithSudo(utils.SudoFromCmd(cmd))
+	return utils.NewNomadClient(addr, token, region).
+		WithSudo(utils.SudoFromCmd(cmd)).
+		WithCloud(utils.CloudFromCmd(cmd))
 }
 
 // namespaceFromCmd reads the --namespace flag, falling back up to the root.

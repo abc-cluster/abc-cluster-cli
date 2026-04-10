@@ -2829,3 +2829,304 @@ The old `--env=NOMAD_VAR` form is replaced by semantic boolean flags. `--region`
 | `#ABC --env=NOMAD_IP_<label>` | `#ABC --port <label>` | Also generates `network` stanza; exposes `NOMAD_PORT_` and `NOMAD_ADDR_` |
 | `#ABC --env=NOMAD_PORT_<label>` | `#ABC --port <label>` | Covered by `--port` |
 | `#ABC --env=NOMAD_ADDR_<label>` | `#ABC --port <label>` | Covered by `--port` |
+
+---
+
+## 14. Permission Tiers and Elevation Flags
+
+### Overview
+
+The ABC CLI uses a four-tier permission model inspired by Linux `sudo`. **The CLI is not a security boundary** — it carries intent as HTTP headers; the jurist layer (cluster-scoped) or cloud gateway (fleet-scoped) enforces policy server-side.
+
+| Tier | Name | Activated by | Scope |
+|------|------|-------------|-------|
+| 0 | **user** | (default) | Own namespace, own jobs |
+| 1 | **group-admin** | `--sudo` | All namespaces in the caller's research group |
+| 2 | **cluster-admin** | `--sudo` | All namespaces and nodes on the current cluster |
+| 3 | **cloud** | `--cloud` | Fleet-wide: multiple clusters, cloud provider APIs, network layer |
+
+Tiers 1 and 2 are both activated by `--sudo`; jurist decides which applies based on the caller's actual token privileges. The CLI requests elevation; the server decides whether to honour it.
+
+---
+
+### `--sudo` — Cluster elevation
+
+**Activation:**
+- `--sudo` flag on any command
+- `ABC_CLI_SUDO_MODE=1` environment variable (takes priority; intended for scripted admin sessions)
+
+**Effect:**
+- Attaches `X-ABC-Sudo: 1` HTTP header to every request in that invocation
+- Jurist/proxy rewrites the Nomad ACL token to the appropriate higher-grade token
+- Returns 403 with a clear message if the caller's credentials don't support the requested tier
+- Widens `--namespace` to `*` (all namespaces) when not explicitly set
+- Reveals admin-only output columns: `NAMESPACE`, `GROUP`, `CONTACT`, `NODE`
+
+**Banner (stderr, before any output):**
+```
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+```
+Suppressed by `--quiet` / `-q`.
+
+**Use-cases:**
+
+| Command | Without --sudo | With --sudo |
+|---------|---------------|-------------|
+| `abc job list` | Own namespace | All namespaces (group or cluster-wide) + NAMESPACE column |
+| `abc job stop <id>` | Own namespace only | Any namespace |
+| `abc job logs <id>` | Own namespace only | Any namespace (compliance / debug) |
+| `abc pipeline list` | Own namespace | All namespaces + NAMESPACE column |
+| `abc pipeline run --namespace=<ns>` | Only own namespace | Any namespace (admin submits on behalf of lab) |
+| `abc namespace list` | Read-only, basic | Adds GROUP, CONTACT, PRIORITY columns |
+| `abc namespace create` | Not available | Available (cluster-admin tier) |
+| `abc namespace delete` | Not available | Available, with `--drain` option |
+| `abc node list` | Not available | All nodes with status and utilisation |
+| `abc node drain` | Not available | Pre-maintenance drain with `--wait` |
+| `abc node undrain` | Not available | Re-enable scheduling after maintenance |
+
+---
+
+### `--cloud` — Infrastructure elevation
+
+**Activation:**
+- `--cloud` flag on any command
+- `ABC_CLI_CLOUD_MODE=1` environment variable
+
+**Effect:**
+- Attaches `X-ABC-Cloud: 1` HTTP header
+- Routed to the cloud gateway layer (above jurist), which holds cloud provider credentials
+- Enables cross-cluster fleet operations and direct cloud provider API calls
+- Adds `--cluster` flag support for explicit cluster targeting
+- Reveals `CLUSTER` column in all list outputs
+
+**Banner (stderr, before any output):**
+```
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+```
+Suppressed by `--quiet` / `-q`.
+
+**Use-cases:**
+
+| Command | What --cloud adds |
+|---------|------------------|
+| `abc job list --cloud` | Jobs across ALL clusters in the fleet, with CLUSTER column |
+| `abc node list --cloud` | Nodes across all clusters |
+| `abc node add --cloud` | Provision a new VM and register it as a Nomad node |
+| `abc node terminate --cloud` | Destroy the underlying VM (not just drain) |
+| `abc cluster list --cloud` | List all Nomad clusters in the fleet |
+| `abc cluster provision --cloud` | Provision a new cluster from a template |
+| `abc cluster decommission --cloud` | Drain and remove a cluster |
+| `abc pipeline run --cloud --cluster=za-cpt` | Submit to a specific named cluster in the fleet |
+| `abc budget list --cloud` | Cloud spend per namespace/group |
+| `abc budget set --cloud` | Set a spend cap for a namespace |
+| `abc residency set --cloud` | Set a standing data residency policy for a namespace (auto-enforced by cloud gateway) |
+| `abc network acl --cloud` | Manage Tailscale/VPN ACLs between nodes |
+| `abc secret rotate --cloud` | Rotate cloud IAM credentials: creates new key at provider, writes to Nomad Variable, revokes old key |
+
+---
+
+### Stacking flags
+
+`--sudo` and `--cloud` may be combined. Both headers are sent; the request traverses the full chain: CLI → cloud gateway → jurist → Nomad.
+
+```bash
+# Drain all nodes in an old cluster before decommissioning
+abc node list --cloud --sudo --cluster=nf-old-cluster \
+  | awk 'NR>2 {print $1}' \
+  | xargs -I{} abc node drain --cloud --sudo {} --deadline=2h
+```
+
+---
+
+## 15. Architecture: Request Flow and Service Layers
+
+```
+abc CLI
+ │
+ │  X-Nomad-Token: <user-token>
+ │  X-ABC-Sudo: 1          (when --sudo active)
+ │  X-ABC-Cloud: 1         (when --cloud active)
+ │
+ ▼
+Cloud Gateway                (--cloud tier, fleet-scoped)
+ ├── Multi-cluster routing: which Nomad cluster to target
+ ├── Cloud provider API calls (GCP / AWS / Tailscale)
+ ├── Budget enforcement: block submissions when namespace is over cap
+ ├── Standing data residency policy: auto-rewrite or reject cross-boundary jobs
+ └── Credential federation: rotate IAM keys, sync to Nomad Variables
+        │
+        ▼
+Jurist                       (--sudo tier, cluster-scoped)
+ ├── Policy check: is this caller authorised for the requested elevation?
+ ├── Token rewriting: swap user token → appropriate ACL token
+ ├── Namespace enforcement: apply residency constraints to submitted HCL
+ ├── Resource limit enforcement: cap cores/memory per namespace/group
+ └── Audit logging: every elevated request is recorded
+        │
+        ▼
+Nomad API
+ ├── Job scheduling (ParseHCL → RegisterJob)
+ ├── Namespace management
+ ├── Node management
+ └── Variables API (pipeline specs, per-lab secrets)
+```
+
+**Key principle:** The CLI generates intent (HCL + elevation headers). Each layer transforms or enforces policy. The CLI does not need to know what tier the user holds — it signals intent and the server decides.
+
+---
+
+### Service map: what the CLI talks to
+
+| Service | Protocol / path | Command groups |
+|---------|----------------|----------------|
+| **Nomad** | HTTP → jurist → Nomad | `job`, `pipeline`, `namespace`, `node` |
+| **Jurist** | HTTP (health + audit endpoints) | `abc service ping jurist`, `abc jurist`, `abc status` |
+| **MinIO** | S3 API or via ABC REST API | `storage`, `data` |
+| **Tus upload server** | tus protocol | `data upload` |
+| **ABC REST API** | HTTP | `auth`, `workspace`, `data`, `automation` |
+| **Cloud Gateway** | HTTP + X-ABC-Cloud header | `--cloud` on any command, `cluster`, `network`, `budget`, `residency` |
+| **Tailscale** | Via cloud gateway | `network acl --cloud` |
+| **GCP / AWS** | Via cloud gateway | `node add/terminate`, `cluster provision`, `budget`, `secret rotate` |
+
+---
+
+## 16. Service Interaction Commands
+
+The ABC CLI is the **single client for all abc-cluster backend services**. Each service exposes health, version, and diagnostic endpoints surfaced uniformly.
+
+### `abc status`
+
+Single command showing the health of every backend service:
+
+```
+$ abc status
+
+  SERVICE            STATUS    VERSION    LATENCY
+  ─────────────────────────────────────────────────
+  Nomad              healthy   1.9.4      12ms
+  Jurist             healthy   0.8.2       8ms
+  ABC REST API       healthy   2.1.0      34ms
+  MinIO              healthy   RELEASE    21ms
+  Tus upload server  healthy   1.4.0      15ms
+  Cloud Gateway      healthy   0.3.1      45ms
+```
+
+Exit code 1 if any service is unhealthy.
+
+### `abc service ping <service>`
+
+Test connectivity to a specific service:
+
+```bash
+abc service ping nomad
+abc service ping jurist
+abc service ping minio
+abc service ping api
+abc service ping tus
+abc service ping cloud-gateway
+```
+
+### `abc service version <service>`
+
+Show version of a specific backend service. Useful for compatibility checking before upgrades.
+
+### `abc jurist` (requires `--sudo`)
+
+Jurist-specific commands for policy testing and audit — for cluster admins and developers debugging policy decisions.
+
+```bash
+# Explain what jurist would change about a hypothetical submission
+abc jurist explain --action=submit --namespace=nf-lab --cores=16
+
+# Audit log of recent elevated requests
+abc jurist audit --since=1h --namespace=nf-lab
+
+# List active jurist policies
+abc jurist policy list --sudo
+```
+
+`abc jurist explain` answers: "if I submit this job, what would jurist change and why?"
+
+---
+
+## 17. Updated Global Flags
+
+Additions to the global flags table in section 3:
+
+| Flag | Short | Env var | Description |
+|------|-------|---------|-------------|
+| `--sudo` | | `ABC_CLI_SUDO_MODE` | Elevate to cluster-admin scope; attaches X-ABC-Sudo header; jurist enforces. |
+| `--cloud` | | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope; attaches X-ABC-Cloud header; cloud gateway enforces. |
+| `--quiet` | `-q` | | Suppress banners, progress lines, and other informational output. |
+| `--cluster` | | `ABC_CLUSTER` | Target a specific named cluster in the fleet (requires `--cloud`). |
+
+---
+
+## 18. Updated Command Tree
+
+```
+abc
+├── auth        login · logout · whoami · token · refresh
+├── config      init · set · get · list · unset
+├── context     list · show · add · use · remove
+├── workspace   list · show · create · delete · use · members
+│
+├── status                                              ← all-service health
+├── service     ping · version                         ← per-service health/version
+├── jurist      explain · audit · policy               ← policy debug (--sudo)
+│
+├── pipeline    run · add · list · show · update · delete · export · import
+├── job         run · translate · list · show · stop · dispatch · logs · status
+│
+├── namespace   list · show                            ← read: all users
+│               create · delete                        ← write: --sudo
+├── node        list · show · drain · undrain          ← --sudo
+│               add · terminate                        ← --cloud
+├── cluster     list · status · provision · decommission  ← --cloud
+│
+├── data        upload · download · list · show · delete · move · stat · encrypt · decrypt
+├── storage     buckets · objects · size
+│
+├── network     acl · show                             ← --cloud
+├── budget      summary · list · show · set · report   ← set: --cloud
+├── residency   show · set                             ← set: --cloud
+├── secret      list · rotate                          ← rotate: --cloud
+├── compliance  status · audit · residency · dta · report
+│
+├── automation  list · show · create · enable · disable · delete · logs
+├── policy      list · show · validate · logs · audit
+│
+├── ssh         connect
+├── chat
+└── version
+```
+
+---
+
+## 19. Implementation Status
+
+| Command group | Status | Notes |
+|---------------|--------|-------|
+| `abc job` | ✅ Implemented | run, translate, list, show, stop, dispatch, logs, status; `--sudo` widens namespace |
+| `abc pipeline` | ✅ Implemented | run, add, list, show, update, delete, export, import; Nomad Variables backed |
+| `abc namespace` | ✅ Implemented | list, show, create (--sudo), delete (--sudo) |
+| `abc node` | ✅ Implemented | list, show, drain, undrain (all require --sudo) |
+| `abc data` | ✅ Implemented | upload, download, encrypt, decrypt |
+| `abc storage` | ✅ Implemented | size |
+| `abc cluster` | 🔲 Planned | `--cloud` tier |
+| `abc network` | 🔲 Planned | `--cloud` tier |
+| `abc budget` | 🔲 Planned | `--cloud` tier |
+| `abc residency` | 🔲 Planned | `--cloud` tier |
+| `abc secret rotate` | 🔲 Planned | `--cloud` tier |
+| `abc status` | 🔲 Planned | all-service health check |
+| `abc service` | 🔲 Planned | per-service ping/version |
+| `abc jurist` | 🔲 Planned | policy explain/audit (--sudo) |
+| `abc auth` | 🔲 Planned | |
+| `abc config` | 🔲 Planned | |
+| `abc context` | 🔲 Planned | |
+| `abc workspace` | 🔲 Planned | |
+| `abc automation` | 🔲 Planned | |
+| `abc policy` | 🔲 Planned | |
+| `abc compliance` | 🔲 Planned | |
+| `abc ssh` | 🔲 Planned | |
+| `abc chat` | 🔲 Planned | |
