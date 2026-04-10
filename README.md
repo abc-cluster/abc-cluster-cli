@@ -89,21 +89,6 @@ go build -o abc .
 bash scripts/local-matrix-build.sh
 ```
 
-### GCP Slurm pure-SLURM e2e validation
-
-Use the dedicated validation suite for pure `#SBATCH` submission through `abc job run` to a Slurm-enabled Nomad client:
-
-```bash
-NOMAD_ADDR=http://<nomad>:4646 \
-NOMAD_TOKEN=<nomad-acl-token> \
-./validation/gcp_slurm/validate-pure-slurm-gcp.sh
-```
-
-Fixtures used by this suite:
-
-- `validation/gcp_slurm/pure-slurm-hello.sbatch.sh`
-- `validation/gcp_slurm/pure-slurm-array.sbatch.sh`
-
 ### Local tus + MinIO testing (rclone compatibility)
 
 Use the provided docker compose setup to run a tusd server backed by MinIO:

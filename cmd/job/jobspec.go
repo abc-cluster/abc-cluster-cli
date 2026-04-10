@@ -55,12 +55,6 @@ type jobSpec struct {
 	NoNetwork          bool
 	Constraints        []nomadConstraint
 	Affinities         []nomadAffinity
-	SlurmPartition     string
-	SlurmAccount       string
-	SlurmWorkDir       string
-	SlurmStdoutFile    string
-	SlurmStderrFile    string
-	SlurmNTasks        int
 
 	// ── Meta directives ───────────────────────────────────────────────────────
 	Meta  map[string]string
@@ -70,25 +64,24 @@ type jobSpec struct {
 	Ports []string
 
 	// ── Runtime-exposure boolean flags ────────────────────────────────────────
-	IncludeHPCCompatEnv bool
-	ExposeAllocID       bool
-	ExposeShortAllocID  bool
-	ExposeAllocName     bool
-	ExposeAllocIndex    bool
-	ExposeJobID         bool
-	ExposeJobName       bool
-	ExposeParentJobID   bool
-	ExposeGroupName     bool
-	ExposeTaskName      bool
-	ExposeNamespaceEnv  bool
-	ExposeDCEnv         bool
-	ExposeCPULimit      bool
-	ExposeCPUCores      bool
-	ExposeMemLimit      bool
-	ExposeMemMaxLimit   bool
-	ExposeAllocDir      bool
-	ExposeTaskDir       bool
-	ExposeSecretsDir    bool
+	ExposeAllocID      bool
+	ExposeShortAllocID bool
+	ExposeAllocName    bool
+	ExposeAllocIndex   bool
+	ExposeJobID        bool
+	ExposeJobName      bool
+	ExposeParentJobID  bool
+	ExposeGroupName    bool
+	ExposeTaskName     bool
+	ExposeNamespaceEnv bool
+	ExposeDCEnv        bool
+	ExposeCPULimit     bool
+	ExposeCPUCores     bool
+	ExposeMemLimit     bool
+	ExposeMemMaxLimit  bool
+	ExposeAllocDir     bool
+	ExposeTaskDir      bool
+	ExposeSecretsDir   bool
 }
 
 // readNomadEnvVars seeds a jobSpec from NOMAD_* environment variables present
@@ -164,24 +157,6 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	if override.Driver != "" {
 		base.Driver = override.Driver
 	}
-	if override.SlurmPartition != "" {
-		base.SlurmPartition = override.SlurmPartition
-	}
-	if override.SlurmAccount != "" {
-		base.SlurmAccount = override.SlurmAccount
-	}
-	if override.SlurmWorkDir != "" {
-		base.SlurmWorkDir = override.SlurmWorkDir
-	}
-	if override.SlurmStdoutFile != "" {
-		base.SlurmStdoutFile = override.SlurmStdoutFile
-	}
-	if override.SlurmStderrFile != "" {
-		base.SlurmStderrFile = override.SlurmStderrFile
-	}
-	if override.SlurmNTasks != 0 {
-		base.SlurmNTasks = override.SlurmNTasks
-	}
 	if override.DriverConfig != nil {
 		if base.DriverConfig == nil {
 			base.DriverConfig = map[string]string{}
@@ -202,9 +177,6 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 		base.Ports = append([]string(nil), override.Ports...)
 	}
 	// Boolean expose flags: true wins.
-	if override.IncludeHPCCompatEnv {
-		base.IncludeHPCCompatEnv = true
-	}
 	if override.ExposeAllocID {
 		base.ExposeAllocID = true
 	}

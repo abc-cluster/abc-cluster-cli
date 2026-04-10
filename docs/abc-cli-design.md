@@ -1447,7 +1447,7 @@ $ abc data encrypt ./fastq/ZA-INST-2024-001_R1.fastq.gz \
 
   ✓ Encrypted → ./fastq/ZA-INST-2024-001_R1.fastq.gz.encrypted
   Size before   2.1 GB
-  Size after    2.1 GB  (rclone crypt, AES-256 CTR)
+  Size after    2.1 GB  (rclone-compatible stream format)
 ```
 
 #### `abc data decrypt <path>`
@@ -1460,6 +1460,23 @@ $ abc data decrypt ./fastq/ZA-INST-2024-001_R1.fastq.gz.encrypted \
   ✓ Decrypted → ./fastq/ZA-INST-2024-001_R1.fastq.gz
   ✓ Checksum verified
 ```
+
+Implementation notes (current CLI behavior):
+
+- Format compatibility target: rclone crypt file format for data payloads.
+- File header: ASCII magic `RCLONE\x00\x00` followed by a 24-byte nonce.
+- KDF: `scrypt(password, salt, N=16384, r=8, p=1, outLen=80)`, first 32 bytes used as the data key.
+- Salt handling: if `--crypt-salt` is omitted, a fixed 16-byte default salt is used (matching CLI behavior).
+- Cipher primitive: NaCl `secretbox` (XSalsa20-Poly1305), not browser WebCrypto AES-GCM.
+- Chunking: plaintext is encrypted in 64 KiB blocks; each block adds `secretbox` overhead and increments the nonce.
+
+Browser integration guidance:
+
+- Best-fit browser stack to emulate current behavior:
+  - `libsodium-wrappers-sumo` for `crypto_secretbox_easy` / `crypto_secretbox_open_easy`.
+  - `scrypt-js` for KDF parameter parity (`N=16384, r=8, p=1`).
+- WebCrypto alone is not sufficient for byte-compatible output because it does not expose NaCl `secretbox` or `scrypt` directly.
+- For interoperability tests, verify round-trips against CLI outputs from `abc data encrypt` and `abc data decrypt` with the same password/salt.
 
 ---
 
