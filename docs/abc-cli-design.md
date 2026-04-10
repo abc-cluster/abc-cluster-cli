@@ -3130,3 +3130,570 @@ abc
 | `abc compliance` | 🔲 Planned | |
 | `abc ssh` | 🔲 Planned | |
 | `abc chat` | 🔲 Planned | |
+
+---
+
+## 20. Command Output Reference
+
+Envisioned terminal output for every implemented and planned command. Output uses the same indented-table style as the existing `abc job` and `abc pipeline` commands. All examples use realistic fictional data representative of a genomics HPC cluster.
+
+---
+
+### Elevation banners
+
+Printed to **stderr** before any command output. Suppressed by `--quiet` / `-q`.
+
+```
+$ abc job list --sudo
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  NOMAD JOB ID                   NAMESPACE        STATUS     DATACENTERS          SUBMITTED          DURATION
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  bwa-align-batch                nf-genomics-lab  running    za-cpt-dc1           2025-06-01 08:14   1h 24m
+  taxprofiler-003                nf-student-lab   dead       za-cpt-dc1           2025-06-01 09:30   0h 41m
+  nf-gwas-pipeline               nf-virology-lab  complete   za-cpt-dc1           2025-05-31 14:00   3h 07m
+```
+
+```
+$ abc cluster list --cloud
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  NAME                     REGION       STATUS     NODES  NOMAD    CREATED
+  ──────────────────────────────────────────────────────────────────────────────────────
+  za-cpt-main              za-cpt       healthy    8      1.9.4    2024-01-15 09:00
+  eu-west-backup           eu-west      healthy    4      1.9.4    2024-03-02 11:30
+  ke-nbi-research          ke-nbi       degraded   3      1.8.6    2024-07-11 08:15
+```
+
+---
+
+### `abc status`
+
+```
+$ abc status
+
+  SERVICE            STATUS    VERSION    LATENCY
+  ─────────────────────────────────────────────────
+  Nomad              healthy   1.9.4       12ms
+  Jurist             healthy   0.8.2        8ms
+  ABC REST API       healthy   2.1.0       34ms
+  MinIO              healthy   RELEASE     21ms
+  Tus upload server  healthy   1.4.0       15ms
+  Cloud Gateway      healthy   0.3.1       45ms
+```
+
+One unhealthy service exits with code 1:
+
+```
+$ abc status
+
+  SERVICE            STATUS      VERSION    LATENCY
+  ─────────────────────────────────────────────────────
+  Nomad              healthy     1.9.4       12ms
+  Jurist             unhealthy   0.8.2        —
+  ABC REST API       healthy     2.1.0       34ms
+  MinIO              healthy     RELEASE     21ms
+  Tus upload server  healthy     1.4.0       15ms
+  Cloud Gateway      healthy     0.3.1       45ms
+
+Error: 1 service(s) are not healthy
+```
+
+---
+
+### `abc service ping <service>`
+
+```
+$ abc service ping nomad
+
+  ✓ nomad               healthy
+
+$ abc service ping jurist
+
+  ✗ jurist  unreachable: request nomad API 503: service unavailable
+Error: service "jurist" is unreachable
+```
+
+### `abc service version <service>`
+
+```
+$ abc service version cloud-gateway
+
+  Service  cloud-gateway
+  Version  0.3.1
+  Status   healthy
+```
+
+---
+
+### `abc namespace list`
+
+Without `--sudo` (read-only, basic):
+
+```
+$ abc namespace list
+
+  NAME                     GROUP            CONTACT          DESCRIPTION
+  ──────────────────────────────────────────────────────────────────────────────────────
+  default                                                    Default namespace
+  nf-genomics-lab          genomics         pi@genomics.org  Genomics research lab
+  nf-virology-lab          virology         lead@viro.org    Virology surveillance
+  nf-student-lab           genomics         tutor@uni.ac.za  Student training namespace
+```
+
+With `--sudo`:
+
+```
+$ abc namespace list --sudo
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  NAME                     GROUP            CONTACT          DESCRIPTION
+  ──────────────────────────────────────────────────────────────────────────────────────
+  default                                                    Default namespace
+  nf-genomics-lab          genomics         pi@genomics.org  Genomics research lab
+  nf-virology-lab          virology         lead@viro.org    Virology surveillance
+  nf-student-lab           genomics         tutor@uni.ac.za  Student training namespace
+  nf-archived-2023         genomics         —                Archived — read-only
+```
+
+(All namespaces visible, including those not owned by the caller's group.)
+
+---
+
+### `abc namespace show <name>`
+
+```
+$ abc namespace show nf-genomics-lab
+
+  Name         nf-genomics-lab
+  Description  Genomics research lab
+
+  Metadata:
+    contact          pi@genomics.org
+    group            genomics
+    node-pool        research
+    priority         60
+```
+
+---
+
+### `abc namespace create` (requires `--sudo`)
+
+```
+$ abc namespace create --sudo \
+    --name=nf-new-lab \
+    --group=genomics \
+    --priority=50 \
+    --contact=pi@newlab.edu \
+    --node-pool=research
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  Namespace "nf-new-lab" applied.
+```
+
+---
+
+### `abc namespace delete` (requires `--sudo`)
+
+```
+$ abc namespace delete --sudo nf-archived-2023
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  Delete namespace "nf-archived-2023"? [y/N]: y
+  Namespace "nf-archived-2023" deleted.
+```
+
+With `--drain` to stop running jobs first:
+
+```
+$ abc namespace delete --sudo nf-old-lab --drain --yes
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  Stopped job nf-gwas-stale
+  Stopped job bactmap-leftover
+  Namespace "nf-old-lab" deleted.
+```
+
+---
+
+### `abc node list` (requires `--sudo`)
+
+```
+$ abc node list --sudo
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  ID          NAME                 DATACENTER     STATUS       DRAIN    ELIGIBILITY
+  ────────────────────────────────────────────────────────────────────────────────────
+  a1b2c3d4    nomad-client-01      za-cpt-dc1     ready        no       eligible
+  b2c3d4e5    nomad-client-02      za-cpt-dc1     ready        no       eligible
+  c3d4e5f6    nomad-client-03      za-cpt-dc1     ready        yes      ineligible
+  d4e5f6a7    nomad-gpu-01         za-cpt-dc1     ready        no       eligible
+  e5f6a7b8    nomad-client-04      za-cpt-dc2     initializing no       eligible
+```
+
+---
+
+### `abc node show <node-id>` (requires `--sudo`)
+
+```
+$ abc node show --sudo nomad-client-02
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  ID          b2c3d4e5-f6a7-8b9c-d0e1-f2a3b4c5d6e7
+  Name        nomad-client-02
+  Datacenter  za-cpt-dc1
+  Region      za-cpt
+  Class       standard
+  Status      ready
+  Drain       no
+  Eligibility eligible
+
+  Resources:
+    CPU       16000 MHz
+    Memory    65536 MiB
+    Disk      512000 MiB
+
+  Drivers:
+    docker           healthy
+    exec             healthy
+    raw_exec         healthy
+    slurm            not detected
+
+  Allocations:
+    b2c3d4e5    bwa-align-batch              running
+    c3d4e5f6    nf-gwas-pipeline             running
+    d4e5f6a7    taxprofiler-003              complete
+```
+
+---
+
+### `abc node drain` (requires `--sudo`)
+
+```
+$ abc node drain --sudo nomad-client-03 --deadline=1h --wait
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  Drain enabled on node nomad-client-03
+  Waiting for drain to complete...
+  Node nomad-client-03 drain complete.
+```
+
+### `abc node undrain` (requires `--sudo`)
+
+```
+$ abc node undrain --sudo nomad-client-03
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  Node nomad-client-03 drain disabled and marked eligible.
+```
+
+---
+
+### `abc node add` (requires `--cloud`)
+
+```
+$ abc node add --cloud \
+    --cluster=za-cpt-main \
+    --type=n2-standard-16 \
+    --datacenter=za-cpt-dc1 \
+    --count=2
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Node provisioning started (2 x n2-standard-16).
+```
+
+Dry-run:
+
+```
+$ abc node add --cloud --cluster=za-cpt-main --type=n2-standard-16 --count=2 --dry-run
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Dry-run: 2 n2-standard-16 node(s) would be added to cluster "za-cpt-main".
+```
+
+---
+
+### `abc node terminate` (requires `--cloud`)
+
+```
+$ abc node terminate --cloud c3d4e5f6
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Terminate node c3d4e5f6? This will destroy the underlying VM. [y/N]: y
+  Node c3d4e5f6 termination initiated.
+```
+
+---
+
+### `abc cluster list` (requires `--cloud`)
+
+```
+$ abc cluster list --cloud
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  NAME                     REGION       STATUS     NODES  NOMAD    CREATED
+  ──────────────────────────────────────────────────────────────────────────────────────
+  za-cpt-main              za-cpt       healthy    8      1.9.4    2024-01-15 09:00
+  eu-west-backup           eu-west      healthy    4      1.9.4    2024-03-02 11:30
+  ke-nbi-research          ke-nbi       degraded   3      1.8.6    2024-07-11 08:15
+```
+
+---
+
+### `abc cluster status [name]` (requires `--cloud`)
+
+```
+$ abc cluster status --cloud za-cpt-main
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Name         za-cpt-main
+  Region       za-cpt
+  Status       healthy
+  Nodes        8
+  Nomad        1.9.4
+  Datacenters  [za-cpt-dc1 za-cpt-dc2]
+
+  Metadata:
+    contact          infra@org.example
+    environment      production
+    owner            platform-team
+```
+
+---
+
+### `abc cluster provision` (requires `--cloud`)
+
+```
+$ abc cluster provision --cloud \
+    --name=nf-genomics-gpu \
+    --region=eu-west \
+    --size=5 \
+    --node-type=a2-highgpu-1g
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Cluster "nf-genomics-gpu" provisioning started in eu-west.
+  Provisioning ID  prov-a1b2c3d4
+```
+
+Dry-run:
+
+```
+$ abc cluster provision --cloud --name=nf-genomics-gpu --region=eu-west --size=5 --dry-run
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Dry-run: cluster "nf-genomics-gpu" would be provisioned in eu-west with 5 node(s).
+```
+
+---
+
+### `abc cluster decommission <name>` (requires `--cloud`)
+
+```
+$ abc cluster decommission --cloud ke-nbi-research
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Decommission cluster "ke-nbi-research" (all jobs will be drained first, deadline: 2h)? This will destroy all cluster VMs. [y/N]: y
+  Cluster "ke-nbi-research" decommission initiated.
+```
+
+---
+
+### `abc budget list` (requires `--cloud`)
+
+```
+$ abc budget list --cloud
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  NAMESPACE                CAP/MONTH    CURRENT SPEND  CCY      STATUS
+  ──────────────────────────────────────────────────────────────────────────
+  nf-genomics-lab          500.00       312.44         USD      ok
+  nf-virology-lab          300.00       298.71         USD      warning
+  nf-student-lab           100.00       23.10          USD      ok
+  nf-archived-2023         unlimited    0.00           USD      ok
+```
+
+Status values: `ok` (under alert threshold), `warning` (between alert and block threshold), `blocked` (over block threshold — new submissions rejected).
+
+---
+
+### `abc budget show` (requires `--cloud`)
+
+```
+$ abc budget show --cloud --namespace=nf-virology-lab
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Namespace      nf-virology-lab
+  Cap            300.00 USD/month
+  Current spend  298.71 USD
+  Status         warning
+  Alert at       80%
+  Block at       100%
+```
+
+---
+
+### `abc budget set` (requires `--cloud`)
+
+```
+$ abc budget set --cloud \
+    --namespace=nf-virology-lab \
+    --monthly=500 \
+    --alert-at=0.75 \
+    --block-at=0.95
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Budget cap for "nf-virology-lab" set to 500.00 USD/month.
+```
+
+Remove the cap entirely:
+
+```
+$ abc budget set --cloud --namespace=nf-student-lab --monthly=0
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  Budget cap for "nf-student-lab" removed (unlimited).
+```
+
+---
+
+### `abc pipeline list`
+
+Without `--sudo`:
+
+```
+$ abc pipeline list
+
+  NAME                           LAST UPDATED
+  ────────────────────────────────────────────────────
+  nf-gwas                        2025-05-28 14:03
+  bactmap-genomics               2025-05-20 09:17
+  rnaseq-standard                2025-04-11 16:44
+```
+
+With `--sudo` (all namespaces):
+
+```
+$ abc pipeline list --sudo
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  NAME                           NAMESPACE             LAST UPDATED
+  ──────────────────────────────────────────────────────────────────────────────
+  nf-gwas                        nf-genomics-lab       2025-05-28 14:03
+  bactmap-genomics               nf-genomics-lab       2025-05-20 09:17
+  taxprofiler-surveillance       nf-virology-lab       2025-05-15 11:22
+  rnaseq-standard                nf-student-lab        2025-04-11 16:44
+```
+
+---
+
+### `abc pipeline run <name-or-url>`
+
+Standard run from a saved pipeline:
+
+```
+$ abc pipeline run nf-gwas --params-file samples.yaml
+
+  Submitting head job for pipeline "nf-gwas"...
+  Generating HCL...
+  Parsing HCL (jurist)...
+
+  ✓ Job registered
+  Nomad job ID   nf-gwas-a1b2c3d4
+  Evaluation ID  e5f6a7b8-c9d0-e1f2-a3b4-c5d6e7f8a9b0
+  Dashboard      http://nomad.za-cpt.internal:4646/ui/jobs/nf-gwas-a1b2c3d4
+```
+
+With `--wait` streaming head job logs:
+
+```
+$ abc pipeline run nf-gwas --wait
+
+  ✓ Job registered  (nf-gwas-a1b2c3d4)
+  Waiting for allocation to start...
+
+  [09:01:22] Nextflow 25.10.4 — https://nextflow.io
+  [09:01:23] Launching nf-core/gwas (revision: 1.0.0)
+  [09:01:25] executor > nomad (48 tasks)
+  [09:03:41] [  submitted ] process > GWAS:PLINK_ASSOC (batch_001)
+  [09:03:42] [  submitted ] process > GWAS:PLINK_ASSOC (batch_002)
+  ...
+  [11:47:03] Completed at: 01-Jun-2025 11:47:03
+  [11:47:03] Duration    : 2h 45m 41s
+  [11:47:03] CPU hours   : 132.3
+  [11:47:03] Succeeded   : 48
+```
+
+With `--sudo` submitting on behalf of another namespace:
+
+```
+$ abc pipeline run nf-gwas --sudo \
+    --namespace=nf-student-lab \
+    --datacenter=za-cpt
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  ✓ Job registered in namespace "nf-student-lab"  (nf-gwas-b2c3d4e5)
+  Evaluation ID  f6a7b8c9-d0e1-f2a3-b4c5-d6e7f8a9b0c1
+```
+
+---
+
+### `abc jurist explain` (requires `--sudo`, planned)
+
+```
+$ abc jurist explain --sudo \
+    --action=submit \
+    --namespace=nf-student-lab \
+    --cores=32 \
+    --memory=128G
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  Action      submit
+  Namespace   nf-student-lab
+  Requested   32 cores, 131072 MiB
+
+  Jurist evaluation:
+    ✓ Namespace exists and is active
+    ✗ cores capped at 16 for namespace tier "student" — reduced to 16
+    ✗ memory capped at 32768 MiB for namespace tier "student" — reduced to 32768 MiB
+    ✓ Datacenter constraint za-cpt applied (residency policy: za)
+    ✓ Token rewrite: user-token → research-submit-token
+
+  Effective submission:
+    Cores   16
+    Memory  32768 MiB
+    Region  za-cpt
+    DC      za-cpt-dc1
+```
+
+---
+
+### `abc jurist audit` (requires `--sudo`, planned)
+
+```
+$ abc jurist audit --sudo --since=1h
+[abc sudo] Elevated mode active — policy enforcement delegated to jurist.
+
+  TIME                 USER                  ACTION    NAMESPACE          RESULT
+  ────────────────────────────────────────────────────────────────────────────────────
+  2025-06-01 10:44:01  pi@genomics.org       submit    nf-genomics-lab    allowed
+  2025-06-01 10:51:17  student@uni.ac.za     submit    nf-student-lab     modified (cores capped)
+  2025-06-01 11:03:55  pi@genomics.org       stop      nf-genomics-lab    allowed
+  2025-06-01 11:22:08  admin@platform.io     namespace nf-new-lab         allowed (sudo)
+```
+
+---
+
+### Elevation stacking example
+
+```
+$ abc node list --cloud --sudo --cluster=ke-nbi-research
+[abc cloud] Infrastructure mode active — cloud gateway policy applies.
+
+  ID          NAME                 DATACENTER     STATUS       DRAIN    ELIGIBILITY
+  ────────────────────────────────────────────────────────────────────────────────────
+  f1a2b3c4    ke-nbi-client-01     ke-nbi-dc1     ready        no       eligible
+  a2b3c4d5    ke-nbi-client-02     ke-nbi-dc1     ready        no       eligible
+  b3c4d5e6    ke-nbi-client-03     ke-nbi-dc1     initializing no       eligible
+```
+
+(Both `X-ABC-Cloud: 1` and `X-ABC-Sudo: 1` sent; cloud gateway routes to the ke-nbi cluster, jurist enforces node-read permission.)
