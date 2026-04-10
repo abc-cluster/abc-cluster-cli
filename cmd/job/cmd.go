@@ -51,7 +51,7 @@ func nomadClientFromCmd(cmd *cobra.Command) *nomadClient {
 	if region == "" {
 		region, _ = cmd.Root().PersistentFlags().GetString("region")
 	}
-	return newNomadClient(addr, token, region)
+	return newNomadClient(addr, token, region).WithSudo(utils.SudoFromCmd(cmd))
 }
 
 // nomadAddrFromCmd returns the Nomad address string for display.

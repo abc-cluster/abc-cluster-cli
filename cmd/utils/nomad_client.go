@@ -22,6 +22,7 @@ type NomadClient struct {
 	addr   string
 	token  string
 	region string
+	sudo   bool
 	http   *http.Client
 }
 
@@ -30,6 +31,13 @@ func (c *NomadClient) Token() string { return c.token }
 
 // Addr returns the Nomad API address configured on this client.
 func (c *NomadClient) Addr() string { return c.addr }
+
+// WithSudo marks this client to send X-ABC-Sudo: 1 on every request.
+// The method returns the receiver so it can be chained with NewNomadClient.
+func (c *NomadClient) WithSudo(sudo bool) *NomadClient {
+	c.sudo = sudo
+	return c
+}
 
 // NewNomadClient creates a NomadClient. addr defaults to http://127.0.0.1:4646.
 func NewNomadClient(addr, token, region string) *NomadClient {
@@ -182,23 +190,46 @@ type NomadNodeResource struct {
 	CPU      int `json:"CPU"`
 	MemoryMB int `json:"MemoryMB"`
 	DiskMB   int `json:"DiskMB"`
-	IOPS     int `json:"IOPS"`
 }
 
-// NomadNode represents Nomad node details captured from /v1/node/<id>.
+// NomadNodeStub is a lightweight summary returned by GET /v1/nodes.
+type NomadNodeStub struct {
+	ID                   string `json:"ID"`
+	Name                 string `json:"Name"`
+	Datacenter           string `json:"Datacenter"`
+	NodeClass            string `json:"NodeClass"`
+	Status               string `json:"Status"`
+	Drain                bool   `json:"Drain"`
+	SchedulingEligibility string `json:"SchedulingEligibility"`
+}
+
+// NomadNode represents full node details from GET /v1/node/<id>.
 type NomadNode struct {
-	ID                string            `json:"ID"`
-	Name              string            `json:"Name"`
-	Datacenter        string            `json:"Datacenter"`
-	Region            string            `json:"Region"`
-	Class             string            `json:"Class"`
-	Status            string            `json:"Status"`
-	Drain             bool              `json:"Drain"`
-	Availability      string            `json:"Availability"`
-	Namespace         string            `json:"Namespace"`
-	Attributes        map[string]string `json:"Attributes"`
-	Resources         NomadNodeResource `json:"Resources"`
-	ReservedResources NomadNodeResource `json:"ReservedResources"`
+	ID                   string            `json:"ID"`
+	Name                 string            `json:"Name"`
+	Datacenter           string            `json:"Datacenter"`
+	Region               string            `json:"Region"`
+	NodeClass            string            `json:"NodeClass"`
+	Status               string            `json:"Status"`
+	Drain                bool              `json:"Drain"`
+	SchedulingEligibility string           `json:"SchedulingEligibility"`
+	Attributes           map[string]string `json:"Attributes"`
+	NodeResources        *NomadNodeResource `json:"NodeResources"`
+	ReservedResources    *NomadNodeResource `json:"ReservedResources"`
+	Drivers              map[string]NomadDriverInfo `json:"Drivers"`
+}
+
+// NomadDriverInfo is a simplified driver status entry.
+type NomadDriverInfo struct {
+	Detected bool `json:"Detected"`
+	Healthy  bool `json:"Healthy"`
+}
+
+// NomadNamespace is a Nomad namespace with optional metadata.
+type NomadNamespace struct {
+	Name        string            `json:"Name"`
+	Description string            `json:"Description"`
+	Meta        map[string]string `json:"Meta"`
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -234,6 +265,9 @@ func (c *NomadClient) do(ctx context.Context, method, path string, query url.Val
 	}
 	if c.token != "" {
 		req.Header.Set("X-Nomad-Token", c.token)
+	}
+	if c.sudo {
+		req.Header.Set("X-ABC-Sudo", "1")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -447,16 +481,80 @@ func (c *NomadClient) GetVariable(ctx context.Context, path, namespace string) (
 	return &out, c.get(ctx, "/v1/var/"+url.PathEscape(path), q, &out)
 }
 
-// ListNodes returns Nomad node summaries.
-func (c *NomadClient) ListNodes(ctx context.Context) ([]NomadNode, error) {
-	var out []NomadNode
+// ListNodes returns node summaries from GET /v1/nodes.
+func (c *NomadClient) ListNodes(ctx context.Context) ([]NomadNodeStub, error) {
+	var out []NomadNodeStub
 	return out, c.get(ctx, "/v1/nodes", nil, &out)
 }
 
-// GetNode returns detailed node resource information.
+// GetNode returns full node detail from GET /v1/node/<id>.
 func (c *NomadClient) GetNode(ctx context.Context, nodeID string) (*NomadNode, error) {
 	var out NomadNode
 	return &out, c.get(ctx, "/v1/node/"+url.PathEscape(nodeID), nil, &out)
+}
+
+// GetNodeAllocs returns the allocations currently assigned to a node.
+func (c *NomadClient) GetNodeAllocs(ctx context.Context, nodeID string) ([]NomadAllocStub, error) {
+	var out []NomadAllocStub
+	return out, c.get(ctx, "/v1/node/"+url.PathEscape(nodeID)+"/allocations", nil, &out)
+}
+
+// DrainNode enables (enable=true) or disables drain on a node.
+// deadlineSecs ≤ 0 means no deadline (drain until empty).
+func (c *NomadClient) DrainNode(ctx context.Context, nodeID string, enable bool, deadlineSecs int) error {
+	type drainSpec struct {
+		Deadline         int64 `json:"Deadline,omitempty"`
+		IgnoreSystemJobs bool  `json:"IgnoreSystemJobs"`
+	}
+	type drainReq struct {
+		DrainSpec     drainSpec `json:"DrainSpec"`
+		MarkEligible  bool      `json:"MarkEligible"`
+	}
+	var body interface{}
+	if enable {
+		spec := drainSpec{IgnoreSystemJobs: false}
+		if deadlineSecs > 0 {
+			spec.Deadline = int64(deadlineSecs) * int64(time.Second)
+		}
+		body = drainReq{DrainSpec: spec}
+	} else {
+		body = drainReq{MarkEligible: true}
+	}
+	return c.post(ctx, "/v1/node/"+url.PathEscape(nodeID)+"/drain", body, nil)
+}
+
+// SetNodeEligibility marks a node as "eligible" or "ineligible" for scheduling.
+func (c *NomadClient) SetNodeEligibility(ctx context.Context, nodeID string, eligible bool) error {
+	eligStr := "ineligible"
+	if eligible {
+		eligStr = "eligible"
+	}
+	body := map[string]string{"Eligibility": eligStr}
+	return c.post(ctx, "/v1/node/"+url.PathEscape(nodeID)+"/eligibility", body, nil)
+}
+
+// ── Namespace API methods ─────────────────────────────────────────────────────
+
+// ListNamespaces returns all namespaces.
+func (c *NomadClient) ListNamespaces(ctx context.Context) ([]NomadNamespace, error) {
+	var out []NomadNamespace
+	return out, c.get(ctx, "/v1/namespaces", nil, &out)
+}
+
+// GetNamespace returns a namespace by name.
+func (c *NomadClient) GetNamespace(ctx context.Context, name string) (*NomadNamespace, error) {
+	var out NomadNamespace
+	return &out, c.get(ctx, "/v1/namespace/"+url.PathEscape(name), nil, &out)
+}
+
+// ApplyNamespace creates or updates a namespace.
+func (c *NomadClient) ApplyNamespace(ctx context.Context, ns *NomadNamespace) error {
+	return c.post(ctx, "/v1/namespace/"+url.PathEscape(ns.Name), ns, nil)
+}
+
+// DeleteNamespace removes a namespace by name.
+func (c *NomadClient) DeleteNamespace(ctx context.Context, name string) error {
+	return c.delete(ctx, "/v1/namespace/"+url.PathEscape(name), nil, nil)
 }
 
 // PutVariable creates or updates a variable at the given path.

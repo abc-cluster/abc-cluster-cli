@@ -3,6 +3,8 @@ package utils
 import (
 	"os"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 // EnvOrDefault returns the value of the first environment variable in keys
@@ -14,6 +16,17 @@ func EnvOrDefault(keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// SudoFromCmd returns true when the caller has requested elevated admin scope,
+// either via the --sudo flag or the ABC_CLI_SUDO_MODE environment variable.
+// The env var takes priority over the flag.
+func SudoFromCmd(cmd *cobra.Command) bool {
+	if os.Getenv("ABC_CLI_SUDO_MODE") != "" {
+		return true
+	}
+	sudo, _ := cmd.Root().PersistentFlags().GetBool("sudo")
+	return sudo
 }
 
 // SleepCh returns a channel that closes after n seconds. Use in select

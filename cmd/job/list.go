@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	statusFilter, _ := cmd.Flags().GetString("status")
 	regionFilter, _ := cmd.Flags().GetString("region")
 	limit, _ := cmd.Flags().GetInt("limit")
+	sudo := utils.SudoFromCmd(cmd)
+
+	// Widen to all namespaces in sudo mode if not explicitly scoped.
+	if sudo && ns == "" {
+		ns = "*"
+	}
 
 	jobs, err := nc.ListJobs(cmd.Context(), "", ns)
 	if err != nil {
@@ -54,26 +61,48 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "  %-30s %-10s %-12s %-20s %-18s %-10s\n",
-		"NOMAD JOB ID", "STATUS", "REGION", "DATACENTERS", "SUBMITTED", "DURATION")
-	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 106))
-
 	now := time.Now()
-	for _, j := range filtered {
-		dcs := strings.Join(j.Datacenters, ",")
-		if len(dcs) > 20 {
-			dcs = dcs[:17] + "..."
+
+	if sudo {
+		fmt.Fprintf(out, "  %-30s %-16s %-10s %-20s %-18s %-10s\n",
+			"NOMAD JOB ID", "NAMESPACE", "STATUS", "DATACENTERS", "SUBMITTED", "DURATION")
+		fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 114))
+		for _, j := range filtered {
+			dcs := strings.Join(j.Datacenters, ",")
+			if len(dcs) > 20 {
+				dcs = dcs[:17] + "..."
+			}
+			submitted := ""
+			if j.SubmitTime > 0 {
+				submitted = time.Unix(0, j.SubmitTime).Format("2006-01-02 15:04")
+			}
+			ns := j.Namespace
+			if ns == "" {
+				ns = "default"
+			}
+			fmt.Fprintf(out, "  %-30s %-16s %-10s %-20s %-18s %-10s\n",
+				j.ID, ns, j.Status, dcs, submitted, jobDuration(j, now))
 		}
-		submitted := ""
-		if j.SubmitTime > 0 {
-			submitted = time.Unix(0, j.SubmitTime).Format("2006-01-02 15:04")
-		}
-		region := j.Region
-		if region == "" {
-			region = "—"
-		}
+	} else {
 		fmt.Fprintf(out, "  %-30s %-10s %-12s %-20s %-18s %-10s\n",
-			j.ID, j.Status, region, dcs, submitted, jobDuration(j, now))
+			"NOMAD JOB ID", "STATUS", "REGION", "DATACENTERS", "SUBMITTED", "DURATION")
+		fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 106))
+		for _, j := range filtered {
+			dcs := strings.Join(j.Datacenters, ",")
+			if len(dcs) > 20 {
+				dcs = dcs[:17] + "..."
+			}
+			submitted := ""
+			if j.SubmitTime > 0 {
+				submitted = time.Unix(0, j.SubmitTime).Format("2006-01-02 15:04")
+			}
+			region := j.Region
+			if region == "" {
+				region = "—"
+			}
+			fmt.Fprintf(out, "  %-30s %-10s %-12s %-20s %-18s %-10s\n",
+				j.ID, j.Status, region, dcs, submitted, jobDuration(j, now))
+		}
 	}
 	return nil
 }

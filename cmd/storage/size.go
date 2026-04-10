@@ -82,13 +82,21 @@ func printServerSizes(ctx context.Context, opts *sizeOptions) error {
 	})
 
 	fmt.Println("SERVER STORAGE:")
-	for _, node := range nodes {
-		if opts.namespace != "" && node.Namespace != opts.namespace {
+	for _, stub := range nodes {
+		node, err := nc.GetNode(ctx, stub.ID)
+		if err != nil {
+			fmt.Printf("%s: failed to fetch node detail: %v\n", stub.Name, err)
 			continue
 		}
 
-		totalFill := node.Resources.DiskMB
-		reserved := node.ReservedResources.DiskMB
+		var totalFill, reserved int
+		if node.NodeResources != nil {
+			totalFill = node.NodeResources.DiskMB
+		}
+		if node.ReservedResources != nil {
+			reserved = node.ReservedResources.DiskMB
+		}
+
 		if totalFill == 0 {
 			fmt.Printf("%s: capacity unknown\n", node.Name)
 			continue
