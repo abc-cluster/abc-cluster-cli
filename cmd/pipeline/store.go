@@ -61,6 +61,7 @@ func listPipelines(ctx context.Context, nc *utils.NomadClient, namespace string)
 		out = append(out, pipelineStub{
 			Name:       name,
 			Path:       s.Path,
+			Namespace:  s.Namespace,
 			ModifyTime: time.Unix(0, s.ModifyTime),
 		})
 	}
@@ -76,5 +77,6 @@ func deletePipeline(ctx context.Context, nc *utils.NomadClient, name, namespace 
 type pipelineStub struct {
 	Name       string
 	Path       string
+	Namespace  string
 	ModifyTime time.Time
 }

@@ -11,8 +11,11 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/namespace"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/node"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/storage"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +37,15 @@ var rootCmd = &cobra.Command{
 
 It allows you to manage and run pipelines and batch jobs on the abc-cluster platform
 from your terminal.`,
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		if utils.SudoFromCmd(cmd) {
+			quiet, _ := cmd.Root().PersistentFlags().GetBool("quiet")
+			if !quiet {
+				fmt.Fprintln(os.Stderr, "[abc sudo] Elevated mode active — policy enforcement delegated to jurist.")
+			}
+		}
+		return nil
+	},
 }
 
 // Execute runs the root command.
@@ -74,6 +86,12 @@ func cancelledActionFromArgs(args []string) string {
 }
 
 func init() {
+	// Elevation flags.
+	rootCmd.PersistentFlags().Bool("sudo", false,
+		"Elevate to admin scope (requires admin token; or set ABC_CLI_SUDO_MODE)")
+	rootCmd.PersistentFlags().BoolP("quiet", "q", false,
+		"Suppress informational output (including sudo banner)")
+
 	// Flags for the data command (ABC REST API).
 	rootCmd.PersistentFlags().StringVar(&serverURL, "url",
 		getEnvOrDefault("ABC_API_ENDPOINT", "https://api.abc-cluster.io"),
@@ -90,6 +108,8 @@ func init() {
 	rootCmd.AddCommand(storage.NewCmd())
 	rootCmd.AddCommand(job.NewCmd())
 	rootCmd.AddCommand(job.NewLogsCmd())
+	rootCmd.AddCommand(namespace.NewCmd())
+	rootCmd.AddCommand(node.NewCmd())
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
