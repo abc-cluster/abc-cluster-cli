@@ -59,7 +59,9 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 	if region == "" {
 		region, _ = cmd.Root().PersistentFlags().GetString("region")
 	}
-	return utils.NewNomadClient(addr, token, region).WithSudo(utils.SudoFromCmd(cmd))
+	return utils.NewNomadClient(addr, token, region).
+		WithSudo(utils.SudoFromCmd(cmd)).
+		WithCloud(utils.CloudFromCmd(cmd))
 }
 
 // requireSudo returns an error if sudo mode is not active. Used as a

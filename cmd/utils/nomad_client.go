@@ -23,6 +23,7 @@ type NomadClient struct {
 	token  string
 	region string
 	sudo   bool
+	cloud  bool
 	http   *http.Client
 }
 
@@ -36,6 +37,13 @@ func (c *NomadClient) Addr() string { return c.addr }
 // The method returns the receiver so it can be chained with NewNomadClient.
 func (c *NomadClient) WithSudo(sudo bool) *NomadClient {
 	c.sudo = sudo
+	return c
+}
+
+// WithCloud marks this client to send X-ABC-Cloud: 1 on every request.
+// The method returns the receiver so it can be chained.
+func (c *NomadClient) WithCloud(cloud bool) *NomadClient {
+	c.cloud = cloud
 	return c
 }
 
@@ -268,6 +276,9 @@ func (c *NomadClient) do(ctx context.Context, method, path string, query url.Val
 	}
 	if c.sudo {
 		req.Header.Set("X-ABC-Sudo", "1")
+	}
+	if c.cloud {
+		req.Header.Set("X-ABC-Cloud", "1")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -555,6 +566,93 @@ func (c *NomadClient) ApplyNamespace(ctx context.Context, ns *NomadNamespace) er
 // DeleteNamespace removes a namespace by name.
 func (c *NomadClient) DeleteNamespace(ctx context.Context, name string) error {
 	return c.delete(ctx, "/v1/namespace/"+url.PathEscape(name), nil, nil)
+}
+
+// ── Cloud Gateway API methods ─────────────────────────────────────────────────
+//
+// These methods call cloud gateway endpoints (routed via X-ABC-Cloud: 1 header).
+// The gateway maps /v1/cloud/* to the appropriate cloud provider APIs and
+// multi-cluster Nomad operations. The paths below are gateway-defined, not
+// Nomad's own API.
+
+// CloudListClusters retrieves all clusters in the fleet.
+func (c *NomadClient) CloudListClusters(ctx context.Context, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/clusters", nil, out)
+}
+
+// CloudGetCluster retrieves detail for a named cluster.
+func (c *NomadClient) CloudGetCluster(ctx context.Context, name string, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/cluster/"+url.PathEscape(name), nil, out)
+}
+
+// CloudProvisionCluster requests provisioning of a new cluster.
+func (c *NomadClient) CloudProvisionCluster(ctx context.Context, req, out interface{}) error {
+	return c.post(ctx, "/v1/cloud/clusters", req, out)
+}
+
+// CloudDecommissionCluster initiates decommission of a named cluster.
+func (c *NomadClient) CloudDecommissionCluster(ctx context.Context, name string, req interface{}) error {
+	return c.post(ctx, "/v1/cloud/cluster/"+url.PathEscape(name)+"/decommission", req, nil)
+}
+
+// CloudAddNode provisions a new VM and registers it as a Nomad client node.
+func (c *NomadClient) CloudAddNode(ctx context.Context, req, out interface{}) error {
+	return c.post(ctx, "/v1/cloud/nodes", req, out)
+}
+
+// CloudTerminateNode destroys the VM backing a named Nomad node.
+func (c *NomadClient) CloudTerminateNode(ctx context.Context, nodeID string, req interface{}) error {
+	return c.post(ctx, "/v1/cloud/node/"+url.PathEscape(nodeID)+"/terminate", req, nil)
+}
+
+// CloudListBudgets retrieves budget allocations for all namespaces.
+func (c *NomadClient) CloudListBudgets(ctx context.Context, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/budgets", nil, out)
+}
+
+// CloudGetBudget retrieves the budget for a specific namespace.
+func (c *NomadClient) CloudGetBudget(ctx context.Context, namespace string, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/budget/"+url.PathEscape(namespace), nil, out)
+}
+
+// CloudSetBudget creates or updates the budget cap for a namespace.
+func (c *NomadClient) CloudSetBudget(ctx context.Context, namespace string, req interface{}) error {
+	return c.put(ctx, "/v1/cloud/budget/"+url.PathEscape(namespace), nil, req, nil)
+}
+
+// CloudGetResidencyPolicy fetches the standing data residency policy for a namespace.
+func (c *NomadClient) CloudGetResidencyPolicy(ctx context.Context, namespace string, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/residency/"+url.PathEscape(namespace), nil, out)
+}
+
+// CloudSetResidencyPolicy creates or updates the residency policy for a namespace.
+func (c *NomadClient) CloudSetResidencyPolicy(ctx context.Context, namespace string, req interface{}) error {
+	return c.put(ctx, "/v1/cloud/residency/"+url.PathEscape(namespace), nil, req, nil)
+}
+
+// CloudRotateSecret rotates a cloud IAM credential associated with a Nomad Variable path.
+func (c *NomadClient) CloudRotateSecret(ctx context.Context, req interface{}) error {
+	return c.post(ctx, "/v1/cloud/secrets/rotate", req, nil)
+}
+
+// CloudListNetworkACLs retrieves the Tailscale/VPN ACL rules.
+func (c *NomadClient) CloudListNetworkACLs(ctx context.Context, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/network/acls", nil, out)
+}
+
+// CloudApplyNetworkACL creates or updates a network ACL rule.
+func (c *NomadClient) CloudApplyNetworkACL(ctx context.Context, req interface{}) error {
+	return c.post(ctx, "/v1/cloud/network/acls", req, nil)
+}
+
+// CloudGetServiceHealth fetches health status for all backend services.
+func (c *NomadClient) CloudGetServiceHealth(ctx context.Context, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/health", nil, out)
+}
+
+// CloudGetServiceVersion fetches version info for a named backend service.
+func (c *NomadClient) CloudGetServiceVersion(ctx context.Context, service string, out interface{}) error {
+	return c.get(ctx, "/v1/cloud/version/"+url.PathEscape(service), nil, out)
 }
 
 // PutVariable creates or updates a variable at the given path.

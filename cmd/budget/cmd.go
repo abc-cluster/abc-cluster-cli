@@ -1,8 +1,7 @@
-// Package node implements the "abc node" command group.
+// Package budget implements the "abc budget" command group.
 //
-// All node operations require --sudo. The X-ABC-Sudo header is forwarded
-// to jurist, which enforces the caller's actual permission tier.
-package node
+// Read operations work for all users. Write operations (set) require --cloud.
+package budget
 
 import (
 	"fmt"
@@ -11,40 +10,36 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the "node" subcommand group.
+// NewCmd returns the "budget" subcommand group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "node",
-		Short: "Inspect and manage cluster nodes (requires --sudo)",
-		Long: `Commands for inspecting and managing compute nodes on the ABC-cluster platform.
+		Use:   "budget",
+		Short: "View and manage namespace spend budgets",
+		Long: `Commands for viewing and managing cloud spend budgets per namespace.
 
-All node operations require --sudo and an admin-tier token.
+Reading budgets is available to all users.
+Setting budget caps requires --cloud and an infrastructure-tier token.
 
-  abc node list --sudo
-  abc node show --sudo nomad-client-02
-  abc node drain --sudo nomad-client-02 --deadline=1h --wait
-  abc node undrain --sudo nomad-client-02`,
+  abc budget list --cloud
+  abc budget show --cloud --namespace=nf-genomics-lab
+  abc budget set --cloud --namespace=nf-genomics-lab --monthly=500`,
 	}
 
 	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Nomad API address (or set ABC_ADDR/NOMAD_ADDR)")
+		"Cloud gateway address (or set ABC_ADDR/NOMAD_ADDR)")
 	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Nomad ACL token (or set ABC_TOKEN/NOMAD_TOKEN)")
+		"Auth token (or set ABC_TOKEN/NOMAD_TOKEN)")
 	cmd.PersistentFlags().String("region", utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION"),
 		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
 
 	cmd.AddCommand(
 		newListCmd(),
 		newShowCmd(),
-		newDrainCmd(),
-		newUndrainCmd(),
-		newAddCmd(),
-		newTerminateCmd(),
+		newSetCmd(),
 	)
 	return cmd
 }
 
-// nomadClientFromCmd builds a NomadClient honoring sudo mode.
 func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 	addr, _ := cmd.Flags().GetString("nomad-addr")
 	if addr == "" {
@@ -63,10 +58,9 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 		WithCloud(utils.CloudFromCmd(cmd))
 }
 
-// requireSudo returns an error if sudo mode is not active.
-func requireSudo(cmd *cobra.Command) error {
-	if !utils.SudoFromCmd(cmd) {
-		return fmt.Errorf("node operations require --sudo (or ABC_CLI_SUDO_MODE=1)")
+func requireCloud(cmd *cobra.Command) error {
+	if !utils.CloudFromCmd(cmd) {
+		return fmt.Errorf("budget write operations require --cloud (or ABC_CLI_CLOUD_MODE=1)")
 	}
 	return nil
 }
