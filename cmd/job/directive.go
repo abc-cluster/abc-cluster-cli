@@ -6,8 +6,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-
-	"github.com/kballard/go-shellquote"
 )
 
 // stripInlineComment removes a trailing shell comment from a directive string.
@@ -25,8 +23,8 @@ func stripInlineComment(s string) string {
 }
 
 // parsePreamble reads lines from r until the first non-comment, non-blank line
-// and returns the directive strings from #ABC, #NOMAD, and #SBATCH comment lines.
-func parsePreamble(r io.Reader) (abcDirs, nomadDirs, slurmDirs []string, err error) {
+// and returns the directive strings from #ABC and #NOMAD comment lines.
+func parsePreamble(r io.Reader) (abcDirs, nomadDirs []string, err error) {
 	scanner := bufio.NewScanner(r)
 	first := true
 	for scanner.Scan() {
@@ -54,18 +52,12 @@ func parsePreamble(r io.Reader) (abcDirs, nomadDirs, slurmDirs []string, err err
 			if rest != "" {
 				nomadDirs = append(nomadDirs, rest)
 			}
-		case strings.HasPrefix(trimmed, "#SBATCH"):
-			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#SBATCH"))
-			rest = stripInlineComment(rest)
-			if rest != "" {
-				slurmDirs = append(slurmDirs, rest)
-			}
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
-		return nil, nil, nil, fmt.Errorf("error reading script: %w", scanErr)
+		return nil, nil, fmt.Errorf("error reading script: %w", scanErr)
 	}
-	return abcDirs, nomadDirs, slurmDirs, nil
+	return abcDirs, nomadDirs, nil
 }
 
 // resolveSpec applies NOMAD then ABC directives (ABC has higher priority) and
@@ -82,61 +74,6 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 			return nil, err
 		}
 	}
-	return finalizeResolvedSpec(spec, defaultName)
-}
-
-func resolveSpecForRun(abcDirs, nomadDirs, slurmDirs []string, mode, defaultName string) (*jobSpec, error) {
-	spec := &jobSpec{}
-	switch mode {
-	case "abc":
-		for _, d := range nomadDirs {
-			if err := applyDirective(spec, d, "NOMAD"); err != nil {
-				return nil, err
-			}
-		}
-		for _, d := range abcDirs {
-			if err := applyDirective(spec, d, "ABC"); err != nil {
-				return nil, err
-			}
-		}
-	case "slurm":
-		if len(slurmDirs) == 0 {
-			return nil, fmt.Errorf("preamble mode slurm requires at least one #SBATCH directive")
-		}
-		for _, d := range slurmDirs {
-			if err := applySlurmDirective(spec, d); err != nil {
-				return nil, err
-			}
-		}
-	case "hybrid":
-		if len(slurmDirs) == 0 {
-			return nil, fmt.Errorf("preamble mode hybrid requires at least one #SBATCH directive")
-		}
-		for _, d := range slurmDirs {
-			if err := applySlurmDirective(spec, d); err != nil {
-				return nil, err
-			}
-		}
-		for _, d := range nomadDirs {
-			if err := applyDirective(spec, d, "NOMAD"); err != nil {
-				return nil, err
-			}
-		}
-		for _, d := range abcDirs {
-			if err := applyDirective(spec, d, "ABC"); err != nil {
-				return nil, err
-			}
-		}
-	default:
-		return nil, fmt.Errorf("unknown preamble mode %q (expected one of: auto, abc, slurm, hybrid)", mode)
-	}
-	if (mode == "slurm" || mode == "hybrid") && spec.Driver == "" {
-		spec.Driver = "slurm"
-	}
-	return finalizeResolvedSpec(spec, defaultName)
-}
-
-func finalizeResolvedSpec(spec *jobSpec, defaultName string) (*jobSpec, error) {
 	if spec.Name == "" {
 		spec.Name = defaultName
 	}
@@ -356,6 +293,10 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --conda requires a value", marker)
 			}
 			spec.Conda = val
+			if !hasValue {
+				return fmt.Errorf("#%s --error requires a value", marker)
+			}
+			spec.ErrorLog = val
 		case "constraint":
 			if !hasValue {
 				return fmt.Errorf("#%s --constraint requires a value", marker)
@@ -405,8 +346,6 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			spec.NoNetwork = true
 
 		// ── Runtime-exposure boolean flags ───────────────────────────────────
-		case "hpc_compat_env", "hpc-compat-env":
-			spec.IncludeHPCCompatEnv = true
 		case "alloc_id":
 			spec.ExposeAllocID = true
 		case "short_alloc_id":
@@ -445,153 +384,6 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 		}
 	}
 	return nil
-}
-
-func applySlurmDirective(spec *jobSpec, directive string) error {
-	tokens, err := shellquote.Split(strings.TrimSpace(directive))
-	if err != nil {
-		return fmt.Errorf("invalid #SBATCH directive %q: %w", directive, err)
-	}
-	for i := 0; i < len(tokens); i++ {
-		tok := tokens[i]
-		key, value, hasValue, ok := parseOpt(tok)
-		if !ok {
-			continue
-		}
-		if !hasValue && i+1 < len(tokens) && !strings.HasPrefix(tokens[i+1], "-") {
-			value = tokens[i+1]
-			hasValue = true
-			i++
-		}
-
-		switch key {
-		case "job-name", "J":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			spec.Name = value
-		case "cpus-per-task", "c":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			n, err := strconv.Atoi(value)
-			if err != nil || n < 1 {
-				return fmt.Errorf("#SBATCH --%s must be a positive integer, got %q", key, value)
-			}
-			spec.Cores = n
-		case "mem":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --mem requires a value")
-			}
-			mb, err := parseMemoryMB(value)
-			if err != nil {
-				return err
-			}
-			spec.MemoryMB = mb
-		case "time", "t":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			secs, err := parseSlurmWalltimeSeconds(value)
-			if err != nil {
-				return err
-			}
-			spec.WalltimeSecs = secs
-		case "nodes", "N":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			n, err := strconv.Atoi(value)
-			if err != nil || n < 1 {
-				return fmt.Errorf("#SBATCH --%s must be a positive integer, got %q", key, value)
-			}
-			spec.Nodes = n
-		case "ntasks", "n":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			n, err := strconv.Atoi(value)
-			if err != nil || n < 1 {
-				return fmt.Errorf("#SBATCH --%s must be a positive integer, got %q", key, value)
-			}
-			spec.SlurmNTasks = n
-		case "partition", "p":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			spec.SlurmPartition = value
-		case "account", "A":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			spec.SlurmAccount = value
-		case "output", "o":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			spec.SlurmStdoutFile = value
-		case "error", "e":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			spec.SlurmStderrFile = value
-		case "chdir", "D":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			spec.SlurmWorkDir = value
-		case "array", "a":
-			if !hasValue || value == "" {
-				return fmt.Errorf("#SBATCH --%s requires a value", key)
-			}
-			if count, ok := estimateArrayCount(value); ok && count > 0 {
-				spec.Nodes = count
-			}
-		}
-	}
-	return nil
-}
-
-func parseSlurmWalltimeSeconds(v string) (int, error) {
-	s := strings.TrimSpace(v)
-	if s == "" {
-		return 0, fmt.Errorf("slurm walltime cannot be empty")
-	}
-
-	dayPart := 0
-	if strings.Contains(s, "-") {
-		parts := strings.SplitN(s, "-", 2)
-		if len(parts) != 2 {
-			return 0, fmt.Errorf("invalid slurm walltime %q", v)
-		}
-		d, err := strconv.Atoi(parts[0])
-		if err != nil || d < 0 {
-			return 0, fmt.Errorf("invalid slurm day component in walltime %q", v)
-		}
-		dayPart = d * 24 * 3600
-		s = parts[1]
-	}
-
-	fields := strings.Split(s, ":")
-	intFields := make([]int, len(fields))
-	for i, f := range fields {
-		n, err := strconv.Atoi(strings.TrimSpace(f))
-		if err != nil || n < 0 {
-			return 0, fmt.Errorf("invalid slurm walltime %q", v)
-		}
-		intFields[i] = n
-	}
-
-	switch len(intFields) {
-	case 1:
-		return dayPart + intFields[0]*60, nil
-	case 2:
-		return dayPart + intFields[0]*60 + intFields[1], nil
-	case 3:
-		return dayPart + intFields[0]*3600 + intFields[1]*60 + intFields[2], nil
-	default:
-		return 0, fmt.Errorf("invalid slurm walltime %q", v)
-	}
 }
 
 func parseConstraint(expr string) (nomadConstraint, error) {
