@@ -17,6 +17,49 @@ import (
 	"github.com/bdragon300/tusgo"
 )
 
+func TestTusUploader_PreflightNetwork_ConnectionRefused(t *testing.T) {
+	uploader, err := newTusUploader("http://127.0.0.1:1/files/", "", UploaderOptions{})
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+
+	tus := uploader.(*tusUploader)
+	err = tus.PreflightNetwork(context.Background())
+	if err == nil {
+		t.Fatal("expected connection error from preflight")
+	}
+	errText := strings.ToLower(err.Error())
+	if !strings.Contains(errText, "cannot connect to upload endpoint") {
+		t.Fatalf("expected informative connection failure, got %q", err.Error())
+	}
+}
+
+func TestTusUploader_PreflightNetwork_MissingTusVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			// Intentionally omit Tus-Version to simulate a reachable, non-tus endpoint.
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+
+	uploader, err := newTusUploader(server.URL+"/files/", "", UploaderOptions{})
+	if err != nil {
+		t.Fatalf("new uploader: %v", err)
+	}
+
+	tus := uploader.(*tusUploader)
+	err = tus.PreflightNetwork(context.Background())
+	if err == nil {
+		t.Fatal("expected preflight to fail for endpoint without Tus-Version")
+	}
+	if !strings.Contains(err.Error(), "did not return Tus-Version") {
+		t.Fatalf("expected Tus-Version guidance, got %q", err.Error())
+	}
+}
 func TestTusUploader_CreateUploadIncludesChecksumMetadata(t *testing.T) {
 	payload := "checksum-payload"
 	tmpFile := filepath.Join(t.TempDir(), "payload.txt")
