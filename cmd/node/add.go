@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -244,39 +243,54 @@ func runLocalAdd(cmd *cobra.Command) error {
 func runSSHAdd(cmd *cobra.Command, host string) error {
 	out := cmd.OutOrStdout()
 
-	user, _ := cmd.Flags().GetString("user")
-	if user == "" {
-		user = os.Getenv("USER")
-		if user == "" {
-			user = "root"
-		}
+	// 1. Load ~/.ssh/config defaults for this alias (Hostname, Port, User,
+	//    IdentityFile, ProxyJump, StrictHostKeyChecking).
+	sshCfg, isAlias := loadSSHConfigEntry(host)
+
+	// 2. CLI flags override config-file values.
+	//    cmd.Flags().Changed() is true only when the user explicitly passed the
+	//    flag — cobra defaults do NOT set Changed, so port=22 in ~/.ssh/config
+	//    is correctly preserved when --ssh-port is omitted.
+	if cmd.Flags().Changed("user") {
+		sshCfg.User, _ = cmd.Flags().GetString("user")
 	}
-	port, _ := cmd.Flags().GetInt("ssh-port")
-	keyFile, _ := cmd.Flags().GetString("ssh-key")
-	skipHostKeyCheck, _ := cmd.Flags().GetBool("skip-host-key-check")
-
-	jumpHost, _ := cmd.Flags().GetString("jump-host")
-	jumpUser, _ := cmd.Flags().GetString("jump-user")
-	jumpPort, _ := cmd.Flags().GetInt("jump-port")
-	jumpKey, _ := cmd.Flags().GetString("jump-key")
-
-	if jumpHost != "" {
-		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d via jump host %s...\n", user, host, port, jumpHost)
-	} else {
-		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d...\n", user, host, port)
+	if cmd.Flags().Changed("ssh-port") {
+		sshCfg.Port, _ = cmd.Flags().GetInt("ssh-port")
+	}
+	if cmd.Flags().Changed("ssh-key") {
+		sshCfg.KeyFile, _ = cmd.Flags().GetString("ssh-key")
+	}
+	if cmd.Flags().Changed("jump-host") {
+		sshCfg.JumpHost, _ = cmd.Flags().GetString("jump-host")
+	}
+	if cmd.Flags().Changed("jump-user") {
+		sshCfg.JumpUser, _ = cmd.Flags().GetString("jump-user")
+	}
+	if cmd.Flags().Changed("jump-port") {
+		sshCfg.JumpPort, _ = cmd.Flags().GetInt("jump-port")
+	}
+	if cmd.Flags().Changed("jump-key") {
+		sshCfg.JumpKeyFile, _ = cmd.Flags().GetString("jump-key")
+	}
+	// Boolean: OR the flag value with the config-file value (security-conservative).
+	if skip, _ := cmd.Flags().GetBool("skip-host-key-check"); skip {
+		sshCfg.SkipHostKeyCheck = true
 	}
 
-	ex, err := newSSHExec(SSHConfig{
-		Host:             host,
-		Port:             port,
-		User:             user,
-		KeyFile:          keyFile,
-		JumpHost:         jumpHost,
-		JumpPort:         jumpPort,
-		JumpUser:         jumpUser,
-		JumpKeyFile:      jumpKey,
-		SkipHostKeyCheck: skipHostKeyCheck,
-	})
+	// 3. Print connection banner.
+	switch {
+	case sshCfg.JumpHost != "":
+		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d via jump host %s...\n",
+			sshCfg.User, host, sshCfg.Port, sshCfg.JumpHost)
+	case isAlias:
+		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d (resolved: %s:%d via ~/.ssh/config)...\n",
+			sshCfg.User, host, sshCfg.Port, sshCfg.Host, sshCfg.Port)
+	default:
+		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d...\n", sshCfg.User, host, sshCfg.Port)
+	}
+
+	// 4. Dial and run install.
+	ex, err := newSSHExec(sshCfg)
 	if err != nil {
 		return fmt.Errorf("SSH connect: %w", err)
 	}
