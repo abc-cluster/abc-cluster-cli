@@ -2,17 +2,21 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/term"
 )
 
@@ -80,47 +84,151 @@ type SSHConfig struct {
 	Port    int
 	User    string
 	KeyFile string // empty → try default keys + SSH agent + password prompt
+
+	// Jump host (optional). When set, abc dials the jump host first and tunnels
+	// the target connection through it — equivalent to `ssh -J jump target`.
+	JumpHost    string
+	JumpPort    int    // default: 22
+	JumpUser    string // default: same as User
+	JumpKeyFile string // default: same as KeyFile
+
+	// SkipHostKeyCheck disables known_hosts verification (insecure; dev only).
+	// Default (false): check against ~/.ssh/known_hosts, error on unknown hosts.
+	SkipHostKeyCheck bool
 }
 
 type sshExec struct {
-	client *ssh.Client
-	goos   string
-	goarch string
+	client     *ssh.Client
+	jumpClient *ssh.Client // non-nil when a jump hop was used; closed in Close()
+	goos       string
+	goarch     string
 }
 
 // newSSHExec connects to the remote host and returns a ready sshExec.
-// Auth chain (hashi-up pattern): key file → default keys → SSH agent → password prompt.
+//
+// Auth chain (hashi-up pattern):
+//  1. Explicit key file (--ssh-key)
+//  2. Default key files (~/.ssh/id_{rsa,ed25519,ecdsa})
+//  3. SSH agent (SSH_AUTH_SOCK)
+//  4. Keyboard-interactive (prompted in terminal)
+//  5. Password prompt (last resort)
+//
+// Host key verification:
+//   - Default: verify against ~/.ssh/known_hosts (errors on unknown/mismatched hosts)
+//   - --skip-host-key-check: InsecureIgnoreHostKey (dev/testing only)
+//
+// Jump host:
+//   - When --jump-host is set: dial jump → tunnel TCP → SSH handshake over tunnel
 func newSSHExec(cfg SSHConfig) (*sshExec, error) {
-	auths, err := buildSSHAuthMethods(cfg.KeyFile)
+	hostKeyCallback, err := buildHostKeyCallback(cfg.SkipHostKeyCheck)
 	if err != nil {
 		return nil, err
 	}
 
-	sshCfg := &ssh.ClientConfig{
+	targetAuths, err := buildSSHAuthMethods(cfg.KeyFile, cfg.User)
+	if err != nil {
+		return nil, err
+	}
+
+	targetCfg := &ssh.ClientConfig{
 		User:            cfg.User,
-		Auth:            auths,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: use known_hosts in v2
+		Auth:            targetAuths,
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         30 * time.Second,
 	}
 
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	client, err := ssh.Dial("tcp", addr, sshCfg)
-	if err != nil {
-		return nil, fmt.Errorf("SSH dial %s: %w", addr, err)
+	targetAddr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+
+	var (
+		client     *ssh.Client
+		jumpClient *ssh.Client
+	)
+
+	if cfg.JumpHost != "" {
+		// ── Two-hop dial: local → jump → target ───────────────────────────────
+		jumpPort := cfg.JumpPort
+		if jumpPort == 0 {
+			jumpPort = 22
+		}
+		jumpUser := cfg.JumpUser
+		if jumpUser == "" {
+			jumpUser = cfg.User
+		}
+		jumpKeyFile := cfg.JumpKeyFile
+		if jumpKeyFile == "" {
+			jumpKeyFile = cfg.KeyFile
+		}
+
+		jumpAuths, err := buildSSHAuthMethods(jumpKeyFile, jumpUser)
+		if err != nil {
+			return nil, fmt.Errorf("SSH jump host auth: %w", err)
+		}
+		// Jump host key callback: use same policy as target (consistent UX).
+		jumpHostKeyCallback, err := buildHostKeyCallback(cfg.SkipHostKeyCheck)
+		if err != nil {
+			return nil, err
+		}
+		jumpCfg := &ssh.ClientConfig{
+			User:            jumpUser,
+			Auth:            jumpAuths,
+			HostKeyCallback: jumpHostKeyCallback,
+			Timeout:         30 * time.Second,
+		}
+		jumpAddr := fmt.Sprintf("%s:%d", cfg.JumpHost, jumpPort)
+
+		jumpClient, err = ssh.Dial("tcp", jumpAddr, jumpCfg)
+		if err != nil {
+			return nil, fmt.Errorf("SSH dial jump host %s: %w", jumpAddr, err)
+		}
+
+		// Tunnel a raw TCP connection through the jump host to the target.
+		tunnelConn, err := jumpClient.Dial("tcp", targetAddr)
+		if err != nil {
+			jumpClient.Close()
+			return nil, fmt.Errorf("SSH tunnel through %s to %s: %w", cfg.JumpHost, targetAddr, err)
+		}
+
+		// Run the SSH handshake over the tunnel.
+		ncc, chans, reqs, err := ssh.NewClientConn(tunnelConn, cfg.Host, targetCfg)
+		if err != nil {
+			tunnelConn.Close()
+			jumpClient.Close()
+			return nil, fmt.Errorf("SSH handshake with %s (via %s): %w", cfg.Host, cfg.JumpHost, err)
+		}
+		client = ssh.NewClient(ncc, chans, reqs)
+
+	} else {
+		// ── Direct dial ───────────────────────────────────────────────────────
+		client, err = ssh.Dial("tcp", targetAddr, targetCfg)
+		if err != nil {
+			return nil, fmt.Errorf("SSH dial %s: %w", targetAddr, err)
+		}
 	}
 
 	goos, goarch, err := detectRemoteOSArch(client)
 	if err != nil {
 		client.Close()
+		if jumpClient != nil {
+			jumpClient.Close()
+		}
 		return nil, err
 	}
 
-	return &sshExec{client: client, goos: goos, goarch: goarch}, nil
+	return &sshExec{client: client, jumpClient: jumpClient, goos: goos, goarch: goarch}, nil
 }
 
 func (s *sshExec) OS() string   { return s.goos }
 func (s *sshExec) Arch() string { return s.goarch }
-func (s *sshExec) Close() error { return s.client.Close() }
+
+func (s *sshExec) Close() error {
+	err := s.client.Close()
+	if s.jumpClient != nil {
+		if e := s.jumpClient.Close(); e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
+}
 
 func (s *sshExec) Run(ctx context.Context, command string, w io.Writer) error {
 	sess, err := s.client.NewSession()
@@ -142,32 +250,138 @@ func (s *sshExec) Run(ctx context.Context, command string, w io.Writer) error {
 	}
 }
 
-// Upload uses an inline SCP-over-SSH trick: pipes r into `cat > remotePath`
-// on the remote shell, avoiding the sftp/scp dependency. Sufficient for the
-// small config files (< 4 KB) written during install.
+// Upload transfers r to remotePath on the remote host using SFTP.
+// SFTP is binary-safe and avoids shell-escaping issues that cat-pipe approaches
+// can have with paths or content containing special characters.
 func (s *sshExec) Upload(ctx context.Context, r io.Reader, remotePath string, mode os.FileMode) error {
-	// Ensure parent directory exists.
-	dir := dirOf(remotePath)
-	if err := s.Run(ctx, fmt.Sprintf("mkdir -p %s", dir), io.Discard); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-
-	sess, err := s.client.NewSession()
+	sc, err := sftp.NewClient(s.client)
 	if err != nil {
-		return fmt.Errorf("new SSH session for upload: %w", err)
+		return fmt.Errorf("SFTP client: %w", err)
 	}
-	defer sess.Close()
+	defer sc.Close()
 
-	sess.Stdin = r
-	if err := sess.Run(fmt.Sprintf("cat > %s && chmod %04o %s", remotePath, mode.Perm(), remotePath)); err != nil {
-		return fmt.Errorf("upload to %s: %w", remotePath, err)
+	// Ensure parent directory exists.
+	if err := sc.MkdirAll(dirOf(remotePath)); err != nil {
+		return fmt.Errorf("SFTP mkdir %s: %w", dirOf(remotePath), err)
 	}
+
+	f, err := sc.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return fmt.Errorf("SFTP open %s: %w", remotePath, err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, r); err != nil {
+		return fmt.Errorf("SFTP write %s: %w", remotePath, err)
+	}
+
+	// Set permissions explicitly after write.
+	if err := sc.Chmod(remotePath, mode); err != nil {
+		return fmt.Errorf("SFTP chmod %s: %w", remotePath, err)
+	}
+
+	// Check context cancellation.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	return nil
 }
 
-// ─── SSH auth helpers (hashi-up pattern) ─────────────────────────────────────
+// ─── Host key verification ────────────────────────────────────────────────────
 
-func buildSSHAuthMethods(keyFile string) ([]ssh.AuthMethod, error) {
+// buildHostKeyCallback returns an ssh.HostKeyCallback appropriate for the config.
+//
+// When skipCheck is false (the default), it loads ~/.ssh/known_hosts and verifies
+// each host against it. On first connection to an unknown host it prints a
+// fingerprint prompt and offers to add it — similar to the OpenSSH client.
+//
+// When skipCheck is true it uses InsecureIgnoreHostKey (dev/testing only).
+func buildHostKeyCallback(skipCheck bool) (ssh.HostKeyCallback, error) {
+	if skipCheck {
+		return ssh.InsecureIgnoreHostKey(), nil //nolint:gosec
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Fall back to insecure if we can't determine home dir.
+		fmt.Fprintln(os.Stderr, "  warn: cannot determine home dir; skipping known_hosts check")
+		return ssh.InsecureIgnoreHostKey(), nil //nolint:gosec
+	}
+
+	khPath := filepath.Join(home, ".ssh", "known_hosts")
+
+	// If known_hosts doesn't exist yet, create it and offer TOFU (trust on first use).
+	if _, err := os.Stat(khPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(khPath), 0700); err == nil {
+			_ = os.WriteFile(khPath, nil, 0600)
+		}
+	}
+
+	callback, err := knownhosts.New(khPath)
+	if err != nil {
+		return nil, fmt.Errorf("load known_hosts %s: %w", khPath, err)
+	}
+
+	// Wrap: on unknown host, prompt the user (TOFU) and add to known_hosts.
+	return toFUCallback(khPath, callback), nil
+}
+
+// toFUCallback wraps a knownhosts callback with a Trust-On-First-Use prompt.
+// Known hosts are verified strictly; new hosts prompt the user and are saved.
+func toFUCallback(khPath string, strict ssh.HostKeyCallback) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		err := strict(hostname, remote, key)
+		if err == nil {
+			return nil // known and verified
+		}
+
+		// Key mismatch: possible MITM — hard error, never auto-accept.
+		var keyErr *knownhosts.KeyError
+		if errors.As(err, &keyErr) && len(keyErr.Want) > 0 {
+			fmt.Fprintf(os.Stderr, "\n  !! WARNING: remote host identification has changed for %s\n", hostname)
+			fmt.Fprintf(os.Stderr, "  !! This may indicate a man-in-the-middle attack.\n")
+			fmt.Fprintf(os.Stderr, "  !! Expected key(s): %v\n", keyErr.Want)
+			return err
+		}
+
+		// Unknown host: offer TOFU prompt.
+		fp := ssh.FingerprintSHA256(key)
+		fmt.Fprintf(os.Stderr, "\n  Host %s is not in known_hosts.\n", hostname)
+		fmt.Fprintf(os.Stderr, "  Fingerprint: %s\n", fp)
+		fmt.Fprintf(os.Stderr, "  Add to %s? [y/N] ", khPath)
+
+		var answer string
+		fmt.Fscan(os.Stdin, &answer)
+		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+			return fmt.Errorf("host %s rejected by user", hostname)
+		}
+
+		// Append the new host entry to known_hosts.
+		f, ferr := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		if ferr != nil {
+			return fmt.Errorf("update known_hosts: %w", ferr)
+		}
+		defer f.Close()
+		entry := knownhosts.Line([]string{hostname}, key)
+		if _, werr := fmt.Fprintln(f, entry); werr != nil {
+			return fmt.Errorf("write known_hosts: %w", werr)
+		}
+		return nil
+	}
+}
+
+// ─── SSH auth helpers ─────────────────────────────────────────────────────────
+
+// buildSSHAuthMethods assembles the auth chain (hashi-up pattern):
+//  1. Explicit key file
+//  2. Default key files (~/.ssh/id_{rsa,ed25519,ecdsa})
+//  3. SSH agent (SSH_AUTH_SOCK)
+//  4. Keyboard-interactive
+//  5. Password prompt (last resort)
+func buildSSHAuthMethods(keyFile, user string) ([]ssh.AuthMethod, error) {
 	var auths []ssh.AuthMethod
 
 	// 1. Explicit key file
@@ -193,7 +407,26 @@ func buildSSHAuthMethods(keyFile string) ([]ssh.AuthMethod, error) {
 		}
 	}
 
-	// 3. Interactive password prompt (last resort)
+	// 3. Keyboard-interactive (handles OTP, PAM challenges, etc.)
+	auths = append(auths, ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
+		answers := make([]string, len(questions))
+		for i, q := range questions {
+			fmt.Fprintf(os.Stderr, "%s", q)
+			if echos[i] {
+				fmt.Fscan(os.Stdin, &answers[i])
+			} else {
+				pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Fprintln(os.Stderr)
+				if err != nil {
+					return nil, err
+				}
+				answers[i] = string(pw)
+			}
+		}
+		return answers, nil
+	}))
+
+	// 4. Interactive password prompt (last resort)
 	auths = append(auths, ssh.PasswordCallback(func() (string, error) {
 		fmt.Fprint(os.Stderr, "SSH password: ")
 		pw, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -211,7 +444,22 @@ func keyFileAuth(path string) (ssh.AuthMethod, error) {
 	}
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
-		return nil, err
+		// Encrypted key: prompt for passphrase.
+		var ppErr *ssh.PassphraseMissingError
+		if errors.As(err, &ppErr) {
+			fmt.Fprintf(os.Stderr, "Passphrase for %s: ", path)
+			pp, pErr := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stderr)
+			if pErr != nil {
+				return nil, pErr
+			}
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(key, pp)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt key %s: %w", path, err)
+			}
+		} else {
+			return nil, err
+		}
 	}
 	return ssh.PublicKeys(signer), nil
 }

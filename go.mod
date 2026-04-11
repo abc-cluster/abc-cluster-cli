@@ -15,7 +15,11 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/muesli/cancelreader v0.2.2 // indirect
+require (
+	github.com/kr/fs v0.1.0 // indirect
+	github.com/muesli/cancelreader v0.2.2 // indirect
+	github.com/pkg/sftp v1.13.10 // indirect
+)
 
 require (
 	github.com/agext/levenshtein v1.2.1 // indirect
