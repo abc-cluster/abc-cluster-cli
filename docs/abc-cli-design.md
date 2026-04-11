@@ -1,5 +1,92 @@
 # `abc` CLI — Command Design Specification v5
 
+---
+
+## Implementation Status
+
+> This section reflects the current state of the codebase. Everything below the line is the
+> aspirational design spec; check here first before assuming a feature is implemented.
+
+### Plumbing commands — low-level, composable, scriptable
+
+| Command | Description | Source |
+|---------|-------------|--------|
+| `pipeline export/import` | Serialize/deserialize pipeline specs to/from YAML | `cmd/pipeline/{export,import}.go` |
+| `job translate` | SLURM/PBS → ABC directive conversion | `cmd/job/translate.go` |
+| `node list/show/drain/undrain` | Node inspection and maintenance scheduling | `cmd/node/` |
+| `cluster list/status` | Fleet inspection (requires `--cloud`) | `cmd/cluster/` |
+| `budget list/show` | Spend inspection (requires `--cloud`) | `cmd/budget/` |
+| `service ping/version` | Backend service connectivity and version checks | `cmd/service/cmd.go` |
+| `status` (alias) | All-services health summary | `cmd/service/cmd.go` |
+| `logs` (alias) | Job log streaming | `cmd/job/logs.go` |
+
+### Porcelain commands — high-level, user-facing
+
+| Command | Description | Source |
+|---------|-------------|--------|
+| `submit` | Unified dispatch: auto-detects pipeline/module/job/conda/pixi | `cmd/submit/` |
+| `pipeline run` | Submit a Nextflow head job to Nomad | `cmd/pipeline/run.go` |
+| `pipeline add/update/list/info/delete` | Saved pipeline lifecycle (Nomad Variables) | `cmd/pipeline/` |
+| `module run` | Run an nf-core module via nf-pipeline-gen | `cmd/module/run.go` |
+| `job run` | Script → Nomad HCL → optional submit | `cmd/job/run.go` |
+| `job list/show/stop/dispatch/logs/status` | Job lifecycle management | `cmd/job/` |
+| `data upload/download/encrypt/decrypt` | Data management (tus, rclone crypt) | `cmd/data/` |
+| `node add` | Compute node provisioning (SSH/local/cloud) | `cmd/node/add.go` |
+| `node terminate` | Destroy the VM backing a node (requires `--cloud`) | `cmd/node/terminate.go` |
+| `namespace list/show/create/delete` | Namespace management | `cmd/namespace/` |
+| `cluster provision/decommission` | Fleet management (requires `--cloud`) | `cmd/cluster/` |
+| `budget set` | Spend cap management (requires `--cloud`) | `cmd/budget/set.go` |
+| `storage size` | Storage usage inspection | `cmd/storage/` |
+
+### Debug logging subsystem
+
+- **Package:** `internal/debuglog/`
+- **Flag:** `--debug[=N]` (0=off, 1=info, 2=debug, 3=trace); also `ABC_DEBUG=N`
+- **Format:** JSON-Lines, one record per event, RFC3339 timestamps, durations in ms
+- **Log location:** `~/Library/Logs/abc-cluster-cli/` (macOS), `~/.local/share/abc-cluster-cli/logs/` (Linux)
+- **Security:** Passwords, tokens, private keys, Tailscale auth keys, URL query params redacted before writing
+- **Overhead:** Zero when disabled — `noopHandler.Enabled()` returns false; slog never calls `Handle()`
+
+### `abc submit` — porcelain dispatch command
+
+`abc submit <target> [flags]` is the single "just run this" entry point. It auto-detects
+whether `<target>` is a Nextflow pipeline, an nf-core module, or a local batch script and
+dispatches to the correct underlying command. Users never need to choose between
+`pipeline run`, `module run`, and `job run --submit`.
+
+**Detection priority:**
+
+| Priority | Condition | Dispatches to |
+|----------|-----------|---------------|
+| 1 | `--type pipeline\|job\|module` | forced |
+| 2 | `--conda <spec>` or `--pixi` | `job run` with auto-generated wrapper |
+| 3 | `os.Stat(target)` succeeds (local file) | `job run --submit` |
+| 4 | target starts with `http://` or `https://` | `pipeline run` |
+| 5 | target has ≥ 3 path segments (e.g. `nf-core/modules/bwa/mem`) | `module run` |
+| 6 | target matches `owner/repo` (exactly one `/`) | `pipeline run` |
+| 7 | Nomad Variables lookup for `nomad/pipelines/<target>` succeeds | `pipeline run` |
+| — | no match | error — use `--type` |
+
+**Wrapper modes (job dispatch):**
+
+| Flag | Generated script | Invocation |
+|------|-----------------|------------|
+| `--conda <spec>` | `#ABC --conda=<spec>` preamble | `conda run --no-capture-output -n <spec> <tool>` |
+| `--conda <spec> --conda-solver mamba` | same preamble | `mamba run --no-capture-output -n <spec> <tool>` |
+| `--conda <spec> --conda-solver micromamba` | same preamble | `micromamba run --no-capture-output -n <spec> <tool>` |
+| `--pixi` | no conda preamble | `pixi run <tool>` |
+
+**Data mapping:** `--input <path>` → `params.input`, `--output <path>` → `params.outdir`,
+written to a temp YAML file. Cleaned up after submission (even on error).
+
+**Implementation:** `cmd/submit/` imports thin exported wrappers from `cmd/pipeline/api.go`,
+`cmd/job/api.go`, and `cmd/module/api.go`. No circular dependencies.
+
+Files: `cmd.go` (cobra flags), `submit.go` (dispatch), `detect.go` (type detection),
+`params.go` (temp params file), `conda.go` (`generateCondaWrapper` + `generatePixiWrapper`).
+
+---
+
 TODO:
 -  `abc job run --submit` to be `abc script run` i.e. the `--submit` should be the default behaviour
 

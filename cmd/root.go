@@ -14,11 +14,13 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/cluster"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/module"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/namespace"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/node"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/storage"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
@@ -179,6 +181,8 @@ func init() {
 		"workspace ID (or set ABC_WORKSPACE_ID)")
 
 	rootCmd.AddCommand(pipeline.NewCmd())
+	rootCmd.AddCommand(module.NewCmd())
+	rootCmd.AddCommand(submit.NewSubmitCmd())
 	rootCmd.AddCommand(data.NewCmd(&serverURL, &accessToken, &workspace))
 	rootCmd.AddCommand(storage.NewCmd())
 	rootCmd.AddCommand(job.NewCmd())
