@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
 
@@ -171,11 +173,22 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 }
 
 func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClient, spec *PipelineSpec, hcl string) error {
+	log := debuglog.FromContext(ctx)
+
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Parsing HCL via Nomad...\n")
+	t := time.Now()
 	jobJSON, err := nc.ParseHCL(ctx, hcl)
 	if err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "pipeline.run.failed",
+			debuglog.AttrsError("pipeline.hcl_parse", err)...,
+		)
 		return fmt.Errorf("nomad HCL parse: %w", err)
 	}
+	log.LogAttrs(ctx, debuglog.L1, "pipeline.hcl_parsed",
+		slog.String("op", "pipeline.run"),
+		slog.Int("hcl_bytes", len(hcl)),
+		slog.Int64("duration_ms", time.Since(t).Milliseconds()),
+	)
 
 	jobName := "nextflow-head"
 	if spec.Name != "" {
@@ -183,10 +196,17 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting pipeline head job to Nomad...\n")
+	t = time.Now()
 	resp, err := nc.RegisterJob(ctx, jobJSON)
 	if err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "pipeline.run.failed",
+			debuglog.AttrsError("pipeline.job_register", err)...,
+		)
 		return fmt.Errorf("nomad register: %w", err)
 	}
+	log.LogAttrs(ctx, debuglog.L1, "pipeline.job_submitted",
+		debuglog.AttrsJobSubmit("register", jobName, resp.EvalID, spec.Namespace, time.Since(t).Milliseconds())...,
+	)
 
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "\n  Pipeline submitted\n")

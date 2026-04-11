@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
 // NomadClient is a thin wrapper around Nomad's HTTP API.
@@ -256,15 +258,25 @@ func (c *NomadClient) url(path string, query url.Values) string {
 }
 
 func (c *NomadClient) do(ctx context.Context, method, path string, query url.Values, body interface{}) (*http.Response, error) {
+	log := debuglog.FromContext(ctx)
+
+	var bodyBytes int64
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request: %w", err)
 		}
+		bodyBytes = int64(len(b))
 		bodyReader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.url(path, query), bodyReader)
+
+	fullURL := c.url(path, query)
+	log.LogAttrs(ctx, debuglog.L2, "http.request",
+		debuglog.AttrsHTTPRequest(method, fullURL, bodyBytes)...,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -280,10 +292,19 @@ func (c *NomadClient) do(ctx context.Context, method, path string, query url.Val
 	if c.cloud {
 		req.Header.Set("X-ABC-Cloud", "1")
 	}
+
+	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "http.error",
+			debuglog.AttrsError(method+" "+path, err)...,
+		)
 		return nil, fmt.Errorf("request %s %s: %w", method, path, err)
 	}
+
+	log.LogAttrs(ctx, debuglog.L2, "http.response",
+		debuglog.AttrsHTTPResponse(method, fullURL, resp.StatusCode, time.Since(start).Milliseconds())...,
+	)
 	return resp, nil
 }
 

@@ -14,7 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
 
@@ -385,19 +388,36 @@ func runJob(cmd *cobra.Command, args []string) error {
 }
 
 func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl string, submit, dryRun bool) error {
+	log := debuglog.FromContext(ctx)
 	nc := nomadClientFromCmd(cmd)
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Parsing HCL via Nomad (%s)...\n", nomadAddrFromCmd(cmd))
+	t := time.Now()
 	jobJSON, err := nc.ParseHCL(ctx, hcl)
 	if err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "job.run.failed",
+			debuglog.AttrsError("job.hcl_parse", err)...,
+		)
 		return fmt.Errorf("nomad HCL parse: %w", err)
 	}
+	log.LogAttrs(ctx, debuglog.L1, "job.hcl_parsed",
+		slog.String("op", "job.run"),
+		slog.Int("hcl_bytes", len(hcl)),
+		slog.Int64("duration_ms", time.Since(t).Milliseconds()),
+	)
 
 	if dryRun {
+		t = time.Now()
 		plan, err := nc.PlanJob(ctx, spec.Name, jobJSON)
 		if err != nil {
+			log.LogAttrs(ctx, debuglog.L1, "job.run.failed",
+				debuglog.AttrsError("job.plan", err)...,
+			)
 			return fmt.Errorf("nomad plan: %w", err)
 		}
+		log.LogAttrs(ctx, debuglog.L1, "job.planned",
+			debuglog.AttrsJobSubmit("plan", spec.Name, "", spec.Namespace, time.Since(t).Milliseconds())...,
+		)
 		printPlan(cmd, hcl, plan)
 		return nil
 	}
@@ -407,10 +427,17 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 		region = "default"
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting to Nomad (%s)...\n", region)
+	t = time.Now()
 	resp, err := nc.RegisterJob(ctx, jobJSON)
 	if err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "job.run.failed",
+			debuglog.AttrsError("job.register", err)...,
+		)
 		return fmt.Errorf("nomad register: %w", err)
 	}
+	log.LogAttrs(ctx, debuglog.L1, "job.submitted",
+		debuglog.AttrsJobSubmit("register", spec.Name, resp.EvalID, spec.Namespace, time.Since(t).Milliseconds())...,
+	)
 
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "\n  ✓ Job submitted\n")

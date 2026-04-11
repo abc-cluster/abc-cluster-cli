@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/storage"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +31,11 @@ var (
 	accessToken string
 	workspace   string
 )
+
+// activeDebugCfg holds the current run's debug config so Execute() can close
+// the log file and print the footer after the command completes (or errors).
+// Safe as a package-level var because cobra commands run sequentially.
+var activeDebugCfg *debuglog.Config
 
 // rootCmd is the base command for the abc CLI.
 var rootCmd = &cobra.Command{
@@ -41,6 +48,37 @@ var rootCmd = &cobra.Command{
 It allows you to manage and run pipelines and batch jobs on the abc-cluster platform
 from your terminal.`,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		// ── Debug logging ─────────────────────────────────────────────────────
+		// Resolve verbosity level: --debug[=N] flag takes precedence over
+		// ABC_DEBUG env var.
+		level, _ := cmd.Root().PersistentFlags().GetInt("debug")
+		if level == 0 {
+			if v := os.Getenv("ABC_DEBUG"); v != "" {
+				level, _ = strconv.Atoi(v)
+			}
+		}
+		ctx, cfg, err := debuglog.Init(cmd.Context(), level)
+		if err != nil {
+			// Non-fatal: warn but continue without logging.
+			fmt.Fprintf(os.Stderr, "[abc] warning: debug log init failed: %v\n", err)
+		}
+		activeDebugCfg = cfg
+		if cfg.Enabled {
+			cfg.PrintHeader(os.Stderr)
+		}
+		cmd.SetContext(ctx)
+
+		// First structured event: full CLI invocation with argv (secrets redacted).
+		log := debuglog.FromContext(ctx)
+		log.LogAttrs(ctx, debuglog.L1, "cli.invocation",
+			debuglog.AttrsCLIInvocation(
+				debuglog.RedactArgv(os.Args),
+				debuglog.EnvSnapshot(),
+				version,
+			)...,
+		)
+
+		// ── Mode banners ──────────────────────────────────────────────────────
 		quiet, _ := cmd.Root().PersistentFlags().GetBool("quiet")
 		if utils.CloudFromCmd(cmd) && !quiet {
 			fmt.Fprintln(os.Stderr, "[abc cloud] Infrastructure mode active — cloud gateway policy applies.")
@@ -59,8 +97,18 @@ func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	runErr := rootCmd.ExecuteContext(ctx)
+
+	// Print the debug log footer (path + failure hint) after the command
+	// completes — whether it succeeded or failed. This runs even when
+	// PersistentPostRunE is skipped due to an error.
+	if activeDebugCfg != nil {
+		activeDebugCfg.PrintFooter(os.Stderr, runErr)
+		activeDebugCfg.Close()
+	}
+
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
 			action := cancelledActionFromArgs(os.Args[1:])
 			if action == "" {
 				fmt.Fprintln(os.Stderr, "cancelled")
@@ -69,7 +117,7 @@ func Execute() {
 			}
 			os.Exit(130)
 		}
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, runErr)
 		os.Exit(1)
 	}
 }
@@ -91,6 +139,10 @@ func cancelledActionFromArgs(args []string) string {
 	return strings.Join(actionParts, " ")
 }
 
+// version is set at build time via -ldflags "-X cmd.version=v1.2.3".
+// Falls back to "dev" when not set.
+var version = "dev"
+
 func init() {
 	// Elevation flags.
 	rootCmd.PersistentFlags().Bool("sudo", false,
@@ -103,6 +155,17 @@ func init() {
 		"Target a specific named cluster in the fleet (requires --cloud; or set ABC_CLUSTER)")
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false,
 		"Suppress informational output (banners, progress)")
+
+	// Debug logging flag.
+	// --debug          → level 1 (AI-debuggable events; recommended default)
+	// --debug=2        → level 2 (+ remote commands run, raw SSH output)
+	// --debug=3        → level 3 (max: SSH round-trips, full config content)
+	// ABC_DEBUG=N      → same as --debug=N via environment variable
+	rootCmd.PersistentFlags().Int("debug", 0,
+		"Write structured JSON debug log to file (0=off, 1=default, 2=verbose, 3=max).\n"+
+			"    Use --debug without a value for level 1. Also ABC_DEBUG=N.\n"+
+			"    Log path is printed to stderr at start and end of run.")
+	rootCmd.PersistentFlags().Lookup("debug").NoOptDefVal = "1"
 
 	// Flags for the data command (ABC REST API).
 	rootCmd.PersistentFlags().StringVar(&serverURL, "url",

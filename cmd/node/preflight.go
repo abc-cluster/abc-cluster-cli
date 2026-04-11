@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
+	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
 // PreflightResult captures the state of the target before installation.
@@ -30,6 +34,7 @@ type PreflightResult struct {
 // requirePkgManagerCheck should be true only when the selected install method
 // requires package-manager privileges.
 func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword string, requirePkgManagerCheck bool) (*PreflightResult, error) {
+	log := debuglog.FromContext(ctx)
 	res := &PreflightResult{
 		OS:   ex.OS(),
 		Arch: ex.Arch(),
@@ -37,26 +42,43 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 
 	fmt.Fprintf(w, "\n  Preflight:\n")
 	fmt.Fprintf(w, "    ✓ OS              %s/%s\n", res.OS, res.Arch)
+	log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+		debuglog.AttrsPreflight("os_detection", true, res.OS+"/"+res.Arch, 0)...,
+	)
 
 	// Init system
+	t := time.Now()
 	switch res.OS {
 	case "linux":
 		res.InitSystem = detectLinuxInitSystem(ctx, ex)
 		if res.InitSystem == "systemd" {
 			res.InitSystem = "systemd"
 			fmt.Fprintf(w, "    ✓ Init system     systemd\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("init_system", true, "systemd", time.Since(t).Milliseconds())...,
+			)
 		} else {
 			fmt.Fprintf(w, "    ✗ Init system     %q (not systemd — service registration unavailable)\n", res.InitSystem)
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("init_system", false, res.InitSystem, time.Since(t).Milliseconds())...,
+			)
 		}
 	case "darwin":
 		res.InitSystem = "launchd"
 		fmt.Fprintf(w, "    ✓ Init system     launchd\n")
+		log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+			debuglog.AttrsPreflight("init_system", true, "launchd", time.Since(t).Milliseconds())...,
+		)
 	default:
 		res.InitSystem = "none"
 		fmt.Fprintf(w, "    - Init system     manual (Windows — sc.exe instructions will be printed)\n")
+		log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+			debuglog.AttrsPreflight("init_system", true, "none (windows)", time.Since(t).Milliseconds())...,
+		)
 	}
 
 	// Sudo / admin access
+	t = time.Now()
 	if res.OS == "windows" {
 		var b strings.Builder
 		_ = ex.Run(ctx, "whoami /groups 2>&1", &b)
@@ -64,20 +86,35 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 		if strings.Contains(b.String(), "S-1-16-12288") {
 			res.HasSudo = true
 			fmt.Fprintf(w, "    ✓ Sudo access     ok (Administrator)\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("sudo_access", true, "Administrator", time.Since(t).Milliseconds())...,
+			)
 		} else {
 			fmt.Fprintf(w, "    ✗ Sudo access     not Administrator — re-run as Administrator\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("sudo_access", false, "not Administrator", time.Since(t).Milliseconds())...,
+			)
 		}
 	} else if sudoPassword != "" {
 		// Password-based sudo: skip the passwordless check and trust the password.
 		// sshExec.Run() will inject it via sudo -S on every privileged command.
 		res.HasSudo = true
 		fmt.Fprintf(w, "    ✓ Sudo access     ok (password auth)\n")
+		log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+			debuglog.AttrsPreflight("sudo_access", true, "password auth", time.Since(t).Milliseconds())...,
+		)
 	} else {
 		if err := ex.Run(ctx, "sudo -n true 2>/dev/null", io.Discard); err == nil {
 			res.HasSudo = true
 			fmt.Fprintf(w, "    ✓ Sudo access     ok (passwordless)\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("sudo_access", true, "passwordless", time.Since(t).Milliseconds())...,
+			)
 		} else {
 			fmt.Fprintf(w, "    ✗ Sudo access     sudo required\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("sudo_access", false, "sudo -n failed", time.Since(t).Milliseconds())...,
+			)
 		}
 	}
 
@@ -85,6 +122,7 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 	// We only need this when Nomad is not already installed (curl + unzip must be present,
 	// and the user must be able to write to /usr/local/bin via sudo).
 	// The check is purely informational on Windows — we install via direct binary upload.
+	t = time.Now()
 	if res.OS != "windows" {
 		if requirePkgManagerCheck {
 			res.PkgManager, res.CanInstallPkgs = checkPackageAccess(ctx, ex, w, res.HasSudo)
@@ -97,24 +135,35 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 				fmt.Fprintf(w, "    ✓ Pkg manager     %s (privilege check skipped)\n", res.PkgManager)
 			}
 		}
+		log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+			debuglog.AttrsPreflight("pkg_manager", res.CanInstallPkgs, res.PkgManager, time.Since(t).Milliseconds())...,
+		)
 	} else {
 		res.PkgManager = "none"
 		res.CanInstallPkgs = res.HasSudo
 	}
 
 	// Nomad already installed?
+	t = time.Now()
 	{
 		var b strings.Builder
 		err := ex.Run(ctx, "command -v nomad 2>/dev/null", &b)
 		if err == nil && strings.TrimSpace(b.String()) != "" {
 			res.NomadInstalled = true
 			fmt.Fprintf(w, "    ✓ Nomad           already installed (will skip Nomad install)\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("nomad_installed", true, strings.TrimSpace(b.String()), time.Since(t).Milliseconds())...,
+			)
 		} else {
 			fmt.Fprintf(w, "    - Nomad           not installed\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("nomad_installed", false, "", time.Since(t).Milliseconds())...,
+			)
 		}
 	}
 
 	// Tailscale already installed?
+	t = time.Now()
 	{
 		var b strings.Builder
 		err := ex.Run(ctx, "command -v tailscale 2>/dev/null", &b)
@@ -125,13 +174,31 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 			if strings.Contains(sb.String(), "100.") {
 				res.TailscaleConnected = true
 				fmt.Fprintf(w, "    ✓ Tailscale       installed and connected (skip)\n")
+				log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+					debuglog.AttrsPreflight("tailscale", true, "installed+connected", time.Since(t).Milliseconds())...,
+				)
 			} else {
 				fmt.Fprintf(w, "    ✓ Tailscale       installed (will run tailscale up)\n")
+				log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+					debuglog.AttrsPreflight("tailscale", true, "installed (not connected)", time.Since(t).Milliseconds())...,
+				)
 			}
 		} else {
 			fmt.Fprintf(w, "    - Tailscale       not installed\n")
+			log.LogAttrs(ctx, debuglog.L1, "preflight.check",
+				debuglog.AttrsPreflight("tailscale", false, "not installed", time.Since(t).Milliseconds())...,
+			)
 		}
 	}
+
+	// Log overall preflight summary before hard stops.
+	log.LogAttrs(ctx, debuglog.L1, "preflight.complete",
+		slog.String("op", "node.add"),
+		slog.String("pkg_manager", res.PkgManager),
+		slog.Bool("has_sudo", res.HasSudo),
+		slog.Bool("nomad_installed", res.NomadInstalled),
+		slog.Bool("tailscale_installed", res.TailscaleInstalled),
+	)
 
 	// Hard stops
 	if !res.HasSudo && res.OS != "windows" {
