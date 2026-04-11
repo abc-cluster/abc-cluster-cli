@@ -2,9 +2,16 @@ package utils
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+)
+
+const (
+	// ExperimentalModeEnvVar toggles experimental CLI functionality globally.
+	ExperimentalModeEnvVar = "ABC_CLI_EXP_MODE"
 )
 
 // EnvOrDefault returns the value of the first environment variable in keys
@@ -38,6 +45,32 @@ func CloudFromCmd(cmd *cobra.Command) bool {
 	}
 	cloud, _ := cmd.Root().PersistentFlags().GetBool("cloud")
 	return cloud
+}
+
+// ExpFromCmd returns true when experimental mode is active via --exp or
+// ABC_CLI_EXP_MODE.
+//
+// The environment variable takes precedence over the flag.
+// Accepted false values are: 0, false, no, off, disabled.
+// Any other non-empty value enables experimental mode.
+func ExpFromCmd(cmd *cobra.Command) bool {
+	if raw, ok := os.LookupEnv(ExperimentalModeEnvVar); ok {
+		v := strings.TrimSpace(strings.ToLower(raw))
+		if v == "" {
+			return false
+		}
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			return parsed
+		}
+		switch v {
+		case "no", "off", "disabled":
+			return false
+		default:
+			return true
+		}
+	}
+	exp, _ := cmd.Root().PersistentFlags().GetBool("exp")
+	return exp
 }
 
 // ClusterFromCmd returns the --cluster flag value, falling back to the

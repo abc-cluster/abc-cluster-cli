@@ -96,6 +96,9 @@ Examples:
 	cmd.Flags().StringArray("host-volume", nil, "Nomad client host volume in name=path[:read_only] format (repeatable)")
 	cmd.Flags().Bool("scratch-host-volume", true, "Configure a default Nomad client host volume named scratch")
 	cmd.Flags().String("scratch-host-volume-path", "/opt/nomad/scratch", "Path for the default scratch host volume")
+	cmd.Flags().StringArray("community-driver", nil, "Experimental: install community task drivers (currently supported: containerd)")
+	cmd.Flags().String("containerd-nerdctl-version", defaultContainerdNerdctlVersion, "Experimental: nerdctl-full version for --community-driver=containerd")
+	cmd.Flags().String("containerd-driver-version", defaultContainerdDriverVersion, "Experimental: nomad-driver-containerd release version for --community-driver=containerd")
 	cmd.Flags().String("encrypt", "", "Nomad gossip encryption key")
 	cmd.Flags().Bool("acl", false, "Enable Nomad ACL system on this node")
 
@@ -236,6 +239,19 @@ func runPrintCommands(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	communityDrivers, err := communityDriverInstallConfigFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+	if err := ensureExperimentalFeatureEnabled(cmd, communityDrivers.Requested(), "community driver installation"); err != nil {
+		return err
+	}
+	if err := validateCommunityDriverTarget(goos, communityDrivers); err != nil {
+		return err
+	}
+	if communityDrivers.Requested() && skipStart {
+		return fmt.Errorf("community driver setup runs after the node joins the cluster; remove --skip-start when using --community-driver")
+	}
 
 	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
 	nodeCfg := NodeConfig{
@@ -287,6 +303,7 @@ func runPrintCommands(cmd *cobra.Command) error {
 		tsKeyReusable,
 		tsKeyExpiry,
 		autoNomadAdvertise,
+		communityDrivers,
 		skipEnable,
 		skipStart,
 	)
@@ -439,6 +456,22 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	if err != nil {
 		return err
 	}
+	communityDrivers, err := communityDriverInstallConfigFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+	if err := ensureExperimentalFeatureEnabled(cmd, communityDrivers.Requested(), "community driver installation"); err != nil {
+		return err
+	}
+	if err := validateCommunityDriverTarget(ex.OS(), communityDrivers); err != nil {
+		return err
+	}
+	nomadVersion, _ := cmd.Flags().GetString("nomad-version")
+	skipEnable, _ := cmd.Flags().GetBool("skip-enable")
+	skipStart, _ := cmd.Flags().GetBool("skip-start")
+	if communityDrivers.Requested() && skipStart {
+		return fmt.Errorf("community driver setup runs after the node joins the cluster; remove --skip-start when using --community-driver")
+	}
 
 	// Collect Nomad config
 	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
@@ -460,12 +493,8 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		nomadUseTailscaleIP = false
 	}
 
-	nomadVersion, _ := cmd.Flags().GetString("nomad-version")
-	skipEnable, _ := cmd.Flags().GetBool("skip-enable")
-	skipStart, _ := cmd.Flags().GetBool("skip-start")
-
 	if dryRun {
-		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP)
+		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers)
 		return nil
 	}
 
@@ -574,7 +603,34 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	if !skipStart {
 		fmt.Fprintf(w, "\n  Verifying...\n")
 		if err := waitForNomadAgent(ctx, ex, w); err != nil {
+			if communityDrivers.Requested() {
+				return fmt.Errorf("nomad agent is not healthy yet; cannot run community driver post-setup: %w", err)
+			}
 			fmt.Fprintf(w, "    ! Could not verify Nomad agent: %v\n", err)
+			fmt.Fprintf(w, "    Check: sudo journalctl -u nomad -n 50\n")
+		}
+	}
+
+	// 5. Experimental post-setup (after node has joined and is healthy)
+	if communityDrivers.Requested() {
+		printExperimentalFeatureNotice(w, "community driver post-setup")
+		if err := InstallCommunityDrivers(ctx, ex, communityDrivers, w); err != nil {
+			return err
+		}
+
+		postSetupNodeCfg := nodeCfg
+		applyCommunityDriverNodeConfig(&postSetupNodeCfg, communityDrivers)
+		postSetupCfg := installCfg
+		postSetupCfg.NodeConfig = postSetupNodeCfg
+		postSetupCfg.SkipStart = false
+
+		fmt.Fprintf(w, "\n  Applying post-setup Nomad config for community drivers...\n")
+		if err := ApplyNomadConfig(ctx, ex, postSetupCfg, w); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "  Verifying after post-setup restart...\n")
+		if err := waitForNomadAgent(ctx, ex, w); err != nil {
+			fmt.Fprintf(w, "    ! Could not verify Nomad agent after post-setup: %v\n", err)
 			fmt.Fprintf(w, "    Check: sudo journalctl -u nomad -n 50\n")
 		}
 	}
@@ -615,7 +671,7 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
 
-func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool) {
+func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig) {
 	fmt.Fprintf(w, "\n  Dry-run plan:\n")
 	fmt.Fprintf(w, "    Target:       %s/%s\n", ex.OS(), ex.Arch())
 	fmt.Fprintf(w, "    Install mode: %s\n", packageInstallMethod)
@@ -633,6 +689,17 @@ func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTa
 		fmt.Fprintf(w, "    Host volumes:\n")
 		for _, v := range cfg.HostVolumes {
 			fmt.Fprintf(w, "      - %s => %s (read_only=%t)\n", v.Name, v.Path, v.ReadOnly)
+		}
+	}
+	if communityDrivers.Requested() {
+		fmt.Fprintf(w, "    Community drivers (post-setup after node join):\n")
+		for _, driver := range communityDrivers.Drivers {
+			switch driver {
+			case communityDriverContainerd:
+				fmt.Fprintf(w, "      - %s (nerdctl-full %s, nomad-driver-containerd %s)\n", driver, communityDrivers.ContainerdNerdctlVersion, communityDrivers.ContainerdDriverVersion)
+			default:
+				fmt.Fprintf(w, "      - %s\n", driver)
+			}
 		}
 	}
 	if useTailscale {

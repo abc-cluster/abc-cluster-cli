@@ -47,6 +47,9 @@ from your terminal.`,
 		} else if utils.SudoFromCmd(cmd) && !quiet {
 			fmt.Fprintln(os.Stderr, "[abc sudo] Elevated mode active — policy enforcement delegated to jurist.")
 		}
+		if utils.ExpFromCmd(cmd) && !quiet {
+			fmt.Fprintln(os.Stderr, "[abc exp] Experimental mode active — unstable features may change.")
+		}
 		return nil
 	},
 }
@@ -94,6 +97,8 @@ func init() {
 		"Elevate to cluster-admin scope (requires admin token; or set ABC_CLI_SUDO_MODE)")
 	rootCmd.PersistentFlags().Bool("cloud", false,
 		"Elevate to infrastructure scope — fleet-wide + cloud provider APIs (or set ABC_CLI_CLOUD_MODE)")
+	rootCmd.PersistentFlags().Bool("exp", false,
+		"Enable experimental CLI features (or set ABC_CLI_EXP_MODE)")
 	rootCmd.PersistentFlags().String("cluster", utils.EnvOrDefault("ABC_CLUSTER"),
 		"Target a specific named cluster in the fleet (requires --cloud; or set ABC_CLUSTER)")
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false,

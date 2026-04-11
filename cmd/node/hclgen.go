@@ -52,20 +52,25 @@ type NomadHostVolume struct {
 
 // NodeConfig holds the parameters for generating a Nomad client HCL config.
 type NodeConfig struct {
-	Datacenter       string
-	DataDir          string
-	NodeClass        string
-	NetworkInterface string
-	ServerJoin       []string // --server-join addresses → client/server server_join.retry_join
-	HostVolumes      []NomadHostVolume
-	Encrypt          string
-	ACL              bool
-	Address          string
-	Advertise        string
-	CAFile           string
-	CertFile         string
-	KeyFile          string
-	ServerMode       bool // also enable server stanza (advanced)
+	Datacenter                    string
+	DataDir                       string
+	PluginDir                     string
+	NodeClass                     string
+	NetworkInterface              string
+	CNIPath                       string
+	ServerJoin                    []string // --server-join addresses → client/server server_join.retry_join
+	HostVolumes                   []NomadHostVolume
+	EnableContainerdDriver        bool
+	ContainerdDriverRuntime       string
+	ContainerdDriverStatsInterval string
+	Encrypt                       string
+	ACL                           bool
+	Address                       string
+	Advertise                     string
+	CAFile                        string
+	CertFile                      string
+	KeyFile                       string
+	ServerMode                    bool // also enable server stanza (advanced)
 }
 
 // GenerateClientHCL emits a Nomad client configuration file using hclwrite.
@@ -83,6 +88,9 @@ func GenerateClientHCL(cfg NodeConfig) string {
 
 	root.SetAttributeValue("datacenter", cty.StringVal(cfg.Datacenter))
 	root.SetAttributeValue("data_dir", cty.StringVal(cfg.DataDir))
+	if cfg.PluginDir != "" {
+		root.SetAttributeValue("plugin_dir", cty.StringVal(cfg.PluginDir))
+	}
 	root.AppendNewline()
 
 	// Optional bind addresses
@@ -111,6 +119,9 @@ func GenerateClientHCL(cfg NodeConfig) string {
 	}
 	if cfg.NetworkInterface != "" {
 		clientBody.SetAttributeValue("network_interface", cty.StringVal(cfg.NetworkInterface))
+	}
+	if cfg.CNIPath != "" {
+		clientBody.SetAttributeValue("cni_path", cty.StringVal(cfg.CNIPath))
 	}
 	if len(cfg.ServerJoin) > 0 {
 		addrs := make([]cty.Value, len(cfg.ServerJoin))
@@ -148,7 +159,7 @@ func GenerateClientHCL(cfg NodeConfig) string {
 	}
 
 	// Native task drivers that can be explicitly configured in generated config.
-	appendDefaultTaskDriverConfig(root)
+	appendDefaultTaskDriverConfig(root, cfg)
 
 	// Gossip encryption key
 	if cfg.Encrypt != "" {
@@ -199,7 +210,7 @@ func hostVolumePaths(volumes []NomadHostVolume) []string {
 	return paths
 }
 
-func appendDefaultTaskDriverConfig(root *hclwrite.Body) {
+func appendDefaultTaskDriverConfig(root *hclwrite.Body, cfg NodeConfig) {
 	dockerPlugin := root.AppendNewBlock("plugin", []string{"docker"}).Body()
 	dockerCfg := dockerPlugin.AppendNewBlock("config", nil).Body()
 	dockerGC := dockerCfg.AppendNewBlock("gc", nil).Body()
@@ -214,6 +225,23 @@ func appendDefaultTaskDriverConfig(root *hclwrite.Body) {
 	rawExecCfg := rawExecPlugin.AppendNewBlock("config", nil).Body()
 	rawExecCfg.SetAttributeValue("enabled", cty.BoolVal(true))
 	root.AppendNewline()
+
+	if cfg.EnableContainerdDriver {
+		runtime := strings.TrimSpace(cfg.ContainerdDriverRuntime)
+		if runtime == "" {
+			runtime = defaultContainerdDriverRuntime
+		}
+		statsInterval := strings.TrimSpace(cfg.ContainerdDriverStatsInterval)
+		if statsInterval == "" {
+			statsInterval = defaultContainerdStatsInterval
+		}
+		containerdPlugin := root.AppendNewBlock("plugin", []string{"containerd-driver"}).Body()
+		containerdCfg := containerdPlugin.AppendNewBlock("config", nil).Body()
+		containerdCfg.SetAttributeValue("enabled", cty.BoolVal(true))
+		containerdCfg.SetAttributeValue("containerd_runtime", cty.StringVal(runtime))
+		containerdCfg.SetAttributeValue("stats_interval", cty.StringVal(statsInterval))
+		root.AppendNewline()
+	}
 }
 
 func stringListValue(values []string) cty.Value {
@@ -236,6 +264,7 @@ func externalTaskDriverNotes() string {
 	for _, name := range communityTaskDriverPlugins {
 		lines = append(lines, "# - "+name)
 	}
+	lines = append(lines, "# - containerd can be enabled experimentally via --community-driver=containerd with --exp (post-join setup).")
 	lines = append(lines, "# Install plugin binaries in Nomad plugin_dir and add plugin blocks manually to enable them.")
 	return strings.Join(lines, "\n") + "\n"
 }

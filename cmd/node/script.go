@@ -30,6 +30,7 @@ func printSetupScript(
 	tsKeyEphemeral, tsKeyReusable bool,
 	tsKeyExpiry time.Duration,
 	autoNomadAdvertise bool,
+	communityDrivers communityDriverInstallConfig,
 	skipEnable, skipStart bool,
 ) error {
 	version := cfg.Version
@@ -269,6 +270,17 @@ func printSetupScript(
 		fmt.Fprintf(w, "  echo \"  attempt $i/20 — retrying in 3s...\"\n")
 		fmt.Fprintf(w, "  sleep 3\n")
 		fmt.Fprintf(w, "done\n")
+	}
+	if communityDrivers.Requested() {
+		postSetupNodeCfg := cfg.NodeConfig
+		applyCommunityDriverNodeConfig(&postSetupNodeCfg, communityDrivers)
+		postSetupHCL := GenerateClientHCL(postSetupNodeCfg)
+		if autoNomadAdvertise {
+			postSetupHCL = strings.ReplaceAll(postSetupHCL, "$${NOMAD_ADVERTISE}", "${NOMAD_ADVERTISE}")
+		}
+		if err := printCommunityDriverPostSetupScriptSection(w, goos, goarch, communityDrivers, cfgPath, postSetupHCL); err != nil {
+			return err
+		}
 	}
 
 	return nil
