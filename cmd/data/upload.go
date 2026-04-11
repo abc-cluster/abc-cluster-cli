@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/bdragon300/tusgo"
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
 
@@ -503,6 +504,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 			uploadProgress.Printf(format, args...)
 		})
 	}
+	log := debuglog.FromContext(ctx)
 	_, err = uploader.Upload(withUploadProgress(uploadCtx, func(n int64) {
 		uploadProgress.Add(n)
 	}), uploadPath, metadata)
@@ -518,9 +520,15 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 		}
 	}
 	if err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "data.upload.failed",
+			debuglog.AttrsError("data.upload", err)...,
+		)
 		result.err = fmt.Errorf("data upload failed for %q: %w", relPath, err)
 		return result
 	}
+	log.LogAttrs(ctx, debuglog.L1, "data.upload.complete",
+		debuglog.AttrsDataUpload(file.path, "", uploadInfo.Size(), "tus-directory")...,
+	)
 
 	result.sizeMB = formatSizeMB(uploadInfo.Size())
 	return result
@@ -570,6 +578,7 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 			uploadProgress.Printf(format, args...)
 		})
 	}
+	log := debuglog.FromContext(cmd.Context())
 	_, err = uploader.Upload(withUploadProgress(uploadCtx, func(n int64) {
 		uploadProgress.Add(n)
 	}), uploadPath, metadata)
@@ -583,8 +592,14 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		}
 	}
 	if err != nil {
+		log.LogAttrs(cmd.Context(), debuglog.L1, "data.upload.failed",
+			debuglog.AttrsError("data.upload", err)...,
+		)
 		return networkError("data upload failed: %w", err)
 	}
+	log.LogAttrs(cmd.Context(), debuglog.L1, "data.upload.complete",
+		debuglog.AttrsDataUpload(filePath, "", uploadInfo.Size(), "tus-single")...,
+	)
 
 	fmt.Fprintln(cmd.OutOrStdout(), "File uploaded successfully.")
 	fmt.Fprintf(cmd.OutOrStdout(), "  Size: %s\n", formatSizeMB(uploadInfo.Size()))

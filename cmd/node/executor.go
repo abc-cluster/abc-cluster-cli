@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/kevinburke/ssh_config"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -42,10 +44,15 @@ type Executor interface {
 type localExec struct {
 	goos   string
 	goarch string
+	log    *slog.Logger
 }
 
-func newLocalExec() *localExec {
-	return &localExec{goos: runtime.GOOS, goarch: runtime.GOARCH}
+func newLocalExec(ctx context.Context) *localExec {
+	return &localExec{
+		goos:   runtime.GOOS,
+		goarch: runtime.GOARCH,
+		log:    debuglog.FromContext(ctx),
+	}
 }
 
 func (l *localExec) OS() string   { return l.goos }
@@ -112,7 +119,8 @@ type sshExec struct {
 	jumpClient   *ssh.Client // non-nil when a jump hop was used; closed in Close()
 	goos         string
 	goarch       string
-	sudoPassword string // from SSHConfig.Password; injected into sudo calls via stdin
+	sudoPassword string      // from SSHConfig.Password; injected into sudo calls via stdin
+	log          *slog.Logger // debug logger from context; noop when --debug not set
 }
 
 // newSSHExec connects to the remote host and returns a ready sshExec.
@@ -130,8 +138,16 @@ type sshExec struct {
 //
 // Jump host:
 //   - When --jump-host is set: dial jump → tunnel TCP → SSH handshake over tunnel
-func newSSHExec(cfg SSHConfig) (*sshExec, error) {
-	hostKeyCallback, err := buildHostKeyCallback(cfg.SkipHostKeyCheck)
+func newSSHExec(ctx context.Context, cfg SSHConfig) (*sshExec, error) {
+	log := debuglog.FromContext(ctx)
+
+	// Determine which auth methods will be attempted (for the log record).
+	authMethodNames := sshAuthMethodNames(cfg.KeyFile, cfg.Password)
+	log.LogAttrs(ctx, debuglog.L1, "ssh.dial.start",
+		debuglog.AttrsSSHDial(cfg.Host, cfg.Port, cfg.User, authMethodNames, cfg.JumpHost)...,
+	)
+
+	hostKeyCallback, err := buildHostKeyCallback(cfg.SkipHostKeyCheck, log, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +192,7 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 			return nil, fmt.Errorf("SSH jump host auth: %w", err)
 		}
 		// Jump host key callback: use same policy as target (consistent UX).
-		jumpHostKeyCallback, err := buildHostKeyCallback(cfg.SkipHostKeyCheck)
+		jumpHostKeyCallback, err := buildHostKeyCallback(cfg.SkipHostKeyCheck, log, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -231,12 +247,23 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 		sudoPass = capturedPassword
 	}
 
+	authUsed := "publickey"
+	if sudoPass != "" && cfg.Password == "" {
+		authUsed = "password (interactive)"
+	} else if cfg.Password != "" {
+		authUsed = "password (flag)"
+	}
+	log.LogAttrs(ctx, debuglog.L1, "ssh.dial.ok",
+		debuglog.AttrsSSHDialOK(authUsed, 0)...,
+	)
+
 	return &sshExec{
 		client:       client,
 		jumpClient:   jumpClient,
 		goos:         goos,
 		goarch:       goarch,
 		sudoPassword: sudoPass,
+		log:          log,
 	}, nil
 }
 
@@ -254,6 +281,8 @@ func (s *sshExec) Close() error {
 }
 
 func (s *sshExec) Run(ctx context.Context, command string, w io.Writer) error {
+	start := time.Now()
+
 	sess, err := s.client.NewSession()
 	if err != nil {
 		return fmt.Errorf("new SSH session: %w", err)
@@ -272,15 +301,36 @@ func (s *sshExec) Run(ctx context.Context, command string, w io.Writer) error {
 		sess.Stdin = newSudoPasswordReader(s.sudoPassword, sudoCount)
 	}
 
+	// Log the command at L2 (verbose), with password-injection syntax stripped.
+	safeCmd := debuglog.RedactCommand(command)
+	s.log.LogAttrs(ctx, debuglog.L2, "ssh.command.start",
+		slog.String("command", safeCmd),
+	)
+
 	done := make(chan error, 1)
 	go func() { done <- sess.Run(command) }()
+
+	var runErr error
 	select {
 	case <-ctx.Done():
 		_ = sess.Signal(ssh.SIGTERM)
-		return ctx.Err()
-	case err := <-done:
-		return err
+		runErr = ctx.Err()
+	case runErr = <-done:
 	}
+
+	exitCode := 0
+	if runErr != nil {
+		var exitErr *ssh.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitStatus()
+		} else {
+			exitCode = -1
+		}
+	}
+	s.log.LogAttrs(ctx, debuglog.L2, "ssh.command",
+		debuglog.AttrsSSHCommand(safeCmd, exitCode, time.Since(start).Milliseconds())...,
+	)
+	return runErr
 }
 
 // Upload transfers r to remotePath on the remote host using SFTP.
@@ -301,6 +351,7 @@ func (s *sshExec) Upload(ctx context.Context, r io.Reader, remotePath string, mo
 
 // sftpUpload writes directly via SFTP (used when user owns the destination).
 func (s *sshExec) sftpUpload(ctx context.Context, r io.Reader, remotePath string, mode os.FileMode) error {
+	start := time.Now()
 	sc, err := sftp.NewClient(s.client)
 	if err != nil {
 		return fmt.Errorf("SFTP client: %w", err)
@@ -315,14 +366,19 @@ func (s *sshExec) sftpUpload(ctx context.Context, r io.Reader, remotePath string
 	if err != nil {
 		return fmt.Errorf("SFTP open %s: %w", remotePath, err)
 	}
-	defer f.Close()
 
-	if _, err := io.Copy(f, r); err != nil {
-		return fmt.Errorf("SFTP write %s: %w", remotePath, err)
+	n, copyErr := io.Copy(f, r)
+	f.Close()
+	if copyErr != nil {
+		return fmt.Errorf("SFTP write %s: %w", remotePath, copyErr)
 	}
 	if err := sc.Chmod(remotePath, mode); err != nil {
 		return fmt.Errorf("SFTP chmod %s: %w", remotePath, err)
 	}
+
+	s.log.LogAttrs(ctx, debuglog.L1, "ssh.upload",
+		debuglog.AttrsUpload("", n, remotePath, mode.String(), "sftp", time.Since(start).Milliseconds())...,
+	)
 
 	select {
 	case <-ctx.Done():
@@ -335,6 +391,7 @@ func (s *sshExec) sftpUpload(ctx context.Context, r io.Reader, remotePath string
 // sudoUpload writes to a /tmp staging path via SFTP (user-writable) and then
 // uses sudo mv + chmod to place the file at its root-owned destination.
 func (s *sshExec) sudoUpload(ctx context.Context, r io.Reader, remotePath string, mode os.FileMode) error {
+	start := time.Now()
 	sc, err := sftp.NewClient(s.client)
 	if err != nil {
 		return fmt.Errorf("SFTP client: %w", err)
@@ -348,13 +405,12 @@ func (s *sshExec) sudoUpload(ctx context.Context, r io.Reader, remotePath string
 		sc.Close()
 		return fmt.Errorf("SFTP open tmp %s: %w", tmpPath, err)
 	}
-	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
-		sc.Close()
-		return fmt.Errorf("SFTP write tmp %s: %w", tmpPath, err)
-	}
+	n, copyErr := io.Copy(f, r)
 	f.Close()
 	sc.Close()
+	if copyErr != nil {
+		return fmt.Errorf("SFTP write tmp %s: %w", tmpPath, copyErr)
+	}
 
 	// Ensure destination directory exists and move into place.
 	mvCmd := fmt.Sprintf(
@@ -366,6 +422,10 @@ func (s *sshExec) sudoUpload(ctx context.Context, r io.Reader, remotePath string
 		_ = s.Run(ctx, "rm -f "+tmpPath, io.Discard)
 		return fmt.Errorf("sudo install %s: %w", remotePath, err)
 	}
+
+	s.log.LogAttrs(ctx, debuglog.L1, "ssh.upload",
+		debuglog.AttrsUpload("", n, remotePath, mode.String(), "sftp+sudo-mv", time.Since(start).Milliseconds())...,
+	)
 	return nil
 }
 
@@ -378,7 +438,7 @@ func (s *sshExec) sudoUpload(ctx context.Context, r io.Reader, remotePath string
 // fingerprint prompt and offers to add it — similar to the OpenSSH client.
 //
 // When skipCheck is true it uses InsecureIgnoreHostKey (dev/testing only).
-func buildHostKeyCallback(skipCheck bool) (ssh.HostKeyCallback, error) {
+func buildHostKeyCallback(skipCheck bool, log *slog.Logger, ctx context.Context) (ssh.HostKeyCallback, error) {
 	if skipCheck {
 		return ssh.InsecureIgnoreHostKey(), nil //nolint:gosec
 	}
@@ -404,22 +464,31 @@ func buildHostKeyCallback(skipCheck bool) (ssh.HostKeyCallback, error) {
 		return nil, fmt.Errorf("load known_hosts %s: %w", khPath, err)
 	}
 
-	// Wrap: on unknown host, prompt the user (TOFU) and add to known_hosts.
-	return toFUCallback(khPath, callback), nil
+	// Wrap: on unknown host, auto-add to known_hosts and log the decision.
+	return toFUCallback(khPath, callback, log, ctx), nil
 }
 
 // toFUCallback wraps a knownhosts callback with automatic Trust-On-First-Use.
 // Known hosts are verified strictly; unknown hosts are added to known_hosts.
-func toFUCallback(khPath string, strict ssh.HostKeyCallback) ssh.HostKeyCallback {
+func toFUCallback(khPath string, strict ssh.HostKeyCallback, log *slog.Logger, ctx context.Context) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		fp := ssh.FingerprintSHA256(key)
+		algo := key.Type()
+
 		err := strict(hostname, remote, key)
 		if err == nil {
+			log.LogAttrs(ctx, debuglog.L1, "ssh.hostkey",
+				debuglog.AttrsHostKey(fp, algo, true, "verified")...,
+			)
 			return nil // known and verified
 		}
 
 		// Key mismatch: possible MITM — hard error, never auto-accept.
 		var keyErr *knownhosts.KeyError
 		if errors.As(err, &keyErr) && len(keyErr.Want) > 0 {
+			log.LogAttrs(ctx, debuglog.L1, "ssh.hostkey",
+				debuglog.AttrsHostKey(fp, algo, true, "mismatch")...,
+			)
 			fmt.Fprintf(os.Stderr, "\n  !! WARNING: remote host identification has changed for %s\n", hostname)
 			fmt.Fprintf(os.Stderr, "  !! This may indicate a man-in-the-middle attack.\n")
 			fmt.Fprintf(os.Stderr, "  !! Expected key(s): %v\n", keyErr.Want)
@@ -427,6 +496,9 @@ func toFUCallback(khPath string, strict ssh.HostKeyCallback) ssh.HostKeyCallback
 		}
 
 		// Unknown host: auto-accept and append to known_hosts.
+		log.LogAttrs(ctx, debuglog.L1, "ssh.hostkey",
+			debuglog.AttrsHostKey(fp, algo, false, "tofu-accepted")...,
+		)
 		f, ferr := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 		if ferr != nil {
 			return fmt.Errorf("update known_hosts: %w", ferr)
@@ -625,6 +697,28 @@ func detectRemoteOSArch(client *ssh.Client) (goos, goarch string, err error) {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+// sshAuthMethodNames returns a human-readable list of auth methods that will be
+// attempted for an SSH connection — used in debug log records.
+func sshAuthMethodNames(keyFile, password string) []string {
+	var methods []string
+	if keyFile != "" {
+		methods = append(methods, "publickey:explicit")
+	} else {
+		methods = append(methods, "publickey:default-keys")
+	}
+	if os.Getenv("SSH_AUTH_SOCK") != "" {
+		methods = append(methods, "publickey:agent")
+	}
+	if password != "" {
+		methods = append(methods, "password:flag")
+	}
+	methods = append(methods, "keyboard-interactive")
+	if password == "" {
+		methods = append(methods, "password:interactive")
+	}
+	return methods
+}
 
 // dirOf returns the directory portion of a file path, handling both / and \ separators.
 func dirOf(path string) string {

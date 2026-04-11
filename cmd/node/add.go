@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
 
@@ -378,7 +380,7 @@ func runCloudAdd(cmd *cobra.Command) error {
 
 func runLocalAdd(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
-	ex := newLocalExec()
+	ex := newLocalExec(cmd.Context())
 	fmt.Fprintf(out, "\n  Installing on local machine (%s/%s)...\n", ex.OS(), ex.Arch())
 	return runInstall(cmd.Context(), cmd, ex, out)
 }
@@ -442,7 +444,7 @@ func runSSHAdd(cmd *cobra.Command, host string) error {
 	}
 
 	// 4. Dial and run install.
-	ex, err := newSSHExec(sshCfg)
+	ex, err := newSSHExec(cmd.Context(), sshCfg)
 	if err != nil {
 		return fmt.Errorf("SSH connect: %w", err)
 	}
@@ -550,7 +552,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		return nil
 	}
 
-	// Resolve sudo password for preflight and install (flag > env var).
+	// Resolve sudo password for preflight and install (flag > env var > captured).
 	sudoPassword, _ := cmd.Flags().GetString("password")
 	if sudoPassword == "" {
 		sudoPassword = os.Getenv("ABC_NODE_PASSWORD")
@@ -561,14 +563,32 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		}
 	}
 
+	log := debuglog.FromContext(ctx)
+	installStart := time.Now()
+	log.LogAttrs(ctx, debuglog.L1, "node.install.start",
+		slog.String("op", "node.add"),
+		slog.String("os", ex.OS()),
+		slog.String("arch", ex.Arch()),
+		slog.Bool("sudo_password_set", sudoPassword != ""),
+	)
+
 	// 1. Preflight checks
 	var pf *PreflightResult
 	if !skipPreflight {
 		requirePkgManagerCheck := packageInstallMethod == packageInstallMethodPackageManager
 		pf, err = RunPreflight(ctx, ex, w, sudoPassword, requirePkgManagerCheck)
 		if err != nil {
+			log.LogAttrs(ctx, debuglog.L1, "node.install.failed",
+				debuglog.AttrsError("node.add.preflight", err)...,
+			)
 			return err
 		}
+		log.LogAttrs(ctx, debuglog.L1, "node.install.preflight_done",
+			slog.String("op", "node.add"),
+			slog.String("pkg_manager", pf.PkgManager),
+			slog.Bool("nomad_installed", pf.NomadInstalled),
+			slog.Bool("tailscale_installed", pf.TailscaleInstalled),
+		)
 	} else {
 		pf = &PreflightResult{OS: ex.OS(), Arch: ex.Arch(), HasSudo: true, InitSystem: initSystemFor(ex.OS())}
 	}
@@ -707,6 +727,11 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		}
 	}
 
+	log.LogAttrs(ctx, debuglog.L1, "node.install.complete",
+		slog.String("op", "node.add"),
+		slog.Int64("total_ms", time.Since(installStart).Milliseconds()),
+		slog.Bool("success", true),
+	)
 	fmt.Fprintf(w, "\n  Done. Run 'abc node list --sudo' to see the new node.\n")
 	return nil
 }
