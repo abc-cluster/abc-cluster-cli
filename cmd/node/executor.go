@@ -264,11 +264,12 @@ func (s *sshExec) Run(ctx context.Context, command string, w io.Writer) error {
 
 	// When a sudo password is configured, rewrite every `sudo ` occurrence in the
 	// command to use `sudo -S -p ''` (read password from stdin, suppress prompt).
-	// A repeatingPasswordReader feeds the password for each sudo call in the
-	// pipeline — handles commands with multiple sequential sudo invocations.
+	// Feed a finite password stream sized for the number of sudo calls so the SSH
+	// stdin copier can terminate cleanly once input is sent.
 	if s.sudoPassword != "" && strings.Contains(command, "sudo ") {
+		sudoCount := strings.Count(command, "sudo ")
 		command = strings.ReplaceAll(command, "sudo ", "sudo -S -p '' ")
-		sess.Stdin = newRepeatingPasswordReader(s.sudoPassword)
+		sess.Stdin = newSudoPasswordReader(s.sudoPassword, sudoCount)
 	}
 
 	done := make(chan error, 1)
@@ -407,8 +408,8 @@ func buildHostKeyCallback(skipCheck bool) (ssh.HostKeyCallback, error) {
 	return toFUCallback(khPath, callback), nil
 }
 
-// toFUCallback wraps a knownhosts callback with a Trust-On-First-Use prompt.
-// Known hosts are verified strictly; new hosts prompt the user and are saved.
+// toFUCallback wraps a knownhosts callback with automatic Trust-On-First-Use.
+// Known hosts are verified strictly; unknown hosts are added to known_hosts.
 func toFUCallback(khPath string, strict ssh.HostKeyCallback) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		err := strict(hostname, remote, key)
@@ -425,19 +426,7 @@ func toFUCallback(khPath string, strict ssh.HostKeyCallback) ssh.HostKeyCallback
 			return err
 		}
 
-		// Unknown host: offer TOFU prompt.
-		fp := ssh.FingerprintSHA256(key)
-		fmt.Fprintf(os.Stderr, "\n  Host %s is not in known_hosts.\n", hostname)
-		fmt.Fprintf(os.Stderr, "  Fingerprint: %s\n", fp)
-		fmt.Fprintf(os.Stderr, "  Add to %s? [y/N] ", khPath)
-
-		var answer string
-		fmt.Fscan(os.Stdin, &answer)
-		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
-			return fmt.Errorf("host %s rejected by user", hostname)
-		}
-
-		// Append the new host entry to known_hosts.
+		// Unknown host: auto-accept and append to known_hosts.
 		f, ferr := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 		if ferr != nil {
 			return fmt.Errorf("update known_hosts: %w", ferr)
@@ -453,25 +442,18 @@ func toFUCallback(khPath string, strict ssh.HostKeyCallback) ssh.HostKeyCallback
 
 // ─── SSH auth helpers ─────────────────────────────────────────────────────────
 
-// repeatingPasswordReader feeds a password line (password + "\n") to stdin
-// repeatedly. This allows a single SSH session to run multiple sequential
-// `sudo -S` commands — each reads one password line from stdin.
-type repeatingPasswordReader struct {
-	line []byte
-	pos  int
-}
-
-func newRepeatingPasswordReader(password string) *repeatingPasswordReader {
-	return &repeatingPasswordReader{line: []byte(password + "\n")}
-}
-
-func (r *repeatingPasswordReader) Read(p []byte) (int, error) {
-	if len(r.line) == 0 {
-		return 0, io.EOF
+// newSudoPasswordReader returns a finite stdin stream containing the sudo
+// password line repeated enough times to satisfy multiple sudo prompts.
+//
+// A finite stream is important: using an infinite reader can cause SSH session
+// completion to surface as EOF when the remote side closes stdin.
+func newSudoPasswordReader(password string, sudoCount int) io.Reader {
+	if sudoCount < 1 {
+		sudoCount = 1
 	}
-	n := copy(p, r.line[r.pos:])
-	r.pos = (r.pos + n) % len(r.line)
-	return n, nil
+	// sudo typically allows up to 3 prompts per invocation.
+	promptBudget := sudoCount * 3
+	return strings.NewReader(strings.Repeat(password+"\n", promptBudget))
 }
 
 // buildSSHAuthMethods assembles the auth chain:

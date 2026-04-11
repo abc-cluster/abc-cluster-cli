@@ -104,6 +104,9 @@ Examples:
 	cmd.Flags().Bool("tailscale", false, "Join a Tailscale tailnet during provisioning (default: false — direct-join mode)")
 	cmd.Flags().String("tailscale-auth-key", "", "Tailscale pre-auth key (required when --tailscale is set)")
 	cmd.Flags().String("tailscale-hostname", "", "Override Tailscale hostname (default: OS hostname)")
+	cmd.Flags().String("package-install-method", packageInstallMethodStatic, "Install method for Nomad and Tailscale: static (default) or package-manager")
+	cmd.Flags().String("tailscale-install-method", "", "DEPRECATED: use --package-install-method")
+	_ = cmd.Flags().MarkHidden("tailscale-install-method")
 
 	// ── Other ────────────────────────────────────────────────────────────────
 	cmd.Flags().Bool("dry-run", false, "Print what would be executed without making changes")
@@ -184,6 +187,10 @@ func runPrintCommands(cmd *cobra.Command) error {
 	useTailscale, _ := cmd.Flags().GetBool("tailscale")
 	tsAuthKey, _ := cmd.Flags().GetString("tailscale-auth-key")
 	tsHostname, _ := cmd.Flags().GetString("tailscale-hostname")
+	packageInstallMethod, err := resolvePackageInstallMethodFlag(cmd)
+	if err != nil {
+		return err
+	}
 
 	cfg := NomadInstallConfig{
 		Version:    nomadVersion,
@@ -192,7 +199,8 @@ func runPrintCommands(cmd *cobra.Command) error {
 		SkipStart:  skipStart,
 	}
 
-	return printSetupScript(cmd.OutOrStdout(), goos, goarch, cfg, useTailscale, tsAuthKey, tsHostname, skipEnable, skipStart)
+	cfg.InstallMethod = packageInstallMethod
+	return printSetupScript(cmd.OutOrStdout(), goos, goarch, cfg, useTailscale, tsAuthKey, tsHostname, packageInstallMethod, skipEnable, skipStart)
 }
 
 // ─── Cloud path (unchanged from original) ────────────────────────────────────
@@ -317,6 +325,10 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	useTailscale, _ := cmd.Flags().GetBool("tailscale")
 	tsAuthKey, _ := cmd.Flags().GetString("tailscale-auth-key")
 	tsHostname, _ := cmd.Flags().GetString("tailscale-hostname")
+	packageInstallMethod, err := resolvePackageInstallMethodFlag(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Validate: auth key required only when --tailscale is explicitly requested
 	if useTailscale && tsAuthKey == "" {
@@ -346,7 +358,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	skipStart, _ := cmd.Flags().GetBool("skip-start")
 
 	if dryRun {
-		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, tsHostname, serverJoin)
+		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin)
 		return nil
 	}
 
@@ -364,8 +376,8 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	// 1. Preflight checks
 	var pf *PreflightResult
 	if !skipPreflight {
-		var err error
-		pf, err = RunPreflight(ctx, ex, w, sudoPassword)
+		requirePkgManagerCheck := packageInstallMethod == packageInstallMethodPackageManager
+		pf, err = RunPreflight(ctx, ex, w, sudoPassword, requirePkgManagerCheck)
 		if err != nil {
 			return err
 		}
@@ -386,7 +398,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 				return fmt.Errorf("tailscale up: %w", err)
 			}
 		} else {
-			if err := InstallTailscale(ctx, ex, tsAuthKey, tsHostname, w); err != nil {
+			if err := InstallTailscale(ctx, ex, tsAuthKey, tsHostname, packageInstallMethod, w); err != nil {
 				return err
 			}
 		}
@@ -395,10 +407,11 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	// 3. Nomad
 	if !pf.NomadInstalled {
 		installCfg := NomadInstallConfig{
-			Version:    nomadVersion,
-			NodeConfig: nodeCfg,
-			SkipEnable: skipEnable,
-			SkipStart:  skipStart,
+			Version:       nomadVersion,
+			InstallMethod: packageInstallMethod,
+			NodeConfig:    nodeCfg,
+			SkipEnable:    skipEnable,
+			SkipStart:     skipStart,
 		}
 		if err := InstallNomad(ctx, ex, installCfg, w); err != nil {
 			return err
@@ -453,9 +466,10 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
 
-func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, tsHostname string, serverJoin []string) {
+func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string) {
 	fmt.Fprintf(w, "\n  Dry-run plan:\n")
 	fmt.Fprintf(w, "    Target:       %s/%s\n", ex.OS(), ex.Arch())
+	fmt.Fprintf(w, "    Install mode: %s\n", packageInstallMethod)
 	fmt.Fprintf(w, "    Datacenter:   %s\n", cfg.Datacenter)
 	if cfg.NodeClass != "" {
 		fmt.Fprintf(w, "    Node class:   %s\n", cfg.NodeClass)
@@ -464,7 +478,7 @@ func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTa
 		fmt.Fprintf(w, "    Server join:  %s\n", strings.Join(serverJoin, ", "))
 	}
 	if useTailscale {
-		fmt.Fprintf(w, "    Tailscale:    install + tailscale up")
+		fmt.Fprintf(w, "    Tailscale:    install + tailscale up (%s)", packageInstallMethod)
 		if tsHostname != "" {
 			fmt.Fprintf(w, " --hostname=%s", tsHostname)
 		}
