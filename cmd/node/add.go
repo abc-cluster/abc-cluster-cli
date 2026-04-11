@@ -100,6 +100,7 @@ Examples:
 	cmd.Flags().String("containerd-nerdctl-version", defaultContainerdNerdctlVersion, "Experimental: nerdctl-full version for --community-driver=containerd")
 	cmd.Flags().String("containerd-driver-version", defaultContainerdDriverVersion, "Experimental: nomad-driver-containerd release version for --community-driver=containerd")
 	cmd.Flags().String("exec2-version", defaultExec2DriverVersion, "Experimental: nomad-driver-exec2 release version for --community-driver=exec2")
+	cmd.Flags().StringArray("local-driver", nil, "Experimental: deploy local Nomad task driver binaries using [plugin_name=]path (repeatable)")
 	cmd.Flags().Bool("java-driver", false, "Install JDK(s) and configure Nomad Java task driver")
 	cmd.Flags().StringArray("jdk-version", nil, "JDK major versions to install for --java-driver (repeatable, e.g. 17,21,25)")
 	cmd.Flags().String("jdk-default-version", "", "Default JDK major version for /usr/local/bin/java when --java-driver is set")
@@ -247,11 +248,21 @@ func runPrintCommands(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	localDrivers, err := localDriverInstallConfigFromFlags(cmd)
+	if err != nil {
+		return err
+	}
 	javaDriverCfg, err := javaDriverInstallConfigFromFlags(cmd)
 	if err != nil {
 		return err
 	}
+	if localDrivers.Requested() {
+		return fmt.Errorf("--print-commands does not support --local-driver because local binaries are uploaded directly by abc during execution")
+	}
 	if err := ensureExperimentalFeatureEnabled(cmd, communityDrivers.Requested(), "community driver installation"); err != nil {
+		return err
+	}
+	if err := ensureExperimentalFeatureEnabled(cmd, localDrivers.Requested(), "local driver deployment"); err != nil {
 		return err
 	}
 	if err := validateCommunityDriverTarget(goos, communityDrivers); err != nil {
@@ -265,6 +276,9 @@ func runPrintCommands(cmd *cobra.Command) error {
 	}
 	if javaDriverCfg.Requested() && skipStart {
 		return fmt.Errorf("java-driver setup runs after the node joins the cluster; remove --skip-start when using --java-driver")
+	}
+	if localDrivers.Requested() && skipStart {
+		return fmt.Errorf("local driver setup runs after the node joins the cluster; remove --skip-start when using --local-driver")
 	}
 
 	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
@@ -475,6 +489,10 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	if err != nil {
 		return err
 	}
+	localDrivers, err := localDriverInstallConfigFromFlags(cmd)
+	if err != nil {
+		return err
+	}
 	javaDriverCfg, err := javaDriverInstallConfigFromFlags(cmd)
 	if err != nil {
 		return err
@@ -482,7 +500,13 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	if err := ensureExperimentalFeatureEnabled(cmd, communityDrivers.Requested(), "community driver installation"); err != nil {
 		return err
 	}
+	if err := ensureExperimentalFeatureEnabled(cmd, localDrivers.Requested(), "local driver deployment"); err != nil {
+		return err
+	}
 	if err := validateCommunityDriverTarget(ex.OS(), communityDrivers); err != nil {
+		return err
+	}
+	if err := validateLocalDriverTarget(ex.OS(), localDrivers); err != nil {
 		return err
 	}
 	if err := validateJavaDriverTarget(ex.OS(), javaDriverCfg); err != nil {
@@ -496,6 +520,9 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	}
 	if javaDriverCfg.Requested() && skipStart {
 		return fmt.Errorf("java-driver setup runs after the node joins the cluster; remove --skip-start when using --java-driver")
+	}
+	if localDrivers.Requested() && skipStart {
+		return fmt.Errorf("local driver setup runs after the node joins the cluster; remove --skip-start when using --local-driver")
 	}
 
 	// Collect Nomad config
@@ -519,7 +546,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	}
 
 	if dryRun {
-		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, javaDriverCfg)
+		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg)
 		return nil
 	}
 
@@ -628,7 +655,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	if !skipStart {
 		fmt.Fprintf(w, "\n  Verifying...\n")
 		if err := waitForNomadAgent(ctx, ex, w); err != nil {
-			if communityDrivers.Requested() || javaDriverCfg.Requested() {
+			if communityDrivers.Requested() || localDrivers.Requested() || javaDriverCfg.Requested() {
 				return fmt.Errorf("nomad agent is not healthy yet; cannot run post-setup driver install: %w", err)
 			}
 			fmt.Fprintf(w, "    ! Could not verify Nomad agent: %v\n", err)
@@ -636,15 +663,23 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		}
 	}
 	// 5. Post-setup driver installation (after node has joined and is healthy)
-	if communityDrivers.Requested() || javaDriverCfg.Requested() {
+	if communityDrivers.Requested() || localDrivers.Requested() || javaDriverCfg.Requested() {
 		if communityDrivers.Requested() {
 			printExperimentalFeatureNotice(w, "community driver post-setup")
+		}
+		if localDrivers.Requested() {
+			printExperimentalFeatureNotice(w, "local driver post-setup")
 		}
 		if javaDriverCfg.Requested() {
 			printExperimentalFeatureNotice(w, "java driver post-setup")
 		}
 		if communityDrivers.Requested() {
 			if err := InstallCommunityDrivers(ctx, ex, communityDrivers, w); err != nil {
+				return err
+			}
+		}
+		if localDrivers.Requested() {
+			if err := InstallLocalDrivers(ctx, ex, localDrivers, w); err != nil {
 				return err
 			}
 		}
@@ -656,6 +691,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 
 		postSetupNodeCfg := nodeCfg
 		applyCommunityDriverNodeConfig(&postSetupNodeCfg, communityDrivers)
+		applyLocalDriverNodeConfig(&postSetupNodeCfg, localDrivers)
 		applyJavaDriverNodeConfig(&postSetupNodeCfg, javaDriverCfg)
 		postSetupCfg := installCfg
 		postSetupCfg.NodeConfig = postSetupNodeCfg
@@ -707,7 +743,7 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
 
-func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, javaDriverCfg javaDriverInstallConfig) {
+func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, localDrivers localDriverInstallConfig, javaDriverCfg javaDriverInstallConfig) {
 	fmt.Fprintf(w, "\n  Dry-run plan:\n")
 	fmt.Fprintf(w, "    Target:       %s/%s\n", ex.OS(), ex.Arch())
 	fmt.Fprintf(w, "    Install mode: %s\n", packageInstallMethod)
@@ -738,6 +774,12 @@ func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTa
 			default:
 				fmt.Fprintf(w, "      - %s\n", driver)
 			}
+		}
+	}
+	if localDrivers.Requested() {
+		fmt.Fprintf(w, "    Local drivers (post-setup after node join):\n")
+		for _, driver := range localDrivers.Drivers {
+			fmt.Fprintf(w, "      - %s <= %s\n", driver.PluginName, driver.BinaryPath)
 		}
 	}
 	if javaDriverCfg.Requested() {
