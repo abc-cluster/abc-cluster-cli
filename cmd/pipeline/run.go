@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -89,7 +90,14 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	// Try loading a saved pipeline; treat as ad-hoc URL if not found.
 	saved, err := loadPipeline(cmd.Context(), nc, nameOrURL, ns)
 	if err != nil {
-		return err
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "403") || strings.Contains(errLower, "permission denied") {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"  Note: no access to saved pipeline store; treating %q as ad-hoc pipeline reference.\n", nameOrURL)
+			saved = nil
+		} else {
+			return err
+		}
 	}
 	base := saved
 	if base == nil {
