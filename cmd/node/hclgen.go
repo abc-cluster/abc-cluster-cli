@@ -2,25 +2,36 @@ package node
 
 import (
 	"bytes"
+	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
 
+// NomadHostVolume represents a Nomad client host_volume block.
+type NomadHostVolume struct {
+	Name     string
+	Path     string
+	ReadOnly bool
+}
+
 // NodeConfig holds the parameters for generating a Nomad client HCL config.
 type NodeConfig struct {
-	Datacenter string
-	DataDir    string
-	NodeClass  string
-	ServerJoin []string // --server-join addresses → server_join.retry_join
-	Encrypt    string
-	ACL        bool
-	Address    string
-	Advertise  string
-	CAFile     string
-	CertFile   string
-	KeyFile    string
-	ServerMode bool // also enable server stanza (advanced)
+	Datacenter       string
+	DataDir          string
+	NodeClass        string
+	NetworkInterface string
+	ServerJoin       []string // --server-join addresses → client/server server_join.retry_join
+	HostVolumes      []NomadHostVolume
+	Encrypt          string
+	ACL              bool
+	Address          string
+	Advertise        string
+	CAFile           string
+	CertFile         string
+	KeyFile          string
+	ServerMode       bool // also enable server stanza (advanced)
 }
 
 // GenerateClientHCL emits a Nomad client configuration file using hclwrite.
@@ -64,25 +75,41 @@ func GenerateClientHCL(cfg NodeConfig) string {
 	if cfg.NodeClass != "" {
 		clientBody.SetAttributeValue("node_class", cty.StringVal(cfg.NodeClass))
 	}
+	if cfg.NetworkInterface != "" {
+		clientBody.SetAttributeValue("network_interface", cty.StringVal(cfg.NetworkInterface))
+	}
+	if len(cfg.ServerJoin) > 0 {
+		addrs := make([]cty.Value, len(cfg.ServerJoin))
+		for i, a := range cfg.ServerJoin {
+			addrs[i] = cty.StringVal(a)
+		}
+		sjBody := clientBody.AppendNewBlock("server_join", nil).Body()
+		sjBody.SetAttributeValue("retry_join", cty.ListVal(addrs))
+	}
+	for _, v := range cfg.HostVolumes {
+		name := strings.TrimSpace(v.Name)
+		path := strings.TrimSpace(v.Path)
+		if name == "" || path == "" {
+			continue
+		}
+		hostVol := clientBody.AppendNewBlock("host_volume", []string{name}).Body()
+		hostVol.SetAttributeValue("path", cty.StringVal(path))
+		hostVol.SetAttributeValue("read_only", cty.BoolVal(v.ReadOnly))
+	}
 	root.AppendNewline()
 
 	// Server stanza (advanced — omitted for pure client nodes)
 	if cfg.ServerMode {
 		serverBody := root.AppendNewBlock("server", nil).Body()
 		serverBody.SetAttributeValue("enabled", cty.BoolVal(true))
-		root.AppendNewline()
-	}
-
-	// server_join — populated from --server-join flag(s)
-	// The flag is named --server-join to match the HCL stanza name;
-	// internally maps to server_join.retry_join.
-	if len(cfg.ServerJoin) > 0 {
-		addrs := make([]cty.Value, len(cfg.ServerJoin))
-		for i, a := range cfg.ServerJoin {
-			addrs[i] = cty.StringVal(a)
+		if len(cfg.ServerJoin) > 0 {
+			addrs := make([]cty.Value, len(cfg.ServerJoin))
+			for i, a := range cfg.ServerJoin {
+				addrs[i] = cty.StringVal(a)
+			}
+			sjBody := serverBody.AppendNewBlock("server_join", nil).Body()
+			sjBody.SetAttributeValue("retry_join", cty.ListVal(addrs))
 		}
-		sjBody := root.AppendNewBlock("server_join", nil).Body()
-		sjBody.SetAttributeValue("retry_join", cty.ListVal(addrs))
 		root.AppendNewline()
 	}
 
@@ -116,4 +143,21 @@ func GenerateClientHCL(cfg NodeConfig) string {
 	}
 
 	return string(bytes.TrimRight(f.Bytes(), "\n")) + "\n"
+}
+
+func hostVolumePaths(volumes []NomadHostVolume) []string {
+	uniq := make(map[string]struct{}, len(volumes))
+	for _, v := range volumes {
+		path := strings.TrimSpace(v.Path)
+		if path == "" {
+			continue
+		}
+		uniq[path] = struct{}{}
+	}
+	paths := make([]string, 0, len(uniq))
+	for path := range uniq {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }

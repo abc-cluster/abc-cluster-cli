@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"path"
 	"strings"
 )
@@ -81,16 +82,46 @@ func InstallTailscale(ctx context.Context, ex Executor, key, hostname, installMe
 	}
 
 	// Confirm tailnet IP (informational)
-	var buf strings.Builder
-	_ = ex.Run(ctx, "tailscale ip -4 2>/dev/null || tailscale ip 2>/dev/null | head -1", &buf)
-	tsIP := strings.TrimSpace(buf.String())
-	if tsIP != "" {
+	tsIP, ipErr := DetectTailscaleIPv4(ctx, ex)
+	if ipErr == nil && tsIP != "" {
 		fmt.Fprintf(w, "    ✓ Joined tailnet (Tailscale IP: %s)\n", tsIP)
 	} else {
 		fmt.Fprintf(w, "    ✓ tailscale up completed\n")
 	}
 
 	return nil
+}
+
+func DetectTailscaleIPv4(ctx context.Context, ex Executor) (string, error) {
+	var out strings.Builder
+	if err := ex.Run(ctx, "tailscale ip -4 2>/dev/null", &out); err == nil {
+		if ip := firstIPv4Line(out.String()); ip != "" {
+			return ip, nil
+		}
+	}
+
+	out.Reset()
+	if err := ex.Run(ctx, "tailscale ip 2>/dev/null", &out); err == nil {
+		if ip := firstIPv4Line(out.String()); ip != "" {
+			return ip, nil
+		}
+	}
+
+	return "", fmt.Errorf("tailscale IPv4 address not found (is tailscale connected?)")
+}
+
+func firstIPv4Line(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		value := strings.TrimSpace(line)
+		if value == "" {
+			continue
+		}
+		ip := net.ParseIP(value)
+		if ip != nil && ip.To4() != nil {
+			return ip.String()
+		}
+	}
+	return ""
 }
 
 func installTailscalePackageManagerLinux(ctx context.Context, ex Executor, w io.Writer) error {

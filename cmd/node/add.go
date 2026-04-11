@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +27,8 @@ Three modes (mutually exclusive):
   --local      Install Nomad on the current machine
 
 Tailscale is off by default (direct-join mode). Add --tailscale and
---tailscale-auth-key=<key> to enrol the node into a Tailscale tailnet.
+either provide --tailscale-auth-key=<key> or let abc create one using
+TAILSCALE_API_KEY.
 
 Examples:
   # Cloud-provisioned VM
@@ -39,6 +41,11 @@ Examples:
   # Remote Linux server via SSH (with Tailscale)
   abc node add --host=192.168.1.50 --user=ubuntu \
     --tailscale --tailscale-auth-key=tskey-auth-... \
+    --server-join=100.64.0.1 --datacenter=za-cpt
+
+  # Remote Linux server via SSH (with Tailscale, auth key auto-created from TAILSCALE_API_KEY)
+  abc node add --host=192.168.1.50 --user=ubuntu \
+    --tailscale --tailscale-key-ephemeral --tailscale-key-expiry=2h \
     --server-join=100.64.0.1 --datacenter=za-cpt
 
   # Local machine (direct-join)
@@ -77,13 +84,18 @@ Examples:
 	cmd.Flags().String("jump-key", "", "SSH private key for the jump host (default: same as --ssh-key)")
 
 	// ── Nomad — node role ─────────────────────────────────────────────────────
-	cmd.Flags().Bool("server", false, "Also enable Nomad server mode (advanced)")
+	// NOTE: Intentionally disabled for now; abc node add is client-only.
+	// cmd.Flags().Bool("server", false, "Also enable Nomad server mode (advanced)")
 
 	// ── Nomad — cluster join ──────────────────────────────────────────────────
 	cmd.Flags().String("nomad-version", "", "Nomad version to install (default: latest stable)")
 	cmd.Flags().String("datacenter", "default", "Nomad datacenter label")
 	cmd.Flags().String("node-class", "", "Nomad node class label (optional)")
-	cmd.Flags().StringArray("server-join", nil, "Nomad server address(es) to join (repeatable); maps to server_join.retry_join")
+	cmd.Flags().StringArray("server-join", nil, "Nomad server address(es) to join (repeatable); maps to client.server_join.retry_join")
+	cmd.Flags().String("network-interface", "", "Nomad client network_interface value (defaults to tailscale0 when using Tailscale)")
+	cmd.Flags().StringArray("host-volume", nil, "Nomad client host volume in name=path[:read_only] format (repeatable)")
+	cmd.Flags().Bool("scratch-host-volume", true, "Configure a default Nomad client host volume named scratch")
+	cmd.Flags().String("scratch-host-volume-path", "/opt/nomad/scratch", "Path for the default scratch host volume")
 	cmd.Flags().String("encrypt", "", "Nomad gossip encryption key")
 	cmd.Flags().Bool("acl", false, "Enable Nomad ACL system on this node")
 
@@ -102,8 +114,15 @@ Examples:
 
 	// ── Tailscale ────────────────────────────────────────────────────────────
 	cmd.Flags().Bool("tailscale", false, "Join a Tailscale tailnet during provisioning (default: false — direct-join mode)")
-	cmd.Flags().String("tailscale-auth-key", "", "Tailscale pre-auth key (required when --tailscale is set)")
+	cmd.Flags().String("tailscale-auth-key", "", "Tailscale pre-auth key (optional when --tailscale is set; auto-created if omitted and TAILSCALE_API_KEY is set)")
 	cmd.Flags().String("tailscale-hostname", "", "Override Tailscale hostname (default: OS hostname)")
+	cmd.Flags().Bool("tailscale-create-auth-key", true, "Auto-create a Tailscale auth key via API when --tailscale-auth-key is omitted (requires TAILSCALE_API_KEY)")
+	cmd.Flags().Bool("tailscale-key-ephemeral", true, "When auto-creating a Tailscale auth key, register the node as ephemeral")
+	cmd.Flags().Bool("tailscale-key-reusable", false, "When auto-creating a Tailscale auth key, make it reusable")
+	cmd.Flags().Duration("tailscale-key-expiry", 24*time.Hour, "When auto-creating a Tailscale auth key, set key expiry (for example 30m, 2h, 24h)")
+	cmd.Flags().Bool("tailscale-key-preauthorized", true, "When auto-creating a Tailscale auth key, mark devices as preauthorized")
+	cmd.Flags().String("tailscale-key-description", "", "When auto-creating a Tailscale auth key, set key description")
+	cmd.Flags().Bool("nomad-use-tailscale-ip", false, "Set Nomad advertise address to the node's Tailscale IPv4; also works when Tailscale was configured manually")
 	cmd.Flags().String("package-install-method", packageInstallMethodStatic, "Install method for Nomad and Tailscale: static (default) or package-manager")
 	cmd.Flags().String("tailscale-install-method", "", "DEPRECATED: use --package-install-method")
 	_ = cmd.Flags().MarkHidden("tailscale-install-method")
@@ -117,6 +136,34 @@ Examples:
 	cmd.Flags().String("target-os", "", "Target OS/arch for --print-commands with --host (e.g. linux/amd64, darwin/arm64; default: linux/amd64)")
 
 	return cmd
+}
+
+func shouldRefreshNomadConfig(cmd *cobra.Command, nomadUseTailscaleIP bool) bool {
+	if nomadUseTailscaleIP {
+		return true
+	}
+	configFlags := []string{
+		"datacenter",
+		"node-class",
+		"server-join",
+		"network-interface",
+		"host-volume",
+		"scratch-host-volume",
+		"scratch-host-volume-path",
+		"encrypt",
+		"acl",
+		"address",
+		"advertise",
+		"ca-file",
+		"cert-file",
+		"key-file",
+	}
+	for _, name := range configFlags {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func runNodeAdd(cmd *cobra.Command, _ []string) error {
@@ -164,43 +211,85 @@ func runPrintCommands(cmd *cobra.Command) error {
 			return err
 		}
 	}
-
-	// Assemble config from flags (same as runInstall)
-	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
-	nodeCfg := NodeConfig{
-		Datacenter: mustGetString(cmd, "datacenter"),
-		NodeClass:  mustGetString(cmd, "node-class"),
-		ServerJoin: serverJoin,
-		Encrypt:    mustGetString(cmd, "encrypt"),
-		Address:    mustGetString(cmd, "address"),
-		Advertise:  mustGetString(cmd, "advertise"),
-		CAFile:     mustGetString(cmd, "ca-file"),
-		CertFile:   mustGetString(cmd, "cert-file"),
-		KeyFile:    mustGetString(cmd, "key-file"),
-	}
-	nodeCfg.ACL, _ = cmd.Flags().GetBool("acl")
-	nodeCfg.ServerMode, _ = cmd.Flags().GetBool("server")
-
 	nomadVersion, _ := cmd.Flags().GetString("nomad-version")
 	skipEnable, _ := cmd.Flags().GetBool("skip-enable")
 	skipStart, _ := cmd.Flags().GetBool("skip-start")
 	useTailscale, _ := cmd.Flags().GetBool("tailscale")
 	tsAuthKey, _ := cmd.Flags().GetString("tailscale-auth-key")
 	tsHostname, _ := cmd.Flags().GetString("tailscale-hostname")
+	tsCreateAuthKey, _ := cmd.Flags().GetBool("tailscale-create-auth-key")
+	tsKeyEphemeral, _ := cmd.Flags().GetBool("tailscale-key-ephemeral")
+	tsKeyReusable, _ := cmd.Flags().GetBool("tailscale-key-reusable")
+	tsKeyExpiry, _ := cmd.Flags().GetDuration("tailscale-key-expiry")
+	nomadUseTailscaleIP, _ := cmd.Flags().GetBool("nomad-use-tailscale-ip")
+	if useTailscale {
+		nomadUseTailscaleIP = true
+	}
+	if tsKeyExpiry < 0 {
+		return fmt.Errorf("--tailscale-key-expiry must be >= 0")
+	}
+	networkInterface := mustGetString(cmd, "network-interface")
+	if !cmd.Flags().Changed("network-interface") && networkInterface == "" && (useTailscale || nomadUseTailscaleIP) {
+		networkInterface = "tailscale0"
+	}
+	hostVolumes, err := hostVolumesFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+
+	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
+	nodeCfg := NodeConfig{
+		Datacenter:       mustGetString(cmd, "datacenter"),
+		NodeClass:        mustGetString(cmd, "node-class"),
+		NetworkInterface: networkInterface,
+		ServerJoin:       serverJoin,
+		HostVolumes:      hostVolumes,
+		Encrypt:          mustGetString(cmd, "encrypt"),
+		Address:          mustGetString(cmd, "address"),
+		Advertise:        mustGetString(cmd, "advertise"),
+		CAFile:           mustGetString(cmd, "ca-file"),
+		CertFile:         mustGetString(cmd, "cert-file"),
+		KeyFile:          mustGetString(cmd, "key-file"),
+	}
+	nodeCfg.ACL, _ = cmd.Flags().GetBool("acl")
+	if cmd.Flags().Changed("advertise") && nomadUseTailscaleIP {
+		nomadUseTailscaleIP = false
+	}
+	autoNomadAdvertise := nomadUseTailscaleIP && nodeCfg.Advertise == ""
+	if autoNomadAdvertise {
+		nodeCfg.Advertise = "${NOMAD_ADVERTISE}"
+	}
+
 	packageInstallMethod, err := resolvePackageInstallMethodFlag(cmd)
 	if err != nil {
 		return err
 	}
 
 	cfg := NomadInstallConfig{
-		Version:    nomadVersion,
-		NodeConfig: nodeCfg,
-		SkipEnable: skipEnable,
-		SkipStart:  skipStart,
+		Version:       nomadVersion,
+		InstallMethod: packageInstallMethod,
+		NodeConfig:    nodeCfg,
+		SkipEnable:    skipEnable,
+		SkipStart:     skipStart,
 	}
 
-	cfg.InstallMethod = packageInstallMethod
-	return printSetupScript(cmd.OutOrStdout(), goos, goarch, cfg, useTailscale, tsAuthKey, tsHostname, packageInstallMethod, skipEnable, skipStart)
+	return printSetupScript(
+		cmd.OutOrStdout(),
+		goos,
+		goarch,
+		cfg,
+		useTailscale,
+		tsAuthKey,
+		tsHostname,
+		packageInstallMethod,
+		tsCreateAuthKey,
+		tsKeyEphemeral,
+		tsKeyReusable,
+		tsKeyExpiry,
+		autoNomadAdvertise,
+		skipEnable,
+		skipStart,
+	)
 }
 
 // ─── Cloud path (unchanged from original) ────────────────────────────────────
@@ -325,40 +414,58 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	useTailscale, _ := cmd.Flags().GetBool("tailscale")
 	tsAuthKey, _ := cmd.Flags().GetString("tailscale-auth-key")
 	tsHostname, _ := cmd.Flags().GetString("tailscale-hostname")
+	tsCreateAuthKey, _ := cmd.Flags().GetBool("tailscale-create-auth-key")
+	tsKeyEphemeral, _ := cmd.Flags().GetBool("tailscale-key-ephemeral")
+	tsKeyReusable, _ := cmd.Flags().GetBool("tailscale-key-reusable")
+	tsKeyExpiry, _ := cmd.Flags().GetDuration("tailscale-key-expiry")
+	tsKeyPreauthorized, _ := cmd.Flags().GetBool("tailscale-key-preauthorized")
+	tsKeyDescription, _ := cmd.Flags().GetString("tailscale-key-description")
+	nomadUseTailscaleIP, _ := cmd.Flags().GetBool("nomad-use-tailscale-ip")
+	if useTailscale {
+		nomadUseTailscaleIP = true
+	}
 	packageInstallMethod, err := resolvePackageInstallMethodFlag(cmd)
 	if err != nil {
 		return err
 	}
-
-	// Validate: auth key required only when --tailscale is explicitly requested
-	if useTailscale && tsAuthKey == "" {
-		return fmt.Errorf("--tailscale-auth-key is required when --tailscale is set\n" +
-			"  Obtain a pre-auth key from https://login.tailscale.com/admin/settings/keys\n" +
-			"  Or omit --tailscale to install without Tailscale (direct-join mode)")
+	if tsKeyExpiry < 0 {
+		return fmt.Errorf("--tailscale-key-expiry must be >= 0")
+	}
+	networkInterface := mustGetString(cmd, "network-interface")
+	if !cmd.Flags().Changed("network-interface") && networkInterface == "" && (useTailscale || nomadUseTailscaleIP) {
+		networkInterface = "tailscale0"
+	}
+	hostVolumes, err := hostVolumesFromFlags(cmd)
+	if err != nil {
+		return err
 	}
 
 	// Collect Nomad config
 	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
 	nodeCfg := NodeConfig{
-		Datacenter: mustGetString(cmd, "datacenter"),
-		NodeClass:  mustGetString(cmd, "node-class"),
-		ServerJoin: serverJoin,
-		Encrypt:    mustGetString(cmd, "encrypt"),
-		Address:    mustGetString(cmd, "address"),
-		Advertise:  mustGetString(cmd, "advertise"),
-		CAFile:     mustGetString(cmd, "ca-file"),
-		CertFile:   mustGetString(cmd, "cert-file"),
-		KeyFile:    mustGetString(cmd, "key-file"),
+		Datacenter:       mustGetString(cmd, "datacenter"),
+		NodeClass:        mustGetString(cmd, "node-class"),
+		NetworkInterface: networkInterface,
+		ServerJoin:       serverJoin,
+		HostVolumes:      hostVolumes,
+		Encrypt:          mustGetString(cmd, "encrypt"),
+		Address:          mustGetString(cmd, "address"),
+		Advertise:        mustGetString(cmd, "advertise"),
+		CAFile:           mustGetString(cmd, "ca-file"),
+		CertFile:         mustGetString(cmd, "cert-file"),
+		KeyFile:          mustGetString(cmd, "key-file"),
 	}
 	nodeCfg.ACL, _ = cmd.Flags().GetBool("acl")
-	nodeCfg.ServerMode, _ = cmd.Flags().GetBool("server")
+	if cmd.Flags().Changed("advertise") && nomadUseTailscaleIP {
+		nomadUseTailscaleIP = false
+	}
 
 	nomadVersion, _ := cmd.Flags().GetString("nomad-version")
 	skipEnable, _ := cmd.Flags().GetBool("skip-enable")
 	skipStart, _ := cmd.Flags().GetBool("skip-start")
 
 	if dryRun {
-		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin)
+		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP)
 		return nil
 	}
 
@@ -384,11 +491,38 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	} else {
 		pf = &PreflightResult{OS: ex.OS(), Arch: ex.Arch(), HasSudo: true, InitSystem: initSystemFor(ex.OS())}
 	}
+	if useTailscale && !pf.TailscaleConnected && tsAuthKey == "" && !tsCreateAuthKey {
+		return fmt.Errorf("missing Tailscale auth key: provide --tailscale-auth-key or enable --tailscale-create-auth-key")
+	}
+
+	// Resolve (or auto-create) Tailscale auth key right before bootstrap.
+	if useTailscale && !pf.TailscaleConnected && tsAuthKey == "" {
+		apiKey := strings.TrimSpace(os.Getenv("TAILSCALE_API_KEY"))
+		if apiKey == "" {
+			return fmt.Errorf("missing Tailscale credentials: set --tailscale-auth-key or export TAILSCALE_API_KEY")
+		}
+		fmt.Fprintf(w, "\n  Creating Tailscale auth key via API...\n")
+		description := tsKeyDescription
+		if description == "" {
+			description = fmt.Sprintf("abc node add bootstrap (%s)", time.Now().UTC().Format(time.RFC3339))
+		}
+		tsAuthKey, err = CreateTailscaleAuthKey(ctx, TailscaleAuthKeyCreateRequest{
+			APIKey:        apiKey,
+			Reusable:      tsKeyReusable,
+			Ephemeral:     tsKeyEphemeral,
+			Preauthorized: tsKeyPreauthorized,
+			Expiry:        tsKeyExpiry,
+			Description:   description,
+		})
+		if err != nil {
+			return fmt.Errorf("create Tailscale auth key: %w", err)
+		}
+		fmt.Fprintf(w, "    ✓ Created bootstrap key (ephemeral=%t reusable=%t expiry=%s)\n", tsKeyEphemeral, tsKeyReusable, tsKeyExpiry)
+	}
 
 	// 2. Tailscale (only when --tailscale flag is set)
 	if useTailscale && !pf.TailscaleConnected {
 		if pf.TailscaleInstalled {
-			// Already installed — just run tailscale up
 			fmt.Fprintf(w, "\n  Joining tailnet...\n")
 			args := "tailscale up --auth-key=" + tsAuthKey
 			if tsHostname != "" {
@@ -404,21 +538,36 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		}
 	}
 
-	// 3. Nomad
-	if !pf.NomadInstalled {
-		installCfg := NomadInstallConfig{
-			Version:       nomadVersion,
-			InstallMethod: packageInstallMethod,
-			NodeConfig:    nodeCfg,
-			SkipEnable:    skipEnable,
-			SkipStart:     skipStart,
+	// 2b. Optionally derive Nomad advertise address from Tailscale.
+	if nomadUseTailscaleIP && nodeCfg.Advertise == "" {
+		tsIP, err := DetectTailscaleIPv4(ctx, ex)
+		if err != nil {
+			return fmt.Errorf("resolve Tailscale IPv4 for Nomad advertise address: %w", err)
 		}
+		nodeCfg.Advertise = tsIP
+		fmt.Fprintf(w, "\n  Using Tailscale IP for Nomad advertise address: %s\n", tsIP)
+	}
+
+	// 3. Nomad
+	installCfg := NomadInstallConfig{
+		Version:       nomadVersion,
+		InstallMethod: packageInstallMethod,
+		NodeConfig:    nodeCfg,
+		SkipEnable:    skipEnable,
+		SkipStart:     skipStart,
+	}
+	if !pf.NomadInstalled {
 		if err := InstallNomad(ctx, ex, installCfg, w); err != nil {
 			return err
 		}
 	} else {
 		fmt.Fprintf(w, "\n  Nomad already installed — skipping install.\n")
-		fmt.Fprintf(w, "  Note: Run 'abc node add --local --skip-preflight' to force reinstall.\n")
+		if shouldRefreshNomadConfig(cmd, nomadUseTailscaleIP) {
+			fmt.Fprintf(w, "  Updating Nomad configuration.\n")
+			if err := ApplyNomadConfig(ctx, ex, installCfg, w); err != nil {
+				return err
+			}
+		}
 	}
 
 	// 4. Verify: poll local Nomad agent
@@ -466,7 +615,7 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
 
-func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string) {
+func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool) {
 	fmt.Fprintf(w, "\n  Dry-run plan:\n")
 	fmt.Fprintf(w, "    Target:       %s/%s\n", ex.OS(), ex.Arch())
 	fmt.Fprintf(w, "    Install mode: %s\n", packageInstallMethod)
@@ -477,14 +626,36 @@ func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTa
 	if len(serverJoin) > 0 {
 		fmt.Fprintf(w, "    Server join:  %s\n", strings.Join(serverJoin, ", "))
 	}
+	if cfg.NetworkInterface != "" {
+		fmt.Fprintf(w, "    Net iface:    %s\n", cfg.NetworkInterface)
+	}
+	if len(cfg.HostVolumes) > 0 {
+		fmt.Fprintf(w, "    Host volumes:\n")
+		for _, v := range cfg.HostVolumes {
+			fmt.Fprintf(w, "      - %s => %s (read_only=%t)\n", v.Name, v.Path, v.ReadOnly)
+		}
+	}
 	if useTailscale {
 		fmt.Fprintf(w, "    Tailscale:    install + tailscale up (%s)", packageInstallMethod)
 		if tsHostname != "" {
 			fmt.Fprintf(w, " --hostname=%s", tsHostname)
 		}
 		fmt.Fprintln(w)
+		switch {
+		case hasExplicitTSKey:
+			fmt.Fprintf(w, "    TS auth key:  provided via --tailscale-auth-key\n")
+		case tsCreateAuthKey:
+			fmt.Fprintf(w, "    TS auth key:  will be auto-created via TAILSCALE_API_KEY (ephemeral=%t reusable=%t expiry=%s)\n", tsKeyEphemeral, tsKeyReusable, tsKeyExpiry)
+		default:
+			fmt.Fprintf(w, "    TS auth key:  missing (set --tailscale-auth-key or enable --tailscale-create-auth-key)\n")
+		}
 	} else {
 		fmt.Fprintf(w, "    Tailscale:    off (direct-join mode)\n")
+	}
+	if nomadUseTailscaleIP && cfg.Advertise == "" {
+		fmt.Fprintf(w, "    Advertise:    tailscale IPv4 (resolved at runtime)\n")
+	} else if cfg.Advertise != "" {
+		fmt.Fprintf(w, "    Advertise:    %s\n", cfg.Advertise)
 	}
 	if version == "" {
 		version = "latest"
@@ -501,6 +672,77 @@ func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTa
 func mustGetString(cmd *cobra.Command, name string) string {
 	v, _ := cmd.Flags().GetString(name)
 	return v
+}
+
+func hostVolumesFromFlags(cmd *cobra.Command) ([]NomadHostVolume, error) {
+	includeScratch, _ := cmd.Flags().GetBool("scratch-host-volume")
+	scratchPath, _ := cmd.Flags().GetString("scratch-host-volume-path")
+	rawHostVolumes, _ := cmd.Flags().GetStringArray("host-volume")
+
+	volumes := make([]NomadHostVolume, 0, len(rawHostVolumes)+1)
+	volumeIndex := make(map[string]int, len(rawHostVolumes)+1)
+
+	upsert := func(v NomadHostVolume) {
+		if idx, ok := volumeIndex[v.Name]; ok {
+			volumes[idx] = v
+			return
+		}
+		volumeIndex[v.Name] = len(volumes)
+		volumes = append(volumes, v)
+	}
+
+	if includeScratch {
+		path := strings.TrimSpace(scratchPath)
+		if path == "" {
+			return nil, fmt.Errorf("--scratch-host-volume-path cannot be empty when --scratch-host-volume is enabled")
+		}
+		upsert(NomadHostVolume{Name: "scratch", Path: path, ReadOnly: false})
+	}
+
+	for _, raw := range rawHostVolumes {
+		v, err := parseHostVolumeFlag(raw)
+		if err != nil {
+			return nil, err
+		}
+		upsert(v)
+	}
+
+	return volumes, nil
+}
+
+func parseHostVolumeFlag(raw string) (NomadHostVolume, error) {
+	entry := strings.TrimSpace(raw)
+	if entry == "" {
+		return NomadHostVolume{}, fmt.Errorf("empty --host-volume value")
+	}
+
+	parts := strings.SplitN(entry, "=", 2)
+	if len(parts) != 2 {
+		return NomadHostVolume{}, fmt.Errorf("--host-volume must be name=path[:read_only], got %q", raw)
+	}
+	name := strings.TrimSpace(parts[0])
+	pathAndMode := strings.TrimSpace(parts[1])
+	if name == "" || pathAndMode == "" {
+		return NomadHostVolume{}, fmt.Errorf("--host-volume must be name=path[:read_only], got %q", raw)
+	}
+
+	path := pathAndMode
+	readOnly := false
+	if i := strings.LastIndex(pathAndMode, ":"); i > 0 && i < len(pathAndMode)-1 {
+		if ro, err := strconv.ParseBool(strings.TrimSpace(pathAndMode[i+1:])); err == nil {
+			readOnly = ro
+			path = strings.TrimSpace(pathAndMode[:i])
+		}
+	}
+	if path == "" {
+		return NomadHostVolume{}, fmt.Errorf("host volume path cannot be empty in %q", raw)
+	}
+
+	return NomadHostVolume{
+		Name:     name,
+		Path:     path,
+		ReadOnly: readOnly,
+	}, nil
 }
 
 func initSystemFor(goos string) string {

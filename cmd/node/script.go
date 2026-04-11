@@ -26,6 +26,10 @@ func printSetupScript(
 	useTailscale bool,
 	tsKey, tsHostname string,
 	packageInstallMethod string,
+	tsCreateAuthKey bool,
+	tsKeyEphemeral, tsKeyReusable bool,
+	tsKeyExpiry time.Duration,
+	autoNomadAdvertise bool,
 	skipEnable, skipStart bool,
 ) error {
 	version := cfg.Version
@@ -45,7 +49,11 @@ func printSetupScript(
 	}
 
 	binPath, cfgDir, cfgPath, dataDir := nomadPaths(goos)
+	hostVolumeDirs := hostVolumePaths(cfg.NodeConfig.HostVolumes)
 	hclContent := GenerateClientHCL(cfg.NodeConfig)
+	if autoNomadAdvertise {
+		hclContent = strings.ReplaceAll(hclContent, "$${NOMAD_ADVERTISE}", "${NOMAD_ADVERTISE}")
+	}
 
 	// ── Header ────────────────────────────────────────────────────────────────
 	if goos == "windows" {
@@ -59,7 +67,7 @@ func printSetupScript(
 			fmt.Fprintf(w, "# Node class: %s\n", cfg.NodeConfig.NodeClass)
 		}
 		fmt.Fprintln(w)
-		printWindowsScript(w, version, releaseOS, releaseArch, binPath, cfgPath, dataDir, hclContent, useTailscale, tsKey, tsHostname, skipEnable, skipStart)
+		printWindowsScript(w, version, releaseOS, releaseArch, binPath, cfgPath, dataDir, hostVolumeDirs, hclContent, useTailscale, tsKey, tsHostname, skipEnable, skipStart)
 		return nil
 	}
 
@@ -115,7 +123,11 @@ func printSetupScript(
 		if tsKey != "" {
 			upCmd += " --auth-key=" + tsKey
 		} else {
-			upCmd += " --auth-key=<YOUR_TAILSCALE_AUTH_KEY>"
+			if tsCreateAuthKey {
+				fmt.Fprintf(w, "# NOTE: In normal abc execution this key can be auto-created from TAILSCALE_API_KEY (ephemeral=%t reusable=%t expiry=%s).\n", tsKeyEphemeral, tsKeyReusable, tsKeyExpiry)
+			}
+			fmt.Fprintf(w, ": \"${TS_AUTH_KEY:?set TS_AUTH_KEY to a Tailscale auth key}\"\n")
+			upCmd += " --auth-key=${TS_AUTH_KEY}"
 		}
 		if tsHostname != "" {
 			upCmd += " --hostname=" + tsHostname
@@ -126,6 +138,13 @@ func printSetupScript(
 		fmt.Fprintf(w, "# To enable: re-run with --tailscale --tailscale-auth-key=<key>\n")
 	}
 	fmt.Fprintln(w)
+	if autoNomadAdvertise {
+		fmt.Fprintf(w, "# Resolve Nomad advertise address from Tailscale\n")
+		fmt.Fprintf(w, "NOMAD_ADVERTISE=$(tailscale ip -4 2>/dev/null | head -n1)\n")
+		fmt.Fprintf(w, "if [ -z \"$NOMAD_ADVERTISE\" ]; then echo \"Could not determine Tailscale IPv4 address\"; exit 1; fi\n")
+		fmt.Fprintf(w, "echo \"Using Tailscale IP for Nomad advertise: ${NOMAD_ADVERTISE}\"\n")
+		fmt.Fprintln(w)
+	}
 
 	if packageInstallMethod == packageInstallMethodPackageManager && goos == "linux" {
 		// ── 2. Nomad install via package manager ─────────────────────────────────
@@ -155,6 +174,9 @@ func printSetupScript(
 		fmt.Fprintf(w, "  exit 1\n")
 		fmt.Fprintf(w, "fi\n")
 		fmt.Fprintf(w, "sudo mkdir -p \"%s\" \"%s\"\n", cfgDir, dataDir)
+		for _, dir := range hostVolumeDirs {
+			fmt.Fprintf(w, "sudo mkdir -p %q\n", dir)
+		}
 		fmt.Fprintln(w)
 	} else {
 		// ── 2. Nomad download + verify ────────────────────────────────────────────
@@ -179,6 +201,9 @@ func printSetupScript(
 		// ── 3. Install Nomad binary ───────────────────────────────────────────────
 		fmt.Fprintf(w, "# ── 3. Install Nomad binary ─────────────────────────────────────────────────\n")
 		fmt.Fprintf(w, "sudo mkdir -p \"%s\" \"%s\"\n", cfgDir, dataDir)
+		for _, dir := range hostVolumeDirs {
+			fmt.Fprintf(w, "sudo mkdir -p %q\n", dir)
+		}
 		fmt.Fprintf(w, "unzip -o \"/tmp/${NOMAD_ZIP}\" nomad -d /tmp/\n")
 		fmt.Fprintf(w, "sudo mv /tmp/nomad \"%s\"\n", binPath)
 		fmt.Fprintf(w, "sudo chmod 755 \"%s\"\n", binPath)
@@ -189,7 +214,11 @@ func printSetupScript(
 
 	// ── 4. Nomad config ───────────────────────────────────────────────────────
 	fmt.Fprintf(w, "# ── 4. Nomad config (%s) ─────────────────────────────────────────\n", cfgPath)
-	fmt.Fprintf(w, "sudo tee \"%s\" > /dev/null <<'HCL'\n", cfgPath)
+	if autoNomadAdvertise {
+		fmt.Fprintf(w, "sudo tee \"%s\" > /dev/null <<HCL\n", cfgPath)
+	} else {
+		fmt.Fprintf(w, "sudo tee \"%s\" > /dev/null <<'HCL'\n", cfgPath)
+	}
 	fmt.Fprint(w, hclContent)
 	fmt.Fprintf(w, "HCL\n")
 	fmt.Fprintf(w, "sudo chown root:root \"%s\"\n", cfgPath)
@@ -247,7 +276,7 @@ func printSetupScript(
 
 // printWindowsScript emits PowerShell-style comments and commands for Windows.
 // Full automation is not supported on Windows; the output is a documented guide.
-func printWindowsScript(w io.Writer, version, releaseOS, releaseArch, binPath, cfgPath, dataDir, hclContent string, useTailscale bool, tsKey, tsHostname string, skipEnable, skipStart bool) {
+func printWindowsScript(w io.Writer, version, releaseOS, releaseArch, binPath, cfgPath, dataDir string, hostVolumeDirs []string, hclContent string, useTailscale bool, tsKey, tsHostname string, skipEnable, skipStart bool) {
 	fmt.Fprintf(w, "# ── 1. Tailscale ────────────────────────────────────────────────────────────\n")
 	if useTailscale {
 		fmt.Fprintf(w, "# Ensure Tailscale is installed: https://tailscale.com/download/windows\n")
@@ -283,6 +312,9 @@ func printWindowsScript(w io.Writer, version, releaseOS, releaseArch, binPath, c
 	binDir := binPath[:strings.LastIndex(binPath, "\\")]
 	fmt.Fprintf(w, "#   New-Item -ItemType Directory -Force -Path \"%s\"\n", binDir)
 	fmt.Fprintf(w, "#   New-Item -ItemType Directory -Force -Path \"%s\"\n", dataDir)
+	for _, dir := range hostVolumeDirs {
+		fmt.Fprintf(w, "#   New-Item -ItemType Directory -Force -Path \"%s\"\n", dir)
+	}
 	fmt.Fprintf(w, "#   Expand-Archive -Path \"$env:TEMP\\nomad.zip\" -DestinationPath \"$env:TEMP\\nomad_extracted\" -Force\n")
 	fmt.Fprintf(w, "#   Move-Item \"$env:TEMP\\nomad_extracted\\nomad.exe\" \"%s\" -Force\n", binPath)
 	fmt.Fprintln(w)
