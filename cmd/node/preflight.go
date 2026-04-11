@@ -22,7 +22,11 @@ type PreflightResult struct {
 
 // RunPreflight executes minimal checks on the target needed for Nomad install.
 // Borrows the check pattern from abc-node-probe, stripped to the install minimum.
-func RunPreflight(ctx context.Context, ex Executor, w io.Writer) (*PreflightResult, error) {
+//
+// sudoPassword, when non-empty, tells preflight that the SSH user has password-
+// based sudo access. The passwordless check (sudo -n) is skipped and HasSudo is
+// set to true; the actual commands will use sudo -S (injected by sshExec.Run).
+func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword string) (*PreflightResult, error) {
 	res := &PreflightResult{
 		OS:   ex.OS(),
 		Arch: ex.Arch(),
@@ -63,10 +67,15 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer) (*PreflightResu
 		} else {
 			fmt.Fprintf(w, "    ✗ Sudo access     not Administrator — re-run as Administrator\n")
 		}
+	} else if sudoPassword != "" {
+		// Password-based sudo: skip the passwordless check and trust the password.
+		// sshExec.Run() will inject it via sudo -S on every privileged command.
+		res.HasSudo = true
+		fmt.Fprintf(w, "    ✓ Sudo access     ok (password auth)\n")
 	} else {
 		if err := ex.Run(ctx, "sudo -n true 2>/dev/null", io.Discard); err == nil {
 			res.HasSudo = true
-			fmt.Fprintf(w, "    ✓ Sudo access     ok\n")
+			fmt.Fprintf(w, "    ✓ Sudo access     ok (passwordless)\n")
 		} else {
 			fmt.Fprintf(w, "    ✗ Sudo access     sudo required\n")
 		}
@@ -118,11 +127,14 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer) (*PreflightResu
 	if !res.HasSudo && res.OS != "windows" {
 		return res, fmt.Errorf(`sudo access required on %s — aborting
 
-  The SSH user lacks passwordless sudo. To fix this, either:
-    1. Add the user to the sudoers file on the remote host:
+  The SSH user lacks passwordless sudo. To fix this, pick one option:
+    1. Supply the user's sudo password:
+         abc node add --host=<host> --password=<pass>
+         (or set ABC_NODE_PASSWORD=<pass> in the environment)
+    2. Add the user to sudoers for passwordless access on the remote host:
          echo "<user> ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/<user>
-    2. Connect as root: abc node add --host=%s --user=root
-    3. Use --skip-preflight if you have already configured sudo`, res.OS, res.OS)
+    3. Connect as root:  abc node add --host=<host> --user=root
+    4. Use --skip-preflight if you have already configured sudo`, res.OS)
 	}
 	if res.OS == "linux" && res.InitSystem != "systemd" {
 		return res, fmt.Errorf(`systemd required on Linux for automatic service registration (found init: %q)

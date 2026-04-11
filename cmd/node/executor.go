@@ -87,6 +87,14 @@ type SSHConfig struct {
 	User    string
 	KeyFile string // empty → try default keys + SSH agent + password prompt
 
+	// Password is used for both SSH password authentication and sudo -S during
+	// install. When set, all `sudo` commands are transparently rewritten to pipe
+	// the password through stdin (sudo -S), and the password is added to the SSH
+	// auth chain so login works without key-based auth.
+	//
+	// Also read from the ABC_NODE_PASSWORD environment variable.
+	Password string
+
 	// Jump host (optional). When set, abc dials the jump host first and tunnels
 	// the target connection through it — equivalent to `ssh -J jump target`.
 	JumpHost    string
@@ -100,10 +108,11 @@ type SSHConfig struct {
 }
 
 type sshExec struct {
-	client     *ssh.Client
-	jumpClient *ssh.Client // non-nil when a jump hop was used; closed in Close()
-	goos       string
-	goarch     string
+	client       *ssh.Client
+	jumpClient   *ssh.Client // non-nil when a jump hop was used; closed in Close()
+	goos         string
+	goarch       string
+	sudoPassword string // from SSHConfig.Password; injected into sudo calls via stdin
 }
 
 // newSSHExec connects to the remote host and returns a ready sshExec.
@@ -127,7 +136,7 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 		return nil, err
 	}
 
-	targetAuths, err := buildSSHAuthMethods(cfg.KeyFile, cfg.User)
+	targetAuths, err := buildSSHAuthMethods(cfg.KeyFile, cfg.User, cfg.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +170,8 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 			jumpKeyFile = cfg.KeyFile
 		}
 
-		jumpAuths, err := buildSSHAuthMethods(jumpKeyFile, jumpUser)
+		// Jump host uses the same password if provided (common for internal networks).
+		jumpAuths, err := buildSSHAuthMethods(jumpKeyFile, jumpUser, cfg.Password)
 		if err != nil {
 			return nil, fmt.Errorf("SSH jump host auth: %w", err)
 		}
@@ -216,7 +226,13 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 		return nil, err
 	}
 
-	return &sshExec{client: client, jumpClient: jumpClient, goos: goos, goarch: goarch}, nil
+	return &sshExec{
+		client:       client,
+		jumpClient:   jumpClient,
+		goos:         goos,
+		goarch:       goarch,
+		sudoPassword: cfg.Password,
+	}, nil
 }
 
 func (s *sshExec) OS() string   { return s.goos }
@@ -241,6 +257,15 @@ func (s *sshExec) Run(ctx context.Context, command string, w io.Writer) error {
 	sess.Stdout = w
 	sess.Stderr = w
 
+	// When a sudo password is configured, rewrite every `sudo ` occurrence in the
+	// command to use `sudo -S -p ''` (read password from stdin, suppress prompt).
+	// A repeatingPasswordReader feeds the password for each sudo call in the
+	// pipeline — handles commands with multiple sequential sudo invocations.
+	if s.sudoPassword != "" && strings.Contains(command, "sudo ") {
+		command = strings.ReplaceAll(command, "sudo ", "sudo -S -p '' ")
+		sess.Stdin = newRepeatingPasswordReader(s.sudoPassword)
+	}
+
 	done := make(chan error, 1)
 	go func() { done <- sess.Run(command) }()
 	select {
@@ -255,14 +280,27 @@ func (s *sshExec) Run(ctx context.Context, command string, w io.Writer) error {
 // Upload transfers r to remotePath on the remote host using SFTP.
 // SFTP is binary-safe and avoids shell-escaping issues that cat-pipe approaches
 // can have with paths or content containing special characters.
+//
+// When sudoPassword is set the destination may be a root-owned path (e.g.
+// /etc/nomad.d, /usr/local/bin). In that case the file is written to a
+// temporary location in /tmp (always user-writable) via SFTP and then moved
+// to its final location with `sudo mv` + `sudo chmod`, which runs through
+// the password-injecting Run() method.
 func (s *sshExec) Upload(ctx context.Context, r io.Reader, remotePath string, mode os.FileMode) error {
+	if s.sudoPassword != "" {
+		return s.sudoUpload(ctx, r, remotePath, mode)
+	}
+	return s.sftpUpload(ctx, r, remotePath, mode)
+}
+
+// sftpUpload writes directly via SFTP (used when user owns the destination).
+func (s *sshExec) sftpUpload(ctx context.Context, r io.Reader, remotePath string, mode os.FileMode) error {
 	sc, err := sftp.NewClient(s.client)
 	if err != nil {
 		return fmt.Errorf("SFTP client: %w", err)
 	}
 	defer sc.Close()
 
-	// Ensure parent directory exists.
 	if err := sc.MkdirAll(dirOf(remotePath)); err != nil {
 		return fmt.Errorf("SFTP mkdir %s: %w", dirOf(remotePath), err)
 	}
@@ -276,19 +314,52 @@ func (s *sshExec) Upload(ctx context.Context, r io.Reader, remotePath string, mo
 	if _, err := io.Copy(f, r); err != nil {
 		return fmt.Errorf("SFTP write %s: %w", remotePath, err)
 	}
-
-	// Set permissions explicitly after write.
 	if err := sc.Chmod(remotePath, mode); err != nil {
 		return fmt.Errorf("SFTP chmod %s: %w", remotePath, err)
 	}
 
-	// Check context cancellation.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
+	return nil
+}
 
+// sudoUpload writes to a /tmp staging path via SFTP (user-writable) and then
+// uses sudo mv + chmod to place the file at its root-owned destination.
+func (s *sshExec) sudoUpload(ctx context.Context, r io.Reader, remotePath string, mode os.FileMode) error {
+	sc, err := sftp.NewClient(s.client)
+	if err != nil {
+		return fmt.Errorf("SFTP client: %w", err)
+	}
+
+	// Unique temp path in /tmp (always writable by the SSH user).
+	tmpPath := fmt.Sprintf("/tmp/.abc-upload-%d", time.Now().UnixNano())
+
+	f, err := sc.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		sc.Close()
+		return fmt.Errorf("SFTP open tmp %s: %w", tmpPath, err)
+	}
+	if _, err := io.Copy(f, r); err != nil {
+		f.Close()
+		sc.Close()
+		return fmt.Errorf("SFTP write tmp %s: %w", tmpPath, err)
+	}
+	f.Close()
+	sc.Close()
+
+	// Ensure destination directory exists and move into place.
+	mvCmd := fmt.Sprintf(
+		"sudo mkdir -p %s && sudo mv %s %s && sudo chmod %04o %s",
+		dirOf(remotePath), tmpPath, remotePath, mode.Perm(), remotePath,
+	)
+	if err := s.Run(ctx, mvCmd, io.Discard); err != nil {
+		// Best-effort cleanup of temp file.
+		_ = s.Run(ctx, "rm -f "+tmpPath, io.Discard)
+		return fmt.Errorf("sudo install %s: %w", remotePath, err)
+	}
 	return nil
 }
 
@@ -377,13 +448,34 @@ func toFUCallback(khPath string, strict ssh.HostKeyCallback) ssh.HostKeyCallback
 
 // ─── SSH auth helpers ─────────────────────────────────────────────────────────
 
-// buildSSHAuthMethods assembles the auth chain (hashi-up pattern):
-//  1. Explicit key file
-//  2. Default key files (~/.ssh/id_{rsa,ed25519,ecdsa})
-//  3. SSH agent (SSH_AUTH_SOCK)
-//  4. Keyboard-interactive
-//  5. Password prompt (last resort)
-func buildSSHAuthMethods(keyFile, user string) ([]ssh.AuthMethod, error) {
+// repeatingPasswordReader feeds a password line (password + "\n") to stdin
+// repeatedly. This allows a single SSH session to run multiple sequential
+// `sudo -S` commands — each reads one password line from stdin.
+type repeatingPasswordReader struct {
+	line []byte
+	pos  int
+}
+
+func newRepeatingPasswordReader(password string) *repeatingPasswordReader {
+	return &repeatingPasswordReader{line: []byte(password + "\n")}
+}
+
+func (r *repeatingPasswordReader) Read(p []byte) (int, error) {
+	if len(r.line) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.line[r.pos:])
+	r.pos = (r.pos + n) % len(r.line)
+	return n, nil
+}
+
+// buildSSHAuthMethods assembles the auth chain:
+//  1. Explicit key file (or default keys)
+//  2. SSH agent (SSH_AUTH_SOCK)
+//  3. Explicit password (--password flag / ABC_NODE_PASSWORD env) — tried silently
+//  4. Keyboard-interactive (for OTP / PAM challenges)
+//  5. Interactive password prompt (last resort, only if no --password given)
+func buildSSHAuthMethods(keyFile, user, password string) ([]ssh.AuthMethod, error) {
 	var auths []ssh.AuthMethod
 
 	// 1. Explicit key file
@@ -409,10 +501,25 @@ func buildSSHAuthMethods(keyFile, user string) ([]ssh.AuthMethod, error) {
 		}
 	}
 
-	// 3. Keyboard-interactive (handles OTP, PAM challenges, etc.)
+	// 3. Explicit password (--password / ABC_NODE_PASSWORD) — tried silently,
+	//    no prompt. Added before keyboard-interactive so it takes priority.
+	if password != "" {
+		auths = append(auths, ssh.Password(password))
+	}
+
+	// 4. Keyboard-interactive (handles OTP, PAM challenges, etc.)
+	//    When an explicit password was given, answer single-question prompts
+	//    with it automatically (covers systems that present password via
+	//    keyboard-interactive rather than the password auth method).
 	auths = append(auths, ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
 		answers := make([]string, len(questions))
 		for i, q := range questions {
+			// If we have a password and the question looks like a password prompt,
+			// answer with it automatically without blocking on a terminal read.
+			if password != "" && !echos[i] {
+				answers[i] = password
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "%s", q)
 			if echos[i] {
 				fmt.Fscan(os.Stdin, &answers[i])
@@ -428,13 +535,15 @@ func buildSSHAuthMethods(keyFile, user string) ([]ssh.AuthMethod, error) {
 		return answers, nil
 	}))
 
-	// 4. Interactive password prompt (last resort)
-	auths = append(auths, ssh.PasswordCallback(func() (string, error) {
-		fmt.Fprint(os.Stderr, "SSH password: ")
-		pw, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
-		return string(pw), err
-	}))
+	// 5. Interactive password prompt (last resort — only when no --password given)
+	if password == "" {
+		auths = append(auths, ssh.PasswordCallback(func() (string, error) {
+			fmt.Fprint(os.Stderr, "SSH password: ")
+			pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stderr)
+			return string(pw), err
+		}))
+	}
 
 	return auths, nil
 }
@@ -572,6 +681,24 @@ func loadSSHConfigEntry(alias string) (SSHConfig, bool) {
 
 	if pj := ssh_config.Get(alias, "ProxyJump"); pj != "" {
 		parseProxyJump(pj, &cfg)
+		// The ProxyJump value is often itself a ~/.ssh/config alias (e.g. "nomad00").
+		// Resolve it recursively so we dial the real hostname/IP — the same thing
+		// OpenSSH does internally. Without this, knownhosts checks the alias name
+		// ("nomad00:22") rather than the actual IP ("100.108.199.30:22"), causing
+		// spurious key-mismatch errors even when `ssh` itself connects fine.
+		if cfg.JumpHost != "" {
+			jumpEntry, _ := loadSSHConfigEntry(cfg.JumpHost)
+			cfg.JumpHost = jumpEntry.Host // resolved hostname / IP
+			if cfg.JumpPort == 22 && jumpEntry.Port != 22 {
+				cfg.JumpPort = jumpEntry.Port
+			}
+			if cfg.JumpUser == "" && jumpEntry.User != "" {
+				cfg.JumpUser = jumpEntry.User
+			}
+			if cfg.JumpKeyFile == "" && jumpEntry.KeyFile != "" {
+				cfg.JumpKeyFile = jumpEntry.KeyFile
+			}
+		}
 	}
 
 	if shc := ssh_config.Get(alias, "StrictHostKeyChecking"); shc == "no" || shc == "off" {
