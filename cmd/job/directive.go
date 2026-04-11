@@ -23,8 +23,8 @@ func stripInlineComment(s string) string {
 }
 
 // parsePreamble reads lines from r until the first non-comment, non-blank line
-// and returns the directive strings from #ABC and #NOMAD comment lines.
-func parsePreamble(r io.Reader) (abcDirs, nomadDirs []string, err error) {
+// and returns directive strings from #ABC, #NOMAD, and #SBATCH comment lines.
+func parsePreamble(r io.Reader) (abcDirs, nomadDirs, slurmDirs []string, err error) {
 	scanner := bufio.NewScanner(r)
 	first := true
 	for scanner.Scan() {
@@ -52,28 +52,158 @@ func parsePreamble(r io.Reader) (abcDirs, nomadDirs []string, err error) {
 			if rest != "" {
 				nomadDirs = append(nomadDirs, rest)
 			}
+		case strings.HasPrefix(trimmed, "#SBATCH"):
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#SBATCH"))
+			rest = stripInlineComment(rest)
+			if rest != "" {
+				slurmDirs = append(slurmDirs, rest)
+			}
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
-		return nil, nil, fmt.Errorf("error reading script: %w", scanErr)
+		return nil, nil, nil, fmt.Errorf("error reading script: %w", scanErr)
 	}
-	return abcDirs, nomadDirs, nil
+	return abcDirs, nomadDirs, slurmDirs, nil
 }
 
+// applySBATCHDirective parses a single #SBATCH directive string and mutates spec.
+// Only the subset of SBATCH flags relevant to Nomad job submission is handled;
+// cluster-specific flags (--nodes, --exclusive, etc.) are silently ignored.
+func applySBATCHDirective(spec *jobSpec, directive string) error {
+	for _, field := range strings.Fields(directive) {
+		if !strings.HasPrefix(field, "--") {
+			continue // skip bare values or short flags like -n
+		}
+		kv := strings.SplitN(strings.TrimPrefix(field, "--"), "=", 2)
+		key := kv[0]
+		hasValue := len(kv) == 2
+		val := ""
+		if hasValue {
+			val = strings.TrimSpace(kv[1])
+			val = strings.Trim(val, "'\"")
+		}
+
+		switch key {
+		case "job-name", "J":
+			if hasValue && val != "" {
+				spec.Name = val
+			}
+		case "cpus-per-task", "c":
+			if hasValue {
+				n, err := strconv.Atoi(val)
+				if err != nil || n < 1 {
+					return fmt.Errorf("#SBATCH --cpus-per-task must be a positive integer, got %q", val)
+				}
+				spec.Cores = n
+			}
+		case "ntasks", "n":
+			if hasValue {
+				n, err := strconv.Atoi(val)
+				if err != nil || n < 1 {
+					return fmt.Errorf("#SBATCH --ntasks must be a positive integer, got %q", val)
+				}
+				spec.SlurmNTasks = n
+			}
+		case "mem":
+			if hasValue {
+				mb, err := parseMemoryMB(val)
+				if err != nil {
+					return fmt.Errorf("#SBATCH --mem: %w", err)
+				}
+				spec.MemoryMB = mb
+			}
+		case "time", "t":
+			if hasValue {
+				secs, err := walltimeToSeconds(val)
+				if err != nil {
+					return fmt.Errorf("#SBATCH --time: %w", err)
+				}
+				spec.WalltimeSecs = secs
+			}
+		case "partition", "p":
+			if hasValue {
+				spec.SlurmPartition = val
+			}
+		case "account", "A":
+			if hasValue {
+				spec.SlurmAccount = val
+			}
+		case "output", "o":
+			if hasValue {
+				spec.SlurmStdoutFile = val
+			}
+		case "error", "e":
+			if hasValue {
+				spec.SlurmStderrFile = val
+			}
+		case "chdir", "D":
+			if hasValue {
+				spec.SlurmWorkDir = val
+				spec.ChDir = val
+			}
+		// Intentionally ignored SBATCH flags (cluster-topology or unsupported):
+		// --nodes, --exclusive, --gres, --qos, --constraint, --reservation, etc.
+		}
+	}
+	return nil
+}
+
+// preambleMode controls which comment markers are honoured during parsing.
+type preambleMode int
+
+const (
+	preambleModeAuto  preambleMode = iota // default: use #SBATCH if present, else #ABC/#NOMAD
+	preambleModeABC                       // only honour #ABC and #NOMAD; ignore #SBATCH
+	preambleModeSlurm                     // only honour #SBATCH; require at least one
+)
+
 // resolveSpec applies NOMAD then ABC directives (ABC has higher priority) and
-// fills in defaults. The defaultName is used when no --name directive is found.
-func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, error) {
+// fills in defaults. slurmDirs contains raw #SBATCH directive strings; mode
+// controls which sets are active. The defaultName is used when no --name is found.
+func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mode preambleMode) (*jobSpec, error) {
 	spec := &jobSpec{}
-	for _, d := range nomadDirs {
-		if err := applyDirective(spec, d, "NOMAD"); err != nil {
-			return nil, err
+
+	// Determine whether to honour SBATCH directives.
+	useSBATCH := false
+	switch mode {
+	case preambleModeSlurm:
+		if len(slurmDirs) == 0 {
+			return nil, fmt.Errorf("--preamble-mode slurm requires at least one #SBATCH directive in the script")
+		}
+		useSBATCH = true
+	case preambleModeAuto:
+		useSBATCH = len(slurmDirs) > 0
+	case preambleModeABC:
+		useSBATCH = false
+	}
+
+	// Apply SBATCH first (lowest priority among preamble sources).
+	if useSBATCH {
+		for _, d := range slurmDirs {
+			if err := applySBATCHDirective(spec, d); err != nil {
+				return nil, err
+			}
 		}
 	}
-	for _, d := range abcDirs {
-		if err := applyDirective(spec, d, "ABC"); err != nil {
-			return nil, err
+
+	// NOMAD overrides SBATCH.
+	if mode != preambleModeSlurm {
+		for _, d := range nomadDirs {
+			if err := applyDirective(spec, d, "NOMAD"); err != nil {
+				return nil, err
+			}
 		}
 	}
+
+	// ABC overrides everything.
+	if mode != preambleModeSlurm {
+		for _, d := range abcDirs {
+			if err := applyDirective(spec, d, "ABC"); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if spec.Name == "" {
 		spec.Name = defaultName
 	}
@@ -81,7 +211,13 @@ func resolveSpec(abcDirs, nomadDirs []string, defaultName string) (*jobSpec, err
 		spec.Nodes = 1
 	}
 	if spec.Driver == "" {
-		spec.Driver = "exec"
+		// Auto-select slurm driver when #SBATCH directives are present and the
+		// caller has not explicitly overridden the driver via #ABC --driver=...
+		if useSBATCH {
+			spec.Driver = "slurm"
+		} else {
+			spec.Driver = "exec"
+		}
 	}
 	if spec.Priority == 0 {
 		spec.Priority = 50
@@ -293,10 +429,6 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --conda requires a value", marker)
 			}
 			spec.Conda = val
-			if !hasValue {
-				return fmt.Errorf("#%s --error requires a value", marker)
-			}
-			spec.ErrorLog = val
 		case "constraint":
 			if !hasValue {
 				return fmt.Errorf("#%s --constraint requires a value", marker)
@@ -378,6 +510,8 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			spec.ExposeTaskDir = true
 		case "secrets_dir":
 			spec.ExposeSecretsDir = true
+		case "hpc_compat_env":
+			spec.IncludeHPCCompatEnv = true
 
 		default:
 			return fmt.Errorf("unknown #%s directive --%s", marker, key)

@@ -178,6 +178,12 @@ EXAMPLES
 	cmd.Flags().StringToString("driver.config", nil, "Driver config key=value (repeatable)")
 	cmd.Flags().String("params-file", "", "YAML params file path")
 
+	// Preamble mode + HPC compat
+	cmd.Flags().String("preamble-mode", "auto",
+		"Preamble parsing mode: auto (default), abc (ignore #SBATCH), slurm (require #SBATCH)")
+	cmd.Flags().Bool("hpc-compat-env", false,
+		"Inject SLURM_*/PBS_* environment aliases into the task env block")
+
 	return cmd
 }
 
@@ -279,6 +285,9 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	if v, _ := cmd.Flags().GetBool("no-network"); v {
 		spec.NoNetwork = true
 	}
+	if v, _ := cmd.Flags().GetBool("hpc-compat-env"); v {
+		spec.IncludeHPCCompatEnv = true
+	}
 	return nil
 }
 
@@ -296,7 +305,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot read script %q: %w", scriptPath, err)
 	}
 
-	abcDirs, nomadDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
+	abcDirs, nomadDirs, slurmDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
 	if err != nil {
 		return fmt.Errorf("failed to parse script preamble: %w", err)
 	}
@@ -304,7 +313,21 @@ func runJob(cmd *cobra.Command, args []string) error {
 	scriptBase := filepath.Base(scriptPath)
 	defaultName := strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
 
-	scriptSpec, err := resolveSpec(abcDirs, nomadDirs, defaultName)
+	mode := preambleModeAuto
+	if modeStr, _ := cmd.Flags().GetString("preamble-mode"); modeStr != "" {
+		switch modeStr {
+		case "auto":
+			mode = preambleModeAuto
+		case "abc":
+			mode = preambleModeABC
+		case "slurm":
+			mode = preambleModeSlurm
+		default:
+			return fmt.Errorf("unknown --preamble-mode %q: must be auto, abc, or slurm", modeStr)
+		}
+	}
+
+	scriptSpec, err := resolveSpec(abcDirs, nomadDirs, slurmDirs, defaultName, mode)
 	if err != nil {
 		return err
 	}

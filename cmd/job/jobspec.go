@@ -56,6 +56,17 @@ type jobSpec struct {
 	Constraints        []nomadConstraint
 	Affinities         []nomadAffinity
 
+	// ── Slurm driver directives ───────────────────────────────────────────────
+	SlurmPartition  string
+	SlurmAccount    string
+	SlurmWorkDir    string
+	SlurmStdoutFile string
+	SlurmStderrFile string
+	SlurmNTasks     int
+
+	// ── HPC compatibility env layer ───────────────────────────────────────────
+	IncludeHPCCompatEnv bool
+
 	// ── Meta directives ───────────────────────────────────────────────────────
 	Meta  map[string]string
 	Conda string
@@ -175,6 +186,27 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if len(override.Ports) > 0 {
 		base.Ports = append([]string(nil), override.Ports...)
+	}
+	if override.SlurmPartition != "" {
+		base.SlurmPartition = override.SlurmPartition
+	}
+	if override.SlurmAccount != "" {
+		base.SlurmAccount = override.SlurmAccount
+	}
+	if override.SlurmWorkDir != "" {
+		base.SlurmWorkDir = override.SlurmWorkDir
+	}
+	if override.SlurmStdoutFile != "" {
+		base.SlurmStdoutFile = override.SlurmStdoutFile
+	}
+	if override.SlurmStderrFile != "" {
+		base.SlurmStderrFile = override.SlurmStderrFile
+	}
+	if override.SlurmNTasks != 0 {
+		base.SlurmNTasks = override.SlurmNTasks
+	}
+	if override.IncludeHPCCompatEnv {
+		base.IncludeHPCCompatEnv = true
 	}
 	// Boolean expose flags: true wins.
 	if override.ExposeAllocID {
