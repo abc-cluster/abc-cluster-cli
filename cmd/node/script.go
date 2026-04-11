@@ -31,6 +31,7 @@ func printSetupScript(
 	tsKeyExpiry time.Duration,
 	autoNomadAdvertise bool,
 	communityDrivers communityDriverInstallConfig,
+	javaDriverCfg javaDriverInstallConfig,
 	skipEnable, skipStart bool,
 ) error {
 	version := cfg.Version
@@ -271,15 +272,28 @@ func printSetupScript(
 		fmt.Fprintf(w, "  sleep 3\n")
 		fmt.Fprintf(w, "done\n")
 	}
-	if communityDrivers.Requested() {
+	if communityDrivers.Requested() || javaDriverCfg.Requested() {
 		postSetupNodeCfg := cfg.NodeConfig
 		applyCommunityDriverNodeConfig(&postSetupNodeCfg, communityDrivers)
+		applyJavaDriverNodeConfig(&postSetupNodeCfg, javaDriverCfg)
 		postSetupHCL := GenerateClientHCL(postSetupNodeCfg)
 		if autoNomadAdvertise {
 			postSetupHCL = strings.ReplaceAll(postSetupHCL, "$${NOMAD_ADVERTISE}", "${NOMAD_ADVERTISE}")
 		}
-		if err := printCommunityDriverPostSetupScriptSection(w, goos, goarch, communityDrivers, cfgPath, postSetupHCL); err != nil {
-			return err
+		rewriteInCommunitySection := communityDrivers.Requested() && !javaDriverCfg.Requested()
+		rewriteInJavaSection := javaDriverCfg.Requested() && !communityDrivers.Requested()
+		if communityDrivers.Requested() {
+			if err := printCommunityDriverPostSetupScriptSection(w, goos, goarch, communityDrivers, cfgPath, postSetupHCL, rewriteInCommunitySection); err != nil {
+				return err
+			}
+		}
+		if javaDriverCfg.Requested() {
+			if err := printJavaDriverPostSetupScriptSection(w, goos, goarch, javaDriverCfg, cfgPath, postSetupHCL, rewriteInJavaSection); err != nil {
+				return err
+			}
+		}
+		if communityDrivers.Requested() && javaDriverCfg.Requested() {
+			printPostSetupNomadConfigRewriteAndRestart(w, cfgPath, postSetupHCL)
 		}
 	}
 
@@ -382,4 +396,21 @@ func parseTargetOS(s string) (goos, goarch string, err error) {
 // localOSArch returns the current machine's OS and arch as Go runtime strings.
 func localOSArch() (string, string) {
 	return runtime.GOOS, runtime.GOARCH
+}
+
+func printPostSetupNomadConfigRewriteAndRestart(w io.Writer, cfgPath, finalHCL string) {
+	fmt.Fprintln(w, "# Rewrite Nomad config with requested driver plugins and restart Nomad")
+	fmt.Fprintf(w, "sudo tee \"%s\" > /dev/null <<'HCL'\n", cfgPath)
+	fmt.Fprint(w, finalHCL)
+	fmt.Fprintln(w, "HCL")
+	fmt.Fprintf(w, "sudo chown root:root \"%s\"\n", cfgPath)
+	fmt.Fprintf(w, "sudo chmod 640 \"%s\"\n", cfgPath)
+	fmt.Fprintln(w, "sudo systemctl restart nomad || sudo systemctl start nomad")
+	fmt.Fprintln(w, "echo 'Waiting for Nomad agent after post-setup restart...'")
+	fmt.Fprintln(w, "for i in $(seq 1 20); do")
+	fmt.Fprintln(w, "  curl -sf http://127.0.0.1:4646/v1/agent/self > /dev/null 2>&1 && echo '✓ Nomad agent healthy' && break")
+	fmt.Fprintln(w, "  echo \"  attempt $i/20 — retrying in 3s...\"")
+	fmt.Fprintln(w, "  sleep 3")
+	fmt.Fprintln(w, "done")
+	fmt.Fprintln(w)
 }

@@ -61,6 +61,8 @@ type NodeConfig struct {
 	ServerJoin                    []string // --server-join addresses → client/server server_join.retry_join
 	HostVolumes                   []NomadHostVolume
 	EnableContainerdDriver        bool
+	EnableExec2Driver             bool
+	EnableJavaDriver              bool
 	ContainerdDriverRuntime       string
 	ContainerdDriverStatsInterval string
 	Encrypt                       string
@@ -242,6 +244,14 @@ func appendDefaultTaskDriverConfig(root *hclwrite.Body, cfg NodeConfig) {
 		containerdCfg.SetAttributeValue("stats_interval", cty.StringVal(statsInterval))
 		root.AppendNewline()
 	}
+	if cfg.EnableExec2Driver {
+		root.AppendNewBlock("plugin", []string{"nomad-driver-exec2"})
+		root.AppendNewline()
+	}
+	if cfg.EnableJavaDriver {
+		root.AppendNewBlock("plugin", []string{"java"})
+		root.AppendNewline()
+	}
 }
 
 func stringListValue(values []string) cty.Value {
@@ -265,6 +275,8 @@ func externalTaskDriverNotes() string {
 		lines = append(lines, "# - "+name)
 	}
 	lines = append(lines, "# - containerd can be enabled experimentally via --community-driver=containerd with --exp (post-join setup).")
+	lines = append(lines, "# - exec2 can be enabled experimentally via --community-driver=exec2 with --exp (post-join setup).")
+	lines = append(lines, "# - java driver + JDK can be configured via --java-driver and --jdk-version (post-join setup).")
 	lines = append(lines, "# Install plugin binaries in Nomad plugin_dir and add plugin blocks manually to enable them.")
 	return strings.Join(lines, "\n") + "\n"
 }
