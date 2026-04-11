@@ -92,10 +92,19 @@ Examples:
 	cmd.Flags().Bool("dry-run", false, "Print what would be executed without making changes")
 	cmd.Flags().Bool("skip-preflight", false, "Skip OS compatibility checks")
 
+	// ── Script generation ────────────────────────────────────────────────────
+	cmd.Flags().Bool("print-commands", false, "Print a self-contained shell script covering all install steps (no execution)")
+	cmd.Flags().String("target-os", "", "Target OS/arch for --print-commands with --host (e.g. linux/amd64, darwin/arm64; default: linux/amd64)")
+
 	return cmd
 }
 
 func runNodeAdd(cmd *cobra.Command, _ []string) error {
+	// --print-commands: emit a shell script and exit without connecting anywhere
+	if printCmds, _ := cmd.Flags().GetBool("print-commands"); printCmds {
+		return runPrintCommands(cmd)
+	}
+
 	isCloud := utils.CloudFromCmd(cmd)
 	isLocal, _ := cmd.Flags().GetBool("local")
 	host, _ := cmd.Flags().GetString("host")
@@ -111,6 +120,62 @@ func runNodeAdd(cmd *cobra.Command, _ []string) error {
 	default:
 		return fmt.Errorf("specify a transport: --cloud, --host=<ip>, or --local")
 	}
+}
+
+// runPrintCommands emits a complete, self-contained shell script to stdout
+// covering every install step (Tailscale, Nomad, config, service, health check).
+// No SSH connection or local execution is performed.
+func runPrintCommands(cmd *cobra.Command) error {
+	isCloud := utils.CloudFromCmd(cmd)
+	if isCloud {
+		return fmt.Errorf("--print-commands is not supported with --cloud (provisioning is handled server-side)")
+	}
+
+	isLocal, _ := cmd.Flags().GetBool("local")
+	targetOSFlag, _ := cmd.Flags().GetString("target-os")
+
+	var goos, goarch string
+	if isLocal {
+		goos, goarch = localOSArch()
+	} else {
+		var err error
+		goos, goarch, err = parseTargetOS(targetOSFlag)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Assemble config from flags (same as runInstall)
+	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
+	nodeCfg := NodeConfig{
+		Datacenter: mustGetString(cmd, "datacenter"),
+		NodeClass:  mustGetString(cmd, "node-class"),
+		ServerJoin: serverJoin,
+		Encrypt:    mustGetString(cmd, "encrypt"),
+		Address:    mustGetString(cmd, "address"),
+		Advertise:  mustGetString(cmd, "advertise"),
+		CAFile:     mustGetString(cmd, "ca-file"),
+		CertFile:   mustGetString(cmd, "cert-file"),
+		KeyFile:    mustGetString(cmd, "key-file"),
+	}
+	nodeCfg.ACL, _ = cmd.Flags().GetBool("acl")
+	nodeCfg.ServerMode, _ = cmd.Flags().GetBool("server")
+
+	nomadVersion, _ := cmd.Flags().GetString("nomad-version")
+	skipEnable, _ := cmd.Flags().GetBool("skip-enable")
+	skipStart, _ := cmd.Flags().GetBool("skip-start")
+	useTailscale, _ := cmd.Flags().GetBool("tailscale")
+	tsAuthKey, _ := cmd.Flags().GetString("tailscale-auth-key")
+	tsHostname, _ := cmd.Flags().GetString("tailscale-hostname")
+
+	cfg := NomadInstallConfig{
+		Version:    nomadVersion,
+		NodeConfig: nodeCfg,
+		SkipEnable: skipEnable,
+		SkipStart:  skipStart,
+	}
+
+	return printSetupScript(cmd.OutOrStdout(), goos, goarch, cfg, useTailscale, tsAuthKey, tsHostname, skipEnable, skipStart)
 }
 
 // ─── Cloud path (unchanged from original) ────────────────────────────────────
