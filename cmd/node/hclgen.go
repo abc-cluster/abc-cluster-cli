@@ -9,6 +9,40 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+var (
+	defaultDockerExtraLabels = []string{
+		"job_name",
+		"job_id",
+		"task_group_name",
+		"task_name",
+		"namespace",
+		"node_name",
+		"node_id",
+	}
+
+	// HashiCorp-supported external task driver plugins from Nomad task-driver docs.
+	hashicorpTaskDriverPlugins = []string{
+		"exec2",
+		"podman",
+		"virt",
+	}
+
+	// Community task drivers from Nomad community plugin docs reference.
+	communityTaskDriverPlugins = []string{
+		"containerd",
+		"firecracker-task-driver",
+		"jail-task-driver",
+		"lightrun",
+		"pledge",
+		"pot",
+		"rookout",
+		"singularity",
+		"nspawn",
+		"iis",
+		"nomad-iis",
+	}
+)
+
 // NomadHostVolume represents a Nomad client host_volume block.
 type NomadHostVolume struct {
 	Name     string
@@ -113,6 +147,9 @@ func GenerateClientHCL(cfg NodeConfig) string {
 		root.AppendNewline()
 	}
 
+	// Native task drivers that can be explicitly configured in generated config.
+	appendDefaultTaskDriverConfig(root)
+
 	// Gossip encryption key
 	if cfg.Encrypt != "" {
 		root.SetAttributeValue("encrypt", cty.StringVal(cfg.Encrypt))
@@ -141,8 +178,8 @@ func GenerateClientHCL(cfg NodeConfig) string {
 			tlsBody.SetAttributeValue("key_file", cty.StringVal(cfg.KeyFile))
 		}
 	}
-
-	return string(bytes.TrimRight(f.Bytes(), "\n")) + "\n"
+	base := string(bytes.TrimRight(f.Bytes(), "\n")) + "\n"
+	return base + "\n" + externalTaskDriverNotes()
 }
 
 func hostVolumePaths(volumes []NomadHostVolume) []string {
@@ -160,4 +197,45 @@ func hostVolumePaths(volumes []NomadHostVolume) []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+func appendDefaultTaskDriverConfig(root *hclwrite.Body) {
+	dockerPlugin := root.AppendNewBlock("plugin", []string{"docker"}).Body()
+	dockerCfg := dockerPlugin.AppendNewBlock("config", nil).Body()
+	dockerGC := dockerCfg.AppendNewBlock("gc", nil).Body()
+	dockerGC.SetAttributeValue("image_delay", cty.StringVal("48h"))
+	dockerCfg.SetAttributeValue("allow_privileged", cty.BoolVal(true))
+	dockerVolumes := dockerCfg.AppendNewBlock("volumes", nil).Body()
+	dockerVolumes.SetAttributeValue("enabled", cty.BoolVal(true))
+	dockerCfg.SetAttributeValue("extra_labels", stringListValue(defaultDockerExtraLabels))
+	root.AppendNewline()
+
+	rawExecPlugin := root.AppendNewBlock("plugin", []string{"raw_exec"}).Body()
+	rawExecCfg := rawExecPlugin.AppendNewBlock("config", nil).Body()
+	rawExecCfg.SetAttributeValue("enabled", cty.BoolVal(true))
+	root.AppendNewline()
+}
+
+func stringListValue(values []string) cty.Value {
+	out := make([]cty.Value, 0, len(values))
+	for _, v := range values {
+		out = append(out, cty.StringVal(v))
+	}
+	return cty.ListVal(out)
+}
+
+func externalTaskDriverNotes() string {
+	lines := []string{
+		"# Optional external task drivers (not auto-enabled by abc node add):",
+		"# HashiCorp plugin drivers listed in Nomad task-driver docs:",
+	}
+	for _, name := range hashicorpTaskDriverPlugins {
+		lines = append(lines, "# - "+name)
+	}
+	lines = append(lines, "# Community task drivers from Nomad community plugin docs:")
+	for _, name := range communityTaskDriverPlugins {
+		lines = append(lines, "# - "+name)
+	}
+	lines = append(lines, "# Install plugin binaries in Nomad plugin_dir and add plugin blocks manually to enable them.")
+	return strings.Join(lines, "\n") + "\n"
 }
