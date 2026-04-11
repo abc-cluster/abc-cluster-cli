@@ -43,7 +43,16 @@ Examples:
 
   # Local machine (direct-join)
   abc node add --local \
-    --server-join=10.0.0.5 --node-class=workstation`,
+    --server-join=10.0.0.5 --node-class=workstation
+
+  # Remote server via SSH jump/bastion host
+  abc node add --host=10.10.0.50 --user=ubuntu \
+    --jump-host=bastion.example.com --jump-user=ec2-user \
+    --server-join=10.10.0.1 --datacenter=za-cpt
+
+  # Print a self-contained install script (no SSH connection made)
+  abc node add --host=10.10.0.50 --print-commands \
+    --target-os=linux/amd64 --server-join=10.10.0.1`,
 		RunE: runNodeAdd,
 	}
 
@@ -58,6 +67,13 @@ Examples:
 	cmd.Flags().String("user", "", "SSH user for remote install (default: current OS user)")
 	cmd.Flags().String("ssh-key", "", "Path to SSH private key (default: ~/.ssh/id_rsa, then SSH agent)")
 	cmd.Flags().Int("ssh-port", 22, "SSH port (default: 22)")
+	cmd.Flags().Bool("skip-host-key-check", false, "Disable known_hosts verification (insecure; for dev/testing only)")
+
+	// ── Jump host flags ───────────────────────────────────────────────────────
+	cmd.Flags().String("jump-host", "", "SSH jump/bastion host to proxy through (equivalent to ssh -J)")
+	cmd.Flags().String("jump-user", "", "Username on the jump host (default: same as --user)")
+	cmd.Flags().Int("jump-port", 22, "SSH port on the jump host (default: 22)")
+	cmd.Flags().String("jump-key", "", "SSH private key for the jump host (default: same as --ssh-key)")
 
 	// ── Nomad — node role ─────────────────────────────────────────────────────
 	cmd.Flags().Bool("server", false, "Also enable Nomad server mode (advanced)")
@@ -237,14 +253,29 @@ func runSSHAdd(cmd *cobra.Command, host string) error {
 	}
 	port, _ := cmd.Flags().GetInt("ssh-port")
 	keyFile, _ := cmd.Flags().GetString("ssh-key")
+	skipHostKeyCheck, _ := cmd.Flags().GetBool("skip-host-key-check")
 
-	fmt.Fprintf(out, "\n  Connecting to %s@%s:%d...\n", user, host, port)
+	jumpHost, _ := cmd.Flags().GetString("jump-host")
+	jumpUser, _ := cmd.Flags().GetString("jump-user")
+	jumpPort, _ := cmd.Flags().GetInt("jump-port")
+	jumpKey, _ := cmd.Flags().GetString("jump-key")
+
+	if jumpHost != "" {
+		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d via jump host %s...\n", user, host, port, jumpHost)
+	} else {
+		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d...\n", user, host, port)
+	}
 
 	ex, err := newSSHExec(SSHConfig{
-		Host:    host,
-		Port:    port,
-		User:    user,
-		KeyFile: keyFile,
+		Host:             host,
+		Port:             port,
+		User:             user,
+		KeyFile:          keyFile,
+		JumpHost:         jumpHost,
+		JumpPort:         jumpPort,
+		JumpUser:         jumpUser,
+		JumpKeyFile:      jumpKey,
+		SkipHostKeyCheck: skipHostKeyCheck,
 	})
 	if err != nil {
 		return fmt.Errorf("SSH connect: %w", err)
