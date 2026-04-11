@@ -3,6 +3,64 @@
 TODO:
 -  `abc job run --submit` to be `abc script run` i.e. the `--submit` should be the default behaviour
 
+Planned changes (operator ergonomics):
+
+- Add command aliases to reduce typing overhead while preserving canonical commands.
+- Introduce shorthand submit/upload paths for the highest-frequency workflows.
+- Keep canonical command forms fully supported for scripts and backward compatibility.
+
+### Planned Alias Surface (vNext)
+
+Top-level groups:
+
+| Canonical | Alias |
+|---|---|
+| `job` | `j` |
+| `data` | `d` |
+| `pipeline` | `p` |
+| `cluster` | `c` |
+| `node` | `n` |
+| `namespace` | `ns` |
+| `budget` | `b` |
+| `service` | `sv` |
+| `storage` | `stg` |
+
+Common verbs:
+
+| Canonical | Alias |
+|---|---|
+| `list` | `ls` |
+| `show` | `sh` |
+| `status` | `st` |
+| `create` | `cr` |
+| `delete` | `del` |
+| `update` | `up` |
+| `add` | `a` |
+| `run` | `r` |
+| `logs` | `lg` |
+| `stop` | `sp` |
+
+High-value shorthand command paths:
+
+| Canonical | Planned shorthand |
+|---|---|
+| `abc job run --submit <flags>` | `abc j sub <flags>` |
+| `abc data upload <path> [flags]` | `abc d up <path> [flags]` |
+| `abc data download [flags]` | `abc d dl [flags]` |
+| `abc data encrypt <path>` | `abc d enc <path>` |
+| `abc data decrypt <path>` | `abc d dec <path>` |
+| `abc pipeline list` | `abc p ls` |
+| `abc pipeline info <name>` | `abc p sh <name>` |
+| `abc cluster provision` | `abc c prov` |
+| `abc cluster decommission` | `abc c decom` |
+
+Implementation notes:
+
+- `abc j sub` is planned as a first-class wrapper command equivalent to `abc job run --submit`.
+- Ambiguous one-letter aliases are intentionally avoided for safety (for example, avoid plain `s` for `show`/`status`/`stop`).
+- Add an `abc aliases` discovery command (or equivalent help section) so shorthand remains discoverable.
+- Update shell completion and usage docs in the same release so aliases are visible to users.
+
 
 > **Status:** Design draft — no implementation
 > **Prototype baseline:** v0.1.4 (`pipeline run`, `job run`, `data upload/encrypt/decrypt`)
@@ -2538,7 +2596,7 @@ Flags:
 | `--scheduler` | HPC scheduler for hpc-bridge: `pbs`, `slurm` (auto-detected if omitted) |
 | `--privileged` | Allow SMART disk checks (requires root or disk group membership) |
 | `--probe-only` | Run checks and print results without joining |
-| `--skip-tailscale` | Skip Tailscale setup (node must already be on the tailnet) |
+| `--tailscale` | Skip Tailscale setup (node must already be on the tailnet) |
 | `--dry-run` | Show what would be written and started, without making any changes |
 
 Exit codes: `0` (joined or probe passed), `1` (probe failed), `2` (usage error), `3` (auth error)
@@ -3098,7 +3156,8 @@ abc
 ├── namespace   list · show                            ← read: all users
 │               create · delete                        ← write: --sudo
 ├── node        list · show · drain · undrain          ← --sudo
-│               add · terminate                        ← --cloud
+│               add [--cloud|--host|--local]          ← provision or join (see §21)
+│               terminate                              ← --cloud
 ├── cluster     list · status · provision · decommission  ← --cloud
 │
 ├── data        upload · download · list · show · delete · move · stat · encrypt · decrypt
@@ -3127,7 +3186,7 @@ abc
 | `abc job` | ✅ Implemented | run, translate, list, show, stop, dispatch, logs, status; `--sudo` widens namespace |
 | `abc pipeline` | ✅ Implemented | run, add, list, show, update, delete, export, import; Nomad Variables backed |
 | `abc namespace` | ✅ Implemented | list, show, create (--sudo), delete (--sudo) |
-| `abc node` | ✅ Implemented | list, show, drain, undrain (all require --sudo) |
+| `abc node` | ✅ Implemented | list, show, drain, undrain (--sudo); add (--cloud / --host / --local); terminate (--cloud) |
 | `abc data` | ✅ Implemented | upload, download, encrypt, decrypt |
 | `abc storage` | ✅ Implemented | size |
 | `abc cluster` | 🔲 Planned | `--cloud` tier |
@@ -3406,7 +3465,11 @@ $ abc node undrain --sudo nomad-client-03
 
 ---
 
-### `abc node add` (requires `--cloud`)
+### `abc node add`
+
+`abc node add` has three operating modes. Tailscale is **skipped by default** (direct-join mode). See §21 for full flag reference.
+
+#### Mode 1 — cloud gateway (requires `--cloud`)
 
 ```
 $ abc node add --cloud \
@@ -3426,6 +3489,200 @@ $ abc node add --cloud --cluster=za-cpt-main --type=n2-standard-16 --count=2 --d
 [abc cloud] Infrastructure mode active — cloud gateway policy applies.
 
   Dry-run: 2 n2-standard-16 node(s) would be added to cluster "za-cpt-main".
+```
+
+#### Mode 2 — SSH remote server (direct-join, no Tailscale)
+
+```
+$ abc node add \
+    --host=192.168.1.50 --user=ubuntu \
+    --server-join=10.0.0.1 --server-join=10.0.0.2 \
+    --datacenter=za-cpt --node-class=standard
+
+  Connecting to ubuntu@192.168.1.50:22...
+  ✓ Connected (linux/amd64)
+
+  Preflight:
+    ✓ OS              linux/amd64
+    ✓ Init system     systemd
+    ✓ Sudo access     ok
+    ✓ Pkg manager     apt (install privileges confirmed)
+    - Nomad           not installed
+    - Tailscale       not installed
+
+  Installing Nomad 1.9.4...
+    Downloading nomad_1.9.4_linux_amd64.zip...
+    ✓ Checksum verified
+    ✓ Extracted to /usr/local/bin/nomad
+    ✓ Config written to /etc/nomad.d/client.hcl
+    ✓ systemd service enabled and started
+
+  Verifying...
+    ✓ Nomad agent is healthy
+
+  Done. Run 'abc node list --sudo' to see the new node.
+```
+
+#### Mode 2 — SSH remote server (with Tailscale)
+
+```
+$ abc node add \
+    --host=192.168.1.50 --user=ubuntu \
+    --tailscale \
+    --tailscale-auth-key=tskey-auth-kTKabc123CNTRL-... \
+    --server-join=100.64.0.1 \
+    --datacenter=za-cpt --node-class=standard \
+    --nomad-version=1.9.4
+
+  Connecting to ubuntu@192.168.1.50:22...
+  ✓ Connected (linux/amd64)
+
+  Preflight:
+    ✓ OS              linux/amd64
+    ✓ Init system     systemd
+    ✓ Sudo access     ok
+    ✓ Pkg manager     apt (install privileges confirmed)
+    - Nomad           not installed
+    - Tailscale       not installed
+
+  Installing Tailscale...
+    Running Tailscale install script...
+    ✓ Joined tailnet (Tailscale IP: 100.64.0.23)
+
+  Installing Nomad 1.9.4...
+    Downloading nomad_1.9.4_linux_amd64.zip...
+    ✓ Checksum verified
+    ✓ Extracted to /usr/local/bin/nomad
+    ✓ Config written to /etc/nomad.d/client.hcl
+    ✓ systemd service enabled and started
+
+  Verifying...
+    ✓ Nomad agent is healthy
+
+  Done. Run 'abc node list --sudo' to see the new node.
+```
+
+#### Mode 3 — local machine (macOS, direct-join)
+
+```
+$ abc node add --local \
+    --server-join=10.0.0.1 \
+    --datacenter=za-cpt \
+    --node-class=workstation
+
+  Installing on local machine (darwin/amd64)...
+
+  Preflight:
+    ✓ OS              darwin/amd64
+    ✓ Init system     launchd
+    ✓ Sudo access     ok
+    ✓ Pkg manager     brew (install privileges confirmed)
+    - Nomad           not installed
+    - Tailscale       not installed
+
+  Installing Nomad 1.9.4...
+    Downloading nomad_1.9.4_darwin_amd64.zip...
+    ✓ Checksum verified
+    ✓ Extracted to /usr/local/bin/nomad
+    ✓ Config written to /etc/nomad.d/client.hcl
+    ✓ launchd plist written and service loaded
+
+  Verifying...
+    ✓ Nomad agent is healthy
+
+  Done. Run 'abc node list --sudo' to see the new node.
+```
+
+#### Mode 3 — local machine (Windows, direct-join)
+
+```
+$ abc node add --local \
+    --server-join=10.0.0.1 \
+    --datacenter=za-cpt
+
+  Installing on local machine (windows/amd64)...
+
+  Preflight:
+    ✓ OS              windows/amd64
+    - Init system     manual (Windows — sc.exe instructions will be printed)
+    ✓ Sudo access     ok (Administrator)
+    - Nomad           not installed
+    - Tailscale       not installed
+
+  Installing Nomad 1.9.4...
+    Downloading nomad_1.9.4_windows_amd64.zip...
+    ✓ Checksum verified
+    ✓ Extracted to C:\Program Files\Nomad\nomad.exe
+    ✓ Config written to C:\ProgramData\Nomad\client.hcl
+
+  Note: Automatic Windows Service registration is not yet supported.
+  To start Nomad manually, run:
+    "C:\Program Files\Nomad\nomad.exe" agent -config "C:\ProgramData\Nomad\client.hcl"
+  To register as a Windows Service:
+    sc.exe create nomad binPath= "\"C:\Program Files\Nomad\nomad.exe\" agent -config \"C:\ProgramData\Nomad\client.hcl\""
+    sc.exe start nomad
+
+  Done. Run 'abc node list --sudo' to see the new node.
+```
+
+#### Dry-run (any mode)
+
+```
+$ abc node add --host=192.168.1.50 --user=ubuntu \
+    --server-join=10.0.0.1 --datacenter=za-cpt --dry-run
+
+  Dry-run plan:
+    Target:       linux/amd64
+    Datacenter:   za-cpt
+    Server join:  10.0.0.1
+    Tailscale:    skipped (direct-join mode)
+    Nomad:        install latest
+    Binary path:  /usr/local/bin/nomad
+    Config path:  /etc/nomad.d/client.hcl
+
+  (no changes made — remove --dry-run to execute)
+```
+
+#### Preflight failure examples
+
+Missing sudo:
+
+```
+$ abc node add --host=203.0.113.42 --user=webuser \
+    --server-join=10.0.0.1
+
+  Connecting to webuser@203.0.113.42:22...
+  ✓ Connected (linux/amd64)
+
+  Preflight:
+    ✓ OS              linux/amd64
+    ✓ Init system     systemd
+    ✗ Sudo access     sudo required
+
+Error: sudo access required on linux — aborting
+
+  The SSH user lacks passwordless sudo. To fix this, either:
+    1. Add the user to the sudoers file on the remote host:
+         echo "webuser ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/webuser
+    2. Connect as root: abc node add --host=203.0.113.42 --user=root
+    3. Use --skip-preflight if you have already configured sudo
+```
+
+Package manager privilege failure:
+
+```
+  Preflight:
+    ✓ OS              linux/amd64
+    ✓ Init system     systemd
+    ✓ Sudo access     ok
+    ✗ Pkg manager     apt found but privilege check failed
+                      E: Could not open lock file /var/lib/dpkg/lock-frontend
+                      Tip: verify the SSH user can run 'sudo apt install <pkg>'
+                      Or add to sudoers: echo "ubuntu ALL=(ALL) NOPASSWD: /usr/bin/apt-get" | sudo tee /etc/sudoers.d/ubuntu-apt
+
+  Warning: Could not verify package-install privileges.
+  Nomad binary will be uploaded directly — no package manager needed.
+  If the install fails with permission errors, check sudo access.
 ```
 
 ---
@@ -3714,3 +3971,189 @@ $ abc node list --cloud --sudo --cluster=ke-nbi-research
 ```
 
 (Both `X-ABC-Cloud: 1` and `X-ABC-Sudo: 1` sent; cloud gateway routes to the ke-nbi cluster, jurist enforces node-read permission.)
+
+---
+
+## 21. `abc node add` — Node Provisioning Reference
+
+`abc node add` brings an existing or new machine into the ABC cluster as a Nomad client node. It handles three transport modes under a single command surface. The Nomad binary is installed via direct HTTPS download (HashiCorp releases), verified by SHA256 checksum, and registered as a system service — no package manager interaction is required for Nomad itself.
+
+### Transport modes
+
+| Flag | Description | Who uses it |
+|------|-------------|-------------|
+| `--cloud` | Provision a new cloud VM via the ABC cloud gateway | Platform/infra team |
+| `--host=<ip>` | SSH into a remote server and install Nomad there | Sysadmin / HPC operator |
+| `--local` | Install on the current machine | Researcher contributing a workstation |
+
+### Tailscale behaviour
+
+Tailscale is **off by default** — `--tailscale` must be explicitly set to enrol the node in a tailnet. The node joins the cluster over whatever network it already has (LAN, institutional VPN, public IP, or WireGuard). Pass `--tailscale --tailscale-auth-key=<key>` to enable Tailscale during provisioning.
+
+| Mode | Network requirement |
+|------|---------------------|
+| Direct-join (default) | Node must already reach the Nomad server at `--server-join` address |
+| Tailscale (`--tailscale`) | Node receives a `100.x.x.x` address; Nomad gossip routes over the tailnet |
+
+### Flag reference
+
+```
+Transport
+  --local                 Install on the current machine
+  --host=<ip>             SSH target (remote install)
+  --user=<user>           SSH user (default: $USER or root)
+  --ssh-key=<path>        SSH private key (default: ~/.ssh/id_{rsa,ed25519,ecdsa}, then agent)
+  --ssh-port=<n>          SSH port (default: 22)
+
+Nomad — role
+  --server                Also enable server mode (advanced; rarely needed)
+
+Nomad — cluster join
+  --server-join=<addr>    Nomad server address to join (repeatable)
+                          → maps to server_join.retry_join in HCL
+  --nomad-version=<ver>   Nomad version (default: latest stable from releases.hashicorp.com)
+  --datacenter=<name>     Datacenter label (default: "default")
+  --node-class=<class>    Node class label for scheduling constraints (optional)
+  --encrypt=<key>         Gossip encryption key
+  --acl                   Enable Nomad ACL on this node
+
+Nomad — network
+  --address=<ip>          Bind address for all Nomad listeners (default: 0.0.0.0)
+  --advertise=<ip>        Advertise address (set when behind NAT)
+
+Nomad — TLS
+  --ca-file=<path>        CA certificate
+  --cert-file=<path>      Agent certificate
+  --key-file=<path>       Agent certificate key
+
+Nomad — service control
+  --skip-enable           Install binary + config but do not enable the service
+  --skip-start            Enable service but do not start it
+
+Tailscale
+  --tailscale                   Join a Tailscale tailnet during provisioning (default: false)
+  --tailscale-auth-key=<key>  Pre-auth key (required when --tailscale is set)
+  --tailscale-hostname=<h>    Override Tailscale hostname (default: OS hostname)
+
+Other
+  --dry-run               Print plan without making changes
+  --skip-preflight        Skip OS compatibility checks
+```
+
+### Installation sequence
+
+```
+abc node add [--local | --host=<ip>]
+  │
+  1. Flag validation
+  │   └── Require --tailscale-auth-key when --tailscale
+  │
+  2. Connect / acquire executor
+  │   ├── --local:  os/exec on the current machine
+  │   └── --host:   golang.org/x/crypto/ssh
+  │         Auth chain: explicit --ssh-key → ~/.ssh/id_{rsa,ed25519,ecdsa}
+  │                     → SSH agent ($SSH_AUTH_SOCK) → interactive password prompt
+  │
+  3. Preflight (on target)
+  │   ├── OS + arch           (abort on unsupported platform)
+  │   ├── Init system         (require systemd on Linux; launchd on macOS; manual on Windows)
+  │   ├── Sudo / admin        (abort if missing; print sudoers fix instructions)
+  │   ├── Package manager     (detect apt/dnf/yum/brew; test privilege; warn if unprivileged)
+  │   ├── Nomad installed?    (skip Nomad steps if yes)
+  │   └── Tailscale installed/connected? (skip relevant steps if yes)
+  │
+  4. Tailscale (skipped by default; only when --tailscale is set)
+  │   ├── Linux: curl -fsSL https://tailscale.com/install.sh | sudo sh
+  │   ├── macOS/Windows: skip install (GUI app assumed present)
+  │   └── All: tailscale up --auth-key=<key> [--hostname=<name>]
+  │
+  5. Nomad
+  │   ├── Download nomad_<ver>_<os>_<arch>.zip from releases.hashicorp.com
+  │   ├── Fetch SHA256SUMS, verify checksum (abort on mismatch)
+  │   ├── Extract binary in-memory (no temp files needed)
+  │   ├── Upload binary to /usr/local/bin/nomad (or Windows equivalent)
+  │   ├── Generate client.hcl via hclwrite
+  │   │     Fields: datacenter, data_dir, client{}, server_join.retry_join,
+  │   │             addresses, advertise, acl, tls, encrypt
+  │   ├── Upload config to /etc/nomad.d/client.hcl
+  │   └── Register service
+  │         Linux:   systemd unit → systemctl enable/start
+  │         macOS:   launchd plist → launchctl load
+  │         Windows: print sc.exe instructions
+  │
+  6. Verify
+      └── Poll http://127.0.0.1:4646/v1/agent/self until healthy (60s timeout)
+```
+
+### Generated client HCL (example)
+
+```hcl
+datacenter = "za-cpt"
+data_dir   = "/opt/nomad/data"
+
+client {
+  enabled    = true
+  node_class = "standard"
+}
+
+server_join {
+  retry_join = ["10.0.0.1", "10.0.0.2"]
+}
+```
+
+With TLS and ACL enabled:
+
+```hcl
+datacenter = "za-cpt"
+data_dir   = "/opt/nomad/data"
+
+client {
+  enabled    = true
+  node_class = "hpc"
+}
+
+server_join {
+  retry_join = ["100.64.0.1"]
+}
+
+acl {
+  enabled = true
+}
+
+tls {
+  http      = true
+  rpc       = true
+  ca_file   = "/etc/nomad.d/ca.pem"
+  cert_file = "/etc/nomad.d/node.pem"
+  key_file  = "/etc/nomad.d/node-key.pem"
+}
+```
+
+### SSH auth chain (hashi-up pattern)
+
+1. `--ssh-key` (explicit path)
+2. `~/.ssh/id_rsa`, `~/.ssh/id_ed25519`, `~/.ssh/id_ecdsa` (tried in order)
+3. SSH agent (`$SSH_AUTH_SOCK`)
+4. Interactive password prompt (last resort)
+
+### Common errors and fixes
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `sudo access required` | SSH user has no passwordless sudo | Add NOPASSWD to sudoers, or use `--user=root` |
+| `systemd required` | Linux host uses SysV/runit/etc | Use `--skip-enable --skip-start` and start manually |
+| `SHA256 mismatch` | Download corrupted / MITM | Retry; check network proxy intercept |
+| `SSH dial ... connection refused` | Wrong host/port, or SSH not running | Check `--ssh-port`, confirm sshd is running |
+| `no supported methods remain` | All SSH auth methods exhausted | Check key permissions (`chmod 600`), or add `--ssh-key` |
+| `tailscale-auth-key is required` | `--tailscale` set but no key given | Add `--tailscale-auth-key=tskey-auth-...` |
+
+### Implementation files
+
+| File | Purpose |
+|------|---------|
+| `cmd/node/add.go` | Command definition, flag registration, mode routing, install orchestration |
+| `cmd/node/executor.go` | `Executor` interface; `localExec` (os/exec) and `sshExec` (crypto/ssh) |
+| `cmd/node/preflight.go` | Target OS checks: init system, sudo, package manager, existing installs |
+| `cmd/node/nomad_install.go` | Download → SHA256 verify → unzip → upload → service registration |
+| `cmd/node/tailscale_install.go` | Linux install script + `tailscale up` for all platforms |
+| `cmd/node/hclgen.go` | Nomad client HCL generation via `hclwrite` (same pattern as `cmd/job/hclgen.go`) |
