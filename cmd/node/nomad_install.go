@@ -417,28 +417,99 @@ func createHostVolumeDirectories(ctx context.Context, ex Executor, goos string, 
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
+const (
+	artifactFetchUserAgent       = "abc-cluster-cli-artifact-fetcher/1.0"
+	artifactFetchRetryAttempts   = 4
+	artifactFetchBaseRetryDelay  = 500 * time.Millisecond
+	artifactFetchMaxRetryBackoff = 8 * time.Second
+)
 
 var nomadHTTPClient = &http.Client{Timeout: 10 * time.Minute}
 
 func fetchBytes(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 1; attempt <= artifactFetchRetryAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", artifactFetchUserAgent)
+		req.Header.Set("Accept", "*/*")
+
+		resp, err := nomadHTTPClient.Do(req)
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if attempt < artifactFetchRetryAttempts {
+				if err := waitForArtifactRetry(ctx, attempt); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return nil, fmt.Errorf("request %s failed after %d attempts: %w", url, attempt, lastErr)
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read response body for %s: %w", url, readErr)
+			if attempt < artifactFetchRetryAttempts {
+				if err := waitForArtifactRetry(ctx, attempt); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return nil, lastErr
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			return body, nil
+		}
+
+		lastErr = fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, url)
+		if !isRetryableFetchStatus(resp.StatusCode) || attempt == artifactFetchRetryAttempts {
+			return nil, lastErr
+		}
+		if err := waitForArtifactRetry(ctx, attempt); err != nil {
+			return nil, err
+		}
 	}
-	resp, err := nomadHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, url)
-	}
-	return io.ReadAll(resp.Body)
+	return nil, lastErr
 }
 
 func fetchText(ctx context.Context, url string) (string, error) {
 	b, err := fetchBytes(ctx, url)
 	return string(b), err
+}
+
+func isRetryableFetchStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForArtifactRetry(ctx context.Context, attempt int) error {
+	delay := artifactFetchBaseRetryDelay
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= artifactFetchMaxRetryBackoff {
+			delay = artifactFetchMaxRetryBackoff
+			break
+		}
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // latestNomadVersion queries releases.hashicorp.com for the latest stable Nomad version.
