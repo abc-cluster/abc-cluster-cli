@@ -6,16 +6,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
 	nomadReleasesBase   = "https://releases.hashicorp.com/nomad"
-	defaultNomadVersion = "1.11.4"
+	defaultNomadVersion = "1.11.3"
 
 	nomadSystemdUnit = `[Unit]
 Description=Nomad
@@ -275,29 +277,27 @@ func fetchText(ctx context.Context, url string) (string, error) {
 
 // latestNomadVersion queries releases.hashicorp.com for the latest stable Nomad version.
 func latestNomadVersion(ctx context.Context) (string, error) {
-	// The index.json approach is complex; use a simpler heuristic: fetch the
-	// releases page and look for the first non-pre-release version.
-	// For simplicity, return a known-good version if the HTTP call fails.
-	data, err := fetchText(ctx, nomadReleasesBase+"/index.json")
+	data, err := fetchBytes(ctx, nomadReleasesBase+"/index.json")
 	if err != nil {
 		return "", err
 	}
-	// Quick scan for versions like "1.9.4" (non-alpha/beta/rc)
-	// This avoids importing encoding/json for a large response.
+
+	var idx struct {
+		Versions map[string]json.RawMessage `json:"versions"`
+	}
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return "", fmt.Errorf("parse index.json: %w", err)
+	}
 	latest := ""
-	for _, line := range strings.Split(data, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, `"version": "`) {
-			v := strings.TrimPrefix(line, `"version": "`)
-			v = strings.TrimSuffix(v, `",`)
-			v = strings.Trim(v, `"`)
-			// Skip pre-releases (alpha, beta, rc)
-			if strings.ContainsAny(v, "abcdefghijklmnopqrstuvwxyz") {
-				continue
-			}
-			if latest == "" || versionGreater(v, latest) {
-				latest = v
-			}
+	var latestParts [3]int
+	for v := range idx.Versions {
+		parts, ok := parseStableSemver(v)
+		if !ok {
+			continue
+		}
+		if latest == "" || compareSemverParts(parts, latestParts) > 0 {
+			latest = v
+			latestParts = parts
 		}
 	}
 	if latest == "" {
@@ -306,19 +306,35 @@ func latestNomadVersion(ctx context.Context) (string, error) {
 	return latest, nil
 }
 
-// versionGreater does a simple lexicographic comparison good enough for semver.
-func versionGreater(a, b string) bool {
-	aParts := strings.Split(a, ".")
-	bParts := strings.Split(b, ".")
-	for i := 0; i < len(aParts) && i < len(bParts); i++ {
-		if aParts[i] > bParts[i] {
-			return true
+func parseStableSemver(v string) ([3]int, bool) {
+	var out [3]int
+	if strings.HasPrefix(v, "v") {
+		v = strings.TrimPrefix(v, "v")
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return out, false
 		}
-		if aParts[i] < bParts[i] {
-			return false
+		out[i] = n
+	}
+	return out, true
+}
+
+func compareSemverParts(a, b [3]int) int {
+	for i := 0; i < len(a); i++ {
+		if a[i] > b[i] {
+			return 1
+		}
+		if a[i] < b[i] {
+			return -1
 		}
 	}
-	return len(aParts) > len(bParts)
+	return 0
 }
 
 // extractSHA parses a HashiCorp-format SHA256SUMS file.

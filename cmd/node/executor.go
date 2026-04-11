@@ -135,8 +135,8 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	targetAuths, err := buildSSHAuthMethods(cfg.KeyFile, cfg.User, cfg.Password)
+	capturedPassword := ""
+	targetAuths, err := buildSSHAuthMethods(cfg.KeyFile, cfg.User, cfg.Password, &capturedPassword)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 		}
 
 		// Jump host uses the same password if provided (common for internal networks).
-		jumpAuths, err := buildSSHAuthMethods(jumpKeyFile, jumpUser, cfg.Password)
+		jumpAuths, err := buildSSHAuthMethods(jumpKeyFile, jumpUser, cfg.Password, &capturedPassword)
 		if err != nil {
 			return nil, fmt.Errorf("SSH jump host auth: %w", err)
 		}
@@ -226,12 +226,17 @@ func newSSHExec(cfg SSHConfig) (*sshExec, error) {
 		return nil, err
 	}
 
+	sudoPass := cfg.Password
+	if sudoPass == "" && capturedPassword != "" {
+		sudoPass = capturedPassword
+	}
+
 	return &sshExec{
 		client:       client,
 		jumpClient:   jumpClient,
 		goos:         goos,
 		goarch:       goarch,
-		sudoPassword: cfg.Password,
+		sudoPassword: sudoPass,
 	}, nil
 }
 
@@ -475,7 +480,10 @@ func (r *repeatingPasswordReader) Read(p []byte) (int, error) {
 //  3. Explicit password (--password flag / ABC_NODE_PASSWORD env) — tried silently
 //  4. Keyboard-interactive (for OTP / PAM challenges)
 //  5. Interactive password prompt (last resort, only if no --password given)
-func buildSSHAuthMethods(keyFile, user, password string) ([]ssh.AuthMethod, error) {
+//
+// When captured is non-nil, any interactively typed password is written to
+// *captured so callers can reuse it for sudo -S later in the install flow.
+func buildSSHAuthMethods(keyFile, user, password string, captured *string) ([]ssh.AuthMethod, error) {
 	var auths []ssh.AuthMethod
 
 	// 1. Explicit key file
@@ -530,6 +538,9 @@ func buildSSHAuthMethods(keyFile, user, password string) ([]ssh.AuthMethod, erro
 					return nil, err
 				}
 				answers[i] = string(pw)
+				if captured != nil && *captured == "" {
+					*captured = string(pw)
+				}
 			}
 		}
 		return answers, nil
@@ -541,6 +552,9 @@ func buildSSHAuthMethods(keyFile, user, password string) ([]ssh.AuthMethod, erro
 			fmt.Fprint(os.Stderr, "SSH password: ")
 			pw, err := term.ReadPassword(int(os.Stdin.Fd()))
 			fmt.Fprintln(os.Stderr)
+			if captured != nil {
+				*captured = string(pw)
+			}
 			return string(pw), err
 		}))
 	}
