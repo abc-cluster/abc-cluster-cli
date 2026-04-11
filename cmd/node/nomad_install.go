@@ -70,18 +70,55 @@ WantedBy=multi-user.target
 
 // NomadInstallConfig holds all installation parameters.
 type NomadInstallConfig struct {
-	Version    string
-	NodeConfig NodeConfig
-	SkipEnable bool
-	SkipStart  bool
+	Version       string
+	InstallMethod string
+	NodeConfig    NodeConfig
+	SkipEnable    bool
+	SkipStart     bool
 }
 
 // InstallNomad downloads, verifies (SHA256), installs, and starts Nomad on the target.
 // Implements the hashi-up install pattern: download → checksum → unzip → service.
 func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io.Writer) error {
+
+	goos, goarch := ex.OS(), ex.Arch()
+	installMethod, err := normalizePackageInstallMethod(cfg.InstallMethod)
+	if err != nil {
+		return err
+	}
+
+	if installMethod == packageInstallMethodPackageManager && goos != "linux" {
+		fmt.Fprintf(w, "    ! Package-manager install is not yet supported on %s; falling back to static binary install\n", goos)
+		installMethod = packageInstallMethodStatic
+	}
+
+	if installMethod == packageInstallMethodPackageManager {
+		fmt.Fprintf(w, "\n  Installing Nomad via package manager...\n")
+		if cfg.Version != "" {
+			fmt.Fprintf(w, "    ! --nomad-version is ignored with --package-install-method=package-manager (repo version will be installed)\n")
+		}
+		if err := installNomadPackageManagerLinux(ctx, ex, w); err != nil {
+			return err
+		}
+
+		_, cfgDir, cfgPath, dataDir := nomadPaths(goos)
+		if err := ex.Run(ctx, fmt.Sprintf("sudo mkdir -p %s %s", cfgDir, dataDir), io.Discard); err != nil {
+			return fmt.Errorf("create directories: %w", err)
+		}
+
+		cfg.NodeConfig.DataDir = dataDir
+		hclContent := GenerateClientHCL(cfg.NodeConfig)
+		if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, 0640); err != nil {
+			return fmt.Errorf("upload config to %s: %w", cfgPath, err)
+		}
+		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 640 %s", cfgPath, cfgPath), io.Discard)
+		fmt.Fprintf(w, "    ✓ Config written to %s\n", cfgPath)
+
+		return registerPackageManagerNomadService(ctx, ex, goos, cfg.SkipEnable, cfg.SkipStart, w)
+	}
+
 	version := cfg.Version
 	if version == "" {
-		var err error
 		version, err = latestNomadVersion(ctx)
 		if err != nil {
 			version = defaultNomadVersion
@@ -90,8 +127,6 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 	}
 
 	fmt.Fprintf(w, "\n  Installing Nomad %s...\n", version)
-
-	goos, goarch := ex.OS(), ex.Arch()
 
 	// Map Go runtime names → HashiCorp release archive naming
 	releaseOS := map[string]string{"linux": "linux", "darwin": "darwin", "windows": "windows"}[goos]
@@ -181,6 +216,61 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 
 	// Register and (optionally) start the service
 	return registerService(ctx, ex, goos, cfg.SkipEnable, cfg.SkipStart, w)
+}
+
+func installNomadPackageManagerLinux(ctx context.Context, ex Executor, w io.Writer) error {
+	pkgMgr := detectPkgManager(ctx, ex)
+	switch pkgMgr {
+	case "apt":
+		fmt.Fprintf(w, "    Installing via apt...\n")
+		cmd := strings.Join([]string{
+			"sudo install -m 0755 -d /etc/apt/keyrings",
+			"curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg",
+			"sudo chmod a+r /etc/apt/keyrings/hashicorp.gpg",
+			"CODENAME=$(. /etc/os-release && echo ${VERSION_CODENAME:-${UBUNTU_CODENAME:-}})",
+			"if [ -z \"$CODENAME\" ] && command -v lsb_release >/dev/null 2>&1; then CODENAME=$(lsb_release -cs); fi",
+			"if [ -z \"$CODENAME\" ]; then echo \"unable to determine distro codename for HashiCorp repo\" >&2; exit 1; fi",
+			"echo \"deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com ${CODENAME} main\" | sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null",
+			"sudo apt-get update",
+			"sudo apt-get install -y nomad",
+		}, " && ")
+		if err := ex.Run(ctx, cmd, io.Discard); err != nil {
+			return fmt.Errorf("install nomad with apt: %w", err)
+		}
+	case "dnf", "yum":
+		fmt.Fprintf(w, "    Installing via %s...\n", pkgMgr)
+		cmd := strings.Join([]string{
+			"printf '%s\n' '[hashicorp]' 'name=HashiCorp Stable - $basearch' 'baseurl=https://rpm.releases.hashicorp.com/RHEL/$releasever/$basearch/stable' 'enabled=1' 'gpgcheck=1' 'gpgkey=https://rpm.releases.hashicorp.com/gpg' | sudo tee /etc/yum.repos.d/hashicorp.repo >/dev/null",
+			"if command -v dnf >/dev/null 2>&1; then sudo dnf -y install nomad; else sudo yum -y install nomad; fi",
+		}, " && ")
+		if err := ex.Run(ctx, cmd, io.Discard); err != nil {
+			return fmt.Errorf("install nomad with %s: %w", pkgMgr, err)
+		}
+	default:
+		return fmt.Errorf("no supported package manager detected for Nomad package installation")
+	}
+	return nil
+}
+
+func registerPackageManagerNomadService(ctx context.Context, ex Executor, goos string, skipEnable, skipStart bool, w io.Writer) error {
+	if goos != "linux" {
+		return registerService(ctx, ex, goos, skipEnable, skipStart, w)
+	}
+	_ = ex.Run(ctx, "sudo systemctl daemon-reload", io.Discard)
+	if !skipEnable {
+		if err := ex.Run(ctx, "sudo systemctl enable nomad", io.Discard); err != nil {
+			return fmt.Errorf("systemctl enable nomad: %w", err)
+		}
+	}
+	if !skipStart {
+		if err := ex.Run(ctx, "sudo systemctl restart nomad || sudo systemctl start nomad", io.Discard); err != nil {
+			return fmt.Errorf("systemctl start nomad: %w", err)
+		}
+		fmt.Fprintf(w, "    ✓ systemd service enabled and started\n")
+	} else {
+		fmt.Fprintf(w, "    ✓ package-managed Nomad installed (start skipped per --skip-start)\n")
+	}
+	return nil
 }
 
 // registerService writes the service unit and starts Nomad per OS.

@@ -26,7 +26,10 @@ type PreflightResult struct {
 // sudoPassword, when non-empty, tells preflight that the SSH user has password-
 // based sudo access. The passwordless check (sudo -n) is skipped and HasSudo is
 // set to true; the actual commands will use sudo -S (injected by sshExec.Run).
-func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword string) (*PreflightResult, error) {
+//
+// requirePkgManagerCheck should be true only when the selected install method
+// requires package-manager privileges.
+func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword string, requirePkgManagerCheck bool) (*PreflightResult, error) {
 	res := &PreflightResult{
 		OS:   ex.OS(),
 		Arch: ex.Arch(),
@@ -38,15 +41,12 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 	// Init system
 	switch res.OS {
 	case "linux":
-		var b strings.Builder
-		_ = ex.Run(ctx, "cat /proc/1/comm 2>/dev/null", &b)
-		comm := strings.TrimSpace(b.String())
-		if strings.Contains(comm, "systemd") {
+		res.InitSystem = detectLinuxInitSystem(ctx, ex)
+		if res.InitSystem == "systemd" {
 			res.InitSystem = "systemd"
 			fmt.Fprintf(w, "    ✓ Init system     systemd\n")
 		} else {
-			res.InitSystem = comm
-			fmt.Fprintf(w, "    ✗ Init system     %q (not systemd — service registration unavailable)\n", comm)
+			fmt.Fprintf(w, "    ✗ Init system     %q (not systemd — service registration unavailable)\n", res.InitSystem)
 		}
 	case "darwin":
 		res.InitSystem = "launchd"
@@ -86,7 +86,17 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 	// and the user must be able to write to /usr/local/bin via sudo).
 	// The check is purely informational on Windows — we install via direct binary upload.
 	if res.OS != "windows" {
-		res.PkgManager, res.CanInstallPkgs = checkPackageAccess(ctx, ex, w, res.HasSudo)
+		if requirePkgManagerCheck {
+			res.PkgManager, res.CanInstallPkgs = checkPackageAccess(ctx, ex, w, res.HasSudo)
+		} else {
+			res.PkgManager = detectPkgManager(ctx, ex)
+			res.CanInstallPkgs = true
+			if res.PkgManager == "none" {
+				fmt.Fprintf(w, "    - Pkg manager     not detected (not required for static-binary install)\n")
+			} else {
+				fmt.Fprintf(w, "    ✓ Pkg manager     %s (privilege check skipped)\n", res.PkgManager)
+			}
+		}
 	} else {
 		res.PkgManager = "none"
 		res.CanInstallPkgs = res.HasSudo
@@ -144,12 +154,12 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
     • Start Nomad manually: sudo /usr/local/bin/nomad agent -config /etc/nomad.d
     • Use --skip-preflight to bypass this check if you know what you are doing`, res.InitSystem)
 	}
-	if !res.CanInstallPkgs && !res.NomadInstalled && res.OS != "windows" {
-		// Non-fatal warning — Nomad is installed via direct binary upload (curl + unzip),
-		// not via apt/yum. But warn clearly so the user understands the state.
+	if requirePkgManagerCheck && !res.CanInstallPkgs && res.OS != "windows" {
+		// Non-fatal warning — keep going, but highlight that package-manager install
+		// steps may fail if privileges are insufficient.
 		fmt.Fprintf(w, "\n  Warning: Could not verify package-install privileges.\n")
-		fmt.Fprintf(w, "  Nomad binary will be uploaded directly — no package manager needed.\n")
-		fmt.Fprintf(w, "  If the install fails with permission errors, check sudo access.\n")
+		fmt.Fprintf(w, "  Selected install method uses package-manager installation.\n")
+		fmt.Fprintf(w, "  If installation fails with permission errors, verify sudo access.\n")
 	}
 
 	return res, nil
@@ -158,9 +168,8 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 // checkPackageAccess detects the available package manager and verifies the user
 // can run privileged install commands. Returns (pkgManager, canInstall).
 //
-// We don't actually install via the package manager — Nomad is downloaded as a
-// binary. But Tailscale's install.sh uses curl | sh which needs apt/yum to pull
-// in tailscaled's dependencies. This check catches permission issues early.
+// This check catches permission issues early when package-manager installation
+// is selected for Nomad and/or Tailscale.
 func checkPackageAccess(ctx context.Context, ex Executor, w io.Writer, hasSudo bool) (pkgMgr string, canInstall bool) {
 	// Detect package manager
 	pkgMgr = detectPkgManager(ctx, ex)
@@ -171,8 +180,8 @@ func checkPackageAccess(ctx context.Context, ex Executor, w io.Writer, hasSudo b
 	}
 
 	if !hasSudo {
-		fmt.Fprintf(w, "    ✗ Pkg manager     %s detected but user lacks sudo — Tailscale install may fail\n", pkgMgr)
-		fmt.Fprintf(w, "                      Tip: ensure the SSH user has NOPASSWD sudo, or omit --tailscale\n")
+		fmt.Fprintf(w, "    ✗ Pkg manager     %s detected but user lacks sudo — package-manager install may fail\n", pkgMgr)
+		fmt.Fprintf(w, "                      Tip: ensure the SSH user has NOPASSWD sudo or switch to --package-install-method=static\n")
 		return pkgMgr, false
 	}
 
@@ -210,20 +219,89 @@ func checkPackageAccess(ctx context.Context, ex Executor, w io.Writer, hasSudo b
 func detectPkgManager(ctx context.Context, ex Executor) string {
 	managers := []struct {
 		name string
-		cmd  string
+		cmds []string
 	}{
-		{"apt", "command -v apt-get 2>/dev/null"},
-		{"dnf", "command -v dnf 2>/dev/null"},
-		{"yum", "command -v yum 2>/dev/null"},
-		{"brew", "command -v brew 2>/dev/null"},
+		{
+			name: "apt",
+			cmds: []string{
+				"command -v apt-get >/dev/null 2>&1",
+				"test -x /usr/bin/apt-get",
+				"test -x /bin/apt-get",
+			},
+		},
+		{
+			name: "dnf",
+			cmds: []string{
+				"command -v dnf >/dev/null 2>&1",
+				"test -x /usr/bin/dnf",
+				"test -x /bin/dnf",
+			},
+		},
+		{
+			name: "yum",
+			cmds: []string{
+				"command -v yum >/dev/null 2>&1",
+				"test -x /usr/bin/yum",
+				"test -x /bin/yum",
+			},
+		},
+		{
+			name: "brew",
+			cmds: []string{
+				"command -v brew >/dev/null 2>&1",
+				"test -x /usr/local/bin/brew",
+				"test -x /opt/homebrew/bin/brew",
+			},
+		},
 	}
 	for _, m := range managers {
-		var b strings.Builder
-		if err := ex.Run(ctx, m.cmd, &b); err == nil && strings.TrimSpace(b.String()) != "" {
-			return m.name
+		for _, cmd := range m.cmds {
+			if err := ex.Run(ctx, cmd, io.Discard); err == nil {
+				return m.name
+			}
 		}
 	}
 	return "none"
+}
+
+// detectLinuxInitSystem tries multiple signals in order:
+//  1. PID 1 command name (/proc/1/comm, then ps fallback)
+//  2. systemd runtime marker (/run/systemd/system)
+//  3. systemd binary locations (/usr/bin/systemd, /lib/systemd/systemd)
+//  4. systemctl presence in PATH
+//
+// Fallback checks are only used when PID 1 could not be determined (empty output),
+// which avoids misclassifying non-systemd hosts that merely have systemd binaries.
+func detectLinuxInitSystem(ctx context.Context, ex Executor) string {
+	proc1 := readFirstLine(ctx, ex, "cat /proc/1/comm 2>/dev/null")
+	if proc1 == "" {
+		proc1 = readFirstLine(ctx, ex, "ps -p 1 -o comm= 2>/dev/null")
+	}
+	if proc1 != "" {
+		if strings.Contains(strings.ToLower(proc1), "systemd") {
+			return "systemd"
+		}
+		return proc1
+	}
+
+	if err := ex.Run(ctx, "test -d /run/systemd/system", io.Discard); err == nil {
+		return "systemd"
+	}
+	if err := ex.Run(ctx, "test -x /usr/bin/systemd || test -x /lib/systemd/systemd", io.Discard); err == nil {
+		return "systemd"
+	}
+	if err := ex.Run(ctx, "command -v systemctl >/dev/null 2>&1", io.Discard); err == nil {
+		return "systemd"
+	}
+	return "unknown"
+}
+
+func readFirstLine(ctx context.Context, ex Executor, cmd string) string {
+	var b strings.Builder
+	if err := ex.Run(ctx, cmd, &b); err != nil {
+		return ""
+	}
+	return firstLine(strings.TrimSpace(b.String()))
 }
 
 // firstLine returns the first non-empty line of s.

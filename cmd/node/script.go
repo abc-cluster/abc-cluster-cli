@@ -25,6 +25,7 @@ func printSetupScript(
 	cfg NomadInstallConfig,
 	useTailscale bool,
 	tsKey, tsHostname string,
+	packageInstallMethod string,
 	skipEnable, skipStart bool,
 ) error {
 	version := cfg.Version
@@ -79,7 +80,34 @@ func printSetupScript(
 	fmt.Fprintf(w, "# ── 1. Tailscale ────────────────────────────────────────────────────────────\n")
 	if useTailscale {
 		if goos == "linux" {
-			fmt.Fprintf(w, "curl -fsSL https://tailscale.com/install.sh | sudo sh\n")
+			switch packageInstallMethod {
+			case packageInstallMethodPackageManager:
+				fmt.Fprintf(w, "curl -fsSL https://tailscale.com/install.sh | sudo sh\n")
+			default:
+				fmt.Fprintf(w, "TS_BASE=https://pkgs.tailscale.com/stable\n")
+				fmt.Fprintf(w, "TS_ARCH=%s\n", releaseArch)
+				fmt.Fprintf(w, "TS_META=$(curl -fsSL \"${TS_BASE}/?mode=json\" | tr -d '\\n')\n")
+				fmt.Fprintf(w, "TS_TGZ=$(printf '%%s' \"$TS_META\" | sed -E \"s/.*\\\"Tarballs\\\":\\{[^}]*\\\"${TS_ARCH}\\\":\\\"([^\\\"]+)\\\".*/\\1/\")\n")
+				fmt.Fprintf(w, "if [ -z \"$TS_TGZ\" ] || [ \"$TS_TGZ\" = \"$TS_META\" ]; then echo \"Could not resolve tailscale static tarball for ${TS_ARCH}\"; exit 1; fi\n")
+				fmt.Fprintf(w, "curl -fsSL \"${TS_BASE}/${TS_TGZ}\" -o \"/tmp/${TS_TGZ}\"\n")
+				fmt.Fprintf(w, "curl -fsSL \"${TS_BASE}/${TS_TGZ}.sha256\" -o \"/tmp/${TS_TGZ}.sha256\"\n")
+				fmt.Fprintf(w, "echo \"$(cat /tmp/${TS_TGZ}.sha256)  /tmp/${TS_TGZ}\" | sha256sum -c -\n")
+				fmt.Fprintf(w, "TS_TMP_DIR=$(mktemp -d)\n")
+				fmt.Fprintf(w, "tar -xzf \"/tmp/${TS_TGZ}\" -C \"$TS_TMP_DIR\"\n")
+				fmt.Fprintf(w, "sudo mkdir -p /usr/local/bin /var/lib/tailscale\n")
+				fmt.Fprintf(w, "sudo cp \"$TS_TMP_DIR\"/tailscale_*/tailscale /usr/local/bin/tailscale\n")
+				fmt.Fprintf(w, "sudo cp \"$TS_TMP_DIR\"/tailscale_*/tailscaled /usr/local/bin/tailscaled\n")
+				fmt.Fprintf(w, "sudo chown root:root /usr/local/bin/tailscale /usr/local/bin/tailscaled\n")
+				fmt.Fprintf(w, "sudo chmod 755 /usr/local/bin/tailscale /usr/local/bin/tailscaled\n")
+				fmt.Fprintf(w, "sudo tee /etc/systemd/system/tailscaled.service > /dev/null <<'UNIT'\n")
+				fmt.Fprint(w, tailscaledSystemdUnit)
+				fmt.Fprintf(w, "UNIT\n")
+				fmt.Fprintf(w, "sudo chown root:root /etc/systemd/system/tailscaled.service\n")
+				fmt.Fprintf(w, "sudo systemctl daemon-reload\n")
+				fmt.Fprintf(w, "sudo systemctl enable tailscaled\n")
+				fmt.Fprintf(w, "sudo systemctl restart tailscaled || sudo systemctl start tailscaled\n")
+				fmt.Fprintf(w, "rm -rf \"$TS_TMP_DIR\" \"/tmp/${TS_TGZ}\" \"/tmp/${TS_TGZ}.sha256\"\n")
+			}
 		} else {
 			fmt.Fprintf(w, "# macOS: ensure Tailscale app is installed (https://tailscale.com/download)\n")
 		}
@@ -99,34 +127,65 @@ func printSetupScript(
 	}
 	fmt.Fprintln(w)
 
-	// ── 2. Nomad download + verify ────────────────────────────────────────────
-	fmt.Fprintf(w, "# ── 2. Download and verify Nomad %s ────────────────────────────────────────\n", version)
-	fmt.Fprintf(w, "NOMAD_VERSION=%s\n", version)
-	fmt.Fprintf(w, "NOMAD_OS=%s\n", releaseOS)
-	fmt.Fprintf(w, "NOMAD_ARCH=%s\n", releaseArch)
-	fmt.Fprintf(w, "NOMAD_ZIP=\"nomad_${NOMAD_VERSION}_${NOMAD_OS}_${NOMAD_ARCH}.zip\"\n")
-	fmt.Fprintf(w, "NOMAD_SHA=\"nomad_${NOMAD_VERSION}_SHA256SUMS\"\n")
-	fmt.Fprintf(w, "NOMAD_BASE=\"%s/${NOMAD_VERSION}\"\n", nomadReleasesBase)
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "curl -fsSL \"${NOMAD_BASE}/${NOMAD_ZIP}\" -o \"/tmp/${NOMAD_ZIP}\"\n")
-	fmt.Fprintf(w, "curl -fsSL \"${NOMAD_BASE}/${NOMAD_SHA}\" -o \"/tmp/${NOMAD_SHA}\"\n")
-	if goos == "darwin" {
-		fmt.Fprintf(w, "# macOS: use shasum -a 256; install coreutils for sha256sum if preferred\n")
-		fmt.Fprintf(w, "grep \"${NOMAD_ZIP}\" \"/tmp/${NOMAD_SHA}\" | awk '{print $1\"  /tmp/\"$2}' | shasum -a 256 --check\n")
+	if packageInstallMethod == packageInstallMethodPackageManager && goos == "linux" {
+		// ── 2. Nomad install via package manager ─────────────────────────────────
+		fmt.Fprintf(w, "# ── 2. Install Nomad via package manager ───────────────────────────────────\n")
+		fmt.Fprintf(w, "if command -v apt-get >/dev/null 2>&1; then\n")
+		fmt.Fprintf(w, "  sudo install -m 0755 -d /etc/apt/keyrings\n")
+		fmt.Fprintf(w, "  curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg\n")
+		fmt.Fprintf(w, "  sudo chmod a+r /etc/apt/keyrings/hashicorp.gpg\n")
+		fmt.Fprintf(w, "  CODENAME=$(. /etc/os-release && echo ${VERSION_CODENAME:-${UBUNTU_CODENAME:-}})\n")
+		fmt.Fprintf(w, "  if [ -z \"$CODENAME\" ] && command -v lsb_release >/dev/null 2>&1; then CODENAME=$(lsb_release -cs); fi\n")
+		fmt.Fprintf(w, "  if [ -z \"$CODENAME\" ]; then echo \"Unable to determine distro codename for HashiCorp repo\"; exit 1; fi\n")
+		fmt.Fprintf(w, "  echo \"deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com ${CODENAME} main\" | sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null\n")
+		fmt.Fprintf(w, "  sudo apt-get update\n")
+		fmt.Fprintf(w, "  sudo apt-get install -y nomad\n")
+		fmt.Fprintf(w, "elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then\n")
+		fmt.Fprintf(w, "  sudo tee /etc/yum.repos.d/hashicorp.repo >/dev/null <<'REPO'\n")
+		fmt.Fprintf(w, "[hashicorp]\n")
+		fmt.Fprintf(w, "name=HashiCorp Stable - $basearch\n")
+		fmt.Fprintf(w, "baseurl=https://rpm.releases.hashicorp.com/RHEL/$releasever/$basearch/stable\n")
+		fmt.Fprintf(w, "enabled=1\n")
+		fmt.Fprintf(w, "gpgcheck=1\n")
+		fmt.Fprintf(w, "gpgkey=https://rpm.releases.hashicorp.com/gpg\n")
+		fmt.Fprintf(w, "REPO\n")
+		fmt.Fprintf(w, "  if command -v dnf >/dev/null 2>&1; then sudo dnf -y install nomad; else sudo yum -y install nomad; fi\n")
+		fmt.Fprintf(w, "else\n")
+		fmt.Fprintf(w, "  echo \"No supported package manager found for Nomad package install\" >&2\n")
+		fmt.Fprintf(w, "  exit 1\n")
+		fmt.Fprintf(w, "fi\n")
+		fmt.Fprintf(w, "sudo mkdir -p \"%s\" \"%s\"\n", cfgDir, dataDir)
+		fmt.Fprintln(w)
 	} else {
-		fmt.Fprintf(w, "sha256sum --check --ignore-missing \"/tmp/${NOMAD_SHA}\"\n")
-	}
-	fmt.Fprintln(w)
+		// ── 2. Nomad download + verify ────────────────────────────────────────────
+		fmt.Fprintf(w, "# ── 2. Download and verify Nomad %s ────────────────────────────────────────\n", version)
+		fmt.Fprintf(w, "NOMAD_VERSION=%s\n", version)
+		fmt.Fprintf(w, "NOMAD_OS=%s\n", releaseOS)
+		fmt.Fprintf(w, "NOMAD_ARCH=%s\n", releaseArch)
+		fmt.Fprintf(w, "NOMAD_ZIP=\"nomad_${NOMAD_VERSION}_${NOMAD_OS}_${NOMAD_ARCH}.zip\"\n")
+		fmt.Fprintf(w, "NOMAD_SHA=\"nomad_${NOMAD_VERSION}_SHA256SUMS\"\n")
+		fmt.Fprintf(w, "NOMAD_BASE=\"%s/${NOMAD_VERSION}\"\n", nomadReleasesBase)
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "curl -fsSL \"${NOMAD_BASE}/${NOMAD_ZIP}\" -o \"/tmp/${NOMAD_ZIP}\"\n")
+		fmt.Fprintf(w, "curl -fsSL \"${NOMAD_BASE}/${NOMAD_SHA}\" -o \"/tmp/${NOMAD_SHA}\"\n")
+		if goos == "darwin" {
+			fmt.Fprintf(w, "# macOS: use shasum -a 256; install coreutils for sha256sum if preferred\n")
+			fmt.Fprintf(w, "grep \"${NOMAD_ZIP}\" \"/tmp/${NOMAD_SHA}\" | awk '{print $1\"  /tmp/\"$2}' | shasum -a 256 --check\n")
+		} else {
+			fmt.Fprintf(w, "sha256sum --check --ignore-missing \"/tmp/${NOMAD_SHA}\"\n")
+		}
+		fmt.Fprintln(w)
 
-	// ── 3. Install Nomad binary ───────────────────────────────────────────────
-	fmt.Fprintf(w, "# ── 3. Install Nomad binary ─────────────────────────────────────────────────\n")
-	fmt.Fprintf(w, "sudo mkdir -p \"%s\" \"%s\"\n", cfgDir, dataDir)
-	fmt.Fprintf(w, "unzip -o \"/tmp/${NOMAD_ZIP}\" nomad -d /tmp/\n")
-	fmt.Fprintf(w, "sudo mv /tmp/nomad \"%s\"\n", binPath)
-	fmt.Fprintf(w, "sudo chmod 755 \"%s\"\n", binPath)
-	fmt.Fprintf(w, "sudo chown root:root \"%s\"\n", binPath)
-	fmt.Fprintf(w, "rm \"/tmp/${NOMAD_ZIP}\" \"/tmp/${NOMAD_SHA}\"\n")
-	fmt.Fprintln(w)
+		// ── 3. Install Nomad binary ───────────────────────────────────────────────
+		fmt.Fprintf(w, "# ── 3. Install Nomad binary ─────────────────────────────────────────────────\n")
+		fmt.Fprintf(w, "sudo mkdir -p \"%s\" \"%s\"\n", cfgDir, dataDir)
+		fmt.Fprintf(w, "unzip -o \"/tmp/${NOMAD_ZIP}\" nomad -d /tmp/\n")
+		fmt.Fprintf(w, "sudo mv /tmp/nomad \"%s\"\n", binPath)
+		fmt.Fprintf(w, "sudo chmod 755 \"%s\"\n", binPath)
+		fmt.Fprintf(w, "sudo chown root:root \"%s\"\n", binPath)
+		fmt.Fprintf(w, "rm \"/tmp/${NOMAD_ZIP}\" \"/tmp/${NOMAD_SHA}\"\n")
+		fmt.Fprintln(w)
+	}
 
 	// ── 4. Nomad config ───────────────────────────────────────────────────────
 	fmt.Fprintf(w, "# ── 4. Nomad config (%s) ─────────────────────────────────────────\n", cfgPath)
@@ -141,16 +200,24 @@ func printSetupScript(
 	fmt.Fprintf(w, "# ── 5. Service registration ──────────────────────────────────────────────────\n")
 	switch goos {
 	case "linux":
-		fmt.Fprintf(w, "sudo tee /etc/systemd/system/nomad.service > /dev/null <<'UNIT'\n")
-		fmt.Fprint(w, nomadSystemdUnit)
-		fmt.Fprintf(w, "UNIT\n")
-		fmt.Fprintf(w, "sudo chown root:root /etc/systemd/system/nomad.service\n")
-		fmt.Fprintf(w, "sudo systemctl daemon-reload\n")
+		if packageInstallMethod == packageInstallMethodPackageManager {
+			fmt.Fprintf(w, "sudo systemctl daemon-reload\n")
+		} else {
+			fmt.Fprintf(w, "sudo tee /etc/systemd/system/nomad.service > /dev/null <<'UNIT'\n")
+			fmt.Fprint(w, nomadSystemdUnit)
+			fmt.Fprintf(w, "UNIT\n")
+			fmt.Fprintf(w, "sudo chown root:root /etc/systemd/system/nomad.service\n")
+			fmt.Fprintf(w, "sudo systemctl daemon-reload\n")
+		}
 		if !skipEnable {
 			fmt.Fprintf(w, "sudo systemctl enable nomad\n")
 		}
 		if !skipStart {
-			fmt.Fprintf(w, "sudo systemctl start nomad\n")
+			if packageInstallMethod == packageInstallMethodPackageManager {
+				fmt.Fprintf(w, "sudo systemctl restart nomad || sudo systemctl start nomad\n")
+			} else {
+				fmt.Fprintf(w, "sudo systemctl start nomad\n")
+			}
 		}
 	case "darwin":
 		const plistPath = "/Library/LaunchDaemons/nomad.plist"
