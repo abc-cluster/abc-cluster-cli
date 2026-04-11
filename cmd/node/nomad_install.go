@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -105,6 +106,9 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 		if err := ex.Run(ctx, fmt.Sprintf("sudo mkdir -p %s %s", cfgDir, dataDir), io.Discard); err != nil {
 			return fmt.Errorf("create directories: %w", err)
 		}
+		if err := createHostVolumeDirectories(ctx, ex, goos, cfg.NodeConfig.HostVolumes); err != nil {
+			return err
+		}
 
 		cfg.NodeConfig.DataDir = dataDir
 		hclContent := GenerateClientHCL(cfg.NodeConfig)
@@ -192,6 +196,9 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 	if err := ex.Run(ctx, mkdirCmd, io.Discard); err != nil {
 		return fmt.Errorf("create directories: %w", err)
 	}
+	if err := createHostVolumeDirectories(ctx, ex, goos, cfg.NodeConfig.HostVolumes); err != nil {
+		return err
+	}
 
 	// Upload binary (0755 — executable)
 	if err := ex.Upload(ctx, bytes.NewReader(nomadBin), binPath, 0755); err != nil {
@@ -216,6 +223,59 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 
 	// Register and (optionally) start the service
 	return registerService(ctx, ex, goos, cfg.SkipEnable, cfg.SkipStart, w)
+}
+
+func ApplyNomadConfig(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io.Writer) error {
+	goos := ex.OS()
+	_, cfgDir, cfgPath, dataDir := nomadPaths(goos)
+
+	var mkdirCmd string
+	switch goos {
+	case "windows":
+		mkdirCmd = fmt.Sprintf("mkdir \"%s\" \"%s\"", cfgDir, dataDir)
+	default:
+		mkdirCmd = fmt.Sprintf("sudo mkdir -p %s %s", cfgDir, dataDir)
+	}
+	if err := ex.Run(ctx, mkdirCmd, io.Discard); err != nil {
+		return fmt.Errorf("create Nomad config directories: %w", err)
+	}
+	if err := createHostVolumeDirectories(ctx, ex, goos, cfg.NodeConfig.HostVolumes); err != nil {
+		return err
+	}
+
+	cfg.NodeConfig.DataDir = dataDir
+	hclContent := GenerateClientHCL(cfg.NodeConfig)
+
+	mode := os.FileMode(0640)
+	if goos == "windows" {
+		mode = 0644
+	}
+	if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, mode); err != nil {
+		return fmt.Errorf("upload config to %s: %w", cfgPath, err)
+	}
+	if goos != "windows" {
+		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 640 %s", cfgPath, cfgPath), io.Discard)
+	}
+	fmt.Fprintf(w, "    ✓ Config written to %s\n", cfgPath)
+
+	if cfg.SkipStart {
+		fmt.Fprintf(w, "    - Nomad restart skipped per --skip-start\n")
+		return nil
+	}
+
+	switch goos {
+	case "linux":
+		if err := ex.Run(ctx, "sudo systemctl restart nomad || sudo systemctl start nomad", io.Discard); err != nil {
+			return fmt.Errorf("restart nomad service: %w", err)
+		}
+		fmt.Fprintf(w, "    ✓ Nomad service restarted\n")
+	case "darwin":
+		_ = ex.Run(ctx, "sudo launchctl kickstart -k system/nomad || true", io.Discard)
+		fmt.Fprintf(w, "    ✓ Nomad restart requested via launchctl\n")
+	case "windows":
+		fmt.Fprintf(w, "    ! Restart Nomad service manually on Windows to apply changes\n")
+	}
+	return nil
 }
 
 func installNomadPackageManagerLinux(ctx context.Context, ex Executor, w io.Writer) error {
@@ -338,6 +398,22 @@ func nomadPaths(goos string) (binPath, cfgDir, cfgPath, dataDir string) {
 		dataDir = "/opt/nomad/data"
 	}
 	return
+}
+
+func createHostVolumeDirectories(ctx context.Context, ex Executor, goos string, hostVolumes []NomadHostVolume) error {
+	for _, path := range hostVolumePaths(hostVolumes) {
+		var cmd string
+		switch goos {
+		case "windows":
+			cmd = fmt.Sprintf("mkdir %q", path)
+		default:
+			cmd = fmt.Sprintf("sudo mkdir -p %q", path)
+		}
+		if err := ex.Run(ctx, cmd, io.Discard); err != nil {
+			return fmt.Errorf("create host volume directory %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
