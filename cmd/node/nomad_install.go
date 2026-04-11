@@ -15,7 +15,7 @@ import (
 
 const (
 	nomadReleasesBase   = "https://releases.hashicorp.com/nomad"
-	defaultNomadVersion = "1.9.4"
+	defaultNomadVersion = "1.11.4"
 
 	nomadSystemdUnit = `[Unit]
 Description=Nomad
