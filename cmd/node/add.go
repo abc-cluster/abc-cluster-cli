@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -67,6 +68,7 @@ Examples:
 	cmd.Flags().String("ssh-key", "", "Path to SSH private key (default: ~/.ssh/id_rsa, then SSH agent)")
 	cmd.Flags().Int("ssh-port", 22, "SSH port (default: 22)")
 	cmd.Flags().Bool("skip-host-key-check", false, "Disable known_hosts verification (insecure; for dev/testing only)")
+	cmd.Flags().String("password", "", "Node login password (used for SSH auth and sudo -S; also ABC_NODE_PASSWORD env var)")
 
 	// ── Jump host flags ───────────────────────────────────────────────────────
 	cmd.Flags().String("jump-host", "", "SSH jump/bastion host to proxy through (equivalent to ssh -J)")
@@ -277,6 +279,13 @@ func runSSHAdd(cmd *cobra.Command, host string) error {
 		sshCfg.SkipHostKeyCheck = true
 	}
 
+	// Resolve password: flag takes precedence over environment variable.
+	password, _ := cmd.Flags().GetString("password")
+	if password == "" {
+		password = os.Getenv("ABC_NODE_PASSWORD")
+	}
+	sshCfg.Password = password
+
 	// 3. Print connection banner.
 	switch {
 	case sshCfg.JumpHost != "":
@@ -341,11 +350,17 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		return nil
 	}
 
+	// Resolve sudo password for preflight and install (flag > env var).
+	sudoPassword, _ := cmd.Flags().GetString("password")
+	if sudoPassword == "" {
+		sudoPassword = os.Getenv("ABC_NODE_PASSWORD")
+	}
+
 	// 1. Preflight checks
 	var pf *PreflightResult
 	if !skipPreflight {
 		var err error
-		pf, err = RunPreflight(ctx, ex, w)
+		pf, err = RunPreflight(ctx, ex, w, sudoPassword)
 		if err != nil {
 			return err
 		}
