@@ -355,6 +355,11 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	if sudoPassword == "" {
 		sudoPassword = os.Getenv("ABC_NODE_PASSWORD")
 	}
+	if sudoPassword == "" {
+		if s, ok := ex.(*sshExec); ok && s.sudoPassword != "" {
+			sudoPassword = s.sudoPassword
+		}
+	}
 
 	// 1. Preflight checks
 	var pf *PreflightResult
