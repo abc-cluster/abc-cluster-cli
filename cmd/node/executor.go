@@ -10,9 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/kevinburke/ssh_config"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -527,6 +529,102 @@ func dirOf(path string) string {
 		}
 	}
 	return "."
+}
+
+// ─── ~/.ssh/config resolution ─────────────────────────────────────────────────
+
+// loadSSHConfigEntry reads ~/.ssh/config for the given host alias and returns
+// an SSHConfig pre-populated with values from that block, plus a bool that is
+// true when the alias resolves to a different Hostname (i.e. it is a real alias
+// rather than a bare IP / FQDN that appears as-is in the config).
+//
+// Precedence: ~/.ssh/config values are used as defaults; the caller (runSSHAdd)
+// overrides individual fields with any CLI flags that were explicitly set.
+func loadSSHConfigEntry(alias string) (SSHConfig, bool) {
+	cfg := SSHConfig{
+		Host: alias, // default: alias is the real hostname
+		Port: 22,
+		User: os.Getenv("USER"),
+	}
+	if cfg.User == "" {
+		cfg.User = "root"
+	}
+
+	hostname := ssh_config.Get(alias, "Hostname")
+	isAlias := hostname != "" && hostname != alias
+	if isAlias {
+		cfg.Host = hostname
+	}
+
+	if port := ssh_config.Get(alias, "Port"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			cfg.Port = p
+		}
+	}
+
+	if user := ssh_config.Get(alias, "User"); user != "" {
+		cfg.User = user
+	}
+
+	if keys := ssh_config.GetAll(alias, "IdentityFile"); len(keys) > 0 {
+		cfg.KeyFile = expandTilde(keys[0])
+	}
+
+	if pj := ssh_config.Get(alias, "ProxyJump"); pj != "" {
+		parseProxyJump(pj, &cfg)
+	}
+
+	if shc := ssh_config.Get(alias, "StrictHostKeyChecking"); shc == "no" || shc == "off" {
+		cfg.SkipHostKeyCheck = true
+	}
+
+	return cfg, isAlias
+}
+
+// expandTilde replaces a leading "~" with the user's home directory.
+func expandTilde(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, path[1:])
+}
+
+// parseProxyJump fills cfg.JumpHost/JumpPort/JumpUser from a ProxyJump value.
+// Supported forms: host, user@host, host:port, user@host:port.
+// Only the first hop is used when multiple are comma-separated.
+func parseProxyJump(pj string, cfg *SSHConfig) {
+	// Multi-hop (e.g. "bastion1,bastion2"): only the first hop is used.
+	if idx := strings.IndexByte(pj, ','); idx >= 0 {
+		pj = pj[:idx]
+	}
+	pj = strings.TrimSpace(pj)
+
+	// Extract optional user@ prefix.
+	user := ""
+	if at := strings.LastIndex(pj, "@"); at >= 0 {
+		user = pj[:at]
+		pj = pj[at+1:]
+	}
+
+	host := pj
+	port := 22
+	// net.SplitHostPort handles "host:port" and "[ipv6]:port".
+	if h, p, err := net.SplitHostPort(pj); err == nil {
+		host = h
+		if n, err2 := strconv.Atoi(p); err2 == nil {
+			port = n
+		}
+	}
+
+	cfg.JumpHost = host
+	cfg.JumpPort = port
+	if user != "" {
+		cfg.JumpUser = user
+	}
 }
 
 // LineWriter returns a writer that prefixes each output line with prefix.

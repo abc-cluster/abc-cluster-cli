@@ -16,6 +16,7 @@ require (
 )
 
 require (
+	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/pkg/sftp v1.13.10 // indirect
