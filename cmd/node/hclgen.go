@@ -55,6 +55,7 @@ type NodeConfig struct {
 	Datacenter                    string
 	DataDir                       string
 	PluginDir                     string
+	AdditionalDriverPlugins       []string
 	NodeClass                     string
 	NetworkInterface              string
 	CNIPath                       string
@@ -250,6 +251,23 @@ func appendDefaultTaskDriverConfig(root *hclwrite.Body, cfg NodeConfig) {
 	}
 	if cfg.EnableJavaDriver {
 		root.AppendNewBlock("plugin", []string{"java"})
+		root.AppendNewline()
+	}
+	seen := map[string]struct{}{
+		"containerd-driver":  {},
+		"nomad-driver-exec2": {},
+		"java":               {},
+	}
+	for _, pluginName := range cfg.AdditionalDriverPlugins {
+		name := strings.TrimSpace(pluginName)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		root.AppendNewBlock("plugin", []string{name})
 		root.AppendNewline()
 	}
 }
