@@ -2,12 +2,18 @@
 
 ---
 
+
+
 ## Implementation Status
 
 > This section reflects the current state of the codebase. Everything below the line is the
 > aspirational design spec; check here first before assuming a feature is implemented.
 
 ### Plumbing commands — low-level, composable, scriptable
+
+<!-- ABHI: Move the pipeline export/import, status and logs to a different section - which still -->
+<!-- needs to be elaborated for a future release. -->
+
 
 | Command | Description | Source |
 |---------|-------------|--------|
@@ -21,6 +27,16 @@
 | `logs` (alias) | Job log streaming | `cmd/job/logs.go` |
 
 ### Porcelain commands — high-level, user-facing
+
+<!-- ABHI: whereever possible these commands consume the lower-level plumbing commands and add user-facing enhancements for an improved UX the porcelain commands are concerned with the top level users such as -->
+<!-- 0. generic - chat, version, auth, context, config -->
+<!-- 1. bioinformatician or machine learning user (pipeline, job, data, -->
+<!-- automations, workspace, secret) -->
+<!-- 2. legal policies ( policy and compliance ) -->
+<!-- 3. accountant (cost) -->
+<!-- 4. infrastrucure ( infra, node, storage  ) -->
+<!-- 5. cluster administration, development and testing  (services ) -->
+<!-- 6. project manager - workspace, automations -->
 
 | Command | Description | Source |
 |---------|-------------|--------|
@@ -37,6 +53,12 @@
 | `cluster provision/decommission` | Fleet management (requires `--cloud`) | `cmd/cluster/` |
 | `budget set` | Spend cap management (requires `--cloud`) | `cmd/budget/set.go` |
 | `storage size` | Storage usage inspection | `cmd/storage/` |
+
+
+<!-- ABHI: the CLI needs to be structured for  -->
+<!-- node *  => abc infra node * -->
+<!-- namespace * => abc services nomad --namespaces -->
+<!-- move the cluster * commands to a different seciotn for clarification and feasibitity analysis -->
 
 ### Debug logging subsystem
 
@@ -56,6 +78,12 @@ dispatches to the correct underlying command. Users never need to choose between
 
 **Detection priority:**
 
+<!-- ABHI: 1. For now remove the --conda and --pixi from the CLI, we shall only release them in the preamble for job scripts -->
+<!-- 2. a module is a type of a pipeline - still need to decide on the exact -->
+<!-- syntax which is useful for nf-core/modules project which areused by the -->
+<!-- nf-pipeline-gen codebase to generate pipelines on the fly for use in the -->
+<!-- project -->
+
 | Priority | Condition | Dispatches to |
 |----------|-----------|---------------|
 | 1 | `--type pipeline\|job\|module` | forced |
@@ -68,6 +96,8 @@ dispatches to the correct underlying command. Users never need to choose between
 | — | no match | error — use `--type` |
 
 **Wrapper modes (job dispatch):**
+
+<!-- ABHI: the wrapper modes do not need to be exposed as of now, maybe sometime in future -->
 
 | Flag | Generated script | Invocation |
 |------|-----------------|------------|
@@ -138,8 +168,6 @@ High-value shorthand command paths:
 | `abc data decrypt <path>` | `abc d dec <path>` |
 | `abc pipeline list` | `abc p ls` |
 | `abc pipeline info <name>` | `abc p sh <name>` |
-| `abc cluster provision` | `abc c prov` |
-| `abc cluster decommission` | `abc c decom` |
 
 Implementation notes:
 
@@ -169,15 +197,18 @@ Implementation notes:
 | **Consistent verbs** | `list`, `show`, `create`, `delete`, `use` across all resource groups |
 | **User-scoped by default** | All commands operate on the authenticated user's profile. Admins can pass `--user` to act on behalf of others. |
 
+
+<!-- ABHI: the use of --sudo is valid for the user-based scoping, which would still allow an admin to assume the identify of another user -->
+
 ---
 
 ## 2. Nomad API Client
 
+
+<!-- ABHI: This is not true, we are simply wrapping the HTTP API ourselves since the control-plane would interact with the actual codebase, when it is enabled. In case that a separate node has been deployed by the user, without it being part of the cluster, only then we submit to the nomad API, which of course does not have all the features. -->
+
 All `abc job`, `abc compute`, and Nomad-layer operations are backed by `github.com/hashicorp/nomad/api` — the same Go package used internally by the Nomad CLI. Pin it to a commit matching your deployed Nomad server version in `go.mod`:
 
-```
-require github.com/hashicorp/nomad/api v0.0.0-<commit-matching-nomad-v1.9.4>
-```
 
 The client is constructed from the ABC-cluster resolved config rather than Nomad's own env vars, to avoid silent conflicts between `NOMAD_ADDR`/`NOMAD_TOKEN` and ABC-cluster's `ABC_API_ENDPOINT`/`ABC_ACCESS_TOKEN`:
 
@@ -203,6 +234,15 @@ Key API surface per `abc` command group:
 | `abc compute nodes *` | `Nodes().List()` / `Info()` / `UpdateDrain()` | Node lifecycle |
 | `abc compute allocations *` | `Allocations().List()` / `Info()` | Allocation detail |
 | `abc status --watch` | Blocking queries: `QueryOptions{WaitIndex, WaitTime}` | State change polling without busy-waiting |
+
+
+<!-- ABHI: rethink/rebrand the dispatch command to allow for template jobs which -->
+<!-- are stored in the cluster within an org's workspace, and can be triggered -->
+<!-- by the user with only the parameters file. this has an overlap with the abc -->
+<!-- pipeline run interface, think about how to use it elegantly. it can be used -->
+<!-- for generating reusable job defs for parameterized as well as periodic jobs -->
+
+
 
 ---
 
@@ -237,6 +277,10 @@ Key API surface per `abc` command group:
 | `ABC_CRYPT_PASSWORD` | rclone crypt password |
 | `ABC_CRYPT_SALT` | rclone crypt salt |
 
+
+<!-- ABHI: for a user who has logged into the system, the credentials which would be provided by the control plane, else there is a chance that the user would forget their own credentials -->
+<!-- ABHI: Consider enabling encryption/decryption only for a logged in user - however this would not allow users to encrypt/decrypt data on a node without internet. it's a good trade-off for initial releases, we do need them to sign in for enabling encryption/decryption -->
+
 ---
 
 ## 5. Command Tree
@@ -265,6 +309,8 @@ abc
 ├── chat
 └── version
 ```
+
+<!-- ABHI: move the abc join to a the TBD section for future implementation, this overlaps wiht the abc infra node add interface as of now -->
 
 ---
 
@@ -532,6 +578,13 @@ $ abc workspace members remove student@org-a.example
 
 ### 5.6 `abc secret`
 
+<!-- ABHI: The abc secret command will be eventually powered by a vault backend, -->
+<!-- via the control plane and locally we can use the mozilla/sops library to -->
+<!-- make sure that the relevant fields (secrets) in the config file are -->
+<!-- encrypted based on the authentication token for a logged in user. the user -->
+<!-- should be able to see all creds that they have added to their own user -->
+<!-- account plus (self, workspace, org, cluster), other workspace level credentials is they have the requisite permission, this will be determined by the permissions (jurist) backend -->
+
 Manage named secrets stored in the ABC-cluster Vault backend. Access is scoped to the authenticated user's workspace. Secret values are masked by default in all terminal output.
 
 > **Backend note:** Secrets are stored in Vault and accessed through the ABC API layer. The CLI never communicates with Vault directly.
@@ -692,6 +745,11 @@ Flags:
 
 ### 5.7 `abc ssh`
 
+<!-- ABHI: this should be moved to abc infra node ssh --id for node level ssh  -->
+<!-- ABHI: the job run interface should have a --ssh and --ssh-timeout flag -->
+<!-- which allows the users to ssh into a specific job via the nomad alloc cli -->
+<!-- command as a lifecycle task -->
+
 Opens an interactive SSH session to a node the user has access to, or prints the equivalent SSH command for scripting. Node discovery is via the ABC API.
 
 When a TTY is present the CLI replaces itself with the SSH process (`exec`), giving the terminal fully to SSH — window resize, `Ctrl-C`, and all signals work natively. When stdout is not a TTY, the SSH command is printed instead.
@@ -812,6 +870,8 @@ Flags:
 
 #### `abc pipeline run`
 
+<!-- ABHI: This needs a clever naming convention for all child jobs - such that it is easy to trace them back to the original head-job, and eventually tie them to the nextflow lineage command enhancements that we are planning for future -->
+
 ```
 $ abc pipeline run \
     --pipeline nf-core/viralrecon \
@@ -851,8 +911,14 @@ $ abc pipeline list
 
 #### `abc pipeline show <id>`
 
-```
-$ abc pipeline show run-a1b2c3
+<!-- ABHI: This needs to be a combination of data fetched from the ABC-api and -->
+<!-- the tower api which is used for monitoring nextflow pipelines -->
+
+<!-- ABHI: We should add a pipeline status command which only shows the task -->
+<!-- statuses - TBD  -->
+
+
+<!-- ABHI: we can also add a porcelain level pipeline monitor command, which follows the pipeline execution based on a list of specific executions and then email, trigger other automations -->
 
   ID          run-a1b2c3
   Name        batch-47
@@ -905,6 +971,8 @@ $ abc pipeline resume run-g7h8i9
 
 #### `abc pipeline delete <id>`
 
+<!-- ABHI: Allow addition of --sudo and --with-data to let people delete all data generated with a specific run -->
+
 ```
 $ abc pipeline delete run-j1k2l3
 
@@ -935,7 +1003,9 @@ Flags:
 | `--task` | Filter to a specific Nextflow process name |
 | `--since` | Show logs from this timestamp onward |
 
-#### `abc pipeline params show <pipeline>`
+#### `abc pipeline params show --id <pipeline>`
+
+<!-- ABHI: should automatically pick the latest execution of a pipeline (if it was stored) if the id was not provided -->
 
 ```
 $ abc pipeline params show nf-core/viralrecon
@@ -981,6 +1051,8 @@ Ad-hoc Nomad batch jobs submitted from annotated shell scripts. The `run` sub-co
 
 Scripts declare job configuration via `#ABC` comment directives at the top of the file. The `abc job run` command parses these directives, generates Nomad HCL, then optionally submits it via `Jobs().ParseHCL()` → `Jobs().Register()`.
 
+<!-- ABHI: Add to the TBD sectoin, that we still need to discuss how the parameterized and periodic job definition can be used. A clear use-case. -->
+
 There are three classes of directive, each with distinct semantics:
 
 **Class 1 — Scheduler directives:** Configure how Nomad places the job. Map directly to HCL stanza fields.
@@ -1000,6 +1072,9 @@ There are three classes of directive, each with distinct semantics:
 | `--driver=<string>` | string | `driver = "<driver>"` | Task driver: `exec2` (default), `hpc-bridge`, `docker` |
 | `--depend=<type:jobid>` | string | prestart lifecycle hook | Block on another job before this task starts |
 | `--priority=<int>` | int | `priority = <n>` | Nomad scheduler priority (default: 50) |
+
+<!-- ABHI: Mark the --depend option as something to be discussed (TBD) in future -->
+<!-- iterations -->
 
 **Class 2 — Runtime exposure directives:** Boolean flags whose presence tells the HCL generator to inject the corresponding Nomad runtime variable into the task `env` block. These are readable by the script at execution time.
 
@@ -1088,6 +1163,37 @@ Legacy `SLURM_*` / `PBS_*` aliases are opt-in via `--hpc-compat-env` (CLI) or `-
 
 #### `abc job run <script>`
 
+<!-- ABHI: The < abc job run > command allow for arbitrary variables during the -->
+<!-- invocation such that these variables are be named or positional and can be -->
+<!-- used withing the script - the location of these variables may have a -->
+<!-- normal URI and the system will look up internally or an abc:// URI which is a unique identified for all data tracked/visble to the ABC cluster  -->
+
+<!-- ABHI: abc job run --named-parameter 1 --param $1 (an unnamed parameter, which is
+enumerated automatically) --output-directory (default is task directory) -->
+<!-- where i should be able to parse these as metadata, add them as appropriate
+preamble and then spawn the necessary data-staging tasks during the pre-start
+lifecycle phase and then run the finalized script, which made use of these
+named and unnamed parameters -->
+
+ <!-- ABHI: The output is always generated in the task directory, but all of the data cane be copied after the main task is compelte, if the user provides a non-default output-dir  -->
+
+
+<!-- ABHI: The abc job run, should work with the baseline user-specific node that the user setup using abc infra node add setup, with the bare minimum server with nomad binary installed and running as a dev server + client. Make sure that in that case, the NOMAD env vars are setup correctly for the user-specific node, these could be stored locally with sensitive fields encrypted using the a token provided by the control plane, used as encryption key in the config file via mozilla sops program. -->
+
+
+<!-- ABHI: the abc job run is a key component of the entire system and other -->
+<!-- components such as pipeline run, automations rely heavily upon this -->
+<!-- command. it should be robust and versatile for users using the full fledged -->
+<!-- abc cluster or simply using the cli with a user-specific single nomad dev node -->
+<!-- The same robust code is consumed multiple times internally within the cli -->
+
+<!-- we shoudl also allow for a new preamble field "green" which indicates to -->
+<!-- the abc-control plane that the job can be held till there's a --green -->
+<!-- window, also add a possible --budget option, along with the enhanced -->
+<!-- --dry-run which can estimate cost and estimate carbon based on ML trained -->
+<!-- on the xtdb historical data by the control plane -->
+
+
 ```
 $ abc job run scripts/bwa-align.sh --submit --region za-cpt
 
@@ -1107,6 +1213,17 @@ $ abc job run scripts/bwa-align.sh --submit --region za-cpt
   Nomad job ID   bwa-align-batch
   Evaluation ID  b3c4d5e6-f789-0abc-def1-234567890abc
 ```
+
+<!-- ABHI: allow users to simply submit a pure HPC specific script to a -->
+<!-- connected HPC - this should eliminate the need of submitting jobs from the -->
+<!-- login node and storing the scipts there. the data uri should stay the same -->
+<!-- as on any HPC or linux machine -->
+
+<!-- ABHI: The idea is to support existing users of HPC , with their scripts and -->
+<!-- then allow a slow migration path to users towards ABC cluster, allowing -->
+<!-- them to slowly add a container, allowing them to run the script in the -->
+<!-- cloud on a custom node etc. I'd like you to elaborate on this idea -->
+
 
 #### `abc job translate <script>`
 
@@ -1243,12 +1360,14 @@ echo "output:${NOMAD_TASK_DIR}/output/${SAMPLE}.sam alloc:${NOMAD_ALLOC_ID}"
 
 #### `abc job list`
 
+<!-- ABHI: This could be enhanced to include the downstream HPC jobs submitted by the user, or belonging to a user at any moment -->
+
 ```
 $ abc job list
 
   NOMAD JOB ID          STATUS     REGION   DATACENTERS    SUBMITTED            DURATION
   bwa-align-batch       running    za-cpt   za-cpt-dc1     2024-11-01 08:14     1h 24m
-  bactmap-ke-batch   complete   ke-nbi   ke-nbi-dc1     2024-10-31 14:00     3h 07m
+  bactmap-ke-batch      complete   ke-nbi   ke-nbi-dc1     2024-10-31 14:00     3h 07m
   analysis              complete   za-cpt   za-cpt-dc1     2024-10-30 16:45     0h 12m
   taxprofiler-003       dead       mz-map   mz-map-dc1     2024-10-30 09:30     0h 41m
 ```
@@ -1264,6 +1383,8 @@ Flags:
 ---
 
 #### `abc job show <id>`
+
+<!--ABHI: this captures info regarding a specific job -->
 
 ```
 $ abc job show bwa-align-batch
@@ -1302,6 +1423,8 @@ $ abc job show bwa-align-batch
 
 #### `abc job stop <id>`
 
+<!-- ABHI: this should allow for cancelling jobs on the HPC as well -->
+
 ```
 $ abc job stop taxprofiler-003
 
@@ -1333,6 +1456,8 @@ $ abc job dispatch viralrecon-parameterized \
   Evaluation ID  c4d5e6f7-a8b9-0cde-f123-456789012bcd
 ```
 
+<!-- ABHI: just a rough idea, This can be used with stored templates , by user, workspace member, admin etc. -->
+
 Flags:
 
 | Flag | Description |
@@ -1344,6 +1469,9 @@ Flags:
 ---
 
 #### `abc job logs <id>`
+
+
+<!-- ABHI: Also include an abc job trace command which informs the user of what happened after a job was submitted, since the abc control plane may reschedule, scale or resume as it sees fit, also allow a --data flag to track which data was generated -->
 
 Streams task logs via `AllocFS().Logs()`, which returns a `<-chan *api.StreamFrame`. Each frame carries stdout or stderr bytes and a file offset. The `--follow` flag holds the channel open — the CLI selects on it until cancelled.
 
@@ -1560,6 +1688,11 @@ $ abc data stat ds-001abc
 
 #### `abc data logs <id>`
 
+<!-- ABHI: This overlaps slightly with the abc job trace command designed above, but -->
+<!-- this should provide a more data centric view rather than job centric. -->
+<!-- Perhaps it's better to use the marquez project on the website to allow -->
+<!-- users to visualize both pieces of informatino together  -->
+
 Full access and event log for a data object — who touched it, when, from where, and what decision was made. Intended for Data Managers and compliance audits.
 
 ```
@@ -1627,6 +1760,11 @@ Browser integration guidance:
 
 ### 5.9 `abc automation`
 
+<!-- ABHI: these are also jobs but not intended to overlaop with pipelines or -->
+<!-- data jobs. Think of good use-cases for these automations  -->
+
+<!-- ABHI: The type should be expanded to different scope/tiers such as system/users/members/admin etc -->
+
 Umbrella command group for all scheduled, event-triggered, and DAG-orchestrated workflows active on the user's profile. Corresponds to the Control plugin backend.
 
 Automation types:
@@ -1636,6 +1774,11 @@ Automation types:
 | `schedule` | Cron-based: run a pipeline or job on a fixed cadence |
 | `trigger` | Event-driven: fire when a data upload, run completion, or external webhook occurs |
 | `dag` | Multi-pipeline DAG: a named graph of pipelines with dependency edges |
+
+
+<!-- ABHI: The schedule type jobs do not need any more user input, such as -->
+<!-- health-check, node info collection under the system scope/tier etc -->
+<!-- ABHI: The dag type is not intended to be used for data analysis -->
 
 #### `abc automation list`
 
@@ -1794,6 +1937,8 @@ $ abc automation triggers
 
 ### 5.10 `abc storage`
 
+<!-- ABHI: This should be moved to abc infra storage   -->
+
 `abc storage size` relies on ABC control plane inventory services:
 - `abc-node-probe` to collect compute node/local disk capacity and usage.
 - central control plane / node metadata table to maintain per-node remaining space.
@@ -1801,6 +1946,10 @@ $ abc automation triggers
 - internal merged table used by `abc storage size` on CLI query.
 
 #### `abc storage buckets list`
+
+<!-- ABHI: the users do not need to know about the bucket as such, this is an -->
+<!-- underlying detail only displayed if requested by the user, a plumbing -->
+<!-- command  -->
 
 ```
 $ abc storage buckets list --region za-cpt
@@ -1911,6 +2060,8 @@ Flags:
 
 ### 5.11 `abc compute`
 
+<!-- ABHI: This should be moved to abc infra compute  -->
+
 #### `abc compute nodes list`
 
 ```
@@ -1925,6 +2076,13 @@ $ abc compute nodes list --region za-cpt
 ```
 
 #### `abc compute nodes show <node-id>`
+
+<!-- ABHI: also display the node-specific storage which ought to be displayed  -->
+
+<!-- ABHI: Also add the network speed test in the node-probe tools and that -->
+<!-- information should be diplayed  -->
+
+<!-- ABHI: allow the user to trigger the probe automation to see the latest stats  -->
 
 ```
 $ abc compute nodes show hpc-a-node-014
@@ -2040,6 +2198,8 @@ $ abc compute hpc list
 
 #### `abc compute hpc status <backend>`
 
+<!-- ABHI: this should be included within the abc infra node status command -->
+
 ```
 $ abc compute hpc status hpc-a-backend
 
@@ -2055,6 +2215,8 @@ $ abc compute hpc status hpc-a-backend
 ```
 
 #### `abc compute hpc jobs <backend>`
+
+<!-- ABHI: should be refactore to abc infra nodes cloud / hpc / local (or suggest a better classification) -->
 
 ```
 $ abc compute hpc jobs hpc-a-backend
@@ -2247,6 +2409,8 @@ $ abc policy residency ds-001abc
 
 ### 5.13 `abc budget`
 
+<!-- ABHI: this should be renamed to abc expenses or cost (or suggest something better) and it consumes the data from the financial data stored within the xtdb database, this should show the node-level storage, network and cpu level expenses, in addition to the job and pipeline level expenses -->
+
 #### `abc budget summary`
 
 ```
@@ -2356,6 +2520,9 @@ Flags:
 ---
 
 ### 5.14 `abc compliance`
+
+<!-- ABHI: this should be moved to a plumbing level abc admin services jurist, -->
+<!-- till we have a better porcelain interface  -->
 
 #### `abc compliance status`
 
@@ -2586,6 +2753,8 @@ $ abc admin version
 
 ### 5.16 `abc join`
 
+<!-- ABHI: overlaps with the abc node join --local, which I think should always be a user node - but what if the user wants to provide access to another user i.e. share a node access. what are your thoughts? -->
+
 Onboards the current machine into the operator's ABC-cluster. Runs node probe checks automatically, presents a full health report, and — if confirmed — registers the node with Nomad, establishes a Tailscale connection, and configures the appropriate task driver.
 
 Requires `admin` or `maintainer` role in the target workspace.
@@ -2691,6 +2860,14 @@ Exit codes: `0` (joined or probe passed), `1` (probe failed), `2` (usage error),
 ---
 
 ### 5.17 `abc chat`
+
+<!-- ABHI: here the user does not need to mention --sudo, the sudo is inferred by the backend, whether the user has permission to ask certain queries or not -->
+
+<!-- ABHI: perhaps the abc chat could provide certain baseline queries to allow -->
+<!-- users to give feedback and improve the utility/experience - the paid add on -->
+<!-- will expand the scope of it. what are your suggestions regarding the -->
+<!-- baseline prompt presets/boundaries ? -->
+
 
 AI assistant embedded in the CLI, available to users on the **Pro plan and above**. Scoped strictly to the authenticated user's own profile — the assistant has read access to the user's runs, data, compliance posture, automations, and budget only. It does not take actions and cannot access other users' data.
 
@@ -3009,6 +3186,8 @@ The ABC CLI uses a four-tier permission model inspired by Linux `sudo`. **The CL
 
 Tiers 1 and 2 are both activated by `--sudo`; jurist decides which applies based on the caller's actual token privileges. The CLI requests elevation; the server decides whether to honour it.
 
+<!-- ABHI: i'm still not sure whether the cluster-admin and cloud still makes sense, let's think more about this -->
+
 ---
 
 ### `--sudo` — Cluster elevation
@@ -3156,9 +3335,17 @@ Nomad API
 
 The ABC CLI is the **single client for all abc-cluster backend services**. Each service exposes health, version, and diagnostic endpoints surfaced uniformly.
 
+<!-- ABHI: place these commands under abc admin services --list -->
+
+<!-- ABHI: the internal services will be exposed to a certain superadmin (maybe cluster admin) privilege via the control plane, such that i can use the cli to conduct api service level tests -->
+
+
 ### `abc status`
 
 Single command showing the health of every backend service:
+
+
+<!-- ABHI: also add network-tailscale, xtdb, superbase and control-panel (khan) services -->
 
 ```
 $ abc status
@@ -3174,6 +3361,7 @@ $ abc status
 ```
 
 Exit code 1 if any service is unhealthy.
+
 
 ### `abc service ping <service>`
 
