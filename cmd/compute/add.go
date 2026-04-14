@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	appconfig "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
@@ -112,6 +114,7 @@ Examples:
 	cmd.Flags().String("jdk-default-version", "", "Default JDK major version for /usr/local/bin/java when --java-driver is set")
 	cmd.Flags().String("encrypt", "", "Nomad gossip encryption key")
 	cmd.Flags().Bool("acl", false, "Enable Nomad ACL system on this node")
+	cmd.Flags().Bool("acl-bootstrap", false, "When --acl is enabled, run nomad acl bootstrap and print the management token")
 
 	// ── Nomad — network bind ──────────────────────────────────────────────────
 	cmd.Flags().String("address", "", "Address the agent binds to (default: 0.0.0.0)")
@@ -137,6 +140,7 @@ Examples:
 	cmd.Flags().Bool("tailscale-key-preauthorized", true, "When auto-creating a Tailscale auth key, mark devices as preauthorized")
 	cmd.Flags().String("tailscale-key-description", "", "When auto-creating a Tailscale auth key, set key description")
 	cmd.Flags().Bool("nomad-use-tailscale-ip", false, "Set Nomad advertise address to the node's Tailscale IPv4; also works when Tailscale was configured manually")
+	cmd.Flags().String("nomad-advertise-ip", "", "Set Nomad advertise address to an explicit Tailscale IP")
 	cmd.Flags().String("package-install-method", packageInstallMethodStatic, "Install method for Nomad and Tailscale: static (default) or package-manager")
 	cmd.Flags().String("tailscale-install-method", "", "DEPRECATED: use --package-install-method")
 	_ = cmd.Flags().MarkHidden("tailscale-install-method")
@@ -171,6 +175,7 @@ func shouldRefreshNomadConfig(cmd *cobra.Command, nomadUseTailscaleIP bool) bool
 		"ca-file",
 		"cert-file",
 		"key-file",
+		"nomad-advertise-ip",
 	}
 	for _, name := range configFlags {
 		if cmd.Flags().Changed(name) {
@@ -292,11 +297,24 @@ func runPrintCommands(cmd *cobra.Command) error {
 	if devMode && len(serverJoin) > 0 {
 		return fmt.Errorf("--dev-mode cannot be combined with --server-join")
 	}
+	advertiseIP, _ := cmd.Flags().GetString("nomad-advertise-ip")
+	advertiseIP = strings.TrimSpace(advertiseIP)
+	aclBootstrap, _ := cmd.Flags().GetBool("acl-bootstrap")
+	if aclBootstrap {
+		aclEnabled, _ := cmd.Flags().GetBool("acl")
+		if !aclEnabled {
+			return fmt.Errorf("--acl-bootstrap requires --acl")
+		}
+		if skipStart {
+			return fmt.Errorf("--acl-bootstrap cannot be combined with --skip-start")
+		}
+	}
 	nodeCfg := NodeConfig{
 		Datacenter:       mustGetString(cmd, "datacenter"),
 		NodeClass:        mustGetString(cmd, "node-class"),
 		NetworkInterface: networkInterface,
 		ServerJoin:       serverJoin,
+		Servers:          make([]string, 0, len(serverJoin)),
 		HostVolumes:      hostVolumes,
 		Encrypt:          mustGetString(cmd, "encrypt"),
 		Address:          mustGetString(cmd, "address"),
@@ -305,9 +323,22 @@ func runPrintCommands(cmd *cobra.Command) error {
 		CertFile:         mustGetString(cmd, "cert-file"),
 		KeyFile:          mustGetString(cmd, "key-file"),
 	}
+	for _, addr := range serverJoin {
+		nodeCfg.Servers = append(nodeCfg.Servers, nomadClientServerAddr(addr))
+	}
 	nodeCfg.ACL, _ = cmd.Flags().GetBool("acl")
 	if cmd.Flags().Changed("advertise") && nomadUseTailscaleIP {
 		nomadUseTailscaleIP = false
+	}
+	if advertiseIP != "" {
+		if nodeCfg.Advertise != "" && nodeCfg.Advertise != advertiseIP {
+			return fmt.Errorf("--nomad-advertise-ip conflicts with --advertise")
+		}
+		nodeCfg.Advertise = advertiseIP
+	}
+	if nodeCfg.Address == "" && (nomadUseTailscaleIP || advertiseIP != "") {
+		// Bind all interfaces so Nomad API/UI is reachable on the Tailscale endpoint.
+		nodeCfg.Address = "0.0.0.0"
 	}
 	autoNomadAdvertise := nomadUseTailscaleIP && nodeCfg.Advertise == ""
 	if autoNomadAdvertise {
@@ -342,6 +373,7 @@ func runPrintCommands(cmd *cobra.Command) error {
 		tsKeyReusable,
 		tsKeyExpiry,
 		autoNomadAdvertise,
+		advertiseIP,
 		communityDrivers,
 		javaDriverCfg,
 		skipEnable,
@@ -542,11 +574,24 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	if devMode && len(serverJoin) > 0 {
 		return fmt.Errorf("--dev-mode cannot be combined with --server-join")
 	}
+	advertiseIP, _ := cmd.Flags().GetString("nomad-advertise-ip")
+	advertiseIP = strings.TrimSpace(advertiseIP)
+	aclBootstrap, _ := cmd.Flags().GetBool("acl-bootstrap")
+	if aclBootstrap {
+		aclEnabled, _ := cmd.Flags().GetBool("acl")
+		if !aclEnabled {
+			return fmt.Errorf("--acl-bootstrap requires --acl")
+		}
+		if skipStart {
+			return fmt.Errorf("--acl-bootstrap cannot be combined with --skip-start")
+		}
+	}
 	nodeCfg := NodeConfig{
 		Datacenter:       mustGetString(cmd, "datacenter"),
 		NodeClass:        mustGetString(cmd, "node-class"),
 		NetworkInterface: networkInterface,
 		ServerJoin:       serverJoin,
+		Servers:          make([]string, 0, len(serverJoin)),
 		HostVolumes:      hostVolumes,
 		Encrypt:          mustGetString(cmd, "encrypt"),
 		Address:          mustGetString(cmd, "address"),
@@ -555,13 +600,29 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		CertFile:         mustGetString(cmd, "cert-file"),
 		KeyFile:          mustGetString(cmd, "key-file"),
 	}
+	for _, addr := range serverJoin {
+		nodeCfg.Servers = append(nodeCfg.Servers, nomadClientServerAddr(addr))
+	}
 	nodeCfg.ACL, _ = cmd.Flags().GetBool("acl")
 	if cmd.Flags().Changed("advertise") && nomadUseTailscaleIP {
 		nomadUseTailscaleIP = false
 	}
+	if advertiseIP != "" {
+		if nodeCfg.Advertise != "" && nodeCfg.Advertise != advertiseIP {
+			return fmt.Errorf("--nomad-advertise-ip conflicts with --advertise")
+		}
+		nodeCfg.Advertise = advertiseIP
+	}
+	if nodeCfg.Address == "" && (nomadUseTailscaleIP || advertiseIP != "") {
+		// Bind all interfaces so Nomad API/UI is reachable on the Tailscale endpoint.
+		nodeCfg.Address = "0.0.0.0"
+	}
+	if advertiseIP == "" && nomadUseTailscaleIP && nodeCfg.Advertise == "" {
+		nodeCfg.Advertise = "${NOMAD_ADVERTISE}"
+	}
 
 	if dryRun {
-		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, devMode, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg)
+		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, devMode, aclBootstrap, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg)
 		return nil
 	}
 
@@ -702,6 +763,20 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 			fmt.Fprintf(w, "    Check: sudo journalctl -u nomad -n 50\n")
 		}
 	}
+
+	if aclBootstrap {
+		fmt.Fprintf(w, "\n  Bootstrapping Nomad ACL...\n")
+		token, err := bootstrapNomadACL(ctx, ex)
+		if err != nil {
+			return fmt.Errorf("acl bootstrap: %w", err)
+		}
+		fmt.Fprintf(w, "    ✓ ACL bootstrap complete\n")
+		fmt.Fprintf(w, "    Management token: %s\n", token)
+		fmt.Fprintf(w, "    Export for this shell: export NOMAD_TOKEN=%s\n", token)
+		if err := persistNomadContext(nodeCfg.Advertise, token); err != nil {
+			return fmt.Errorf("save nomad context: %w", err)
+		}
+	}
 	// 5. Post-setup driver installation (after node has joined and is healthy)
 	if communityDrivers.Requested() || localDrivers.Requested() || javaDriverCfg.Requested() {
 		if communityDrivers.Requested() {
@@ -791,9 +866,56 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
 	return fmt.Errorf("Nomad agent did not respond within 60s")
 }
 
+type nomadACLBootstrapResponse struct {
+	SecretID string `json:"SecretID"`
+}
+
+func bootstrapNomadACL(ctx context.Context, ex Executor) (string, error) {
+	var out strings.Builder
+	if err := ex.Run(ctx, "nomad acl bootstrap -json 2>/dev/null", &out); err != nil {
+		return "", err
+	}
+
+	raw := strings.TrimSpace(out.String())
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start == -1 || end == -1 || end < start {
+		return "", fmt.Errorf("unexpected bootstrap output: %q", raw)
+	}
+
+	var resp nomadACLBootstrapResponse
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &resp); err != nil {
+		return "", fmt.Errorf("parse bootstrap output: %w", err)
+	}
+	if strings.TrimSpace(resp.SecretID) == "" {
+		return "", fmt.Errorf("bootstrap output missing SecretID")
+	}
+	return resp.SecretID, nil
+}
+
+func persistNomadContext(advertiseAddr, token string) error {
+	if advertiseAddr == "" || token == "" {
+		return nil
+	}
+	cfg, err := appconfig.Load()
+	if err != nil {
+		return err
+	}
+	ctxName := cfg.ActiveContext
+	if ctxName == "" {
+		ctxName = "default"
+	}
+	ctx := cfg.Contexts[ctxName]
+	ctx.NomadAddr = "http://" + strings.TrimSpace(advertiseAddr) + ":4646"
+	ctx.NomadToken = token
+	cfg.Contexts[ctxName] = ctx
+	cfg.ActiveContext = ctxName
+	return cfg.Save()
+}
+
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
 
-func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, devMode bool, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, localDrivers localDriverInstallConfig, javaDriverCfg javaDriverInstallConfig) {
+func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, devMode bool, aclBootstrap bool, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, localDrivers localDriverInstallConfig, javaDriverCfg javaDriverInstallConfig) {
 	fmt.Fprintf(w, "\n  Dry-run plan:\n")
 	fmt.Fprintf(w, "    Target:       %s/%s\n", ex.OS(), ex.Arch())
 	fmt.Fprintf(w, "    Install mode: %s\n", packageInstallMethod)
@@ -801,6 +923,9 @@ func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTa
 		fmt.Fprintf(w, "    Nomad mode:   dev (soft onboarding)\n")
 	} else {
 		fmt.Fprintf(w, "    Nomad mode:   cluster client\n")
+	}
+	if aclBootstrap {
+		fmt.Fprintf(w, "    ACL:          enabled + bootstrap token output\n")
 	}
 	fmt.Fprintf(w, "    Datacenter:   %s\n", cfg.Datacenter)
 	if cfg.NodeClass != "" {

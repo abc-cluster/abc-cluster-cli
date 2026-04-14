@@ -54,6 +54,21 @@
   for schema evolution. Currently at v1. Future versions (v2, v3) will support automated migrations
   if the structure needs to change. Configs without a version field default to v1.
 
+### 0.3 Next Iteration Tracking (Planned)
+
+The following items are explicitly tracked for the next iteration:
+
+| Item | Scope | Target |
+|------|-------|--------|
+| Extend structured output contract | `infra compute probe` | Add `--output table|json` and `--json-path` for dispatch/probe result metadata |
+| Extend structured output contract | `job list`, `job show`, `job status` | Standardize `--output table|json` and path-filtered JSON output |
+| Shared output utility hardening | `cmd/*` common helpers | Promote reusable output helper package and unify error semantics |
+| JSON path capabilities | Structured output layer | Evaluate richer JSONPath support (quoted keys, filters) vs current lightweight parser |
+| Regression coverage | tests | Add command-level tests for output mode matrix (`table`, `json`, `json-path`) |
+
+Non-goal for this tracking item:
+- Replacing table UX defaults; table remains the default human-readable mode.
+
 ---
 
 ## 1. Global CLI Flags
