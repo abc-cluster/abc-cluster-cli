@@ -32,6 +32,18 @@ func loadParamsFile(path string) ([]string, error) {
 func flattenParams(prefix string, value any, out *[]string) error {
 	switch v := value.(type) {
 	case map[string]any:
+		if prefix == "meta" {
+			for k, x := range v {
+				*out = append(*out, fmt.Sprintf("--meta=%s=%v", k, x))
+			}
+			return nil
+		}
+		if prefix == "driver.config" {
+			for k, x := range v {
+				*out = append(*out, fmt.Sprintf("--driver.config.%s=%v", k, x))
+			}
+			return nil
+		}
 		for k, x := range v {
 			key := k
 			if prefix != "" {
@@ -42,6 +54,18 @@ func flattenParams(prefix string, value any, out *[]string) error {
 			}
 		}
 	case map[string]string:
+		if prefix == "meta" {
+			for k, x := range v {
+				*out = append(*out, fmt.Sprintf("--meta=%s=%s", k, x))
+			}
+			return nil
+		}
+		if prefix == "driver.config" {
+			for k, x := range v {
+				*out = append(*out, fmt.Sprintf("--driver.config.%s=%s", k, x))
+			}
+			return nil
+		}
 		for k, x := range v {
 			key := k
 			if prefix != "" {
