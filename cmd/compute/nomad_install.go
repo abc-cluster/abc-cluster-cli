@@ -20,7 +20,7 @@ const (
 	nomadReleasesBase   = "https://releases.hashicorp.com/nomad"
 	defaultNomadVersion = "1.11.3"
 
-	nomadSystemdUnit = `[Unit]
+	nomadSystemdUnitTemplate = `[Unit]
 Description=Nomad
 Documentation=https://developer.hashicorp.com/nomad/docs
 Wants=network-online.target
@@ -28,7 +28,7 @@ After=network-online.target
 
 [Service]
 ExecReload=/bin/kill -HUP $MAINPID
-ExecStart=/usr/local/bin/nomad agent -config /etc/nomad.d
+ExecStart=%s
 KillMode=process
 KillSignal=SIGINT
 LimitNOFILE=65536
@@ -43,7 +43,7 @@ TasksMax=infinity
 WantedBy=multi-user.target
 `
 
-	nomadLaunchdPlist = `<?xml version="1.0" encoding="UTF-8"?>
+	nomadLaunchdPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -53,6 +53,7 @@ WantedBy=multi-user.target
   <array>
     <string>/usr/local/bin/nomad</string>
     <string>agent</string>
+		%s
     <string>-config</string>
     <string>/etc/nomad.d</string>
   </array>
@@ -74,6 +75,7 @@ type NomadInstallConfig struct {
 	Version       string
 	InstallMethod string
 	NodeConfig    NodeConfig
+	DevMode       bool
 	SkipEnable    bool
 	SkipStart     bool
 }
@@ -118,7 +120,7 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 640 %s", cfgPath, cfgPath), io.Discard)
 		fmt.Fprintf(w, "    ✓ Config written to %s\n", cfgPath)
 
-		return registerPackageManagerNomadService(ctx, ex, goos, cfg.SkipEnable, cfg.SkipStart, w)
+		return registerPackageManagerNomadService(ctx, ex, goos, cfg.DevMode, cfg.SkipEnable, cfg.SkipStart, w)
 	}
 
 	version := cfg.Version
@@ -222,7 +224,7 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 	fmt.Fprintf(w, "    ✓ Config written to %s\n", cfgPath)
 
 	// Register and (optionally) start the service
-	return registerService(ctx, ex, goos, cfg.SkipEnable, cfg.SkipStart, w)
+	return registerService(ctx, ex, goos, cfg.DevMode, cfg.SkipEnable, cfg.SkipStart, w)
 }
 
 func ApplyNomadConfig(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io.Writer) error {
@@ -312,9 +314,12 @@ func installNomadPackageManagerLinux(ctx context.Context, ex Executor, w io.Writ
 	return nil
 }
 
-func registerPackageManagerNomadService(ctx context.Context, ex Executor, goos string, skipEnable, skipStart bool, w io.Writer) error {
+func registerPackageManagerNomadService(ctx context.Context, ex Executor, goos string, devMode, skipEnable, skipStart bool, w io.Writer) error {
+	if devMode {
+		return registerService(ctx, ex, goos, devMode, skipEnable, skipStart, w)
+	}
 	if goos != "linux" {
-		return registerService(ctx, ex, goos, skipEnable, skipStart, w)
+		return registerService(ctx, ex, goos, devMode, skipEnable, skipStart, w)
 	}
 	_ = ex.Run(ctx, "sudo systemctl daemon-reload", io.Discard)
 	if !skipEnable {
@@ -334,11 +339,11 @@ func registerPackageManagerNomadService(ctx context.Context, ex Executor, goos s
 }
 
 // registerService writes the service unit and starts Nomad per OS.
-func registerService(ctx context.Context, ex Executor, goos string, skipEnable, skipStart bool, w io.Writer) error {
+func registerService(ctx context.Context, ex Executor, goos string, devMode, skipEnable, skipStart bool, w io.Writer) error {
 	switch goos {
 	case "linux":
 		const unitPath = "/etc/systemd/system/nomad.service"
-		if err := ex.Upload(ctx, strings.NewReader(nomadSystemdUnit), unitPath, 0644); err != nil {
+		if err := ex.Upload(ctx, strings.NewReader(renderNomadSystemdUnit(devMode)), unitPath, 0644); err != nil {
 			return fmt.Errorf("upload systemd unit: %w", err)
 		}
 		_ = ex.Run(ctx, "sudo chown root:root "+unitPath, io.Discard)
@@ -359,7 +364,7 @@ func registerService(ctx context.Context, ex Executor, goos string, skipEnable, 
 
 	case "darwin":
 		const plistPath = "/Library/LaunchDaemons/nomad.plist"
-		if err := ex.Upload(ctx, strings.NewReader(nomadLaunchdPlist), plistPath, 0644); err != nil {
+		if err := ex.Upload(ctx, strings.NewReader(renderNomadLaunchdPlist(devMode)), plistPath, 0644); err != nil {
 			return fmt.Errorf("upload launchd plist: %w", err)
 		}
 		_ = ex.Run(ctx, "sudo chown root:wheel "+plistPath, io.Discard)
@@ -376,12 +381,32 @@ func registerService(ctx context.Context, ex Executor, goos string, skipEnable, 
 		binPath, _, cfgPath, _ := nomadPaths("windows")
 		fmt.Fprintf(w, "\n  Note: Automatic Windows Service registration is not yet supported.\n")
 		fmt.Fprintf(w, "  To start Nomad manually, run:\n")
-		fmt.Fprintf(w, "    \"%s\" agent -config \"%s\"\n", binPath, cfgPath)
+		args := "agent -config"
+		if devMode {
+			args = "agent -dev -config"
+		}
+		fmt.Fprintf(w, "    \"%s\" %s \"%s\"\n", binPath, args, cfgPath)
 		fmt.Fprintf(w, "  To register as a Windows Service:\n")
-		fmt.Fprintf(w, "    sc.exe create nomad binPath= \"\\\"%s\\\" agent -config \\\"%s\\\"\"\n", binPath, cfgPath)
+		fmt.Fprintf(w, "    sc.exe create nomad binPath= \"\\\"%s\\\" %s \\\"%s\\\"\"\n", binPath, args, cfgPath)
 		fmt.Fprintf(w, "    sc.exe start nomad\n")
 	}
 	return nil
+}
+
+func renderNomadSystemdUnit(devMode bool) string {
+	execStart := "/usr/local/bin/nomad agent -config /etc/nomad.d"
+	if devMode {
+		execStart = "/usr/local/bin/nomad agent -dev -config /etc/nomad.d"
+	}
+	return fmt.Sprintf(nomadSystemdUnitTemplate, execStart)
+}
+
+func renderNomadLaunchdPlist(devMode bool) string {
+	devArg := ""
+	if devMode {
+		devArg = "<string>-dev</string>"
+	}
+	return fmt.Sprintf(nomadLaunchdPlistTemplate, devArg)
 }
 
 // nomadPaths returns OS-specific installation paths.

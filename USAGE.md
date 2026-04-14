@@ -13,6 +13,7 @@ This document describes every command available in the `abc` CLI.
   - [auth whoami](#auth-whoami)
   - [auth token](#auth-token)
   - [auth refresh](#auth-refresh)
+- [context](#context)
 - [config](#config)
   - [config init](#config-init)
   - [config set](#config-set-key-value)
@@ -48,6 +49,8 @@ This document describes every command available in the `abc` CLI.
 - [data decrypt](#data-decrypt)
 - [data download](#data-download)
 - [infra compute add](#infra-compute-add)
+- [infra compute list](#infra-compute-list)
+- [infra compute show](#infra-compute-show)
 - [infra compute probe](#infra-compute-probe)
 - [infra storage size](#infra-storage-size)
 - [admin services nomad namespace](#admin-services-nomad-namespace)
@@ -218,6 +221,8 @@ contexts:
   org-a-za-cpt:
     endpoint: https://api.org-a.example
     access_token: eyJ...
+    cluster: dev-cluster
+    organization_id: org-dev
     workspace_id: ws-org-a-01
     region: za-cpt
 defaults:
@@ -262,6 +267,8 @@ $ abc config set contexts.myorg.endpoint https://api.myorg.example
 | `defaults.region` | Default region for all commands | `za-cpt` |
 | `contexts.<name>.endpoint` | API endpoint URL | `https://api.example.com` |
 | `contexts.<name>.access_token` | Access token | `eyJ...` |
+| `contexts.<name>.cluster` | Cluster ID/name | `dev-cluster` |
+| `contexts.<name>.organization_id` | Organization ID | `org-dev` |
 | `contexts.<name>.workspace_id` | Default workspace | `ws-org-a-01` |
 | `contexts.<name>.region` | Region override for this context | `za-cpt` |
 
@@ -302,6 +309,83 @@ $ abc config unset defaults.output
 
 $ abc config unset contexts.myorg.region
 ✓ Unset contexts.myorg.region
+```
+
+---
+
+## `context`
+
+Manage saved authentication contexts. Contexts are stored in `~/.abc/config.yaml` under `contexts.<name>`.
+
+Example config file:
+```yaml
+version: "1"
+active_context: dev
+contexts:
+  dev:
+    endpoint: "https://dev.abc-cluster.cloud"
+    access_token: "eyJ..."
+    cluster: "dev-cluster"
+    organization_id: "org-dev"
+    workspace_id: "ws-dev"
+    region: "za-cpt"
+  staging:
+    endpoint: "https://staging.abc-cluster.cloud"
+    access_token: "eyJ..."
+    cluster: "staging-cluster"
+    organization_id: "org-staging"
+    workspace_id: "ws-staging"
+    region: "eu-cpt"
+defaults:
+  output: "table"
+  region: "za-cpt"
+```
+
+### `context list`
+
+List all saved contexts and the active context.
+
+```bash
+$ abc context list
+```
+
+### `context show [name]`
+
+Show details for the active context or a named context.
+
+```bash
+$ abc context show
+$ abc context show org-a-za-cpt
+```
+
+### `context use <name>`
+
+Switch the active context.
+
+```bash
+$ abc context use org-a-za-cpt
+```
+
+### `context add <name>`
+
+Add a new named context and make it active.
+
+```bash
+$ abc context add dev \
+  --endpoint https://dev.abc-cluster.cloud \
+  --access-token "TOKEN" \
+  --cluster dev-cluster \
+  --organization-id org-dev \
+  --workspace-id ws-dev \
+  --region za-cpt
+```
+
+### `context delete <name>`
+
+Delete a saved context from the config file.
+
+```bash
+$ abc context delete org-a-za-cpt
 ```
 
 ---
@@ -1291,6 +1375,7 @@ Jump host support reads `~/.ssh/config` and resolves `ProxyJump` entries automat
 | `--datacenter`          | Nomad datacenter label                                 | `default`  |
 | `--node-class`          | Nomad node class label (optional)                      |            |
 | `--server-join`         | Nomad server address(es) to join (repeatable)          |            |
+| `--dev-mode`            | Run Nomad in local dev mode (soft onboarding; no cluster join) | `false` |
 | `--network-interface`   | Nomad client network interface                         | `tailscale0` when Tailscale is used |
 | `--host-volume`         | Nomad host volume `name=path[:read_only]` (repeatable) |            |
 | `--scratch-host-volume` | Configure default `scratch` host volume                | `true`     |
@@ -1352,6 +1437,9 @@ Before installing, `node add` validates:
 # Install on the current machine
 abc --sudo infra compute add --local --server-join 10.0.0.1:4647
 
+# Soft onboarding: local Nomad dev mode (no ABC cluster membership required)
+abc --sudo infra compute add --local --dev-mode
+
 # Install on a remote machine via SSH
 abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu --server-join 10.0.0.1:4647
 
@@ -1360,12 +1448,12 @@ abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu --password mypasswo
   --server-join 10.0.0.1:4647
 
 # Install via a bastion host
-abc --sudo infra node add --host 10.0.0.5 --user ubuntu \
+abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu \
   --jump-host bastion.example.com --jump-user ec2-user \
   --server-join 10.0.0.1:4647
 
 # Install with Tailscale auto-key creation
-abc --sudo infra node add --host 10.0.0.5 --user ubuntu \
+abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu \
   --tailscale --tailscale-key-ephemeral \
   --server-join 10.0.0.1:4647
 
@@ -1383,22 +1471,82 @@ abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu --dry-run
 
 ---
 
-## `infra compute probe`
+## `infra compute list`
 
-Test connectivity and readiness of a registered cluster compute resource. *(stub — not yet implemented)*
+List compute nodes. Requires `--sudo`.
 
 ```
-abc infra compute probe <compute-id> [flags]
+abc infra compute list [flags]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--output table\|json` | Output format | `table` |
+| `--json-path <path>` | When `--output=json`, print only one JSON path | |
+
+JSON path supports dot notation and array indices, for example: `0.Name`, `0.Datacenter`, `active_allocations[0].JobID`.
+
+```bash
+# Human-readable table
+abc --sudo infra compute list
+
+# Full JSON
+abc --sudo infra compute list --output json
+
+# Extract only first node name
+abc --sudo infra compute list --output json --json-path 0.Name
+```
+
+---
+
+## `infra compute show`
+
+Show one compute node. Requires `--sudo`.
+
+```
+abc infra compute show <node-id> [flags]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--output table\|json` | Output format | `table` |
+| `--json-path <path>` | When `--output=json`, print only one JSON path | |
+
+`--output json` returns a payload with:
+- `node`
+- `active_allocations`
+
+```bash
+# Full details as JSON
+abc --sudo infra compute show nomad-client-02 --output json
+
+# Extract eligibility only
+abc --sudo infra compute show nomad-client-02 --output json --json-path node.SchedulingEligibility
+```
+
+---
+
+## `infra compute probe`
+
+Run `abc-node-probe` on a specific node via a parameterized system Nomad job.
+
+```
+abc infra compute probe <node-id> [flags]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--ssh` | Test SSH connectivity |
-| `--drivers` | Test Nomad task driver availability on the node |
+| `--binary` | Path to `abc-node-probe` Linux binary to deploy |
+| `--jurisdiction` | Optional jurisdiction forwarded to probe |
+| `--skip-categories` | Optional comma-separated probe categories to skip |
+| `--json` | Request JSON-only probe output |
+| `--fail-fast` | Stop probe after first fail |
+| `--detach` | Submit probe and return without waiting for streamed logs |
+| `--wait-timeout` | Maximum wait time while streaming probe output |
 
 ```bash
-abc infra compute probe nomad-client-02
-abc infra compute probe nomad-client-02 --ssh --drivers
+abc --sudo infra compute probe nomad-client-02 --jurisdiction ZA
+abc --sudo infra compute probe nomad-client-02 --json --wait-timeout 2m
 ```
 
 ---

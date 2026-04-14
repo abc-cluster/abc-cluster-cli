@@ -54,6 +54,9 @@ Examples:
   abc infra compute add --local \
     --server-join=10.0.0.5 --node-class=workstation
 
+  # Local machine in Nomad dev mode (soft onboarding, no cluster membership)
+  abc infra compute add --local --dev-mode
+
   # Remote server via SSH jump/bastion host
   abc infra compute add --remote=10.10.0.50 --user=ubuntu \
     --jump-host=bastion.example.com --jump-user=ec2-user \
@@ -94,6 +97,7 @@ Examples:
 	cmd.Flags().String("datacenter", "default", "Nomad datacenter label")
 	cmd.Flags().String("node-class", "", "Nomad node class label (optional)")
 	cmd.Flags().StringArray("server-join", nil, "Nomad server address(es) to join (repeatable); maps to client.server_join.retry_join")
+	cmd.Flags().Bool("dev-mode", false, "Run Nomad agent in dev mode (soft onboarding, no server join required)")
 	cmd.Flags().String("network-interface", "", "Nomad client network_interface value (defaults to tailscale0 when using Tailscale)")
 	cmd.Flags().StringArray("host-volume", nil, "Nomad client host volume in name=path[:read_only] format (repeatable)")
 	cmd.Flags().Bool("scratch-host-volume", true, "Configure a default Nomad client host volume named scratch")
@@ -284,6 +288,10 @@ func runPrintCommands(cmd *cobra.Command) error {
 	}
 
 	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
+	devMode, _ := cmd.Flags().GetBool("dev-mode")
+	if devMode && len(serverJoin) > 0 {
+		return fmt.Errorf("--dev-mode cannot be combined with --server-join")
+	}
 	nodeCfg := NodeConfig{
 		Datacenter:       mustGetString(cmd, "datacenter"),
 		NodeClass:        mustGetString(cmd, "node-class"),
@@ -315,6 +323,7 @@ func runPrintCommands(cmd *cobra.Command) error {
 		Version:       nomadVersion,
 		InstallMethod: packageInstallMethod,
 		NodeConfig:    nodeCfg,
+		DevMode:       devMode,
 		SkipEnable:    skipEnable,
 		SkipStart:     skipStart,
 	}
@@ -529,6 +538,10 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 
 	// Collect Nomad config
 	serverJoin, _ := cmd.Flags().GetStringArray("server-join")
+	devMode, _ := cmd.Flags().GetBool("dev-mode")
+	if devMode && len(serverJoin) > 0 {
+		return fmt.Errorf("--dev-mode cannot be combined with --server-join")
+	}
 	nodeCfg := NodeConfig{
 		Datacenter:       mustGetString(cmd, "datacenter"),
 		NodeClass:        mustGetString(cmd, "node-class"),
@@ -548,7 +561,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	}
 
 	if dryRun {
-		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg)
+		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, devMode, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg)
 		return nil
 	}
 
@@ -654,6 +667,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		Version:       nomadVersion,
 		InstallMethod: packageInstallMethod,
 		NodeConfig:    nodeCfg,
+		DevMode:       devMode,
 		SkipEnable:    skipEnable,
 		SkipStart:     skipStart,
 	}
@@ -666,6 +680,12 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		if shouldRefreshNomadConfig(cmd, nomadUseTailscaleIP) {
 			fmt.Fprintf(w, "  Updating Nomad configuration.\n")
 			if err := ApplyNomadConfig(ctx, ex, installCfg, w); err != nil {
+				return err
+			}
+		}
+		if devMode || cmd.Flags().Changed("dev-mode") {
+			fmt.Fprintf(w, "  Reconfiguring Nomad service mode.\n")
+			if err := registerService(ctx, ex, ex.OS(), devMode, skipEnable, skipStart, w); err != nil {
 				return err
 			}
 		}
@@ -732,6 +752,11 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		slog.Int64("total_ms", time.Since(installStart).Milliseconds()),
 		slog.Bool("success", true),
 	)
+	if devMode {
+		fmt.Fprintf(w, "\n  Done. Nomad is running in dev mode for soft onboarding.\n")
+		fmt.Fprintf(w, "  Try: abc infra compute list --sudo --nomad-addr=http://127.0.0.1:4646\n")
+		return nil
+	}
 	fmt.Fprintf(w, "\n  Done. Run 'abc node list --sudo' to see the new node.\n")
 	return nil
 }
@@ -768,16 +793,23 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
 
-func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, localDrivers localDriverInstallConfig, javaDriverCfg javaDriverInstallConfig) {
+func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, devMode bool, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, localDrivers localDriverInstallConfig, javaDriverCfg javaDriverInstallConfig) {
 	fmt.Fprintf(w, "\n  Dry-run plan:\n")
 	fmt.Fprintf(w, "    Target:       %s/%s\n", ex.OS(), ex.Arch())
 	fmt.Fprintf(w, "    Install mode: %s\n", packageInstallMethod)
+	if devMode {
+		fmt.Fprintf(w, "    Nomad mode:   dev (soft onboarding)\n")
+	} else {
+		fmt.Fprintf(w, "    Nomad mode:   cluster client\n")
+	}
 	fmt.Fprintf(w, "    Datacenter:   %s\n", cfg.Datacenter)
 	if cfg.NodeClass != "" {
 		fmt.Fprintf(w, "    Node class:   %s\n", cfg.NodeClass)
 	}
 	if len(serverJoin) > 0 {
 		fmt.Fprintf(w, "    Server join:  %s\n", strings.Join(serverJoin, ", "))
+	} else if !devMode {
+		fmt.Fprintf(w, "    Server join:  none (node will not join a remote cluster)\n")
 	}
 	if cfg.NetworkInterface != "" {
 		fmt.Fprintf(w, "    Net iface:    %s\n", cfg.NetworkInterface)

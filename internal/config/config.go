@@ -13,10 +13,12 @@
 //	active_context: "org-a-za-cpt"
 //	contexts:
 //	  org-a-za-cpt:
-//	    endpoint:     "https://api.abc-cluster.io"
-//	    access_token: "eyJ..."
-//	    workspace_id: ""
-//	    region:       ""
+//	    endpoint:        "https://api.abc-cluster.io"
+//	    access_token:    "eyJ..."
+//	    cluster:         "dev-cluster"
+//	    organization_id: "org-dev"
+//	    workspace_id:    ""
+//	    region:          ""
 //	defaults:
 //	  output: "table"
 //	  region: ""
@@ -52,6 +54,8 @@ func DefaultConfigPath() string {
 type Context struct {
 	Endpoint    string `yaml:"endpoint"`
 	AccessToken string `yaml:"access_token"`
+	Cluster     string `yaml:"cluster,omitempty"`
+	OrgID       string `yaml:"organization_id,omitempty"`
 	WorkspaceID string `yaml:"workspace_id,omitempty"`
 	Region      string `yaml:"region,omitempty"`
 }
@@ -212,6 +216,10 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.Endpoint, true
 		case "access_token":
 			return ctx.AccessToken, true
+		case "cluster":
+			return ctx.Cluster, true
+		case "organization_id":
+			return ctx.OrgID, true
 		case "workspace_id":
 			return ctx.WorkspaceID, true
 		case "region":
@@ -252,6 +260,10 @@ func (c *Config) Set(key, value string) error {
 			ctx.Endpoint = value
 		case "access_token":
 			ctx.AccessToken = value
+		case "cluster":
+			ctx.Cluster = value
+		case "organization_id":
+			ctx.OrgID = value
 		case "workspace_id":
 			ctx.WorkspaceID = value
 		case "region":
@@ -298,6 +310,10 @@ func (c *Config) Unset(key string) error {
 			ctx.Endpoint = ""
 		case "access_token":
 			ctx.AccessToken = ""
+		case "cluster":
+			ctx.Cluster = ""
+		case "organization_id":
+			ctx.OrgID = ""
 		case "workspace_id":
 			ctx.WorkspaceID = ""
 		case "region":
@@ -321,6 +337,12 @@ func (c *Config) AllKeys() [][2]string {
 	for name, ctx := range c.Contexts {
 		out = append(out, [2]string{"contexts." + name + ".endpoint", ctx.Endpoint})
 		out = append(out, [2]string{"contexts." + name + ".access_token", maskToken(ctx.AccessToken)})
+		if ctx.Cluster != "" {
+			out = append(out, [2]string{"contexts." + name + ".cluster", ctx.Cluster})
+		}
+		if ctx.OrgID != "" {
+			out = append(out, [2]string{"contexts." + name + ".organization_id", ctx.OrgID})
+		}
 		if ctx.WorkspaceID != "" {
 			out = append(out, [2]string{"contexts." + name + ".workspace_id", ctx.WorkspaceID})
 		}
