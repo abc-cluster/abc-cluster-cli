@@ -1125,9 +1125,9 @@ Two encryption modes are supported:
 
 - **Managed** (default, not yet available): key is derived from your control-plane session token.
   Provides managed key storage and recovery. Requires an authenticated session.
-- **Unsafe** (`--unsafe-local`): key is derived from a locally-provided password and salt.
+- **Local** (`--crypt-password`): key is derived from a locally-provided password and salt.
   No key management — if you lose the password, your data cannot be recovered.
-  You accept this risk explicitly by passing `--unsafe-local`.
+  Credentials are automatically stored in `~/.abc/config.yaml` for reuse in future encryption/decryption operations.
 
 ```
 abc data encrypt <path> [flags]
@@ -1135,24 +1135,30 @@ abc data encrypt <path> [flags]
 
 | Flag               | Description                                                               |
 |--------------------|---------------------------------------------------------------------------|
-| `--unsafe-local`   | Encrypt with a locally-provided password instead of the managed key       |
-| `--crypt-password` | rclone crypt password (requires `--unsafe-local`)                        |
-| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe-local`)                |
+| `--unsafe-local`   | Use local mode with credentials from config; if password/salt are provided, they are written to config if missing |
+| `--crypt-password` | rclone crypt password (stored in config for future use)                  |
+| `--crypt-salt`     | rclone crypt salt / password2 (optional; only used with `--crypt-password`) |
 | `--output`         | Output file path (single-file encryption)                                 |
 | `--output-dir`     | Output directory (folder encryption)                                      |
 | `--progress`       | Show live progress bars (default: `true`)                                 |
 
 Output files are written with the `.bin` suffix by default.
 
+**Note:** Once crypt credentials are stored in the config file, they are automatically used for all subsequent `abc data encrypt` and `abc data decrypt` operations. If you need to change credentials, manually edit `~/.abc/config.yaml` to remove or update the `crypt_password` and `crypt_salt` fields under the `defaults:` section.
+
 ```bash
-# Local password (unsafe mode — key not managed)
-abc data encrypt ./data.csv --unsafe-local --crypt-password "secret"
-abc data encrypt ./dataset  --unsafe-local --crypt-password "secret" --crypt-salt "pepper"
+# First encryption with a local password — stored in config
+abc data encrypt ./data.csv --crypt-password "secret"
+abc data encrypt ./dataset  --crypt-password "secret" --crypt-salt "pepper"
+
+# Subsequent operations use stored credentials (no flags needed)
+abc data encrypt ./another.csv
+abc data decrypt ./encrypted.csv.bin
 ```
 
 Expected output:
 ```
-WARNING: --unsafe-local mode active. Encryption key is NOT managed by the control plane.
+WARNING: local encryption active. Encryption key is NOT managed by the control plane.
          If you lose your password, your data cannot be recovered.
 File encrypted successfully.
   Output: ./data.csv.bin
@@ -1167,7 +1173,8 @@ Decrypt a file or folder previously encrypted with `abc data encrypt` or rclone 
 Mirrors the two-mode model of `abc data encrypt`:
 
 - **Managed** (default, not yet available): key derived from control-plane session token.
-- **Unsafe** (`--unsafe-local`): decrypt with a locally-provided password — must match the password used during `--unsafe-local` encryption.
+- **Local** (`--crypt-password` or stored config): decrypt with a locally-provided password — must match the password used during encryption. 
+  Credentials can be stored in `~/.abc/config.yaml` and reused automatically.
 
 ```
 abc data decrypt <path> [flags]
@@ -1175,23 +1182,28 @@ abc data decrypt <path> [flags]
 
 | Flag               | Description                                                               |
 |--------------------|---------------------------------------------------------------------------|
-| `--unsafe-local`   | Decrypt with a locally-provided password instead of the managed key       |
-| `--crypt-password` | rclone crypt password (requires `--unsafe-local`)                        |
-| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe-local`)                |
+| `--unsafe-local`   | Use local mode with credentials from config; if password/salt are provided, they are written to config if missing |
+| `--crypt-password` | rclone crypt password (stored in config for future use)                  |
+| `--crypt-salt`     | rclone crypt salt / password2 (optional; only used with `--crypt-password`) |
 | `--output`         | Output file path (single-file decryption)                                 |
 | `--output-dir`     | Output directory (folder decryption)                                      |
 
 If `--output` is omitted, the `.bin` suffix is stripped from the filename. If the resulting path already exists, `.dec` is appended.
 
+**Note:** Once crypt credentials are stored in the config file, they are automatically used for all subsequent `abc data encrypt` and `abc data decrypt` operations. If you need to change credentials, manually edit `~/.abc/config.yaml` to remove or update the `crypt_password` and `crypt_salt` fields under the `defaults:` section.
+
 ```bash
-# Local password (unsafe mode — must match encryption password)
-abc data decrypt ./data.csv.bin --unsafe-local --crypt-password "secret"
-abc data decrypt ./data.csv.bin --unsafe-local --crypt-password "secret" --output ./data.csv
+# First decryption with a local password — stored in config
+abc data decrypt ./data.csv.bin --crypt-password "secret"
+
+# Subsequent decryption uses stored credentials (no flags needed)
+abc data decrypt ./another.bin
+abc data decrypt ./folder.bin --output-dir ./decrypted
 ```
 
 Expected output:
 ```
-WARNING: --unsafe-local mode active. Decrypting with locally-provided password (no key management).
+WARNING: local decryption active. Decrypting with locally-provided password (no key management).
 File decrypted successfully.
   Output: ./data.csv
 ```
