@@ -29,6 +29,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -36,6 +38,7 @@ import (
 // requireNomad skips the test if NOMAD_ADDR is not set or not reachable.
 func requireNomad(t *testing.T) string {
 	t.Helper()
+	ensureNomadEnv()
 	addr := os.Getenv("NOMAD_ADDR")
 	if addr == "" {
 		addr = "http://127.0.0.1:4646"
@@ -53,6 +56,26 @@ func requireNomad(t *testing.T) string {
 	}
 	resp.Body.Close()
 	return addr
+}
+
+// ensureNomadEnv uses the active abc config context when NOMAD_ADDR/TOKEN are unset.
+func ensureNomadEnv() {
+	addr := strings.TrimSpace(os.Getenv("NOMAD_ADDR"))
+	token := strings.TrimSpace(os.Getenv("NOMAD_TOKEN"))
+	if addr != "" && token != "" {
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return
+	}
+	ctx := cfg.ActiveCtx()
+	if addr == "" && strings.TrimSpace(ctx.NomadAddr) != "" {
+		_ = os.Setenv("NOMAD_ADDR", strings.TrimSpace(ctx.NomadAddr))
+	}
+	if token == "" && strings.TrimSpace(ctx.NomadToken) != "" {
+		_ = os.Setenv("NOMAD_TOKEN", strings.TrimSpace(ctx.NomadToken))
+	}
 }
 
 // testNamespace returns the namespace to use for integration tests.
@@ -139,6 +162,12 @@ func extractJobID(t *testing.T, out string) string {
 		if strings.Contains(line, "Job submitted:") {
 			parts := strings.Fields(line)
 			if len(parts) >= 3 {
+				return parts[len(parts)-1]
+			}
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "Nomad job ID") {
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
 				return parts[len(parts)-1]
 			}
 		}
