@@ -28,7 +28,7 @@
 | Expand service health list (xtdb, supabase, tailscale, khan) | ✅ Done | `cmd/service/cmd.go` |
 | Add `--ssh`/`--ssh-timeout` flags to `abc job run` | ✅ Done | `cmd/job/run.go` (stub) |
 | Add `--with-data`/`--with-jobs` flags to `abc pipeline delete` | ✅ Done | `cmd/pipeline/delete.go` (stubs) |
-| Add `abc infra node probe` stub | ✅ Done | `cmd/node/probe.go` |
+| Add `abc infra compute probe` stub | ✅ Done | `cmd/compute/probe.go` |
 | Add `abc job trace` stub | ✅ Done | `cmd/job/trace.go` |
 | Add `abc pipeline params` stub | ✅ Done | `cmd/pipeline/params.go` |
 | Restore `abc auth` command group | ✅ Done | `cmd/auth/cmd.go` |
@@ -45,6 +45,8 @@
 - **`abc admin services`** holds service health checks (ping, version) and Nomad resource management
   (namespace). Organized as: `abc admin services ping`, `abc admin services version`,
   `abc admin services nomad namespace <subcommand>`.
+  **Note:** The goal is not to provide full-fledged API clients or duplicate existing service APIs,
+  but to build just enough functionality to test our use-cases for the ABC-cluster platform.
 - **`abc infra`** holds infrastructure operations (node, storage).
 - **Stubs** are real cobra commands that return `"not yet implemented"`. They appear in help, are
   discoverable, and give the right shape for future implementation.
@@ -90,7 +92,7 @@ All flags are defined as persistent flags on the root command and available on e
 | Tier | Flag | Scope | Required for |
 |------|------|-------|-------------|
 | 0 — user | *(none)* | Own namespace, own jobs | `submit`, `pipeline`, `job`, `data`, `module` |
-| 1 — cluster-admin | `--sudo` | Namespace-wide or cluster-wide | `admin services nomad namespace create/delete`, `infra node add/drain` |
+| 1 — cluster-admin | `--sudo` | Namespace-wide or cluster-wide | `admin services nomad namespace create/delete`, `infra compute add/drain` |
 | 2 — infrastructure | `--cloud` | Fleet-wide, cloud provider APIs | `cluster provision/decommission`, `cost set` |
 | 3 — impersonation | `--sudo --user <email>` | Acts as another user | Admin only — sends `X-ABC-As-User` |
 
@@ -802,7 +804,7 @@ Translate SLURM/PBS script to `#ABC` directives.
 
 ## 9. `abc infra`
 
-### `abc infra node add`
+### `abc infra compute add`
 
 Requires `--sudo`. Runs preflight, installs Nomad, registers node.
 
@@ -869,18 +871,18 @@ Requires `--sudo`. Runs preflight, installs Nomad, registers node.
   Node registered as nomad-client-03 in datacenter dc1.
 ```
 
-### `abc infra node probe <node-id>` *(stub)*
+### `abc infra compute probe <compute-id>` *(stub)*
 
 ```
-abc infra node probe <node-id> [--ssh] [--drivers]
+abc infra compute probe <compute-id> [--ssh] [--drivers]
 ```
 
 **Expected output:**
 ```
-  abc infra node probe "nomad-client-02": not yet implemented.
+  abc infra compute probe "nomad-client-02": not yet implemented.
 ```
 
-### `abc infra node list`
+### `abc infra compute list`
 
 **Expected output:**
 ```
@@ -889,15 +891,15 @@ abc infra node probe <node-id> [--ssh] [--drivers]
   def456gh               nomad-client-02     ready     dc1
 ```
 
-### `abc infra node drain <node-id>`
+### `abc infra compute drain <node-id>`
 
 Marks node as ineligible and drains allocations.
 
-### `abc infra node undrain <node-id>`
+### `abc infra compute undrain <node-id>`
 
 Marks node as eligible again.
 
-### `abc infra node terminate <node-id>`
+### `abc infra compute terminate <node-id>`
 
 Force-terminates a node (requires `--sudo`).
 
@@ -956,6 +958,17 @@ Read operations are available to all users. `cost set` requires `--cloud`.
 ---
 
 ## 11. `abc admin`
+
+### Services Scope
+
+The `abc admin services` command group provides tools for:
+- **Service health checks** (ping, version) — verify connectivity and versions of backend services
+- **Nomad resource management** (namespace, node) — manage Nomad-specific resources and test Nomad-specific operations
+
+**Design principle:** This group is not intended to provide full-fledged API clients or duplicate
+existing service APIs. Instead, it builds just enough functionality to test our use-cases and
+verify the ABC-cluster platform's operational integrity. As the platform evolves, commands here
+may be promoted to top-level groups or removed if their use-cases are superseded.
 
 ### `abc admin services ping <service>`
 
@@ -1279,7 +1292,7 @@ a "not yet implemented" message at runtime.
 
 | Command | Stub location | Next step |
 |---------|---------------|-----------|
-| `abc infra node probe` | `cmd/node/probe.go` | Implement SSH probe + driver check |
+| `abc infra compute probe` | `cmd/compute/probe.go` | Implement SSH probe + driver check |
 | `abc job trace` | `cmd/job/trace.go` | Implement alloc event streaming |
 | `abc pipeline params` | `cmd/pipeline/params.go` | Implement schema fetch + merge |
 | `abc job run --ssh` | `cmd/job/run.go` (flag declared) | Implement `nomad alloc exec` |
@@ -1299,7 +1312,7 @@ a "not yet implemented" message at runtime.
 | `job` | `cmd/job/` | `abc job *` |
 | `data` | `cmd/data/` | `abc data *` |
 | `infra` | `cmd/infra/` | `abc infra` (group only) |
-| `node` | `cmd/node/` | `abc infra node *` |
+| `compute` | `cmd/compute/` | `abc infra compute *` |
 | `storage` | `cmd/storage/` | `abc infra storage *` |
 | `admin` | `cmd/admin/` | `abc admin` (group + app subgroup) |
 | `service` | `cmd/service/` | `abc admin services *` + `abc status` |
@@ -1319,7 +1332,7 @@ a "not yet implemented" message at runtime.
 | `abc config init/set/get` | §1 | High — context-aware config |
 | `abc context list/use` | §1 | High — multi-cluster support |
 | `abc chat [--prompt <text>]` | §0.14 | High — AI assistant entry point |
-| `abc infra node ssh <id>` | §0.9 | Medium — moved from top-level `abc ssh` |
+| `abc infra compute ssh <id>` | §0.9 | Medium — moved from top-level `abc ssh` |
 | `abc job run --ssh` (fully) | §0.6 | Medium — `nomad alloc exec` interactive |
 | `abc pipeline monitor <id>` | §0.8 | Medium — streaming status updates |
 | `abc workspace *` | §1 | Medium — multi-workspace support |

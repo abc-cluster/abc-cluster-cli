@@ -47,8 +47,8 @@ This document describes every command available in the `abc` CLI.
 - [data encrypt](#data-encrypt)
 - [data decrypt](#data-decrypt)
 - [data download](#data-download)
-- [infra node add](#infra-node-add)
-- [infra node probe](#infra-node-probe)
+- [infra compute add](#infra-compute-add)
+- [infra compute probe](#infra-compute-probe)
 - [infra storage size](#infra-storage-size)
 - [admin services nomad namespace](#admin-services-nomad-namespace)
 - [cluster](#cluster)
@@ -84,7 +84,7 @@ These flags are available on every `abc` command.
 | Flag      | Scope               | Required for                                   |
 |-----------|---------------------|------------------------------------------------|
 | *(none)*  | User operations     | pipeline, job, data, module, submit                           |
-| `--sudo`  | Cluster-admin       | `admin services nomad namespace create/delete`, `infra node add/drain`   |
+| `--sudo`  | Cluster-admin       | `admin services nomad namespace create/delete`, `infra compute add/drain`   |
 | `--cloud` | Infrastructure      | `cluster provision/decommission`, `cost set`                  |
 | `--user`  | Impersonation       | Act as another user (admin-only; forwarded as `X-ABC-As-User`)|
 | `--exp`   | Experimental        | Community task drivers, unreleased features                   |
@@ -1227,15 +1227,15 @@ abc data download --params-file fetchngs-params.yaml
 
 ---
 
-## `infra node add`
+## `infra compute add`
 
-Add a compute node to the cluster. Runs preflight checks, installs Nomad (and optionally
-Tailscale and community task drivers), and registers the node.
+Add a compute resource to the cluster. Runs preflight checks, installs Nomad (and optionally
+Tailscale and community task drivers), and registers the resource.
 
 Requires `--sudo`.
 
 ```
-abc infra node add [flags]
+abc infra compute add [flags]
 ```
 
 ### Transport mode (one required)
@@ -1332,13 +1332,13 @@ Before installing, `node add` validates:
 
 ```bash
 # Install on the current machine
-abc --sudo infra node add --local --server-join 10.0.0.1:4647
+abc --sudo infra compute add --local --server-join 10.0.0.1:4647
 
 # Install on a remote machine via SSH
-abc --sudo infra node add --remote 10.0.0.5 --user ubuntu --server-join 10.0.0.1:4647
+abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu --server-join 10.0.0.1:4647
 
 # Install with password auth (no SSH key)
-abc --sudo infra node add --remote 10.0.0.5 --user ubuntu --password mypassword \
+abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu --password mypassword \
   --server-join 10.0.0.1:4647
 
 # Install via a bastion host
@@ -1352,25 +1352,25 @@ abc --sudo infra node add --host 10.0.0.5 --user ubuntu \
   --server-join 10.0.0.1:4647
 
 # Generate a self-contained install script (no execution)
-abc --sudo infra node add --remote 10.0.0.5 --print-commands > install.sh
+abc --sudo infra compute add --remote 10.0.0.5 --print-commands > install.sh
 
 # Install with community containerd driver (experimental)
-abc --sudo --exp infra node add --remote 10.0.0.5 --user ubuntu \
+abc --sudo --exp infra compute add --remote 10.0.0.5 --user ubuntu \
   --community-driver containerd \
   --server-join 10.0.0.1:4647
 
 # Dry-run — show what would be executed
-abc --sudo infra node add --remote 10.0.0.5 --user ubuntu --dry-run
+abc --sudo infra compute add --remote 10.0.0.5 --user ubuntu --dry-run
 ```
 
 ---
 
-## `infra node probe`
+## `infra compute probe`
 
-Test connectivity and readiness of a registered cluster node. *(stub — not yet implemented)*
+Test connectivity and readiness of a registered cluster compute resource. *(stub — not yet implemented)*
 
 ```
-abc infra node probe <node-id> [flags]
+abc infra compute probe <compute-id> [flags]
 ```
 
 | Flag | Description |
@@ -1379,8 +1379,8 @@ abc infra node probe <node-id> [flags]
 | `--drivers` | Test Nomad task driver availability on the node |
 
 ```bash
-abc infra node probe nomad-client-02
-abc infra node probe nomad-client-02 --ssh --drivers
+abc infra compute probe nomad-client-02
+abc infra compute probe nomad-client-02 --ssh --drivers
 ```
 
 ---

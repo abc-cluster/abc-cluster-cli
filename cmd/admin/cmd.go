@@ -6,7 +6,7 @@
 package admin
 
 import (
-	"github.com/abc-cluster/abc-cluster-cli/cmd/namespace"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nomad"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/spf13/cobra"
 )
@@ -30,30 +30,12 @@ func NewCmd() *cobra.Command {
 	svcCmd.Use = "services"
 	svcCmd.Short = "Inspect backend service health and versions"
 	
-	// Add nomad sub-group under services
-	svcCmd.AddCommand(newNomadCmd())
+	// Add nomad sub-group under services (for Nomad-specific operations)
+	svcCmd.AddCommand(nomad.NewCmd())
 	cmd.AddCommand(svcCmd)
 
 	// app sub-group — application-level entity management.
 	cmd.AddCommand(newAppCmd())
-
-	return cmd
-}
-
-// newNomadCmd returns the "nomad" subcommand group for Nomad-specific operations.
-func newNomadCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "nomad",
-		Short: "Manage Nomad resources: namespaces",
-		Long: `Commands for managing Nomad resources on the ABC-cluster platform.
-
-  abc admin services nomad namespace list            List all Nomad namespaces
-  abc admin services nomad namespace create --sudo   Create a Nomad namespace
-  abc admin services nomad namespace delete --sudo   Delete a Nomad namespace`,
-	}
-
-	// namespace — maps to abc admin services nomad namespace <subcommand>
-	cmd.AddCommand(namespace.NewCmd())
 
 	return cmd
 }
