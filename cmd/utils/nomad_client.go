@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
@@ -69,6 +70,17 @@ func NewNomadClient(addr, token, region string) *NomadClient {
 		region: region,
 		http:   &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// NomadDefaultsFromConfig returns node-specific Nomad defaults stored in the
+// active abc config context.
+func NomadDefaultsFromConfig() (addr, token, region string) {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return "", "", ""
+	}
+	active := cfg.ActiveCtx()
+	return active.NomadAddr, active.NomadToken, active.Region
 }
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -213,29 +225,29 @@ type NomadNodeResource struct {
 
 // NomadNodeStub is a lightweight summary returned by GET /v1/nodes.
 type NomadNodeStub struct {
-	ID                   string `json:"ID"`
-	Name                 string `json:"Name"`
-	Datacenter           string `json:"Datacenter"`
-	NodeClass            string `json:"NodeClass"`
-	Status               string `json:"Status"`
-	Drain                bool   `json:"Drain"`
+	ID                    string `json:"ID"`
+	Name                  string `json:"Name"`
+	Datacenter            string `json:"Datacenter"`
+	NodeClass             string `json:"NodeClass"`
+	Status                string `json:"Status"`
+	Drain                 bool   `json:"Drain"`
 	SchedulingEligibility string `json:"SchedulingEligibility"`
 }
 
 // NomadNode represents full node details from GET /v1/node/<id>.
 type NomadNode struct {
-	ID                   string            `json:"ID"`
-	Name                 string            `json:"Name"`
-	Datacenter           string            `json:"Datacenter"`
-	Region               string            `json:"Region"`
-	NodeClass            string            `json:"NodeClass"`
-	Status               string            `json:"Status"`
-	Drain                bool              `json:"Drain"`
-	SchedulingEligibility string           `json:"SchedulingEligibility"`
-	Attributes           map[string]string `json:"Attributes"`
-	NodeResources        *NomadNodeResource `json:"NodeResources"`
-	ReservedResources    *NomadNodeResource `json:"ReservedResources"`
-	Drivers              map[string]NomadDriverInfo `json:"Drivers"`
+	ID                    string                     `json:"ID"`
+	Name                  string                     `json:"Name"`
+	Datacenter            string                     `json:"Datacenter"`
+	Region                string                     `json:"Region"`
+	NodeClass             string                     `json:"NodeClass"`
+	Status                string                     `json:"Status"`
+	Drain                 bool                       `json:"Drain"`
+	SchedulingEligibility string                     `json:"SchedulingEligibility"`
+	Attributes            map[string]string          `json:"Attributes"`
+	NodeResources         *NomadNodeResource         `json:"NodeResources"`
+	ReservedResources     *NomadNodeResource         `json:"ReservedResources"`
+	Drivers               map[string]NomadDriverInfo `json:"Drivers"`
 }
 
 // NomadDriverInfo is a simplified driver status entry.
@@ -551,8 +563,8 @@ func (c *NomadClient) DrainNode(ctx context.Context, nodeID string, enable bool,
 		IgnoreSystemJobs bool  `json:"IgnoreSystemJobs"`
 	}
 	type drainReq struct {
-		DrainSpec     drainSpec `json:"DrainSpec"`
-		MarkEligible  bool      `json:"MarkEligible"`
+		DrainSpec    drainSpec `json:"DrainSpec"`
+		MarkEligible bool      `json:"MarkEligible"`
 	}
 	var body interface{}
 	if enable {

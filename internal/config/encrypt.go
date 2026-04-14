@@ -5,14 +5,15 @@
 // invoke 'abc secrets' with --unsafe-local flag to encrypt/decrypt secrets.
 //
 // Environment Variables:
-//   ABC_CRYPT_PASSWORD  — encryption password (required for --unsafe-local operations)
-//   ABC_CRYPT_SALT      — optional salt for key derivation (same as data encryption)
+//
+//	ABC_CRYPT_PASSWORD  — encryption password (required for --unsafe-local operations)
+//	ABC_CRYPT_SALT      — optional salt for key derivation (same as data encryption)
 //
 // Secrets are stored in the config file under the 'secrets' section:
 //
-//   secrets:
-//     my-api-key: "ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]"
-//     db-password: "ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]"
+//	secrets:
+//	  my-api-key: "ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]"
+//	  db-password: "ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]"
 //
 // This module exports functions for use by cmd/secrets/ subcommand:
 // - EncryptField: Encrypt a single value
@@ -170,7 +171,7 @@ func EncryptConfigFields(configYAML string, password, salt string) (string, erro
 
 	hasEncrypted := false
 
-	// Encrypt access_token fields in all contexts
+	// Encrypt access_token and nomad_token fields in all contexts
 	if contexts, ok := data["contexts"].(map[string]interface{}); ok {
 		for _, ctxInterface := range contexts {
 			if ctx, ok := ctxInterface.(map[string]interface{}); ok {
@@ -182,6 +183,14 @@ func EncryptConfigFields(configYAML string, password, salt string) (string, erro
 					ctx["access_token"] = encrypted
 					hasEncrypted = true
 				}
+				if token, ok := ctx["nomad_token"].(string); ok && token != "" {
+					encrypted, err := EncryptField(token, password, salt)
+					if err != nil {
+						return "", fmt.Errorf("encrypt nomad_token: %w", err)
+					}
+					ctx["nomad_token"] = encrypted
+					hasEncrypted = true
+				}
 			}
 		}
 	}
@@ -190,11 +199,11 @@ func EncryptConfigFields(configYAML string, password, salt string) (string, erro
 	if hasEncrypted {
 		if sopsData, ok := data["sops"].(map[string]interface{}); !ok {
 			data["sops"] = map[string]interface{}{
-				"encrypted_regex": "^(contexts\\..*\\.access_token)$",
+				"encrypted_regex": "^(contexts\\..*\\.(access_token|nomad_token))$",
 				"version":         "3.7.0",
 			}
 		} else {
-			sopsData["encrypted_regex"] = "^(contexts\\..*\\.access_token)$"
+			sopsData["encrypted_regex"] = "^(contexts\\..*\\.(access_token|nomad_token))$"
 			sopsData["version"] = "3.7.0"
 		}
 	}
@@ -216,7 +225,7 @@ func DecryptConfigFields(configYAML string, password, salt string) (string, erro
 		return "", fmt.Errorf("parse YAML: %w", err)
 	}
 
-	// Try to decrypt access_token fields in all contexts
+	// Try to decrypt access_token and nomad_token fields in all contexts
 	if contexts, ok := data["contexts"].(map[string]interface{}); ok {
 		for _, ctxInterface := range contexts {
 			if ctx, ok := ctxInterface.(map[string]interface{}); ok {
@@ -227,6 +236,12 @@ func DecryptConfigFields(configYAML string, password, salt string) (string, erro
 						ctx["access_token"] = decrypted
 					}
 					// Silently ignore decryption errors (token might be plaintext)
+				}
+				if token, ok := ctx["nomad_token"].(string); ok && token != "" {
+					decrypted, err := DecryptField(token, password, salt)
+					if err == nil {
+						ctx["nomad_token"] = decrypted
+					}
 				}
 			}
 		}

@@ -2,6 +2,10 @@
 //
 // The config file is stored at ~/.abc/config.yaml by default.
 // The location can be overridden with the ABC_CONFIG_FILE environment variable.
+// Package config manages the abc-cluster CLI configuration file.
+//
+// The config file is stored at ~/.abc/config.yaml by default.
+// The location can be overridden with the ABC_CONFIG_FILE environment variable.
 //
 // Schema versioning:
 // The config file includes a version field for forward/backward compatibility.
@@ -19,6 +23,8 @@
 //	    organization_id: "org-dev"
 //	    workspace_id:    ""
 //	    region:          ""
+//	    nomad_addr:      "http://100.70.185.46:4646"
+//	    nomad_token:     "s.123..."
 //	defaults:
 //	  output: "table"
 //	  region: ""
@@ -58,14 +64,16 @@ type Context struct {
 	OrgID       string `yaml:"organization_id,omitempty"`
 	WorkspaceID string `yaml:"workspace_id,omitempty"`
 	Region      string `yaml:"region,omitempty"`
+	NomadAddr   string `yaml:"nomad_addr,omitempty"`
+	NomadToken  string `yaml:"nomad_token,omitempty"`
 }
 
 // Defaults holds user-level default values.
 type Defaults struct {
-	Output       string `yaml:"output,omitempty"`
-	Region       string `yaml:"region,omitempty"`
+	Output        string `yaml:"output,omitempty"`
+	Region        string `yaml:"region,omitempty"`
 	CryptPassword string `yaml:"crypt_password,omitempty"`
-	CryptSalt    string `yaml:"crypt_salt,omitempty"`
+	CryptSalt     string `yaml:"crypt_salt,omitempty"`
 }
 
 // Config is the in-memory representation of ~/.abc/config.yaml.
@@ -125,7 +133,6 @@ func LoadFrom(path string) (*Config, error) {
 	if cfg.Secrets == nil {
 		cfg.Secrets = map[string]string{}
 	}
-	// Default to v1 if not specified
 	if cfg.Version == "" {
 		cfg.Version = CurrentVersion
 	}
@@ -144,7 +151,6 @@ func (c *Config) SaveTo(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	// Ensure version is always set to current
 	if c.Version == "" {
 		c.Version = CurrentVersion
 	}
@@ -224,6 +230,10 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.WorkspaceID, true
 		case "region":
 			return ctx.Region, true
+		case "nomad_addr":
+			return ctx.NomadAddr, true
+		case "nomad_token":
+			return ctx.NomadToken, true
 		}
 	}
 	return "", false
@@ -268,6 +278,10 @@ func (c *Config) Set(key, value string) error {
 			ctx.WorkspaceID = value
 		case "region":
 			ctx.Region = value
+		case "nomad_addr":
+			ctx.NomadAddr = value
+		case "nomad_token":
+			ctx.NomadToken = value
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
@@ -318,6 +332,10 @@ func (c *Config) Unset(key string) error {
 			ctx.WorkspaceID = ""
 		case "region":
 			ctx.Region = ""
+		case "nomad_addr":
+			ctx.NomadAddr = ""
+		case "nomad_token":
+			ctx.NomadToken = ""
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
@@ -348,6 +366,12 @@ func (c *Config) AllKeys() [][2]string {
 		}
 		if ctx.Region != "" {
 			out = append(out, [2]string{"contexts." + name + ".region", ctx.Region})
+		}
+		if ctx.NomadAddr != "" {
+			out = append(out, [2]string{"contexts." + name + ".nomad_addr", ctx.NomadAddr})
+		}
+		if ctx.NomadToken != "" {
+			out = append(out, [2]string{"contexts." + name + ".nomad_token", maskToken(ctx.NomadToken)})
 		}
 	}
 	return out

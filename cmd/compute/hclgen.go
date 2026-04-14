@@ -2,6 +2,7 @@ package compute
 
 import (
 	"bytes"
+	"net"
 	"sort"
 	"strings"
 
@@ -60,6 +61,7 @@ type NodeConfig struct {
 	NetworkInterface              string
 	CNIPath                       string
 	ServerJoin                    []string // --server-join addresses → client/server server_join.retry_join
+	Servers                       []string
 	HostVolumes                   []NomadHostVolume
 	EnableContainerdDriver        bool
 	EnableExec2Driver             bool
@@ -134,6 +136,13 @@ func GenerateClientHCL(cfg NodeConfig) string {
 		sjBody := clientBody.AppendNewBlock("server_join", nil).Body()
 		sjBody.SetAttributeValue("retry_join", cty.ListVal(addrs))
 	}
+	if len(cfg.Servers) > 0 {
+		addrs := make([]cty.Value, len(cfg.Servers))
+		for i, a := range cfg.Servers {
+			addrs[i] = cty.StringVal(a)
+		}
+		clientBody.SetAttributeValue("servers", cty.ListVal(addrs))
+	}
 	for _, v := range cfg.HostVolumes {
 		name := strings.TrimSpace(v.Name)
 		path := strings.TrimSpace(v.Path)
@@ -147,7 +156,7 @@ func GenerateClientHCL(cfg NodeConfig) string {
 	root.AppendNewline()
 
 	// Server stanza (advanced — omitted for pure client nodes)
-	if cfg.ServerMode {
+	if cfg.ServerMode || len(cfg.ServerJoin) > 0 {
 		serverBody := root.AppendNewBlock("server", nil).Body()
 		serverBody.SetAttributeValue("enabled", cty.BoolVal(true))
 		if len(cfg.ServerJoin) > 0 {
@@ -194,6 +203,22 @@ func GenerateClientHCL(cfg NodeConfig) string {
 	}
 	base := string(bytes.TrimRight(f.Bytes(), "\n")) + "\n"
 	return base + "\n" + externalTaskDriverNotes()
+}
+
+func nomadClientServerAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	if strings.Contains(addr, ":") {
+		if _, _, err := net.SplitHostPort(addr); err == nil {
+			return addr
+		}
+		if strings.Count(addr, ":") > 1 && !strings.HasPrefix(addr, "[") {
+			return "[" + addr + "]:4647"
+		}
+	}
+	return addr + ":4647"
 }
 
 func hostVolumePaths(volumes []NomadHostVolume) []string {

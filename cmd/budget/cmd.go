@@ -53,6 +53,18 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 	if region == "" {
 		region, _ = cmd.Root().PersistentFlags().GetString("region")
 	}
+	if addr == "" || token == "" || region == "" {
+		cfgAddr, cfgToken, cfgRegion := utils.NomadDefaultsFromConfig()
+		if addr == "" {
+			addr = cfgAddr
+		}
+		if token == "" {
+			token = cfgToken
+		}
+		if region == "" {
+			region = cfgRegion
+		}
+	}
 	return utils.NewNomadClient(addr, token, region).
 		WithSudo(utils.SudoFromCmd(cmd)).
 		WithCloud(utils.CloudFromCmd(cmd))
@@ -64,4 +76,3 @@ func requireCloud(cmd *cobra.Command) error {
 	}
 	return nil
 }
-

@@ -30,6 +30,7 @@ func printSetupScript(
 	tsKeyEphemeral, tsKeyReusable bool,
 	tsKeyExpiry time.Duration,
 	autoNomadAdvertise bool,
+	nomadAdvertiseIP string,
 	communityDrivers communityDriverInstallConfig,
 	javaDriverCfg javaDriverInstallConfig,
 	skipEnable, skipStart bool,
@@ -53,7 +54,7 @@ func printSetupScript(
 	binPath, cfgDir, cfgPath, dataDir := nomadPaths(goos)
 	hostVolumeDirs := hostVolumePaths(cfg.NodeConfig.HostVolumes)
 	hclContent := GenerateClientHCL(cfg.NodeConfig)
-	if autoNomadAdvertise {
+	if autoNomadAdvertise && nomadAdvertiseIP == "" {
 		hclContent = strings.ReplaceAll(hclContent, "$${NOMAD_ADVERTISE}", "${NOMAD_ADVERTISE}")
 	}
 
