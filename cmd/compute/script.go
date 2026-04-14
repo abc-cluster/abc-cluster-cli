@@ -359,9 +359,6 @@ func printWindowsScript(w io.Writer, version, releaseOS, releaseArch, binPath, c
 	fmt.Fprintf(w, "# ── 5. Service registration ─────────────────────────────────────────────────\n")
 	fmt.Fprintf(w, "# Windows Service registration (run as Administrator):\n")
 	agentArgs := "agent -config"
-	if devMode {
-		agentArgs = "agent -dev -config"
-	}
 	fmt.Fprintf(w, "#   sc.exe create nomad binPath= \"\\\"%s\\\" %s \\\"%s\\\"\"\n", binPath, agentArgs, cfgPath)
 	if !skipStart {
 		fmt.Fprintf(w, "#   sc.exe start nomad\n")

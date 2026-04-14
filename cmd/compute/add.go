@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -322,6 +323,7 @@ func runPrintCommands(cmd *cobra.Command) error {
 		CAFile:           mustGetString(cmd, "ca-file"),
 		CertFile:         mustGetString(cmd, "cert-file"),
 		KeyFile:          mustGetString(cmd, "key-file"),
+		ServerMode:       devMode,
 	}
 	for _, addr := range serverJoin {
 		nodeCfg.Servers = append(nodeCfg.Servers, nomadClientServerAddr(addr))
@@ -337,10 +339,15 @@ func runPrintCommands(cmd *cobra.Command) error {
 		nodeCfg.Advertise = advertiseIP
 	}
 	if nodeCfg.Address == "" && (nomadUseTailscaleIP || advertiseIP != "") {
-		// Bind all interfaces so Nomad API/UI is reachable on the Tailscale endpoint.
-		nodeCfg.Address = "0.0.0.0"
+		// In dev mode, bind directly to the Tailscale endpoint for parity with
+		// standalone server+client setups. Non-dev keeps a broad bind for joinability.
+		if devMode && nomadUseTailscaleIP && advertiseIP == "" {
+			nodeCfg.Address = ""
+		} else {
+			nodeCfg.Address = "0.0.0.0"
+		}
 	}
-	autoNomadAdvertise := nomadUseTailscaleIP && nodeCfg.Advertise == ""
+	autoNomadAdvertise := !devMode && nomadUseTailscaleIP && nodeCfg.Advertise == ""
 	if autoNomadAdvertise {
 		nodeCfg.Advertise = "${NOMAD_ADVERTISE}"
 	}
@@ -599,6 +606,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		CAFile:           mustGetString(cmd, "ca-file"),
 		CertFile:         mustGetString(cmd, "cert-file"),
 		KeyFile:          mustGetString(cmd, "key-file"),
+		ServerMode:       devMode,
 	}
 	for _, addr := range serverJoin {
 		nodeCfg.Servers = append(nodeCfg.Servers, nomadClientServerAddr(addr))
@@ -614,14 +622,26 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		nodeCfg.Advertise = advertiseIP
 	}
 	if nodeCfg.Address == "" && (nomadUseTailscaleIP || advertiseIP != "") {
-		// Bind all interfaces so Nomad API/UI is reachable on the Tailscale endpoint.
-		nodeCfg.Address = "0.0.0.0"
+		if devMode && nomadUseTailscaleIP && advertiseIP == "" {
+			nodeCfg.Address = ""
+		} else {
+			// Bind all interfaces so Nomad API/UI is reachable on the Tailscale endpoint.
+			nodeCfg.Address = "0.0.0.0"
+		}
 	}
-	if advertiseIP == "" && nomadUseTailscaleIP && nodeCfg.Advertise == "" {
-		nodeCfg.Advertise = "${NOMAD_ADVERTISE}"
-	}
-
 	if dryRun {
+		if nomadUseTailscaleIP && nodeCfg.Advertise == "" {
+			if tsIP, tsErr := DetectTailscaleIPv4(ctx, ex); tsErr == nil {
+				if devMode {
+					nodeCfg.Advertise = ""
+					if !cmd.Flags().Changed("address") {
+						nodeCfg.Address = tsIP
+					}
+				} else {
+					nodeCfg.Advertise = tsIP
+				}
+			}
+		}
 		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, devMode, aclBootstrap, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg)
 		return nil
 	}
@@ -719,8 +739,17 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		if err != nil {
 			return fmt.Errorf("resolve Tailscale IPv4 for Nomad advertise address: %w", err)
 		}
-		nodeCfg.Advertise = tsIP
-		fmt.Fprintf(w, "\n  Using Tailscale IP for Nomad advertise address: %s\n", tsIP)
+		if devMode {
+			// For dev mode we only set bind addresses; no advertise stanza is required.
+			nodeCfg.Advertise = ""
+			if !cmd.Flags().Changed("address") {
+				nodeCfg.Address = tsIP
+			}
+			fmt.Fprintf(w, "\n  Using Tailscale IP for Nomad bind address: %s\n", tsIP)
+		} else {
+			nodeCfg.Advertise = tsIP
+			fmt.Fprintf(w, "\n  Using Tailscale IP for Nomad advertise address: %s\n", tsIP)
+		}
 	}
 
 	// 3. Nomad
@@ -755,7 +784,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	// 4. Verify: poll local Nomad agent
 	if !skipStart {
 		fmt.Fprintf(w, "\n  Verifying...\n")
-		if err := waitForNomadAgent(ctx, ex, w); err != nil {
+		if err := waitForNomadAgent(ctx, ex, w, nodeCfg.Address); err != nil {
 			if communityDrivers.Requested() || localDrivers.Requested() || javaDriverCfg.Requested() {
 				return fmt.Errorf("nomad agent is not healthy yet; cannot run post-setup driver install: %w", err)
 			}
@@ -775,6 +804,11 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		fmt.Fprintf(w, "    Export for this shell: export NOMAD_TOKEN=%s\n", token)
 		if err := persistNomadContext(nodeCfg.Advertise, token); err != nil {
 			return fmt.Errorf("save nomad context: %w", err)
+		}
+		if devMode {
+			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
+				return fmt.Errorf("save nomad token on node: %w", err)
+			}
 		}
 	}
 	// 5. Post-setup driver installation (after node has joined and is healthy)
@@ -816,7 +850,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 			return err
 		}
 		fmt.Fprintf(w, "  Verifying after post-setup restart...\n")
-		if err := waitForNomadAgent(ctx, ex, w); err != nil {
+		if err := waitForNomadAgent(ctx, ex, w, postSetupNodeCfg.Address); err != nil {
 			fmt.Fprintf(w, "    ! Could not verify Nomad agent after post-setup: %v\n", err)
 			fmt.Fprintf(w, "    Check: sudo journalctl -u nomad -n 50\n")
 		}
@@ -838,23 +872,38 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 
 // waitForNomadAgent polls http://127.0.0.1:4646/v1/agent/self until Nomad responds.
 // For remote nodes this checks via the SSH executor running curl on the remote host.
-func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
+func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer, bindAddr string) error {
+	probeURLs := nomadHealthProbeURLs(bindAddr)
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		// Check via executor: run curl on the target
-		var buf strings.Builder
-		err := ex.Run(ctx, "curl -sf http://127.0.0.1:4646/v1/agent/self 2>/dev/null | head -1", &buf)
-		if err == nil && strings.TrimSpace(buf.String()) != "" {
+		var listenBuf strings.Builder
+		listenCmd := "(command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':4646') || (command -v netstat >/dev/null 2>&1 && netstat -lnt 2>/dev/null | grep -q ':4646')"
+		if err := ex.Run(ctx, listenCmd, &listenBuf); err == nil {
 			fmt.Fprintf(w, "    ✓ Nomad agent is healthy\n")
 			return nil
 		}
-		// Fallback for local: try direct HTTP
-		if _, ok := ex.(*localExec); ok {
-			resp, herr := http.Get("http://127.0.0.1:4646/v1/agent/self") //nolint:noctx
-			if herr == nil && resp.StatusCode == 200 {
-				resp.Body.Close()
+
+		// Check via executor: run curl on the target across candidate bind addresses.
+		for _, probeURL := range probeURLs {
+			var buf strings.Builder
+			codeCmd := fmt.Sprintf("curl -sS -o /dev/null -w '%%{http_code}' '%s' 2>/dev/null", probeURL)
+			err := ex.Run(ctx, codeCmd, &buf)
+			if err == nil && nomadHealthHTTPCodeOK(strings.TrimSpace(buf.String())) {
 				fmt.Fprintf(w, "    ✓ Nomad agent is healthy\n")
 				return nil
+			}
+		}
+		// Fallback for local: try direct HTTP
+		if _, ok := ex.(*localExec); ok {
+			for _, probeURL := range probeURLs {
+				resp, herr := http.Get(probeURL) //nolint:noctx
+				if herr == nil {
+					_ = resp.Body.Close()
+				}
+				if herr == nil && resp.StatusCode >= 200 && resp.StatusCode < 500 {
+					fmt.Fprintf(w, "    ✓ Nomad agent is healthy\n")
+					return nil
+				}
 			}
 		}
 		select {
@@ -864,6 +913,46 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer) error {
 		}
 	}
 	return fmt.Errorf("Nomad agent did not respond within 60s")
+}
+
+func nomadHealthProbeURLs(bindAddr string) []string {
+	probeSet := make(map[string]struct{}, 2)
+	probes := make([]string, 0, 2)
+	appendProbe := func(host string) {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			return
+		}
+		if _, ok := probeSet[host]; ok {
+			return
+		}
+		probeSet[host] = struct{}{}
+		probes = append(probes, fmt.Sprintf("http://%s:4646/v1/agent/self", host))
+	}
+
+	if trimmed := strings.TrimSpace(bindAddr); trimmed != "" {
+		host := trimmed
+		if parsedHost, _, err := net.SplitHostPort(trimmed); err == nil {
+			host = parsedHost
+		}
+		host = strings.Trim(host, "[]")
+		if host != "0.0.0.0" && host != "::" {
+			appendProbe(host)
+		}
+	}
+	appendProbe("127.0.0.1")
+	return probes
+}
+
+func nomadHealthHTTPCodeOK(code string) bool {
+	if code == "" || code == "000" {
+		return false
+	}
+	n, err := strconv.Atoi(code)
+	if err != nil {
+		return false
+	}
+	return n >= 200 && n < 500
 }
 
 type nomadACLBootstrapResponse struct {
@@ -911,6 +1000,27 @@ func persistNomadContext(advertiseAddr, token string) error {
 	cfg.Contexts[ctxName] = ctx
 	cfg.ActiveContext = ctxName
 	return cfg.Save()
+}
+
+func persistNomadTokenOnNode(ctx context.Context, ex Executor, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	if ex.OS() == "windows" {
+		return nil
+	}
+	const tokenPath = "/etc/nomad.d/nomad.token"
+	quotedToken := shellQuote(token + "\n")
+	cmd := fmt.Sprintf("sudo mkdir -p /etc/nomad.d && sudo sh -c 'umask 077; printf %%s %s > %s'", quotedToken, tokenPath)
+	if err := ex.Run(ctx, cmd, io.Discard); err != nil {
+		return fmt.Errorf("write token to %s: %w", tokenPath, err)
+	}
+	return nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
