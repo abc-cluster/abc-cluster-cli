@@ -13,7 +13,7 @@ This guide covers:
 5. **Data Download Workflows** — Download from remote sources or pipeline outputs
 6. **Complete Workflows** — End-to-end examples combining all features
 
-**Time:** ~30 minutes total  
+**Time:** ~30 minutes total
 **Difficulty:** Beginner-friendly, assumes CLI familiarity
 
 ## Prerequisites
@@ -122,6 +122,21 @@ abc --sudo infra compute show <node-id> --output json --json-path node.Schedulin
 ```
 
 JSON path currently supports dot notation and array indexes (`foo.bar.0.baz` or `foo[0].bar`).
+
+### 1.5.5 Reuse the saved Nomad context
+
+After `abc infra compute add` stores the node-specific Nomad address and token in the active config,
+the job/pipeline/admin Nomad interfaces reuse them automatically:
+
+```bash
+abc --sudo job list
+abc pipeline run nextflow-io/hello --dry-run
+abc admin services nomad cli status
+```
+
+**What you should see:**
+- `job list` and `pipeline run` use the saved Nomad context when explicit flags are omitted
+- `admin services nomad cli` behaves like a preconfigured `nomad` command using the same context
 
 
 

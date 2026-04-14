@@ -2,10 +2,6 @@
 //
 // The config file is stored at ~/.abc/config.yaml by default.
 // The location can be overridden with the ABC_CONFIG_FILE environment variable.
-// Package config manages the abc-cluster CLI configuration file.
-//
-// The config file is stored at ~/.abc/config.yaml by default.
-// The location can be overridden with the ABC_CONFIG_FILE environment variable.
 //
 // Schema versioning:
 // The config file includes a version field for forward/backward compatibility.

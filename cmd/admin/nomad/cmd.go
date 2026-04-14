@@ -1,7 +1,9 @@
 // Package nomad implements the "abc admin services nomad" command group.
 //
-// Commands for managing Nomad cluster resources including namespaces and node operations.
-// All write operations require --sudo.
+// This group stays focused on ABC-cluster-specific Nomad operations such as
+// namespaces and node lifecycle management. The `cli` subcommand is a
+// preconfigured passthrough alias to the local Nomad CLI for operations that
+// abc does not yet implement natively.
 package nomad
 
 import (
@@ -16,9 +18,10 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "nomad",
-		Short: "Manage Nomad cluster resources: namespaces and nodes",
+		Short: "ABC-focused Nomad operations plus a passthrough CLI alias",
 		Long: `Commands for managing Nomad cluster resources on the ABC-cluster platform.
 
+	abc admin services nomad cli status                                   Run the local Nomad CLI with abc config defaults
   abc admin services nomad namespace list                                 List all namespaces
   abc admin services nomad namespace create --sudo --name=my-lab         Create a namespace
   abc admin services nomad namespace delete --sudo my-lab                Delete a namespace
@@ -36,6 +39,7 @@ func NewCmd() *cobra.Command {
 	// Add namespace and node sub-groups
 	cmd.AddCommand(namespace.NewCmd())
 	cmd.AddCommand(newNodeCmd())
+	cmd.AddCommand(newCLICmd())
 
 	return cmd
 }

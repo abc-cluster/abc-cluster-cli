@@ -69,6 +69,25 @@ The following items are explicitly tracked for the next iteration:
 Non-goal for this tracking item:
 - Replacing table UX defaults; table remains the default human-readable mode.
 
+### 0.4 Next Iteration: Config-Backed Nomad Access
+
+This iteration treats the active abc config context as the source of truth for node-specific Nomad connectivity.
+The immediate goal is for `abc job`, `abc pipeline`, and `abc submit` to work from saved context values without requiring ad-hoc `--nomad-addr` / `--nomad-token` flags.
+
+Planned behavior:
+
+| Item | Scope | Target |
+|------|-------|--------|
+| Save Nomad connection details in context | `abc infra compute add` | Persist `nomad_addr` and `nomad_token` into the active abc config context after successful node setup |
+| Resolve Nomad defaults from config | `abc job`, `abc pipeline`, `abc submit` | Use saved context values when command flags and root env defaults are absent |
+| Fallback for unsupported Nomad operations | Nomad-specific commands not yet implemented in abc | Shell out to the local `nomad` CLI with the resolved config context values |
+
+Fallback policy:
+
+- If abc already implements the operation, use the native implementation.
+- If the operation is Nomad-specific and not yet implemented, invoke the local `nomad` CLI using the resolved `nomad_addr`, `nomad_token`, and `region` from the active context.
+- This keeps developer workflows moving while native coverage catches up.
+
 ---
 
 ## 1. Global CLI Flags
@@ -398,6 +417,8 @@ contexts:
     access_token: eyJ...
     workspace_id: ws-org-a-01
     region: za-cpt
+    nomad_addr: http://100.70.185.46:4646
+    nomad_token: s.123...
 defaults:
   output: table
   region: za-cpt
@@ -410,6 +431,14 @@ Currently at v1. All new configs default to v1; legacy configs without a version
 `ABC_CRYPT_PASSWORD` environment variable is set. Uses password-based AES-256-GCM encryption
 with scrypt key derivation — equivalent to SOPS local password mode. Works offline without
 external KMS. Encrypted fields are marked with SOPS metadata in the YAML for compatibility.
+
+Node-specific Nomad connection details are also stored in the active context:
+
+- `contexts.<name>.nomad_addr` for the Tailscale-reachable Nomad API endpoint
+- `contexts.<name>.nomad_token` for the ACL token associated with that node/context
+
+These values are treated as the default Nomad connection for `abc job`, `abc pipeline`, and
+`abc submit` when command flags are not provided.
 
 ### `abc config init`
 
@@ -438,6 +467,8 @@ Set a configuration key to a value.
 | `contexts.<name>.access_token` | Access token | `eyJ...` |
 | `contexts.<name>.workspace_id` | Default workspace | `ws-org-a-01` |
 | `contexts.<name>.region` | Region override for this context | `za-cpt` |
+| `contexts.<name>.nomad_addr` | Node-specific Nomad API address | `http://100.70.185.46:4646` |
+| `contexts.<name>.nomad_token` | Node-specific Nomad ACL token | `s.123...` |
 
 **Expected output:**
 ```

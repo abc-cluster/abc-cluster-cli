@@ -52,6 +52,18 @@ func nomadClientFromCmd(cmd *cobra.Command) *nomadClient {
 	if region == "" {
 		region, _ = cmd.Root().PersistentFlags().GetString("region")
 	}
+	if addr == "" || token == "" || region == "" {
+		cfgAddr, cfgToken, cfgRegion := utils.NomadDefaultsFromConfig()
+		if addr == "" {
+			addr = cfgAddr
+		}
+		if token == "" {
+			token = cfgToken
+		}
+		if region == "" {
+			region = cfgRegion
+		}
+	}
 	return newNomadClient(addr, token, region).
 		WithSudo(utils.SudoFromCmd(cmd)).
 		WithCloud(utils.CloudFromCmd(cmd))
@@ -62,6 +74,10 @@ func nomadAddrFromCmd(cmd *cobra.Command) string {
 	addr, _ := cmd.Flags().GetString("nomad-addr")
 	if addr == "" {
 		addr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
+	}
+	if addr == "" {
+		cfgAddr, _, _ := utils.NomadDefaultsFromConfig()
+		addr = cfgAddr
 	}
 	if addr == "" {
 		return "http://127.0.0.1:4646"

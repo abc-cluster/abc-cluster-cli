@@ -53,6 +53,7 @@ This document describes every command available in the `abc` CLI.
 - [infra compute show](#infra-compute-show)
 - [infra compute probe](#infra-compute-probe)
 - [infra storage size](#infra-storage-size)
+- [admin services nomad cli](#admin-services-nomad-cli)
 - [admin services nomad namespace](#admin-services-nomad-namespace)
 - [cluster](#cluster)
 - [cost](#cost)
@@ -1263,7 +1264,7 @@ Decrypt a file or folder previously encrypted with `abc data encrypt` or rclone 
 Mirrors the two-mode model of `abc data encrypt`:
 
 - **Managed** (default, not yet available): key derived from control-plane session token.
-- **Local** (`--crypt-password` or stored config): decrypt with a locally-provided password — must match the password used during encryption. 
+- **Local** (`--crypt-password` or stored config): decrypt with a locally-provided password — must match the password used during encryption.
   Credentials can be stored in `~/.abc/config.yaml` and reused automatically.
 
 ```
@@ -1576,6 +1577,20 @@ abc infra storage size --buckets
 ## `admin services nomad namespace`
 
 Manage cluster namespaces. Read operations are available to all users; write operations require `--sudo`.
+
+## `admin services nomad cli`
+
+Run the local `nomad` CLI as a preconfigured passthrough alias. Nomad address, token, and region are
+resolved from the active abc config context when not explicitly provided via flags.
+
+### `admin services nomad cli [nomad-args...]`
+
+```bash
+abc admin services nomad cli status
+abc admin services nomad cli node status
+```
+
+Use this command for Nomad operations that abc does not yet implement natively.
 
 ### `admin services nomad namespace list`
 
