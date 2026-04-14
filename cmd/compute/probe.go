@@ -63,7 +63,7 @@ var nodeProbeJobTemplate = template.Must(template.New("node_probe_job").Parse(`j
 #!/usr/bin/env bash
 set -euo pipefail
 
-BIN_PATH="${NOMAD_TASK_DIR}/abc-node-probe"
+BIN_PATH="$${NOMAD_TASK_DIR}/abc-node-probe"
 FALLBACK_PATH="/opt/nomad/abc-node-probe"
 DOWNLOAD_URL={{printf "%q" .DownloadURL}}
 
