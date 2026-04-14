@@ -143,21 +143,29 @@ Manage authentication and session credentials. Credentials are stored in `~/.abc
 
 ### `auth login`
 
-Interactive login — prompts for API endpoint and access token, then saves them to a named context.
+Interactive login — prompts for connection details, then saves them to a named context.
+All fields except the API endpoint and access token are optional.
 
 ```bash
 $ abc auth login
 API endpoint [https://api.abc-cluster.io]: https://api.org-a.example
 Access token: ••••••••••••••••••••••••••••••••
-Workspace ID (optional):
+Workspace ID (optional): ws-org-a-01
+Organization ID (optional): org-a
+Cluster ID/name (optional): dev-cluster
 Region (optional): za-cpt
+Validating credentials...
 
 ✓ Authenticated to https://api.org-a.example
 ✓ Context saved as: org-a-za-cpt
+✓ Workspace: ws-org-a-01
+✓ Organization: org-a
+✓ Cluster: dev-cluster
 ✓ Region: za-cpt
 ```
 
-Context name is auto-derived from endpoint and region (e.g., `org-a-za-cpt`).
+Context name is auto-derived from the endpoint hostname and region (e.g., `org-a-za-cpt`).
+Fields you leave blank are simply omitted from the saved context.
 
 ### `auth logout`
 
@@ -177,14 +185,17 @@ $ abc auth logout
 ### `auth whoami`
 
 Show the current authenticated identity and active context details.
+Fields with empty values are omitted.
 
 ```bash
 $ abc auth whoami
 Context      org-a-za-cpt
 Endpoint     https://api.org-a.example
+Cluster      dev-cluster
+Organization org-a
 Workspace    ws-org-a-01
 Region       za-cpt
-Token        eyJ... (first 8 chars)
+Token        eyJ...•••••••••••• (first 8 chars)
 ```
 
 ### `auth token`
@@ -214,25 +225,30 @@ $ abc auth refresh
 Manage local CLI configuration. All settings are stored in `~/.abc/config.yaml`
 (or `ABC_CONFIG_FILE`). The config file includes a `version` field for forward/backward compatibility.
 
-**Config file structure:**
+**Config file structure (`~/.abc/config.yaml`):**
 ```yaml
-version: "1"
+version: "1"                 # Schema version; used for future migrations
 active_context: org-a-za-cpt
 contexts:
   org-a-za-cpt:
     endpoint: https://api.org-a.example
     access_token: eyJ...
-    cluster: dev-cluster
-    organization_id: org-dev
-    workspace_id: ws-org-a-01
-    region: za-cpt
+    cluster: dev-cluster          # optional; set by abc auth login or abc infra compute add
+    organization_id: org-a        # optional; set by abc auth login
+    workspace_id: ws-org-a-01    # optional; set by abc auth login
+    region: za-cpt               # optional; set by abc auth login
+    nomad_addr: http://10.70.185.46:4646  # set by abc infra compute add
+    nomad_token: s.123...                  # set by abc infra compute add
 defaults:
   output: table
   region: za-cpt
+secrets:                          # encrypted credentials, managed via abc secrets
+  GITHUB_TOKEN: "ENC[AES256_GCM,...]"
 ```
 
-Sensitive fields (`access_token`) can be encrypted with [mozilla/sops](https://github.com/mozilla/sops)
-if configured. See [SOPS encryption](#sops-encryption) below.
+The `nomad_addr` and `nomad_token` fields are automatically populated when you provision or
+add a node via `abc infra compute add`. Once set, `abc job`, `abc pipeline`, and `abc submit`
+will use them as defaults without requiring the `--nomad-addr` / `--nomad-token` flags.
 
 ### `config init`
 
@@ -269,9 +285,11 @@ $ abc config set contexts.myorg.endpoint https://api.myorg.example
 | `contexts.<name>.endpoint` | API endpoint URL | `https://api.example.com` |
 | `contexts.<name>.access_token` | Access token | `eyJ...` |
 | `contexts.<name>.cluster` | Cluster ID/name | `dev-cluster` |
-| `contexts.<name>.organization_id` | Organization ID | `org-dev` |
+| `contexts.<name>.organization_id` | Organization ID | `org-a` |
 | `contexts.<name>.workspace_id` | Default workspace | `ws-org-a-01` |
 | `contexts.<name>.region` | Region override for this context | `za-cpt` |
+| `contexts.<name>.nomad_addr` | Node Nomad API URL (set by infra) | `http://10.70.185.46:4646` |
+| `contexts.<name>.nomad_token` | Nomad ACL token (set by infra) | `s.123...` |
 
 ### `config get KEY`
 
