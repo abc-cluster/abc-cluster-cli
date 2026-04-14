@@ -250,6 +250,15 @@ func installCommunityContainerd(ctx context.Context, ex Executor, nerdctlVersion
 	if err != nil {
 		return err
 	}
+	runtimePresent := containerdRuntimePresent(ctx, ex)
+	driverPresent := containerdDriverPresent(ctx, ex)
+	if runtimePresent && driverPresent {
+		fmt.Fprintf(w, "\n  Containerd runtime and driver already present; skipping download.\n")
+		if err := ensureContainerdServiceActive(ctx, ex, metadata.SystemdUnitPath, w); err != nil {
+			return err
+		}
+		return nil
+	}
 	nerdctlAsset, err := nerdctlReleaseAssetName(ex.Arch(), nerdctlVersion)
 	if err != nil {
 		return err
@@ -269,21 +278,9 @@ func installCommunityContainerd(ctx context.Context, ex Executor, nerdctlVersion
 	if err := ex.Run(ctx, strings.Join(steps, " && "), LineWriter(w, "    ")); err != nil {
 		return fmt.Errorf("install nerdctl-full bundle: %w", err)
 	}
-
-	if err := ex.Run(ctx, renderContainerdSystemdUnitInstallCommand(metadata.SystemdUnitPath), LineWriter(w, "    ")); err != nil {
-		return fmt.Errorf("install containerd systemd unit: %w", err)
+	if err := ensureContainerdServiceActive(ctx, ex, metadata.SystemdUnitPath, w); err != nil {
+		return err
 	}
-
-	enableCmd := strings.Join([]string{
-		"sudo chown root:root " + metadata.SystemdUnitPath,
-		"sudo systemctl daemon-reload",
-		"sudo systemctl enable --now containerd",
-		"sudo systemctl is-active --quiet containerd",
-	}, " && ")
-	if err := ex.Run(ctx, enableCmd, LineWriter(w, "    ")); err != nil {
-		return fmt.Errorf("enable/start containerd service: %w", err)
-	}
-	fmt.Fprintf(w, "    ✓ containerd service active\n")
 
 	driverAsset, err := containerdDriverReleaseAsset(ex.Arch())
 	if err != nil {
@@ -304,6 +301,31 @@ func installCommunityContainerd(ctx context.Context, ex Executor, nerdctlVersion
 		return fmt.Errorf("install nomad-driver-containerd binary: %w", err)
 	}
 	fmt.Fprintf(w, "    ✓ nomad-driver-containerd installed in %s\n", defaultNomadPluginsDir)
+	return nil
+}
+
+func containerdRuntimePresent(ctx context.Context, ex Executor) bool {
+	return ex.Run(ctx, "command -v containerd >/dev/null 2>&1", io.Discard) == nil
+}
+
+func containerdDriverPresent(ctx context.Context, ex Executor) bool {
+	return ex.Run(ctx, "test -x /opt/nomad/plugins/containerd-driver", io.Discard) == nil
+}
+
+func ensureContainerdServiceActive(ctx context.Context, ex Executor, unitPath string, w io.Writer) error {
+	if err := ex.Run(ctx, renderContainerdSystemdUnitInstallCommand(unitPath), LineWriter(w, "    ")); err != nil {
+		return fmt.Errorf("install containerd systemd unit: %w", err)
+	}
+	enableCmd := strings.Join([]string{
+		"sudo chown root:root " + unitPath,
+		"sudo systemctl daemon-reload",
+		"sudo systemctl enable --now containerd",
+		"sudo systemctl is-active --quiet containerd",
+	}, " && ")
+	if err := ex.Run(ctx, enableCmd, LineWriter(w, "    ")); err != nil {
+		return fmt.Errorf("enable/start containerd service: %w", err)
+	}
+	fmt.Fprintf(w, "    ✓ containerd service active\n")
 	return nil
 }
 

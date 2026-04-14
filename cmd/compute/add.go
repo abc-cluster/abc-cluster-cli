@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -793,22 +794,12 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		}
 	}
 
-	if aclBootstrap {
+	needsPostSetup := communityDrivers.Requested() || localDrivers.Requested() || javaDriverCfg.Requested()
+	bootstrapAfterPostSetup := devMode && aclBootstrap && needsPostSetup
+	if aclBootstrap && !bootstrapAfterPostSetup {
 		fmt.Fprintf(w, "\n  Bootstrapping Nomad ACL...\n")
-		token, err := bootstrapNomadACL(ctx, ex)
-		if err != nil {
-			return fmt.Errorf("acl bootstrap: %w", err)
-		}
-		fmt.Fprintf(w, "    ✓ ACL bootstrap complete\n")
-		fmt.Fprintf(w, "    Management token: %s\n", token)
-		fmt.Fprintf(w, "    Export for this shell: export NOMAD_TOKEN=%s\n", token)
-		if err := persistNomadContext(nodeCfg.Advertise, token); err != nil {
-			return fmt.Errorf("save nomad context: %w", err)
-		}
-		if devMode {
-			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
-				return fmt.Errorf("save nomad token on node: %w", err)
-			}
+		if err := runACLBootstrap(ctx, ex, nodeCfg, devMode, w); err != nil {
+			return err
 		}
 	}
 	if devMode && nodeCfg.ACL && !aclBootstrap {
@@ -860,6 +851,19 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		if err := waitForNomadAgent(ctx, ex, w, postSetupNodeCfg.Address); err != nil {
 			fmt.Fprintf(w, "    ! Could not verify Nomad agent after post-setup: %v\n", err)
 			fmt.Fprintf(w, "    Check: sudo journalctl -u nomad -n 50\n")
+		}
+	}
+	if aclBootstrap && bootstrapAfterPostSetup {
+		fmt.Fprintf(w, "\n  Bootstrapping Nomad ACL (after post-setup)...\n")
+		if err := runACLBootstrap(ctx, ex, nodeCfg, devMode, w); err != nil {
+			return err
+		}
+	}
+	if devMode && nodeCfg.ACL && !aclBootstrap {
+		if token := resolveNomadTokenForNode(); token != "" {
+			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
+				return fmt.Errorf("save nomad token on node: %w", err)
+			}
 		}
 	}
 
@@ -962,13 +966,33 @@ func nomadHealthHTTPCodeOK(code string) bool {
 	return n >= 200 && n < 500
 }
 
+func nomadAddrForBootstrap(addr string) string {
+	host := strings.TrimSpace(addr)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(host, "[]")
+	return fmt.Sprintf("http://%s:4646", host)
+}
+
 type nomadACLBootstrapResponse struct {
 	SecretID string `json:"SecretID"`
 }
 
-func bootstrapNomadACL(ctx context.Context, ex Executor) (string, error) {
+var errACLBootstrapAlreadyDone = errors.New("acl bootstrap already done")
+
+func bootstrapNomadACL(ctx context.Context, ex Executor, addr string) (string, error) {
 	var out strings.Builder
-	if err := ex.Run(ctx, "nomad acl bootstrap -json 2>/dev/null", &out); err != nil {
+	bootstrapAddr := nomadAddrForBootstrap(addr)
+	cmd := fmt.Sprintf("NOMAD_ADDR=%s nomad acl bootstrap -json", bootstrapAddr)
+	if err := ex.Run(ctx, cmd, &out); err != nil {
+		raw := strings.TrimSpace(out.String())
+		if strings.Contains(raw, "ACL bootstrap already done") {
+			return "", errACLBootstrapAlreadyDone
+		}
 		return "", err
 	}
 
@@ -989,8 +1013,46 @@ func bootstrapNomadACL(ctx context.Context, ex Executor) (string, error) {
 	return resp.SecretID, nil
 }
 
+func runACLBootstrap(ctx context.Context, ex Executor, nodeCfg NodeConfig, devMode bool, w io.Writer) error {
+	bootstrapAddr := nodeCfg.Address
+	if strings.TrimSpace(bootstrapAddr) == "" {
+		bootstrapAddr = nodeCfg.Advertise
+	}
+	token, err := bootstrapNomadACL(ctx, ex, bootstrapAddr)
+	if err != nil {
+		if errors.Is(err, errACLBootstrapAlreadyDone) {
+			token = resolveNomadTokenForNode()
+			if token == "" {
+				fmt.Fprintf(w, "    ! ACL already bootstrapped; set NOMAD_TOKEN to persist on node\n")
+				return nil
+			}
+			fmt.Fprintf(w, "    ! ACL already bootstrapped; using existing token from env/config\n")
+		} else {
+			return fmt.Errorf("acl bootstrap: %w", err)
+		}
+	}
+	if token != "" {
+		fmt.Fprintf(w, "    ✓ ACL bootstrap complete\n")
+		fmt.Fprintf(w, "    Management token: %s\n", token)
+		fmt.Fprintf(w, "    Export for this shell: export NOMAD_TOKEN=%s\n", token)
+		contextAddr := strings.TrimSpace(nodeCfg.Advertise)
+		if contextAddr == "" {
+			contextAddr = strings.TrimSpace(nodeCfg.Address)
+		}
+		if err := persistNomadContext(contextAddr, token); err != nil {
+			return fmt.Errorf("save nomad context: %w", err)
+		}
+		if devMode {
+			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
+				return fmt.Errorf("save nomad token on node: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 func persistNomadContext(advertiseAddr, token string) error {
-	if advertiseAddr == "" || token == "" {
+	if token == "" {
 		return nil
 	}
 	cfg, err := appconfig.Load()
@@ -1002,7 +1064,9 @@ func persistNomadContext(advertiseAddr, token string) error {
 		ctxName = "default"
 	}
 	ctx := cfg.Contexts[ctxName]
-	ctx.NomadAddr = "http://" + strings.TrimSpace(advertiseAddr) + ":4646"
+	if strings.TrimSpace(advertiseAddr) != "" {
+		ctx.NomadAddr = "http://" + strings.TrimSpace(advertiseAddr) + ":4646"
+	}
 	ctx.NomadToken = token
 	cfg.Contexts[ctxName] = ctx
 	cfg.ActiveContext = ctxName
