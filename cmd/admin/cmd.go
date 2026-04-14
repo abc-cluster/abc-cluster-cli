@@ -6,7 +6,9 @@
 package admin
 
 import (
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/minio"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nomad"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tailscale"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +22,9 @@ func NewCmd() *cobra.Command {
 
   abc admin services ping nomad           Check connectivity to a backend service
   abc admin services version api          Show a service version
+	abc admin services nomad cli status     Run the preconfigured Nomad CLI
+	abc admin services tailscale cli status Run the local Tailscale CLI
+	abc admin services minio cli ls local   Run the local MinIO client CLI
   abc admin services nomad namespace list            List all namespaces
   abc admin services nomad namespace create --sudo   Create a namespace (requires --sudo)
   abc admin services nomad namespace delete --sudo   Delete a namespace (requires --sudo)`,
@@ -29,9 +34,11 @@ func NewCmd() *cobra.Command {
 	svcCmd := service.NewCmd()
 	svcCmd.Use = "services"
 	svcCmd.Short = "Inspect backend service health and versions"
-	
+
 	// Add nomad sub-group under services (for Nomad-specific operations)
 	svcCmd.AddCommand(nomad.NewCmd())
+	svcCmd.AddCommand(tailscale.NewCmd())
+	svcCmd.AddCommand(minio.NewCmd())
 	cmd.AddCommand(svcCmd)
 
 	// app sub-group — application-level entity management.

@@ -12,8 +12,13 @@ import (
 
 // RunNomadCLI runs the local nomad CLI with NOMAD_* values sourced from the
 // active abc config context when available.
-func RunNomadCLI(ctx context.Context, args []string, addr, token, region string, stdin io.Reader, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, "nomad", args...)
+func RunNomadCLI(ctx context.Context, args []string, binaryLocation, addr, token, region string, stdin io.Reader, stdout, stderr io.Writer) error {
+	binary := binaryLocation
+	if binary == "" {
+		binary = "nomad"
+	}
+
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -45,7 +50,7 @@ func RunNomadCLI(ctx context.Context, args []string, addr, token, region string,
 	cmd.Env = env
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("run nomad %v: %w", args, err)
+		return fmt.Errorf("run %s %v: %w", binary, args, err)
 	}
 	return nil
 }
@@ -53,5 +58,5 @@ func RunNomadCLI(ctx context.Context, args []string, addr, token, region string,
 // RunNomadCLIFromConfig runs the local nomad CLI using only the active abc
 // config context for connection defaults.
 func RunNomadCLIFromConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	return RunNomadCLI(ctx, args, "", "", "", stdin, stdout, stderr)
-	}
+	return RunNomadCLI(ctx, args, "", "", "", "", stdin, stdout, stderr)
+}
