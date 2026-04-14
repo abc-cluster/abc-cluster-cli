@@ -3431,7 +3431,7 @@ abc
 ├── namespace   list · show                            ← read: all users
 │               create · delete                        ← write: --sudo
 ├── node        list · show · drain · undrain          ← --sudo
-│               add [--cloud|--host|--local]          ← provision or join (see §21)
+│               add [--cloud|--remote|--local]          ← provision or join (see §21)
 │               terminate                              ← --cloud
 ├── cluster     list · status · provision · decommission  ← --cloud
 │
@@ -3461,7 +3461,7 @@ abc
 | `abc job` | ✅ Implemented | run, translate, list, show, stop, dispatch, logs, status; `--sudo` widens namespace |
 | `abc pipeline` | ✅ Implemented | run, add, list, show, update, delete, export, import; Nomad Variables backed |
 | `abc namespace` | ✅ Implemented | list, show, create (--sudo), delete (--sudo) |
-| `abc node` | ✅ Implemented | list, show, drain, undrain (--sudo); add (--cloud / --host / --local); terminate (--cloud) |
+| `abc node` | ✅ Implemented | list, show, drain, undrain (--sudo); add (--cloud / --remote / --local); terminate (--cloud) |
 | `abc data` | ✅ Implemented | upload, download, encrypt, decrypt |
 | `abc storage` | ✅ Implemented | size |
 | `abc cluster` | 🔲 Planned | `--cloud` tier |
@@ -3770,7 +3770,7 @@ $ abc node add --cloud --cluster=za-cpt-main --type=n2-standard-16 --count=2 --d
 
 ```
 $ abc node add \
-    --host=192.168.1.50 --user=ubuntu \
+    --remote=192.168.1.50 --user=ubuntu \
     --server-join=10.0.0.1 --server-join=10.0.0.2 \
     --datacenter=za-cpt --node-class=standard
 
@@ -3802,7 +3802,7 @@ $ abc node add \
 
 ```
 $ abc node add \
-    --host=192.168.1.50 --user=ubuntu \
+    --remote=192.168.1.50 --user=ubuntu \
     --tailscale \
     --tailscale-auth-key=tskey-auth-kTKabc123CNTRL-... \
     --server-join=100.64.0.1 \
@@ -3903,7 +3903,7 @@ $ abc node add --local \
 #### Dry-run (any mode)
 
 ```
-$ abc node add --host=192.168.1.50 --user=ubuntu \
+$ abc node add --remote=192.168.1.50 --user=ubuntu \
     --server-join=10.0.0.1 --datacenter=za-cpt --dry-run
 
   Dry-run plan:
@@ -3923,7 +3923,7 @@ $ abc node add --host=192.168.1.50 --user=ubuntu \
 Missing sudo:
 
 ```
-$ abc node add --host=203.0.113.42 --user=webuser \
+$ abc node add --remote=203.0.113.42 --user=webuser \
     --server-join=10.0.0.1
 
   Connecting to webuser@203.0.113.42:22...
@@ -3939,7 +3939,7 @@ Error: sudo access required on linux — aborting
   The SSH user lacks passwordless sudo. To fix this, either:
     1. Add the user to the sudoers file on the remote host:
          echo "webuser ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/webuser
-    2. Connect as root: abc node add --host=203.0.113.42 --user=root
+    2. Connect as root: abc node add --remote=203.0.113.42 --user=root
     3. Use --skip-preflight if you have already configured sudo
 ```
 
@@ -4258,7 +4258,7 @@ $ abc node list --cloud --sudo --cluster=ke-nbi-research
 | Flag | Description | Who uses it |
 |------|-------------|-------------|
 | `--cloud` | Provision a new cloud VM via the ABC cloud gateway | Platform/infra team |
-| `--host=<ip>` | SSH into a remote server and install Nomad there | Sysadmin / HPC operator |
+| `--remote=<ip>` | SSH into a remote server and install Nomad there | Sysadmin / HPC operator |
 | `--local` | Install on the current machine | Researcher contributing a workstation |
 
 ### Tailscale behaviour
@@ -4275,7 +4275,7 @@ Tailscale is **off by default** — `--tailscale` must be explicitly set to enro
 ```
 Transport
   --local                 Install on the current machine
-  --host=<ip>             SSH target (remote install)
+  --remote=<ip>             SSH target (remote install)
   --user=<user>           SSH user (default: $USER or root)
   --ssh-key=<path>        SSH private key (default: ~/.ssh/id_{rsa,ed25519,ecdsa}, then agent)
   --ssh-port=<n>          SSH port (default: 22)
@@ -4318,14 +4318,14 @@ Other
 ### Installation sequence
 
 ```
-abc node add [--local | --host=<ip>]
+abc node add [--local | --remote=<ip>]
   │
   1. Flag validation
   │   └── Require --tailscale-auth-key when --tailscale
   │
   2. Connect / acquire executor
   │   ├── --local:  os/exec on the current machine
-  │   └── --host:   golang.org/x/crypto/ssh
+  │   └── --remote:   golang.org/x/crypto/ssh
   │         Auth chain: explicit --ssh-key → ~/.ssh/id_{rsa,ed25519,ecdsa}
   │                     → SSH agent ($SSH_AUTH_SOCK) → interactive password prompt
   │

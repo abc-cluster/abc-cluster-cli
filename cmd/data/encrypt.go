@@ -10,13 +10,13 @@ import (
 )
 
 type encryptOptions struct {
-	inputPath     string
-	outputPath    string
-	outputDir     string
-	cryptPassword string
-	cryptSalt     string
-	progress      bool
-	unsafe        bool
+	inputPath      string
+	outputPath     string
+	outputDir      string
+	cryptPassword  string
+	cryptSalt      string
+	progress       bool
+	unsafeLocal    bool
 }
 
 func newEncryptCmd() *cobra.Command {
@@ -30,15 +30,15 @@ func newEncryptCmd() *cobra.Command {
 By default, encryption uses a key derived from your control-plane session token,
 which provides managed key storage and recovery. This requires an authenticated session.
 
-Use --unsafe to encrypt with a locally-provided password and salt instead.
-In unsafe mode, the key is not managed by the control plane — if you lose your
+Use --unsafe-local to encrypt with a locally-provided password and salt instead.
+In unsafe-local mode, the key is not managed by the control plane — if you lose your
 password, your data cannot be recovered. You accept this risk explicitly.
 
   # Managed (default — requires authenticated session, not yet available)
   abc data encrypt ./data.csv
 
   # Local password — key management is your responsibility
-  abc data encrypt ./data.csv --unsafe --crypt-password "my-secret"`,
+  abc data encrypt ./data.csv --unsafe-local --crypt-password "my-secret"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.inputPath = args[0]
@@ -48,10 +48,10 @@ password, your data cannot be recovered. You accept this risk explicitly.
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file encryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder encryption")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (requires --unsafe)")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (requires --unsafe)")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (requires --unsafe-local)")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (requires --unsafe-local)")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption")
-	cmd.Flags().BoolVar(&opts.unsafe, "unsafe", false,
+	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use a locally-provided password instead of the control-plane managed key (no key recovery if password is lost)")
 
 	return cmd
@@ -69,21 +69,21 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 		return localIOError("failed to access path %q: %w", opts.inputPath, err)
 	}
 
-	if !opts.unsafe {
+	if !opts.unsafeLocal {
 		// Managed encryption path — not yet implemented.
 		return inputError(
 			"managed encryption (control-plane key) is not yet available.\n" +
-				"To encrypt with a local password, pass --unsafe --crypt-password <password>.\n" +
-				"WARNING: in unsafe mode the key is not managed — losing your password means losing your data.")
+			"To encrypt with a local password, pass --unsafe-local --crypt-password <password>.\n" +
+			"WARNING: in unsafe-local mode the key is not managed — losing your password means losing your data.")
 	}
 
 	fmt.Fprintln(cmd.ErrOrStderr(),
-		"WARNING: --unsafe mode active. Encryption key is NOT managed by the control plane.")
+		"WARNING: --unsafe-local mode active. Encryption key is NOT managed by the control plane.")
 	fmt.Fprintln(cmd.ErrOrStderr(),
 		"         If you lose your password, your data cannot be recovered.")
 
 	if opts.cryptPassword == "" {
-		return inputError("--crypt-password is required in --unsafe mode")
+		return inputError("--crypt-password is required in --unsafe-local mode")
 	}
 	if opts.outputPath != "" && info.IsDir() {
 		return fmt.Errorf("--output can only be used when encrypting a single file")

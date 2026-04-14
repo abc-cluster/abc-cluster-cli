@@ -15,7 +15,7 @@ type decryptOptions struct {
 	outputDir     string
 	cryptPassword string
 	cryptSalt     string
-	unsafe        bool
+	unsafeLocal   bool
 }
 
 func newDecryptCmd() *cobra.Command {
@@ -29,14 +29,14 @@ func newDecryptCmd() *cobra.Command {
 By default, decryption uses a key derived from your control-plane session token
 (matching the managed encryption path). This requires an authenticated session.
 
-Use --unsafe to decrypt with a locally-provided password and salt — required when
-the file was encrypted with abc data encrypt --unsafe.
+Use --unsafe-local to decrypt with a locally-provided password and salt — required when
+the file was encrypted with abc data encrypt --unsafe-local.
 
   # Managed (default — requires authenticated session, not yet available)
   abc data decrypt ./data.csv.bin
 
-  # Local password — must match the password used during --unsafe encryption
-  abc data decrypt ./data.csv.bin --unsafe --crypt-password "my-secret"`,
+  # Local password — must match the password used during --unsafe-local encryption
+  abc data decrypt ./data.csv.bin --unsafe-local --crypt-password "my-secret"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.inputPath = args[0]
@@ -46,9 +46,9 @@ the file was encrypted with abc data encrypt --unsafe.
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file decryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder decryption")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (requires --unsafe)")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (requires --unsafe)")
-	cmd.Flags().BoolVar(&opts.unsafe, "unsafe", false,
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (requires --unsafe-local)")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (requires --unsafe-local)")
+	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use a locally-provided password instead of the control-plane managed key")
 
 	return cmd
@@ -60,18 +60,18 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		return fmt.Errorf("failed to access path %q: %w", opts.inputPath, err)
 	}
 
-	if !opts.unsafe {
+	if !opts.unsafeLocal {
 		// Managed decryption path — not yet implemented.
 		return fmt.Errorf(
 			"managed decryption (control-plane key) is not yet available.\n" +
-				"To decrypt with a local password, pass --unsafe --crypt-password <password>.")
+			"To decrypt with a local password, pass --unsafe-local --crypt-password <password>.")
 	}
 
 	fmt.Fprintln(cmd.ErrOrStderr(),
-		"WARNING: --unsafe mode active. Decrypting with locally-provided password (no key management).")
+		"WARNING: --unsafe-local mode active. Decrypting with locally-provided password (no key management).")
 
 	if opts.cryptPassword == "" {
-		return fmt.Errorf("--crypt-password is required in --unsafe mode")
+		return fmt.Errorf("--crypt-password is required in --unsafe-local mode")
 	}
 	if opts.outputPath != "" && info.IsDir() {
 		return fmt.Errorf("--output can only be used when decrypting a single file")

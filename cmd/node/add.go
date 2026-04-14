@@ -24,9 +24,9 @@ func newAddCmd() *cobra.Command {
 
 Three modes (mutually exclusive):
 
-  --cloud      Provision a new VM via the cloud gateway (requires --cloud flag)
-  --host=<ip>  SSH into a remote server and install Nomad there
-  --local      Install Nomad on the current machine
+  --cloud       Provision a new VM via the cloud gateway (requires --cloud flag)
+  --remote=<ip> SSH into a remote server and install Nomad there
+  --local       Install Nomad on the current machine
 
 Tailscale is off by default (direct-join mode). Add --tailscale and
 either provide --tailscale-auth-key=<key> or let abc create one using
@@ -37,16 +37,16 @@ Examples:
   abc node add --cloud --cluster=za-cpt --type=n2-standard-8 --count=2
 
   # Remote Linux server via SSH (direct-join, no Tailscale)
-  abc node add --host=192.168.1.50 --user=ubuntu \
+  abc node add --remote=192.168.1.50 --user=ubuntu \
     --server-join=10.0.0.1 --datacenter=za-cpt
 
   # Remote Linux server via SSH (with Tailscale)
-  abc node add --host=192.168.1.50 --user=ubuntu \
+  abc node add --remote=192.168.1.50 --user=ubuntu \
     --tailscale --tailscale-auth-key=tskey-auth-... \
     --server-join=100.64.0.1 --datacenter=za-cpt
 
   # Remote Linux server via SSH (with Tailscale, auth key auto-created from TAILSCALE_API_KEY)
-  abc node add --host=192.168.1.50 --user=ubuntu \
+  abc node add --remote=192.168.1.50 --user=ubuntu \
     --tailscale --tailscale-key-ephemeral --tailscale-key-expiry=2h \
     --server-join=100.64.0.1 --datacenter=za-cpt
 
@@ -55,12 +55,12 @@ Examples:
     --server-join=10.0.0.5 --node-class=workstation
 
   # Remote server via SSH jump/bastion host
-  abc node add --host=10.10.0.50 --user=ubuntu \
+  abc node add --remote=10.10.0.50 --user=ubuntu \
     --jump-host=bastion.example.com --jump-user=ec2-user \
     --server-join=10.10.0.1 --datacenter=za-cpt
 
   # Print a self-contained install script (no SSH connection made)
-  abc node add --host=10.10.0.50 --print-commands \
+  abc node add --remote=10.10.0.50 --print-commands \
     --target-os=linux/amd64 --server-join=10.10.0.1`,
 		RunE: runNodeAdd,
 	}
@@ -72,7 +72,7 @@ Examples:
 
 	// ── Transport flags (new) ─────────────────────────────────────────────────
 	cmd.Flags().Bool("local", false, "Install on the current machine")
-	cmd.Flags().String("host", "", "SSH target host or IP for remote installation")
+	cmd.Flags().String("remote", "", "SSH target host or IP for remote installation")
 	cmd.Flags().String("user", "", "SSH user for remote install (default: current OS user)")
 	cmd.Flags().String("ssh-key", "", "Path to SSH private key (default: ~/.ssh/id_rsa, then SSH agent)")
 	cmd.Flags().Int("ssh-port", 22, "SSH port (default: 22)")
@@ -143,7 +143,7 @@ Examples:
 
 	// ── Script generation ────────────────────────────────────────────────────
 	cmd.Flags().Bool("print-commands", false, "Print a self-contained shell script covering all install steps (no execution)")
-	cmd.Flags().String("target-os", "", "Target OS/arch for --print-commands with --host (e.g. linux/amd64, darwin/arm64; default: linux/amd64)")
+	cmd.Flags().String("target-os", "", "Target OS/arch for --print-commands with --remote (e.g. linux/amd64, darwin/arm64; default: linux/amd64)")
 
 	return cmd
 }
@@ -184,18 +184,18 @@ func runNodeAdd(cmd *cobra.Command, _ []string) error {
 
 	isCloud := utils.CloudFromCmd(cmd)
 	isLocal, _ := cmd.Flags().GetBool("local")
-	host, _ := cmd.Flags().GetString("host")
+	remote, _ := cmd.Flags().GetString("remote")
 
 	// Route to the correct mode
 	switch {
 	case isCloud:
 		return runCloudAdd(cmd)
-	case host != "":
-		return runSSHAdd(cmd, host)
+	case remote != "":
+		return runSSHAdd(cmd, remote)
 	case isLocal:
 		return runLocalAdd(cmd)
 	default:
-		return fmt.Errorf("specify a transport: --cloud, --host=<ip>, or --local")
+		return fmt.Errorf("specify a transport: --cloud, --remote=<ip>, or --local")
 	}
 }
 
@@ -387,12 +387,12 @@ func runLocalAdd(cmd *cobra.Command) error {
 
 // ─── SSH path ─────────────────────────────────────────────────────────────────
 
-func runSSHAdd(cmd *cobra.Command, host string) error {
+func runSSHAdd(cmd *cobra.Command, remote string) error {
 	out := cmd.OutOrStdout()
 
 	// 1. Load ~/.ssh/config defaults for this alias (Hostname, Port, User,
 	//    IdentityFile, ProxyJump, StrictHostKeyChecking).
-	sshCfg, isAlias := loadSSHConfigEntry(host)
+	sshCfg, isAlias := loadSSHConfigEntry(remote)
 
 	// 2. CLI flags override config-file values.
 	//    cmd.Flags().Changed() is true only when the user explicitly passed the
@@ -435,12 +435,12 @@ func runSSHAdd(cmd *cobra.Command, host string) error {
 	switch {
 	case sshCfg.JumpHost != "":
 		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d via jump host %s...\n",
-			sshCfg.User, host, sshCfg.Port, sshCfg.JumpHost)
+			sshCfg.User, remote, sshCfg.Port, sshCfg.JumpHost)
 	case isAlias:
 		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d (resolved: %s:%d via ~/.ssh/config)...\n",
-			sshCfg.User, host, sshCfg.Port, sshCfg.Host, sshCfg.Port)
+			sshCfg.User, remote, sshCfg.Port, sshCfg.Host, sshCfg.Port)
 	default:
-		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d...\n", sshCfg.User, host, sshCfg.Port)
+		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d...\n", sshCfg.User, remote, sshCfg.Port)
 	}
 
 	// 4. Dial and run install.

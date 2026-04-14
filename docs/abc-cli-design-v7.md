@@ -117,10 +117,10 @@ abc
 │   └── unset  KEY                     Unset (clear) a configuration key
 │
 ├── secrets
-│   ├── set    KEY VALUE --unsafe      Store an encrypted credential
-│   ├── get    KEY --unsafe            Retrieve and decrypt a credential
-│   ├── list   [--unsafe]              List all secret keys (and values if --unsafe)
-│   └── delete KEY --unsafe            Delete a secret
+│   ├── set    KEY VALUE --unsafe-local      Store an encrypted credential
+│   ├── get    KEY --unsafe-local            Retrieve and decrypt a credential
+│   ├── list   [--unsafe-local]              List all secret keys (and values if --unsafe-local)
+│   └── delete KEY --unsafe-local            Delete a secret
 │
 │  ── Unified entry point ────────────────────────────────────────────────
 ├── submit       <target> [flags]                (auto-detects pipeline/module/job)
@@ -165,7 +165,7 @@ abc
 │  ── Infrastructure ──────────────────────────────────────────────────────
 ├── infra
 │   ├── node
-│   │   ├── add        [flags]                  (--local / --host / --cloud)
+│   │   ├── add        [flags]                  (--local / --remote / --cloud)
 │   │   ├── list       [flags]
 │   │   ├── show       <node-id>
 │   │   ├── drain      <node-id> [flags]
@@ -391,7 +391,7 @@ Currently at v1. All new configs default to v1; legacy configs without a version
 
 **Encryption (SOPS):** Sensitive fields (`access_token`) are automatically encrypted when
 `ABC_CRYPT_PASSWORD` environment variable is set. Uses password-based AES-256-GCM encryption
-with scrypt key derivation — equivalent to SOPS "--unsafe" mode. Works offline without
+with scrypt key derivation — equivalent to SOPS local password mode. Works offline without
 external KMS. Encrypted fields are marked with SOPS metadata in the YAML for compatibility.
 
 ### `abc config init`
@@ -466,16 +466,16 @@ Clear a configuration key, reverting to environment variables or built-in defaul
 
 Credentials and API keys are stored locally in the config file using password-based encryption.
 No backend server is required. All encryption/decryption happens locally via the `abc secrets`
-command with the `--unsafe` flag.
+command with the `--unsafe-local` flag.
 
 **Commands:**
 
-| Command | Purpose | Requires `--unsafe` |
+| Command | Purpose | Requires `--unsafe-local` |
 |---------|---------|--------------------|
 | `abc secrets set <key> <value>` | Store an encrypted credential | Yes (`ABC_CRYPT_PASSWORD`) |
 | `abc secrets get <key>` | Retrieve and decrypt a credential | Yes (`ABC_CRYPT_PASSWORD`) |
 | `abc secrets list` | List all secret keys (not values) | No |
-| `abc secrets list --unsafe` | List keys and decrypted values | Yes (`ABC_CRYPT_PASSWORD`) |
+| `abc secrets list --unsafe-local` | List keys and decrypted values | Yes (`ABC_CRYPT_PASSWORD`) |
 | `abc secrets delete <key>` | Remove a secret | Yes |
 
 **Encryption:**
@@ -493,18 +493,18 @@ command with the `--unsafe` flag.
 export ABC_CRYPT_PASSWORD="my-secret-passphrase"
 
 # Store credentials
-abc secrets set aws-access-key "AKIA..." --unsafe
-abc secrets set db-password "postgres://..." --unsafe
-abc secrets set github-token "ghp_..." --unsafe
+abc secrets set aws-access-key "AKIA..." --unsafe-local
+abc secrets set db-password "postgres://..." --unsafe-local
+abc secrets set github-token "ghp_..." --unsafe-local
 
 # List stored secrets (without values)
 abc secrets list
 
 # Retrieve a credential (decrypts it)
-abc secrets get aws-access-key --unsafe
+abc secrets get aws-access-key --unsafe-local
 
 # Use in scripts (pipe-compatible)
-export DB_URL=$(ABC_CRYPT_PASSWORD="..." abc secrets get db-password --unsafe)
+export DB_URL=$(ABC_CRYPT_PASSWORD="..." abc secrets get db-password --unsafe-local)
 ```
 
 **Config file structure:**
@@ -811,10 +811,10 @@ Requires `--sudo`. Runs preflight, installs Nomad, registers node.
 | Flag | Description |
 |------|-------------|
 | `--local` | Install on the current machine |
-| `--host <ip>` | Install on a remote machine via SSH |
+| `--remote <ip>` | Install on a remote machine via SSH |
 | `--cloud` | Provision a cloud VM |
 
-**SSH flags** (`--host` mode):
+**SSH flags** (`--remote` mode):
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -1119,14 +1119,14 @@ Both commands support two encryption modes:
 **Managed mode** (planned, not yet available): key derived from control-plane session token.
 Provides managed key storage and recovery. Will be the default when implemented.
 
-**Unsafe mode** (`--unsafe`): key derived from a locally-provided password and optional salt.
+**Unsafe mode** (`--unsafe-local`): key derived from a locally-provided password and optional salt.
 No key management — losing the password means losing the data. Explicit opt-in required.
 
 | Flag | Description |
 |------|-------------|
-| `--unsafe` | Use a locally-provided password instead of the managed key (required for now) |
-| `--crypt-password` | rclone crypt password (requires `--unsafe`) |
-| `--crypt-salt` | rclone crypt salt / password2 (requires `--unsafe`) |
+| `--unsafe-local` | Use a locally-provided password instead of the managed key (required for now) |
+| `--crypt-password` | rclone crypt password (requires `--unsafe-local`) |
+| `--crypt-salt` | rclone crypt salt / password2 (requires `--unsafe-local`) |
 | `--output` | Output file (single-file) |
 | `--output-dir` | Output directory (folder) |
 
@@ -1135,7 +1135,7 @@ path already exists, `.dec` is appended.
 
 **Expected output — `abc data encrypt`:**
 ```
-WARNING: --unsafe mode active. Encryption key is NOT managed by the control plane.
+WARNING: --unsafe-local mode active. Encryption key is NOT managed by the control plane.
          If you lose your password, your data cannot be recovered.
 File encrypted successfully.
   Output: ./data.csv.bin
@@ -1143,22 +1143,22 @@ File encrypted successfully.
 
 **Expected output — `abc data decrypt`:**
 ```
-WARNING: --unsafe mode active. Decrypting with locally-provided password (no key management).
+WARNING: --unsafe-local mode active. Decrypting with locally-provided password (no key management).
 File decrypted successfully.
   Output: ./data.csv
 ```
 
 **Error cases:**
 ```
-# Without --unsafe:
+# Without --unsafe-local:
 $ abc data encrypt ./data.csv --crypt-password secret
 Error: managed encryption (control-plane key) is not yet available.
-       To encrypt with a local password, pass --unsafe --crypt-password <password>.
-       WARNING: in unsafe mode the key is not managed — losing your password means losing your data.
+       To encrypt with a local password, pass --unsafe-local --crypt-password <password>.
+       WARNING: in unsafe-local mode the key is not managed — losing your password means losing your data.
 
-# With --unsafe but missing password:
-$ abc data encrypt ./data.csv --unsafe
-Error: --crypt-password is required in --unsafe mode
+# With --unsafe-local but missing password:
+$ abc data encrypt ./data.csv --unsafe-local
+Error: --crypt-password is required in --unsafe-local mode
 ```
 
 ---

@@ -18,7 +18,7 @@ func NewCmd() *cobra.Command {
 		Short: "Manage infrastructure: nodes and storage",
 		Long: `Commands for managing cluster infrastructure.
 
-  abc infra node add --host <ip>        Add a compute node
+		  abc infra node add --remote <ip>        Add a compute node
   abc infra node list                   List registered nodes
   abc infra node show <id>              Show node details
   abc infra node drain <id>             Drain a node

@@ -116,13 +116,13 @@ File permissions: `0600`. Sensitive data (passwords, tokens, private keys) is **
 
 ```bash
 # Default debug level (recommended for issue reports)
-abc --debug node add --host 10.0.0.5
+abc --debug node add --remote 10.0.0.5
 
 # Verbose — includes remote commands
-abc --debug=2 node add --host 10.0.0.5
+abc --debug=2 node add --remote 10.0.0.5
 
 # Via environment variable
-ABC_DEBUG=1 abc node add --host 10.0.0.5
+ABC_DEBUG=1 abc node add --remote 10.0.0.5
 ```
 
 On failure, the CLI prints:
@@ -309,38 +309,38 @@ $ abc config unset contexts.myorg.region
 ## `secrets`
 
 Manage encrypted credentials stored in the config file without exposing them to the backend.
-Uses password-based encryption (mozilla/sops --unsafe mode) with no external KMS required.
+Uses password-based encryption (local password mode) with no external KMS required.
 
 ### `secrets set KEY VALUE`
 
-Store an encrypted credential. Requires `--unsafe` flag and `ABC_CRYPT_PASSWORD` environment variable.
+Store an encrypted credential. Requires `--unsafe-local` flag and `ABC_CRYPT_PASSWORD` environment variable.
 
 ```bash
 $ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-$ abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe
+$ abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe-local
 ✓ Secret "aws-access-key" stored.
 
-$ abc secrets set db-password "postgres://user:pass@localhost/db" --unsafe
+$ abc secrets set db-password "postgres://user:pass@localhost/db" --unsafe-local
 ✓ Secret "db-password" stored.
 ```
 
 ### `secrets get KEY`
 
-Retrieve and decrypt a secret. Requires `--unsafe` flag and `ABC_CRYPT_PASSWORD` environment variable.
+Retrieve and decrypt a secret. Requires `--unsafe-local` flag and `ABC_CRYPT_PASSWORD` environment variable.
 
 ```bash
 $ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-$ abc secrets get aws-access-key --unsafe
+$ abc secrets get aws-access-key --unsafe-local
 AKIAIOSFODNN7EXAMPLE
 
 # Pipe-compatible (no trailing newline)
-$ export AWS_ACCESS_KEY_ID=$(ABC_CRYPT_PASSWORD="..." abc secrets get aws-access-key --unsafe)
+$ export AWS_ACCESS_KEY_ID=$(ABC_CRYPT_PASSWORD="..." abc secrets get aws-access-key --unsafe-local)
 ```
 
 ### `secrets list`
 
-List all stored secret keys. Without `--unsafe`, shows only key names (not values).
-With `--unsafe`, decrypts and displays all key-value pairs.
+List all stored secret keys. Without `--unsafe-local`, shows only key names (not values).
+With `--unsafe-local`, decrypts and displays all key-value pairs.
 
 ```bash
 # List keys only (no password needed)
@@ -349,11 +349,11 @@ SECRETS (2):
   aws-access-key
   db-password
 
-Use --unsafe to view decrypted values (requires ABC_CRYPT_PASSWORD)
+Use --unsafe-local to view decrypted values (requires ABC_CRYPT_PASSWORD)
 
 # List with decrypted values
 $ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-$ abc secrets list --unsafe
+$ abc secrets list --unsafe-local
 KEY               VALUE
 aws-access-key    AKIAIOSFODNN7EXAMPLE
 db-password       postgres://user:pass@localhost/db
@@ -361,15 +361,15 @@ db-password       postgres://user:pass@localhost/db
 
 ### `secrets delete KEY`
 
-Delete a secret from the config file. Requires `--unsafe` flag and confirms before deletion.
+Delete a secret from the config file. Requires `--unsafe-local` flag and confirms before deletion.
 
 ```bash
-$ abc secrets delete aws-access-key --unsafe
+$ abc secrets delete aws-access-key --unsafe-local
 Delete secret "aws-access-key"? (y/n) y
 ✓ Secret "aws-access-key" deleted.
 
 # Skip confirmation with --yes
-$ abc secrets delete db-password --unsafe --yes
+$ abc secrets delete db-password --unsafe-local --yes
 ✓ Secret "db-password" deleted.
 ```
 
@@ -1125,9 +1125,9 @@ Two encryption modes are supported:
 
 - **Managed** (default, not yet available): key is derived from your control-plane session token.
   Provides managed key storage and recovery. Requires an authenticated session.
-- **Unsafe** (`--unsafe`): key is derived from a locally-provided password and salt.
+- **Unsafe** (`--unsafe-local`): key is derived from a locally-provided password and salt.
   No key management — if you lose the password, your data cannot be recovered.
-  You accept this risk explicitly by passing `--unsafe`.
+  You accept this risk explicitly by passing `--unsafe-local`.
 
 ```
 abc data encrypt <path> [flags]
@@ -1135,9 +1135,9 @@ abc data encrypt <path> [flags]
 
 | Flag               | Description                                                               |
 |--------------------|---------------------------------------------------------------------------|
-| `--unsafe`         | Encrypt with a locally-provided password instead of the managed key       |
-| `--crypt-password` | rclone crypt password (requires `--unsafe`)                               |
-| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe`)                       |
+| `--unsafe-local`   | Encrypt with a locally-provided password instead of the managed key       |
+| `--crypt-password` | rclone crypt password (requires `--unsafe-local`)                        |
+| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe-local`)                |
 | `--output`         | Output file path (single-file encryption)                                 |
 | `--output-dir`     | Output directory (folder encryption)                                      |
 | `--progress`       | Show live progress bars (default: `true`)                                 |
@@ -1146,13 +1146,13 @@ Output files are written with the `.bin` suffix by default.
 
 ```bash
 # Local password (unsafe mode — key not managed)
-abc data encrypt ./data.csv --unsafe --crypt-password "secret"
-abc data encrypt ./dataset  --unsafe --crypt-password "secret" --crypt-salt "pepper"
+abc data encrypt ./data.csv --unsafe-local --crypt-password "secret"
+abc data encrypt ./dataset  --unsafe-local --crypt-password "secret" --crypt-salt "pepper"
 ```
 
 Expected output:
 ```
-WARNING: --unsafe mode active. Encryption key is NOT managed by the control plane.
+WARNING: --unsafe-local mode active. Encryption key is NOT managed by the control plane.
          If you lose your password, your data cannot be recovered.
 File encrypted successfully.
   Output: ./data.csv.bin
@@ -1167,7 +1167,7 @@ Decrypt a file or folder previously encrypted with `abc data encrypt` or rclone 
 Mirrors the two-mode model of `abc data encrypt`:
 
 - **Managed** (default, not yet available): key derived from control-plane session token.
-- **Unsafe** (`--unsafe`): decrypt with a locally-provided password — must match the password used during `--unsafe` encryption.
+- **Unsafe** (`--unsafe-local`): decrypt with a locally-provided password — must match the password used during `--unsafe-local` encryption.
 
 ```
 abc data decrypt <path> [flags]
@@ -1175,9 +1175,9 @@ abc data decrypt <path> [flags]
 
 | Flag               | Description                                                               |
 |--------------------|---------------------------------------------------------------------------|
-| `--unsafe`         | Decrypt with a locally-provided password instead of the managed key       |
-| `--crypt-password` | rclone crypt password (requires `--unsafe`)                               |
-| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe`)                       |
+| `--unsafe-local`   | Decrypt with a locally-provided password instead of the managed key       |
+| `--crypt-password` | rclone crypt password (requires `--unsafe-local`)                        |
+| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe-local`)                |
 | `--output`         | Output file path (single-file decryption)                                 |
 | `--output-dir`     | Output directory (folder decryption)                                      |
 
@@ -1185,13 +1185,13 @@ If `--output` is omitted, the `.bin` suffix is stripped from the filename. If th
 
 ```bash
 # Local password (unsafe mode — must match encryption password)
-abc data decrypt ./data.csv.bin --unsafe --crypt-password "secret"
-abc data decrypt ./data.csv.bin --unsafe --crypt-password "secret" --output ./data.csv
+abc data decrypt ./data.csv.bin --unsafe-local --crypt-password "secret"
+abc data decrypt ./data.csv.bin --unsafe-local --crypt-password "secret" --output ./data.csv
 ```
 
 Expected output:
 ```
-WARNING: --unsafe mode active. Decrypting with locally-provided password (no key management).
+WARNING: --unsafe-local mode active. Decrypting with locally-provided password (no key management).
 File decrypted successfully.
   Output: ./data.csv
 ```
@@ -1243,10 +1243,10 @@ abc infra node add [flags]
 | Flag              | Description                                                           |
 |-------------------|-----------------------------------------------------------------------|
 | `--local`         | Install on the current machine                                        |
-| `--host <ip>`     | Install on a remote machine via SSH                                   |
+| `--remote <ip>`   | Install on a remote machine via SSH                                   |
 | `--cloud`         | Provision a cloud VM (requires `--cloud` elevation)                   |
 
-### SSH flags (`--host` mode)
+### SSH flags (`--remote` mode)
 
 | Flag                    | Description                                                     | Default |
 |-------------------------|-----------------------------------------------------------------|---------|
@@ -1260,7 +1260,7 @@ abc infra node add [flags]
 | `--jump-port`           | SSH port on the jump host                                       | `22`    |
 | `--jump-key`            | SSH private key for the jump host                               | same as `--ssh-key` |
 | `--print-commands`      | Print a self-contained install script instead of executing      | `false` |
-| `--target-os`           | Target OS/arch for `--print-commands` with `--host` (e.g. `linux/amd64`) | `linux/amd64` |
+| `--target-os`           | Target OS/arch for `--print-commands` with `--remote` (e.g. `linux/amd64`) | `linux/amd64` |
 
 The SSH auth chain (highest to lowest priority): explicit `--ssh-key` → default key files → SSH agent → keyboard-interactive → `--password`. When `--password` is provided it is also used transparently for `sudo -S` so the install proceeds without a second prompt.
 
@@ -1335,10 +1335,10 @@ Before installing, `node add` validates:
 abc --sudo infra node add --local --server-join 10.0.0.1:4647
 
 # Install on a remote machine via SSH
-abc --sudo infra node add --host 10.0.0.5 --user ubuntu --server-join 10.0.0.1:4647
+abc --sudo infra node add --remote 10.0.0.5 --user ubuntu --server-join 10.0.0.1:4647
 
 # Install with password auth (no SSH key)
-abc --sudo infra node add --host 10.0.0.5 --user ubuntu --password mypassword \
+abc --sudo infra node add --remote 10.0.0.5 --user ubuntu --password mypassword \
   --server-join 10.0.0.1:4647
 
 # Install via a bastion host
@@ -1352,15 +1352,15 @@ abc --sudo infra node add --host 10.0.0.5 --user ubuntu \
   --server-join 10.0.0.1:4647
 
 # Generate a self-contained install script (no execution)
-abc --sudo infra node add --host 10.0.0.5 --print-commands > install.sh
+abc --sudo infra node add --remote 10.0.0.5 --print-commands > install.sh
 
 # Install with community containerd driver (experimental)
-abc --sudo --exp infra node add --host 10.0.0.5 --user ubuntu \
+abc --sudo --exp infra node add --remote 10.0.0.5 --user ubuntu \
   --community-driver containerd \
   --server-join 10.0.0.1:4647
 
 # Dry-run — show what would be executed
-abc --sudo infra node add --host 10.0.0.5 --user ubuntu --dry-run
+abc --sudo infra node add --remote 10.0.0.5 --user ubuntu --dry-run
 ```
 
 ---
