@@ -187,6 +187,10 @@ EXAMPLES
 	cmd.Flags().Bool("hpc-compat-env", false,
 		"Inject SLURM_*/PBS_* environment aliases into the task env block")
 
+	// SSH execution mode
+	cmd.Flags().Bool("ssh", false, "Execute the job on a remote host via SSH instead of submitting to Nomad")
+	cmd.Flags().Duration("ssh-timeout", 0, "Timeout for SSH job execution (e.g. 30m, 2h); 0 means no timeout")
+
 	return cmd
 }
 

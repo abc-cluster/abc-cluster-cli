@@ -28,6 +28,7 @@ func NewCmd() *cobra.Command {
 		newDispatchCmd(),
 		newLogsCmd(),
 		newStatusCmd(),
+		newTraceCmd(),
 	)
 	return cmd
 }

@@ -73,6 +73,16 @@ func ExpFromCmd(cmd *cobra.Command) bool {
 	return exp
 }
 
+// UserFromCmd returns the --user flag value (email address for impersonation).
+// Falls back to the ABC_AS_USER environment variable.
+func UserFromCmd(cmd *cobra.Command) string {
+	if v := os.Getenv("ABC_AS_USER"); v != "" {
+		return v
+	}
+	user, _ := cmd.Root().PersistentFlags().GetString("user")
+	return user
+}
+
 // ClusterFromCmd returns the --cluster flag value, falling back to the
 // ABC_CLUSTER environment variable.
 func ClusterFromCmd(cmd *cobra.Command) string {

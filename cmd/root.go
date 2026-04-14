@@ -10,16 +10,18 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/auth"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/budget"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/cluster"
+	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/namespace"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/node"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/storage"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
@@ -155,6 +157,8 @@ func init() {
 		"Enable experimental CLI features (or set ABC_CLI_EXP_MODE)")
 	rootCmd.PersistentFlags().String("cluster", utils.EnvOrDefault("ABC_CLUSTER"),
 		"Target a specific named cluster in the fleet (requires --cloud; or set ABC_CLUSTER)")
+	rootCmd.PersistentFlags().String("user", utils.EnvOrDefault("ABC_AS_USER"),
+		"Act on behalf of this user email — admin only (or set ABC_AS_USER)")
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false,
 		"Suppress informational output (banners, progress)")
 
@@ -184,15 +188,16 @@ func init() {
 	rootCmd.AddCommand(module.NewCmd())
 	rootCmd.AddCommand(submit.NewSubmitCmd())
 	rootCmd.AddCommand(data.NewCmd(&serverURL, &accessToken, &workspace))
-	rootCmd.AddCommand(storage.NewCmd())
+	rootCmd.AddCommand(infra.NewCmd())
+	rootCmd.AddCommand(admin.NewCmd())
 	rootCmd.AddCommand(job.NewCmd())
 	rootCmd.AddCommand(job.NewLogsCmd())
-	rootCmd.AddCommand(namespace.NewCmd())
-	rootCmd.AddCommand(node.NewCmd())
 	rootCmd.AddCommand(cluster.NewCmd())
 	rootCmd.AddCommand(budget.NewCmd())
-	rootCmd.AddCommand(service.NewCmd())
 	rootCmd.AddCommand(service.NewStatusCmd())
+	rootCmd.AddCommand(auth.NewCmd())
+	rootCmd.AddCommand(cfgcmd.NewCmd())
+	rootCmd.AddCommand(secrets.NewCmd())
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

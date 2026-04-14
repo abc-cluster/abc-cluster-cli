@@ -40,6 +40,7 @@ All node operations require --sudo and an admin-tier token.
 		newUndrainCmd(),
 		newAddCmd(),
 		newTerminateCmd(),
+		newProbeCmd(),
 	)
 	return cmd
 }

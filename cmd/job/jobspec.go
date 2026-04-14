@@ -70,6 +70,7 @@ type jobSpec struct {
 	// ── Meta directives ───────────────────────────────────────────────────────
 	Meta  map[string]string
 	Conda string
+	Pixi  bool
 
 	// ── Network directives ────────────────────────────────────────────────────
 	Ports []string
@@ -207,6 +208,9 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.IncludeHPCCompatEnv {
 		base.IncludeHPCCompatEnv = true
+	}
+	if override.Pixi {
+		base.Pixi = true
 	}
 	// Boolean expose flags: true wins.
 	if override.ExposeAllocID {

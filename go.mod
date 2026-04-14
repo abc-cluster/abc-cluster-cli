@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.2.4
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
+	github.com/mozilla-services/go-sops/v3 v3.9.1
 	github.com/spf13/cobra v1.10.2
 	github.com/zclconf/go-cty v1.18.0
 	golang.org/x/crypto v0.48.0

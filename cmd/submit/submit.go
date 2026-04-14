@@ -34,10 +34,8 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 
 	// Collect detection inputs.
 	forceType, _ := cmd.Flags().GetString("type")
-	conda, _ := cmd.Flags().GetString("conda")
-	pixi, _ := cmd.Flags().GetBool("pixi")
 
-	tt, err := detectTargetType(ctx, nc, target, forceType, conda, pixi, namespace)
+	tt, err := detectTargetType(ctx, nc, target, forceType, namespace)
 	if err != nil {
 		return err
 	}
@@ -71,7 +69,7 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 		hcl, jobName, err = buildModuleHCL(cmd, target, paramsPath,
 			name, namespace, nomadAddr, nomadToken, datacenters)
 	case typeJob:
-		hcl, jobName, err = buildJobHCL(cmd, target, conda, pixi, paramsPath,
+		hcl, jobName, err = buildJobHCL(cmd, target, paramsPath,
 			name, namespace, datacenters)
 	}
 	if err != nil {
@@ -194,44 +192,18 @@ func buildModuleHCL(cmd *cobra.Command, target, paramsPath, name, namespace, nom
 	return hcl, spec.JobName, nil
 }
 
-// buildJobHCL handles direct script submission, conda wrapper mode, and pixi wrapper mode.
-func buildJobHCL(cmd *cobra.Command, target, conda string, pixi bool, paramsPath, name, namespace string, datacenters []string) (string, string, error) {
+// buildJobHCL handles direct script submission. Conda/pixi wrappers are
+// declared via #ABC preamble directives inside the script itself.
+func buildJobHCL(cmd *cobra.Command, target, paramsPath, name, namespace string, datacenters []string) (string, string, error) {
 	cores, _ := cmd.Flags().GetInt("cores")
 	mem, _ := cmd.Flags().GetString("mem")
 	memMB, _ := parseMemoryMBStr(mem)
-	walltime, _ := cmd.Flags().GetString("time")
-	toolArgs, _ := cmd.Flags().GetStringArray("tool-arg")
-
-	scriptPath := target
-	var cleanWrapper func()
-
-	switch {
-	case pixi:
-		var err error
-		scriptPath, cleanWrapper, err = generatePixiWrapper(target, cores, memMB, walltime, toolArgs)
-		if err != nil {
-			return "", "", err
-		}
-		defer cleanWrapper()
-
-	case conda != "":
-		solver, _ := cmd.Flags().GetString("conda-solver")
-		var err error
-		scriptPath, cleanWrapper, err = generateCondaWrapper(target, conda, solver, cores, memMB, walltime, toolArgs)
-		if err != nil {
-			return "", "", err
-		}
-		defer cleanWrapper()
-	}
 
 	opts := jobpkg.ScriptHCLOptions{
 		Name:      name,
 		Namespace: namespace,
-	}
-	// For direct script jobs (no wrapper), honour resource flags via options.
-	if conda == "" && !pixi {
-		opts.Cores = cores
-		opts.MemoryMB = memMB
+		Cores:     cores,
+		MemoryMB:  memMB,
 	}
 
 	// paramsPath carries --input/--output/--param values; for script jobs these
@@ -239,7 +211,7 @@ func buildJobHCL(cmd *cobra.Command, target, conda string, pixi bool, paramsPath
 	// the params file if the script preamble supports it.
 	_ = paramsPath
 
-	res, err := jobpkg.BuildScriptHCL(scriptPath, opts)
+	res, err := jobpkg.BuildScriptHCL(target, opts)
 	if err != nil {
 		return "", "", err
 	}

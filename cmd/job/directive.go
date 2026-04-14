@@ -242,7 +242,7 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 			spec.Meta["abc_reschedule_max_delay"] = spec.RescheduleMaxDelay
 		}
 	}
-	if spec.OutputLog != "" || spec.ErrorLog != "" || spec.Conda != "" {
+	if spec.OutputLog != "" || spec.ErrorLog != "" || spec.Conda != "" || spec.Pixi {
 		if spec.Meta == nil {
 			spec.Meta = map[string]string{}
 		}
@@ -254,6 +254,9 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 		}
 		if spec.Conda != "" {
 			spec.Meta["abc_conda"] = spec.Conda
+		}
+		if spec.Pixi {
+			spec.Meta["abc_pixi"] = "true"
 		}
 	}
 	if spec.NoNetwork && len(spec.Ports) > 0 {
@@ -429,6 +432,11 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --conda requires a value", marker)
 			}
 			spec.Conda = val
+		case "pixi":
+			if hasValue {
+				return fmt.Errorf("#%s --pixi does not accept a value", marker)
+			}
+			spec.Pixi = true
 		case "constraint":
 			if !hasValue {
 				return fmt.Errorf("#%s --constraint requires a value", marker)

@@ -18,7 +18,7 @@ func TestDataEncrypt_FileDefaultOutput(t *testing.T) {
 	}
 
 	cmd := newEncryptCmd()
-	out, err := executeDataCmd(cmd, sourcePath, "--crypt-password", "secret")
+	out, err := executeDataCmd(cmd, sourcePath, "--unsafe", "--crypt-password", "secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
