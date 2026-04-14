@@ -811,6 +811,13 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 			}
 		}
 	}
+	if devMode && nodeCfg.ACL && !aclBootstrap {
+		if token := resolveNomadTokenForNode(); token != "" {
+			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
+				return fmt.Errorf("save nomad token on node: %w", err)
+			}
+		}
+	}
 	// 5. Post-setup driver installation (after node has joined and is healthy)
 	if communityDrivers.Requested() || localDrivers.Requested() || javaDriverCfg.Requested() {
 		if communityDrivers.Requested() {
@@ -1012,7 +1019,7 @@ func persistNomadTokenOnNode(ctx context.Context, ex Executor, token string) err
 	}
 	const tokenPath = "/etc/nomad.d/nomad.token"
 	quotedToken := shellQuote(token + "\n")
-	cmd := fmt.Sprintf("sudo mkdir -p /etc/nomad.d && sudo sh -c 'umask 077; printf %%s %s > %s'", quotedToken, tokenPath)
+	cmd := fmt.Sprintf("sudo mkdir -p /etc/nomad.d && sudo /bin/sh -c 'umask 077; printf %%s \"$1\" > %s' sh %s", tokenPath, quotedToken)
 	if err := ex.Run(ctx, cmd, io.Discard); err != nil {
 		return fmt.Errorf("write token to %s: %w", tokenPath, err)
 	}
@@ -1021,6 +1028,22 @@ func persistNomadTokenOnNode(ctx context.Context, ex Executor, token string) err
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func resolveNomadTokenForNode() string {
+	if token := strings.TrimSpace(os.Getenv("NOMAD_TOKEN")); token != "" {
+		return token
+	}
+	cfg, err := appconfig.Load()
+	if err != nil {
+		return ""
+	}
+	ctxName := cfg.ActiveContext
+	if ctxName == "" {
+		ctxName = "default"
+	}
+	ctx := cfg.Contexts[ctxName]
+	return strings.TrimSpace(ctx.NomadToken)
 }
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
