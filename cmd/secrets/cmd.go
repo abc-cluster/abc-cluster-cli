@@ -29,7 +29,8 @@ func NewCmd() *cobra.Command {
 		Long: `Manage encrypted secrets without exposing credentials.
 
 Secrets are encrypted locally using password-based encryption (local password mode).
-All operations require ABC_CRYPT_PASSWORD environment variable.
+All operations use password-based local encryption.
+Values from ~/.abc/config.yaml take precedence; otherwise ABC_CRYPT_PASSWORD and optional ABC_CRYPT_SALT are used.
 
 Examples:
   export ABC_CRYPT_PASSWORD="my-secret-passphrase"
@@ -37,6 +38,8 @@ Examples:
   abc secrets get my-api-key --unsafe-local
   abc secrets list
   abc secrets delete my-api-key --unsafe-local`,
+
+
 	}
 
 	cmd.AddCommand(
@@ -56,12 +59,14 @@ func newSetCmd() *cobra.Command {
 		Short: "Store an encrypted secret",
 		Long: `Store a value as an encrypted secret in the config file.
 
-Requires --unsafe-local flag and ABC_CRYPT_PASSWORD environment variable.
+Requires --unsafe-local flag. Values from ~/.abc/config.yaml take precedence; otherwise ABC_CRYPT_PASSWORD and optional ABC_CRYPT_SALT are used.
 
 Examples:
   export ABC_CRYPT_PASSWORD="passphrase"
   abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe-local
   abc secrets set db-url "postgres://user:pass@localhost/db" --unsafe-local`,
+
+
 		Args: cobra.ExactArgs(2),
 		RunE: runSetSecret,
 	}
@@ -78,12 +83,14 @@ func newGetCmd() *cobra.Command {
 		Short: "Retrieve and decrypt a secret",
 		Long: `Get a secret by key, decrypting it on output.
 
-Requires --unsafe-local flag and ABC_CRYPT_PASSWORD environment variable.
+Requires --unsafe-local flag. Values from ~/.abc/config.yaml take precedence; otherwise ABC_CRYPT_PASSWORD and optional ABC_CRYPT_SALT are used.
 
 Examples:
   export ABC_CRYPT_PASSWORD="passphrase"
   abc secrets get aws-access-key --unsafe-local
   abc secrets get db-url --unsafe-local | xargs echo "DB URL:"`,
+
+
 		Args: cobra.ExactArgs(1),
 		RunE: runGetSecret,
 	}
@@ -146,24 +153,26 @@ func runSetSecret(cmd *cobra.Command, args []string) error {
 	}
 
 	password := os.Getenv("ABC_CRYPT_PASSWORD")
-	if password == "" {
-		return fmt.Errorf("ABC_CRYPT_PASSWORD not set")
-	}
-
-	key := args[0]
-	value := args[1]
+	salt := os.Getenv("ABC_CRYPT_SALT")
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	password, salt, err = resolveSecretCredentials(cmd, cfg, password, salt)
+	if err != nil {
+		return err
+	}
+
+	key := args[0]
+	value := args[1]
+
 	if cfg.Secrets == nil {
 		cfg.Secrets = map[string]string{}
 	}
 
 	// Encrypt the value
-	salt := os.Getenv("ABC_CRYPT_SALT")
 	encrypted, err := config.EncryptField(value, password, salt)
 	if err != nil {
 		return fmt.Errorf("encrypt secret: %w", err)
@@ -187,16 +196,19 @@ func runGetSecret(cmd *cobra.Command, args []string) error {
 	}
 
 	password := os.Getenv("ABC_CRYPT_PASSWORD")
-	if password == "" {
-		return fmt.Errorf("ABC_CRYPT_PASSWORD not set")
-	}
-
-	key := args[0]
+	salt := os.Getenv("ABC_CRYPT_SALT")
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+
+	password, salt, err = resolveSecretCredentials(cmd, cfg, password, salt)
+	if err != nil {
+		return err
+	}
+
+	key := args[0]
 
 	encrypted, ok := cfg.Secrets[key]
 	if !ok {
@@ -204,7 +216,6 @@ func runGetSecret(cmd *cobra.Command, args []string) error {
 	}
 
 	// Decrypt the value
-	salt := os.Getenv("ABC_CRYPT_SALT")
 	decrypted, err := config.DecryptField(encrypted, password, salt)
 	if err != nil {
 		return fmt.Errorf("decrypt secret: %w", err)
@@ -231,11 +242,13 @@ func runListSecrets(cmd *cobra.Command, args []string) error {
 
 	if unsafeLocal {
 		password := os.Getenv("ABC_CRYPT_PASSWORD")
-		if password == "" {
-			return fmt.Errorf("ABC_CRYPT_PASSWORD not set")
+		salt := os.Getenv("ABC_CRYPT_SALT")
+
+		password, salt, err = resolveSecretCredentials(cmd, cfg, password, salt)
+		if err != nil {
+			return err
 		}
 
-		salt := os.Getenv("ABC_CRYPT_SALT")
 		fmt.Fprintf(cmd.OutOrStdout(), "KEY\tVALUE\n")
 		for key, encrypted := range cfg.Secrets {
 			decrypted, err := config.DecryptField(encrypted, password, salt)
@@ -293,3 +306,42 @@ func runDeleteSecret(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "Secret %q deleted.\n", key)
 	return nil
 }
+
+func resolveSecretCredentials(cmd *cobra.Command, cfg *config.Config, envPassword, envSalt string) (string, string, error) {
+	passwordProvided := envPassword != ""
+	saltProvided := envSalt != ""
+	configChanged := false
+
+	if cfg.Defaults.CryptPassword != "" {
+		if passwordProvided && envPassword != cfg.Defaults.CryptPassword {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: ABC_CRYPT_PASSWORD differs from config; using config value from ~/.abc/config.yaml\n")
+		}
+		envPassword = cfg.Defaults.CryptPassword
+	} else if passwordProvided {
+		cfg.Defaults.CryptPassword = envPassword
+		configChanged = true
+	}
+
+	if cfg.Defaults.CryptSalt != "" {
+		if saltProvided && envSalt != cfg.Defaults.CryptSalt {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: ABC_CRYPT_SALT differs from config; using config value from ~/.abc/config.yaml\n")
+		}
+		envSalt = cfg.Defaults.CryptSalt
+	} else if saltProvided {
+		cfg.Defaults.CryptSalt = envSalt
+		configChanged = true
+	}
+
+	if configChanged {
+		if err := cfg.Save(); err != nil {
+			return "", "", fmt.Errorf("save config: %w", err)
+		}
+	}
+
+	if envPassword == "" {
+		return "", "", fmt.Errorf("ABC_CRYPT_PASSWORD not set and no crypt password stored in config; set ABC_CRYPT_PASSWORD or add crypt_password to ~/.abc/config.yaml")
+	}
+
+	return envPassword, envSalt, nil
+}
+

@@ -485,6 +485,8 @@ command with the `--unsafe-local` flag.
 - Algorithm: AES-256-GCM with random nonce
 - Key derivation: scrypt (16384, 8, 1) — same as `abc data encrypt/decrypt` module
 - Uses same `ABC_CRYPT_PASSWORD` and `ABC_CRYPT_SALT` as data encryption
+- If `defaults.crypt_password` / `defaults.crypt_salt` are present in `~/.abc/config.yaml`, they are canonical; environment variables are only used when config values are absent
+- If env vars differ from config values, the CLI warns and continues with the config values
 - No external KMS or cloud services required (works offline)
 - Secrets stored in `~/.abc/config.yaml` under the `secrets` section
 
