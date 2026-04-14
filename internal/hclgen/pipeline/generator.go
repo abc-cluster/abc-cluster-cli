@@ -5,14 +5,35 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
 
+type Spec struct {
+	Name string
+
+	WorkDir string
+	Params  map[string]any
+
+	CPU             int
+	MemoryMB        int
+	NfVersion       string
+	NfPluginVersion string
+
+	Namespace   string
+	Datacenters []string
+
+	Repository  string
+	Revision    string
+	Profile     string
+	ExtraConfig string
+}
+
 // generateHeadJobHCL produces a Nomad HCL job spec for a Nextflow head job
 // from the given PipelineSpec and runtime credentials. runUUID must be a fresh
 // unique identifier on every submission (prevents Nomad duplicate-job skip).
-func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string) string {
+func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	f := hclwrite.NewEmptyFile()
 	root := f.Body()
 
@@ -99,12 +120,12 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 	envBody.SetAttributeValue("NOMAD_ADDR", cty.StringVal(nomadAddr))
 	envBody.SetAttributeValue("NOMAD_TOKEN", cty.StringVal(nomadToken))
 
-	return string(f.Bytes())
+	return utils.PrettyPrintHCL(string(f.Bytes()))
 }
 
 // buildNextflowConfig generates the Groovy nextflow config embedded in the
 // head job. It closely mirrors nextflow.headjob.config from the infra scripts.
-func buildNextflowConfig(spec *PipelineSpec) string {
+func buildNextflowConfig(spec Spec) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `plugins {
   id "nf-nomad@%s"
@@ -162,7 +183,7 @@ nomad {
 }
 
 // buildEntrypoint generates the bash entrypoint script for the head job.
-func buildEntrypoint(spec *PipelineSpec) string {
+func buildEntrypoint(spec Spec) string {
 	var sb strings.Builder
 	sb.WriteString("#!/usr/bin/env bash\nset -euo pipefail\ncd /local\n\n")
 	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s/.nxf-home\n\n", spec.WorkDir)

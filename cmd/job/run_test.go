@@ -225,7 +225,8 @@ python analysis.py
 		`command = "/bin/bash"`,
 		`args    = ["local/job.sh"]`,
 		`template {`,
-		`data        = "#!/bin/bash`,
+		`data        = <<-EOT`,
+		`#!/bin/bash`,
 		`destination = "local/job.sh"`,
 		`perms       = "0755"`,
 	}
