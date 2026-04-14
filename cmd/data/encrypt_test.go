@@ -10,6 +10,9 @@ import (
 )
 
 func TestDataEncrypt_FileDefaultOutput(t *testing.T) {
+	// Isolate config so stored crypt credentials don't bleed between tests.
+	t.Setenv("ABC_CONFIG_FILE", filepath.Join(t.TempDir(), "config.yaml"))
+
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "sample.txt")
 	plaintext := []byte("hello world")

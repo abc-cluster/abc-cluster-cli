@@ -8,6 +8,9 @@ import (
 )
 
 func TestDataDecrypt_FileDefaultOutput(t *testing.T) {
+	// Isolate config so stored crypt credentials don't bleed between tests.
+	t.Setenv("ABC_CONFIG_FILE", filepath.Join(t.TempDir(), "config.yaml"))
+
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "sample.txt")
 	plaintext := []byte("hello world")
@@ -42,6 +45,9 @@ func TestDataDecrypt_FileDefaultOutput(t *testing.T) {
 }
 
 func TestDataDecrypt_RequiresPassword(t *testing.T) {
+	// Isolate config so stored crypt credentials don't bleed between tests.
+	t.Setenv("ABC_CONFIG_FILE", filepath.Join(t.TempDir(), "config.yaml"))
+
 	dir := t.TempDir()
 	encryptedPath := filepath.Join(dir, "sample.txt"+rcloneDefaultSuffix)
 	if err := os.WriteFile(encryptedPath, []byte("not-real-encrypted-data"), 0600); err != nil {

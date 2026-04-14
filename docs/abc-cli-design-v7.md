@@ -347,21 +347,41 @@ Authentication and session management. Credentials are stored in `~/.abc/config.
 
 ### `abc auth login`
 
-Interactive login — prompts for endpoint and access token, then saves them to a named context.
+Interactive login — prompts for connection details, then saves them to a named context.
 
-**Expected output:**
+All fields except the API endpoint and access token are optional. The context name is
+auto-derived from the endpoint hostname and region (e.g., `org-a-za-cpt`).
+
+**Prompts and expected output:**
 ```
 API endpoint [https://api.abc-cluster.io]: https://api.org-a.example
 Access token: ••••••••••••••••••••••••••••••••
-Workspace ID (optional):
+Workspace ID (optional): ws-org-a-01
+Organization ID (optional): org-a
+Cluster ID/name (optional): dev-cluster
 Region (optional): za-cpt
+Validating credentials...
 
 ✓ Authenticated to https://api.org-a.example
 ✓ Context saved as: org-a-za-cpt
+✓ Workspace: ws-org-a-01
+✓ Organization: org-a
+✓ Cluster: dev-cluster
 ✓ Region: za-cpt
 ```
 
-Context name is auto-derived from endpoint and region (e.g., `org-a-za-cpt`).
+Fields stored in the context:
+
+| Field | Config key | Description |
+|-------|-----------|-------------|
+| API endpoint | `contexts.<name>.endpoint` | ABC control-plane API URL |
+| Access token | `contexts.<name>.access_token` | Bearer token for API auth |
+| Workspace ID | `contexts.<name>.workspace_id` | Default workspace for commands |
+| Organization ID | `contexts.<name>.organization_id` | Org identifier |
+| Cluster name | `contexts.<name>.cluster` | Default cluster for infra commands |
+| Region | `contexts.<name>.region` | Nomad region / jurisdiction |
+| Nomad addr | `contexts.<name>.nomad_addr` | Direct Nomad API endpoint (set by `abc infra compute add`) |
+| Nomad token | `contexts.<name>.nomad_token` | Nomad ACL token (set by `abc infra compute add`) |
 
 ### `abc auth logout`
 
@@ -376,6 +396,11 @@ Clear the active session context.
 ✓ Logged out
 ```
 
+With `--all`:
+```
+✓ All contexts removed
+```
+
 ### `abc auth whoami`
 
 Show the current authenticated identity and active context details.
@@ -384,10 +409,14 @@ Show the current authenticated identity and active context details.
 ```
 Context      org-a-za-cpt
 Endpoint     https://api.org-a.example
+Cluster      dev-cluster
+Organization org-a
 Workspace    ws-org-a-01
 Region       za-cpt
-Token        eyJ... (first 8 chars)
+Token        eyJ...•••••••••••• (first 8 chars)
 ```
+
+Fields with empty values are omitted.
 
 ### `abc auth token`
 
@@ -418,13 +447,17 @@ contexts:
   org-a-za-cpt:
     endpoint: https://api.org-a.example
     access_token: eyJ...
-    workspace_id: ws-org-a-01
-    region: za-cpt
-    nomad_addr: http://100.70.185.46:4646
-    nomad_token: s.123...
+    cluster: dev-cluster          # set by abc auth login or abc infra compute add
+    organization_id: org-a        # set by abc auth login
+    workspace_id: ws-org-a-01    # set by abc auth login
+    region: za-cpt               # set by abc auth login
+    nomad_addr: http://100.70.185.46:4646  # set by abc infra compute add
+    nomad_token: s.123...                  # set by abc infra compute add
 defaults:
   output: table
   region: za-cpt
+secrets:                          # encrypted credentials managed via abc secrets
+  GITHUB_TOKEN: "ENC[AES256_GCM,...]"
 ```
 
 **Versioning:** The `version` field allows future schema changes (v2, v3, etc) with automatic migrations.
@@ -468,10 +501,12 @@ Set a configuration key to a value.
 | `defaults.region` | Default region for all commands | `za-cpt` |
 | `contexts.<name>.endpoint` | API endpoint URL | `https://api.example.com` |
 | `contexts.<name>.access_token` | Access token | `eyJ...` |
+| `contexts.<name>.cluster` | Default cluster for infra commands | `dev-cluster` |
+| `contexts.<name>.organization_id` | Organization identifier | `org-a` |
 | `contexts.<name>.workspace_id` | Default workspace | `ws-org-a-01` |
 | `contexts.<name>.region` | Region override for this context | `za-cpt` |
-| `contexts.<name>.nomad_addr` | Node-specific Nomad API address | `http://100.70.185.46:4646` |
-| `contexts.<name>.nomad_token` | Node-specific Nomad ACL token | `s.123...` |
+| `contexts.<name>.nomad_addr` | Node-specific Nomad API address (set by infra) | `http://100.70.185.46:4646` |
+| `contexts.<name>.nomad_token` | Node-specific Nomad ACL token (set by infra) | `s.123...` |
 
 **Expected output:**
 ```

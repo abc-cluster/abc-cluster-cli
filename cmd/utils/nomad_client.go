@@ -223,6 +223,52 @@ type NomadNodeResource struct {
 	DiskMB   int `json:"DiskMB"`
 }
 
+// UnmarshalJSON supports both legacy flat fields (CPU/MemoryMB/DiskMB)
+// and newer nested Nomad payloads (Cpu.CpuShares, Memory.MemoryMB, Disk.DiskMB).
+func (r *NomadNodeResource) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if v, ok := raw["CPU"]; ok {
+		_ = json.Unmarshal(v, &r.CPU)
+	}
+	if v, ok := raw["MemoryMB"]; ok {
+		_ = json.Unmarshal(v, &r.MemoryMB)
+	}
+	if v, ok := raw["DiskMB"]; ok {
+		_ = json.Unmarshal(v, &r.DiskMB)
+	}
+
+	if v, ok := raw["Cpu"]; ok {
+		var cpu struct {
+			CpuShares int `json:"CpuShares"`
+		}
+		if err := json.Unmarshal(v, &cpu); err == nil && cpu.CpuShares > 0 {
+			r.CPU = cpu.CpuShares
+		}
+	}
+	if v, ok := raw["Memory"]; ok {
+		var mem struct {
+			MemoryMB int `json:"MemoryMB"`
+		}
+		if err := json.Unmarshal(v, &mem); err == nil {
+			r.MemoryMB = mem.MemoryMB
+		}
+	}
+	if v, ok := raw["Disk"]; ok {
+		var disk struct {
+			DiskMB int `json:"DiskMB"`
+		}
+		if err := json.Unmarshal(v, &disk); err == nil {
+			r.DiskMB = disk.DiskMB
+		}
+	}
+
+	return nil
+}
+
 // NomadNodeStub is a lightweight summary returned by GET /v1/nodes.
 type NomadNodeStub struct {
 	ID                    string `json:"ID"`
@@ -756,7 +802,21 @@ func WatchJobLogs(ctx context.Context, nc *NomadClient, jobID, namespace string,
 				break
 			}
 			follow := chosen.ClientStatus == "running"
-			return nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, follow, w)
+			if err := nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, follow, w); err != nil {
+				emsg := err.Error()
+				if strings.Contains(emsg, "404 Not Found") ||
+					strings.Contains(emsg, "not started yet") ||
+					strings.Contains(emsg, "No logs available") {
+					select {
+					case <-ctx.Done():
+						return nil
+					case <-SleepCh(int(delay.Seconds())):
+					}
+					continue
+				}
+				return err
+			}
+			return nil
 		}
 		select {
 		case <-ctx.Done():
