@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -33,29 +34,33 @@ func runNomadCLI(cmd *cobra.Command, args []string) error {
 }
 
 func nomadConnectionFromCmd(cmd *cobra.Command) (addr, token, region string) {
-	addr, _ = cmd.Flags().GetString("nomad-addr")
-	if addr == "" {
-		addr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
+	addr, token, region = nomadDefaultsFromConfigFirst()
+
+	if cmd.Flags().Changed("nomad-addr") {
+		addr, _ = cmd.Flags().GetString("nomad-addr")
+	} else if addr == "" {
+		addr = utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR")
 	}
-	token, _ = cmd.Flags().GetString("nomad-token")
-	if token == "" {
-		token, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
+
+	if cmd.Flags().Changed("nomad-token") {
+		token, _ = cmd.Flags().GetString("nomad-token")
+	} else if token == "" {
+		token = utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN")
 	}
-	region, _ = cmd.Flags().GetString("region")
-	if region == "" {
-		region, _ = cmd.Root().PersistentFlags().GetString("region")
-	}
-	if addr == "" || token == "" || region == "" {
-		cfgAddr, cfgToken, cfgRegion := utils.NomadDefaultsFromConfig()
-		if addr == "" {
-			addr = cfgAddr
-		}
-		if token == "" {
-			token = cfgToken
-		}
-		if region == "" {
-			region = cfgRegion
-		}
+
+	if cmd.Flags().Changed("region") {
+		region, _ = cmd.Flags().GetString("region")
+	} else if region == "" {
+		region = utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION")
 	}
 	return addr, token, region
+}
+
+func nomadDefaultsFromConfigFirst() (addr, token, region string) {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return "", "", ""
+	}
+	active := cfg.ActiveCtx()
+	return active.NomadAddr, active.NomadToken, active.Region
 }
