@@ -157,17 +157,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	// Read Nomad connection details for embedding in the head job env block.
-	nomadAddr, _ := cmd.Flags().GetString("nomad-addr")
-	if nomadAddr == "" {
-		nomadAddr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
-	}
-	if nomadAddr == "" {
-		nomadAddr = "http://127.0.0.1:4646"
-	}
-	nomadToken, _ := cmd.Flags().GetString("nomad-token")
-	if nomadToken == "" {
-		nomadToken, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
-	}
+	nomadAddr, nomadToken := nomadConnFromCmd(cmd)
 
 	runUUID := newRunUUID()
 	hcl := generateHeadJobHCL(spec, nomadAddr, nomadToken, runUUID)
@@ -178,6 +168,30 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	return submitAndWatch(cmd.Context(), cmd, nc, spec, hcl)
+}
+
+func nomadConnFromCmd(cmd *cobra.Command) (string, string) {
+	addr, _ := cmd.Flags().GetString("nomad-addr")
+	if addr == "" {
+		addr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
+	}
+	token, _ := cmd.Flags().GetString("nomad-token")
+	if token == "" {
+		token, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
+	}
+	if addr == "" || token == "" {
+		cfgAddr, cfgToken, _ := utils.NomadDefaultsFromConfig()
+		if addr == "" {
+			addr = cfgAddr
+		}
+		if token == "" {
+			token = cfgToken
+		}
+	}
+	if addr == "" {
+		addr = "http://127.0.0.1:4646"
+	}
+	return addr, token
 }
 
 func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClient, spec *PipelineSpec, hcl string) error {

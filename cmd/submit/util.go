@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +17,9 @@ func nomadAddrFromCmd(cmd *cobra.Command) string {
 	if v, _ := cmd.Root().PersistentFlags().GetString("nomad-addr"); v != "" {
 		return v
 	}
+	if cfgAddr, _, _ := utils.NomadDefaultsFromConfig(); cfgAddr != "" {
+		return cfgAddr
+	}
 	return "http://127.0.0.1:4646"
 }
 
@@ -26,6 +30,9 @@ func nomadTokenFromCmd(cmd *cobra.Command) string {
 	}
 	if v, _ := cmd.Root().PersistentFlags().GetString("nomad-token"); v != "" {
 		return v
+	}
+	if _, cfgToken, _ := utils.NomadDefaultsFromConfig(); cfgToken != "" {
+		return cfgToken
 	}
 	return ""
 }
