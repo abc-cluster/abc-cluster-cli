@@ -88,7 +88,7 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 			if cfg.Defaults.CryptPassword != opts.cryptPassword {
 				return inputError(
 					"crypt password already exists in config file.\n" +
-					"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
+						"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
 			}
 		} else {
 			cfg.Defaults.CryptPassword = opts.cryptPassword
@@ -100,7 +100,7 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 			if cfg.Defaults.CryptSalt != opts.cryptSalt {
 				return inputError(
 					"crypt salt already exists in config file.\n" +
-					"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
+						"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
 			}
 		} else {
 			cfg.Defaults.CryptSalt = opts.cryptSalt
@@ -126,8 +126,8 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 		} else {
 			return inputError(
 				"managed encryption (control-plane key) is not yet available.\n" +
-				"To encrypt with a local password, pass --crypt-password <password>.\n" +
-				"WARNING: in local mode the key is not managed — losing your password means losing your data.")
+					"To encrypt with a local password, pass --crypt-password <password>.\n" +
+					"WARNING: in local mode the key is not managed — losing your password means losing your data.")
 		}
 	}
 

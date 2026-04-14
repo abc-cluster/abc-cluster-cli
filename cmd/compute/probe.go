@@ -63,7 +63,7 @@ var nodeProbeJobTemplate = template.Must(template.New("node_probe_job").Parse(`j
 #!/usr/bin/env bash
 set -euo pipefail
 
-BIN_PATH="$${NOMAD_TASK_DIR}/abc-node-probe"
+BIN_PATH="${NOMAD_TASK_DIR}/abc-node-probe"
 FALLBACK_PATH="/opt/nomad/abc-node-probe"
 DOWNLOAD_URL={{printf "%q" .DownloadURL}}
 
@@ -145,8 +145,7 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve latest release asset for in-job download; fall back to pre-installed path.
-	targetOS, targetArch := platformFromNode(node)
-	downloadURL, version, err := utils.GetLatestReleaseAssetURLForPlatform(probeGitHubOwner, probeGitHubRepo, probeBinaryName, targetOS, targetArch)
+	downloadURL, version, err := utils.GetLatestReleaseAssetURL(probeGitHubOwner, probeGitHubRepo, probeBinaryName)
 	if err != nil {
 		downloadURL = ""
 	}
@@ -210,27 +209,6 @@ func runProbe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("streaming probe output: %w", err)
 	}
 	return nil
-}
-
-func platformFromNode(node *utils.NomadNode) (string, string) {
-	if node == nil || node.Attributes == nil {
-		return "linux", "amd64"
-	}
-
-	goos := strings.TrimSpace(node.Attributes["kernel.name"])
-	if goos == "" {
-		goos = strings.TrimSpace(node.Attributes["os.name"])
-	}
-	if goos == "" {
-		goos = "linux"
-	}
-
-	goarch := strings.TrimSpace(node.Attributes["cpu.arch"])
-	if goarch == "" {
-		goarch = "amd64"
-	}
-
-	return goos, goarch
 }
 
 func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*utils.NomadNode, error) {

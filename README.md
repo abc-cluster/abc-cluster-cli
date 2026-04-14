@@ -39,8 +39,8 @@ Additional optional environment variables:
 |---------------------|---------------------------------------------------|--------------------------------|
 | `ABC_API_ENDPOINT`  | abc-cluster API URL                               | `https://api.abc-cluster.io`   |
 | `ABC_WORKSPACE_ID`  | Workspace ID to use for operations                | *(user's default workspace)*   |
-| `ABC_UPLOAD_ENDPOINT` | Tus upload endpoint used by `abc data upload` (falls back to `<url>/data/uploads`) | *(unset)* |
-| `ABC_UPLOAD_TOKEN`  | Bearer token used by `abc data upload` for tus auth (falls back to `ABC_ACCESS_TOKEN`) | *(unset)* |
+| `ABC_UPLOAD_ENDPOINT` | Tus upload endpoint used by `abc data upload` (falls back to context upload endpoint or `<url>/data/uploads`) | *(unset)* |
+| `ABC_UPLOAD_TOKEN`  | Bearer token used by `abc data upload` for tus auth (falls back to context upload token or `ABC_ACCESS_TOKEN`) | *(unset)* |
 
 ## Usage
 

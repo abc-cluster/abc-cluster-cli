@@ -59,6 +59,11 @@ func (f *factoryRecorder) factory(endpoint, accessToken string, opts data.Upload
 	return f.uploader, f.err
 }
 
+func setTestConfigEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("ABC_CONFIG_FILE", filepath.Join(t.TempDir(), "config.yaml"))
+}
+
 func executeCmd(t *testing.T, cmd *cobra.Command, args ...string) (string, error) {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -69,7 +74,8 @@ func executeCmd(t *testing.T, cmd *cobra.Command, args ...string) (string, error
 	return buf.String(), err
 }
 
-func buildCmd(serverURL, accessToken, workspace *string, factory data.ClientFactory) *cobra.Command {
+func buildCmd(t *testing.T, serverURL, accessToken, workspace *string, factory data.ClientFactory) *cobra.Command {
+	setTestConfigEnv(t)
 	return data.NewCmd(serverURL, accessToken, workspace, factory)
 }
 
@@ -88,7 +94,7 @@ func TestDataUpload_Basic(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	out, err := executeCmd(t, cmd, "upload", tmpFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -140,7 +146,7 @@ func TestDataUpload_UsesAccessTokenByDefault(t *testing.T) {
 	accessToken := "api-token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -162,7 +168,7 @@ func TestDataUpload_UploadTokenOverridesAccessToken(t *testing.T) {
 	accessToken := "api-token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--upload-token", "tusd-token")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -187,7 +193,7 @@ func TestDataUpload_WithWorkspace(t *testing.T) {
 	accessToken := "token"
 	workspace := "ws-1"
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -200,8 +206,8 @@ func TestDataUpload_WithWorkspace(t *testing.T) {
 	if parsed.Path != "/v1/data/uploads/" {
 		t.Fatalf("unexpected endpoint path: %s", parsed.Path)
 	}
-	if parsed.Query().Get("workspaceId") != "ws-1" {
-		t.Fatalf("workspaceId missing in query: %s", parsed.RawQuery)
+	if parsed.RawQuery != "" {
+		t.Fatalf("unexpected query string: %s", parsed.RawQuery)
 	}
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 upload call, got %d", len(mock.calls))
@@ -221,21 +227,21 @@ func TestDataUpload_CustomEndpoint(t *testing.T) {
 	workspace := "ws-2"
 	endpoint := "https://uploads.example.com/files?region=west"
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--endpoint", endpoint)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.endpoint != endpoint {
+		t.Fatalf("expected endpoint %q, got %q", endpoint, recorder.endpoint)
 	}
 
 	parsed, err := url.Parse(recorder.endpoint)
 	if err != nil {
 		t.Fatalf("invalid endpoint: %v", err)
 	}
-	if parsed.Path != "/files/" {
+	if parsed.Path != "/files" {
 		t.Fatalf("unexpected endpoint path: %s", parsed.Path)
-	}
-	if parsed.Query().Get("workspaceId") != "ws-2" {
-		t.Fatalf("workspaceId missing in query: %s", parsed.RawQuery)
 	}
 	if parsed.Query().Get("region") != "west" {
 		t.Fatalf("expected region query preserved: %s", parsed.RawQuery)
@@ -259,28 +265,28 @@ func TestDataUpload_EndpointFromEnvironment(t *testing.T) {
 	accessToken := "token"
 	workspace := "ws-2"
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.endpoint != os.Getenv("ABC_UPLOAD_ENDPOINT") {
+		t.Fatalf("expected endpoint %q, got %q", os.Getenv("ABC_UPLOAD_ENDPOINT"), recorder.endpoint)
 	}
 
 	parsed, err := url.Parse(recorder.endpoint)
 	if err != nil {
 		t.Fatalf("invalid endpoint: %v", err)
 	}
-	if parsed.Path != "/files/" {
+	if parsed.Path != "/files" {
 		t.Fatalf("unexpected endpoint path: %s", parsed.Path)
-	}
-	if parsed.Query().Get("workspaceId") != "ws-2" {
-		t.Fatalf("workspaceId missing in query: %s", parsed.RawQuery)
 	}
 	if parsed.Query().Get("region") != "dev" {
 		t.Fatalf("expected region query preserved: %s", parsed.RawQuery)
 	}
 }
 
-func TestDataUpload_WorkspaceConflict(t *testing.T) {
+func TestDataUpload_CustomEndpointIgnoresWorkspace(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
 	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
@@ -293,16 +299,13 @@ func TestDataUpload_WorkspaceConflict(t *testing.T) {
 	workspace := "ws-2"
 	endpoint := "https://uploads.example.com/files?workspaceId=ws-1"
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--endpoint", endpoint)
-	if err == nil {
-		t.Fatal("expected workspace conflict error")
-	}
-	if !strings.Contains(err.Error(), "workspaceId") {
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if recorder.endpoint != "" {
-		t.Fatalf("factory should not be called on workspace conflict")
+	if recorder.endpoint != endpoint {
+		t.Fatalf("expected endpoint %q, got %q", endpoint, recorder.endpoint)
 	}
 }
 
@@ -327,7 +330,7 @@ func TestDataUpload_DirectoryUploadsFiles(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	out, err := executeCmd(t, cmd, "upload", dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -375,7 +378,7 @@ func TestDataUpload_DirectoryUploadsFilesWithoutParallel(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	out, err := executeCmd(t, cmd, "upload", dir, "--parallel=false")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -400,7 +403,7 @@ func TestDataUpload_WithName(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--name", "project-data")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -425,7 +428,7 @@ func TestDataUpload_ChecksumDisabled(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	out, err := executeCmd(t, cmd, "upload", tmpFile, "--checksum=false")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -448,7 +451,7 @@ func TestDataUpload_MissingFile(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", "/missing/file")
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -474,7 +477,7 @@ func TestDataUpload_DirectoryWithName(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", dir, "--name", "nope")
 	if err == nil {
 		t.Fatal("expected error for directory upload with name")
@@ -500,7 +503,7 @@ func TestDataUpload_InvalidParallelJobs(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", dir, "--parallel-jobs", "0")
 	if err == nil {
 		t.Fatal("expected error for invalid parallel job count")
@@ -527,7 +530,7 @@ func TestDataUpload_PreflightNetworkError(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile)
 	if err == nil {
 		t.Fatal("expected preflight network error")
@@ -558,7 +561,7 @@ func TestDataUpload_UploaderError(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile)
 	if err == nil {
 		t.Fatal("expected upload error")
@@ -580,7 +583,7 @@ func TestDataUpload_CryptSaltWithoutPassword(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--crypt-salt", "pepper")
 	if err == nil {
 		t.Fatal("expected error for missing crypt password")
@@ -608,7 +611,7 @@ func TestDataUpload_ChunkSizeFlagPropagated(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--chunk-size", "4MB")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -633,7 +636,7 @@ func TestDataUpload_MaxRateFlagPropagated(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--max-rate", "10MB/s")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -658,7 +661,7 @@ func TestDataUpload_MetaFlagMergedIntoMetadata(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--meta", "project=myproject", "--meta", "owner=alice")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -693,7 +696,7 @@ func TestDataUpload_MetaFlagInvalidFormat(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--meta", "badformat")
 	if err == nil {
 		t.Fatal("expected error for invalid meta format")
@@ -719,7 +722,7 @@ func TestDataUpload_NoResumeFlagPropagated(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--no-resume")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -744,7 +747,7 @@ func TestDataUpload_ChunkSizeInvalidFormat(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--chunk-size", "notabytes")
 	if err == nil {
 		t.Fatal("expected error for invalid chunk-size")

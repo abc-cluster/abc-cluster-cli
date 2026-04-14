@@ -235,6 +235,8 @@ active_context: org-a-za-cpt
 contexts:
   org-a-za-cpt:
     endpoint: https://api.org-a.example
+    upload_endpoint: https://uploads.org-a.example/files/  # optional; tus endpoint override
+    upload_token: s.abc123...                # optional; tus auth override
     access_token: eyJ...
     cluster: dev-cluster          # optional; set by abc auth login or abc infra compute add
     organization_id: org-a        # optional; set by abc auth login
@@ -286,6 +288,8 @@ $ abc config set contexts.myorg.endpoint https://api.myorg.example
 | `defaults.output` | Default output format | `json`, `yaml`, `table` |
 | `defaults.region` | Default region for all commands | `za-cpt` |
 | `contexts.<name>.endpoint` | API endpoint URL | `https://api.example.com` |
+| `contexts.<name>.upload_endpoint` | Tus upload endpoint URL | `https://uploads.example.com/files/` |
+| `contexts.<name>.upload_token` | Tus upload token | `s.abc123...` |
 | `contexts.<name>.access_token` | Access token | `eyJ...` |
 | `contexts.<name>.cluster` | Cluster ID/name | `dev-cluster` |
 | `contexts.<name>.organization_id` | Organization ID | `org-a` |
@@ -346,6 +350,8 @@ active_context: dev
 contexts:
   dev:
     endpoint: "https://dev.abc-cluster.cloud"
+    upload_endpoint: "https://uploads.dev.abc-cluster.cloud/files/"
+    upload_token: "s.dev-upload-token"
     access_token: "eyJ..."
     cluster: "dev-cluster"
     organization_id: "org-dev"
@@ -395,6 +401,8 @@ Add a new named context and make it active.
 ```bash
 $ abc context add dev \
   --endpoint https://dev.abc-cluster.cloud \
+  --upload-endpoint https://uploads.dev.abc-cluster.cloud/files/ \
+  --upload-token "UPLOAD_TOKEN" \
   --access-token "TOKEN" \
   --cluster dev-cluster \
   --organization-id org-dev \
@@ -1204,8 +1212,8 @@ abc data upload <path> [flags]
 | Flag               | Env var               | Description                                                         |
 |--------------------|-----------------------|---------------------------------------------------------------------|
 | `--name`           |                       | Display name for the uploaded file                                  |
-| `--endpoint`       | `ABC_UPLOAD_ENDPOINT` | Tus endpoint URL (default: `<url>/data/uploads`)                    |
-| `--upload-token`   | `ABC_UPLOAD_TOKEN`    | Bearer token for tus (falls back to `--access-token`)               |
+| `--endpoint`       | `ABC_UPLOAD_ENDPOINT` | Tus endpoint URL (default: context upload endpoint or `<url>/data/uploads`) |
+| `--upload-token`   | `ABC_UPLOAD_TOKEN`    | Bearer token for tus (or context upload token; falls back to `--access-token`) |
 | `--crypt-password` |                       | rclone crypt password for client-side encryption                    |
 | `--crypt-salt`     |                       | rclone crypt salt (password2)                                       |
 | `--checksum`       |                       | Include SHA-256 checksum metadata (default: `true`)                 |

@@ -83,6 +83,8 @@ Supported keys follow a dot-separated path:
   defaults.output               table, json, or yaml
   defaults.region               Nomad region (e.g., za-cpt)
 	contexts.<name>.endpoint          API endpoint URL
+		contexts.<name>.upload_endpoint   Tus upload endpoint URL
+			contexts.<name>.upload_token      Tus upload token
 	contexts.<name>.access_token      Access token
 	contexts.<name>.cluster           Cluster ID/name
 	contexts.<name>.organization_id   Organization ID
