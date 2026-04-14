@@ -54,6 +54,9 @@ This document describes every command available in the `abc` CLI.
 - [infra compute probe](#infra-compute-probe)
 - [infra storage size](#infra-storage-size)
 - [admin services nomad cli](#admin-services-nomad-cli)
+- [admin services nebula cli](#admin-services-nebula-cli)
+- [admin services rustfs cli](#admin-services-rustfs-cli)
+- [admin services vault cli](#admin-services-vault-cli)
 - [admin services nomad namespace](#admin-services-nomad-namespace)
 - [cluster](#cluster)
 - [cost](#cost)
@@ -1609,6 +1612,45 @@ abc admin services nomad cli node status
 ```
 
 Use this command for Nomad operations that abc does not yet implement natively.
+
+## `admin services nebula cli`
+
+Run the local `nebula` CLI as a passthrough alias.
+
+### `admin services nebula cli [nebula-args...]`
+
+```bash
+abc admin services nebula cli -version
+abc admin services nebula cli -config /etc/nebula/config.yml
+```
+
+Use this command to keep networking tooling open-source while preserving a stable `abc` command surface.
+
+## `admin services rustfs cli`
+
+Run the local `rustfs` CLI as a passthrough alias.
+
+### `admin services rustfs cli [rustfs-args...]`
+
+```bash
+abc admin services rustfs cli status
+abc admin services rustfs cli bucket list
+```
+
+Use this command to integrate RustFS as a storage backend option behind the same `abc admin services ... cli` interface.
+
+## `admin services vault cli`
+
+Run the local `vault` CLI as a passthrough alias, with OpenBao compatibility.
+
+### `admin services vault cli [vault-args...]`
+
+```bash
+abc admin services vault cli status
+abc admin services vault cli secrets list
+```
+
+By default this command resolves `vault` first, then `openbao`, and also supports explicit binary overrides via `--binary-location`.
 
 ### `admin services nomad namespace list`
 

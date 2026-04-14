@@ -71,6 +71,11 @@ abc job run myjob.sh --submit --watch
 # Upload a file
 abc data upload ./data.csv
 
+# Run open-source service CLIs through abc wrappers
+abc admin services nebula cli -version
+abc admin services rustfs cli status
+abc admin services vault cli status
+
 # Encrypt a file before uploading
 abc data encrypt ./data.csv --crypt-password "secret"
 abc data upload ./data.csv.bin
@@ -87,6 +92,9 @@ go build -o abc .
 
 # Build multi-platform binaries locally (linux/darwin/windows x amd64/arm64)
 bash scripts/local-matrix-build.sh
+
+# Diagnose Slurm control-plane connectivity from Nomad login node
+abc job run scripts/slurm-cli-diagnose.sh --submit --watch --region global
 ```
 
 ### Local tus + MinIO testing (rclone compatibility)
