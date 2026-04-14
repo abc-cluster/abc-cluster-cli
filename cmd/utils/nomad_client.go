@@ -26,6 +26,7 @@ type NomadClient struct {
 	region string
 	sudo   bool
 	cloud  bool
+	asUser string
 	http   *http.Client
 }
 
@@ -46,6 +47,14 @@ func (c *NomadClient) WithSudo(sudo bool) *NomadClient {
 // The method returns the receiver so it can be chained.
 func (c *NomadClient) WithCloud(cloud bool) *NomadClient {
 	c.cloud = cloud
+	return c
+}
+
+// WithUser sets the user email to forward as X-ABC-As-User on every request.
+// This allows admins to act on behalf of another user.
+// The method returns the receiver so it can be chained.
+func (c *NomadClient) WithUser(email string) *NomadClient {
+	c.asUser = email
 	return c
 }
 
@@ -291,6 +300,9 @@ func (c *NomadClient) do(ctx context.Context, method, path string, query url.Val
 	}
 	if c.cloud {
 		req.Header.Set("X-ABC-Cloud", "1")
+	}
+	if c.asUser != "" {
+		req.Header.Set("X-ABC-As-User", c.asUser)
 	}
 
 	start := time.Now()

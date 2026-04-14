@@ -24,9 +24,11 @@ func NewCmd() *cobra.Command {
 		Short: "Inspect backend service health and versions",
 		Long: `Commands for checking the health and version of individual abc-cluster backend services.
 
-  abc service ping nomad
-  abc service ping jurist
-  abc service version api`,
+Valid service names: nomad, jurist, minio, api, tus, cloud-gateway, xtdb, supabase, tailscale, khan
+
+  abc admin services ping nomad
+  abc admin services ping jurist
+  abc admin services version api`,
 	}
 
 	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
@@ -71,10 +73,10 @@ func newPingCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ping <service>",
 		Short: "Check connectivity to a specific backend service",
-		Long: `Valid service names: nomad, jurist, minio, api, tus, cloud-gateway
+		Long: `Valid service names: nomad, jurist, minio, api, tus, cloud-gateway, xtdb, supabase, tailscale, khan
 
-  abc service ping nomad
-  abc service ping jurist`,
+  abc admin services ping nomad
+  abc admin services ping jurist`,
 		Args: cobra.ExactArgs(1),
 		RunE: runServicePing,
 	}

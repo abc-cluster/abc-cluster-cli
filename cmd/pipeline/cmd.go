@@ -46,6 +46,7 @@ repository URL directly for ad-hoc runs.
 		newDeleteCmd(),
 		newExportCmd(),
 		newImportCmd(),
+		newParamsCmd(),
 	)
 	return cmd
 }

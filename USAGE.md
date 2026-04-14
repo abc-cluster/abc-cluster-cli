@@ -7,12 +7,32 @@ This document describes every command available in the `abc` CLI.
 - [Global flags](#global-flags)
 - [Elevation tiers](#elevation-tiers)
 - [Debug logging](#debug-logging)
+- [auth](#auth)
+  - [auth login](#auth-login)
+  - [auth logout](#auth-logout)
+  - [auth whoami](#auth-whoami)
+  - [auth token](#auth-token)
+  - [auth refresh](#auth-refresh)
+- [config](#config)
+  - [config init](#config-init)
+  - [config set](#config-set-key-value)
+  - [config get](#config-get-key)
+  - [config list](#config-list)
+  - [config unset](#config-unset-key)
+- [secrets](#secrets)
+  - [secrets set](#secrets-set-key-value)
+  - [secrets get](#secrets-get-key)
+  - [secrets list](#secrets-list)
+  - [secrets delete](#secrets-delete-key)
 - [submit](#submit)
 - [pipeline run](#pipeline-run)
 - [pipeline lifecycle](#pipeline-lifecycle)
+  - [pipeline delete](#pipeline-delete-name)
+  - [pipeline params](#pipeline-params-name)
 - [module run](#module-run)
 - [job run](#job-run)
   - [Preamble directives](#preamble-directives)
+  - [Package manager directives](#package-manager-directives)
   - [Directive precedence](#directive-precedence)
 - [job list](#job-list)
 - [job show](#job-show)
@@ -21,17 +41,19 @@ This document describes every command available in the `abc` CLI.
 - [job status](#job-status)
 - [job dispatch](#job-dispatch)
 - [job translate](#job-translate)
+- [job trace](#job-trace)
 - [logs (alias)](#logs-alias)
 - [data upload](#data-upload)
 - [data encrypt](#data-encrypt)
 - [data decrypt](#data-decrypt)
 - [data download](#data-download)
-- [node add](#node-add)
-- [storage size](#storage-size)
-- [namespace](#namespace)
+- [infra node add](#infra-node-add)
+- [infra node probe](#infra-node-probe)
+- [infra storage size](#infra-storage-size)
+- [admin services nomad namespace](#admin-services-nomad-namespace)
 - [cluster](#cluster)
-- [budget](#budget)
-- [service](#service)
+- [cost](#cost)
+- [admin services](#admin-services)
 - [status (alias)](#status-alias)
 
 ---
@@ -48,9 +70,10 @@ These flags are available on every `abc` command.
 | `--cluster`      | `ABC_CLUSTER`        | Target a specific named cluster in the fleet     | *(unset)*                    |
 | `--quiet` / `-q` |                      | Suppress informational output to stderr          | `false`                      |
 | `--debug[=N]`    | `ABC_DEBUG`          | Write structured JSON debug log (see [Debug logging](#debug-logging)) | `0` (off) |
-| `--sudo`         |                      | Elevate to cluster-admin scope (required for namespace/node write ops) | `false` |
-| `--cloud`        |                      | Elevate to infrastructure scope (required for cluster/budget write ops) | `false` |
-| `--exp`          |                      | Enable experimental CLI features                 | `false`                      |
+| `--sudo`         | `ABC_CLI_SUDO_MODE`  | Elevate to cluster-admin scope (required for namespace/node write ops) | `false` |
+| `--cloud`        | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope (required for cluster/cost write ops) | `false` |
+| `--exp`          | `ABC_CLI_EXP_MODE`   | Enable experimental CLI features                 | `false`                      |
+| `--user <email>` | `ABC_AS_USER`        | Act on behalf of this user email — admin only    | *(unset)*                    |
 
 ---
 
@@ -60,10 +83,11 @@ These flags are available on every `abc` command.
 
 | Flag      | Scope               | Required for                                   |
 |-----------|---------------------|------------------------------------------------|
-| *(none)*  | User operations     | pipeline, job, data, module, submit            |
-| `--sudo`  | Cluster-admin       | `namespace create/delete`, `node add/drain`    |
-| `--cloud` | Infrastructure      | `cluster provision/decommission`, `budget set` |
-| `--exp`   | Experimental        | Community task drivers, unreleased features    |
+| *(none)*  | User operations     | pipeline, job, data, module, submit                           |
+| `--sudo`  | Cluster-admin       | `admin services nomad namespace create/delete`, `infra node add/drain`   |
+| `--cloud` | Infrastructure      | `cluster provision/decommission`, `cost set`                  |
+| `--user`  | Impersonation       | Act as another user (admin-only; forwarded as `X-ABC-As-User`)|
+| `--exp`   | Experimental        | Community task drivers, unreleased features                   |
 
 ---
 
@@ -108,6 +132,257 @@ On failure, the CLI prints:
 
 ---
 
+## `auth`
+
+Manage authentication and session credentials. Credentials are stored in `~/.abc/config.yaml`
+(or `ABC_CONFIG_FILE` environment variable).
+
+### `auth login`
+
+Interactive login — prompts for API endpoint and access token, then saves them to a named context.
+
+```bash
+$ abc auth login
+API endpoint [https://api.abc-cluster.io]: https://api.org-a.example
+Access token: ••••••••••••••••••••••••••••••••
+Workspace ID (optional):
+Region (optional): za-cpt
+
+✓ Authenticated to https://api.org-a.example
+✓ Context saved as: org-a-za-cpt
+✓ Region: za-cpt
+```
+
+Context name is auto-derived from endpoint and region (e.g., `org-a-za-cpt`).
+
+### `auth logout`
+
+Clear the active session context.
+
+```bash
+$ abc auth logout
+✓ Logged out
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--all` | Remove all saved contexts |
+
+### `auth whoami`
+
+Show the current authenticated identity and active context details.
+
+```bash
+$ abc auth whoami
+Context      org-a-za-cpt
+Endpoint     https://api.org-a.example
+Workspace    ws-org-a-01
+Region       za-cpt
+Token        eyJ... (first 8 chars)
+```
+
+### `auth token`
+
+Print the active context's access token to stdout (pipe-safe).
+
+```bash
+$ abc auth token
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+$ export ABC_ACCESS_TOKEN=$(abc auth token)
+```
+
+### `auth refresh`
+
+Refresh the access token. **Stub** — OAuth flow not yet implemented.
+
+```bash
+$ abc auth refresh
+[abc] Token refresh not yet implemented
+```
+
+---
+
+## `config`
+
+Manage local CLI configuration. All settings are stored in `~/.abc/config.yaml`
+(or `ABC_CONFIG_FILE`). The config file includes a `version` field for forward/backward compatibility.
+
+**Config file structure:**
+```yaml
+version: "1"
+active_context: org-a-za-cpt
+contexts:
+  org-a-za-cpt:
+    endpoint: https://api.org-a.example
+    access_token: eyJ...
+    workspace_id: ws-org-a-01
+    region: za-cpt
+defaults:
+  output: table
+  region: za-cpt
+```
+
+Sensitive fields (`access_token`) can be encrypted with [mozilla/sops](https://github.com/mozilla/sops)
+if configured. See [SOPS encryption](#sops-encryption) below.
+
+### `config init`
+
+Initialize configuration interactively. Delegates to `abc auth login`.
+
+```bash
+$ abc config init
+Running 'abc auth login' to set up your first context...
+✓ Config initialized at /Users/name/.abc/config.yaml
+```
+
+### `config set KEY VALUE`
+
+Set a configuration key to a value.
+
+```bash
+$ abc config set defaults.output json
+✓ Set defaults.output = json
+
+$ abc config set defaults.region za-cpt
+✓ Set defaults.region = za-cpt
+
+$ abc config set contexts.myorg.endpoint https://api.myorg.example
+✓ Set contexts.myorg.endpoint = https://api.myorg.example
+```
+
+**Supported keys:**
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `active_context` | Active context name | `org-a-za-cpt` |
+| `defaults.output` | Default output format | `json`, `yaml`, `table` |
+| `defaults.region` | Default region for all commands | `za-cpt` |
+| `contexts.<name>.endpoint` | API endpoint URL | `https://api.example.com` |
+| `contexts.<name>.access_token` | Access token | `eyJ...` |
+| `contexts.<name>.workspace_id` | Default workspace | `ws-org-a-01` |
+| `contexts.<name>.region` | Region override for this context | `za-cpt` |
+
+### `config get KEY`
+
+Print the value of a configuration key (pipe-safe, no colored output).
+
+```bash
+$ abc config get defaults.output
+json
+
+$ abc config get active_context
+org-a-za-cpt
+```
+
+### `config list`
+
+Display all configuration keys and values in table format.
+Access tokens are masked for security.
+
+```bash
+$ abc config list
+KEY                                    VALUE
+active_context                         org-a-za-cpt
+defaults.output                        json
+defaults.region                        za-cpt
+contexts.org-a-za-cpt.endpoint        https://api.org-a.example
+contexts.org-a-za-cpt.access_token    eyJ...•••• (masked)
+```
+
+### `config unset KEY`
+
+Clear a configuration key, reverting to environment variables or built-in defaults.
+
+```bash
+$ abc config unset defaults.output
+✓ Unset defaults.output
+
+$ abc config unset contexts.myorg.region
+✓ Unset contexts.myorg.region
+```
+
+---
+
+## `secrets`
+
+Manage encrypted credentials stored in the config file without exposing them to the backend.
+Uses password-based encryption (mozilla/sops --unsafe mode) with no external KMS required.
+
+### `secrets set KEY VALUE`
+
+Store an encrypted credential. Requires `--unsafe` flag and `ABC_CRYPT_PASSWORD` environment variable.
+
+```bash
+$ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
+$ abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe
+✓ Secret "aws-access-key" stored.
+
+$ abc secrets set db-password "postgres://user:pass@localhost/db" --unsafe
+✓ Secret "db-password" stored.
+```
+
+### `secrets get KEY`
+
+Retrieve and decrypt a secret. Requires `--unsafe` flag and `ABC_CRYPT_PASSWORD` environment variable.
+
+```bash
+$ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
+$ abc secrets get aws-access-key --unsafe
+AKIAIOSFODNN7EXAMPLE
+
+# Pipe-compatible (no trailing newline)
+$ export AWS_ACCESS_KEY_ID=$(ABC_CRYPT_PASSWORD="..." abc secrets get aws-access-key --unsafe)
+```
+
+### `secrets list`
+
+List all stored secret keys. Without `--unsafe`, shows only key names (not values).
+With `--unsafe`, decrypts and displays all key-value pairs.
+
+```bash
+# List keys only (no password needed)
+$ abc secrets list
+SECRETS (2):
+  aws-access-key
+  db-password
+
+Use --unsafe to view decrypted values (requires ABC_CRYPT_PASSWORD)
+
+# List with decrypted values
+$ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
+$ abc secrets list --unsafe
+KEY               VALUE
+aws-access-key    AKIAIOSFODNN7EXAMPLE
+db-password       postgres://user:pass@localhost/db
+```
+
+### `secrets delete KEY`
+
+Delete a secret from the config file. Requires `--unsafe` flag and confirms before deletion.
+
+```bash
+$ abc secrets delete aws-access-key --unsafe
+Delete secret "aws-access-key"? (y/n) y
+✓ Secret "aws-access-key" deleted.
+
+# Skip confirmation with --yes
+$ abc secrets delete db-password --unsafe --yes
+✓ Secret "db-password" deleted.
+```
+
+**Encryption Details:**
+
+- Algorithm: AES-256-GCM with random nonce per secret
+- Key derivation: scrypt (16384, 8, 1) — same as `abc data encrypt/decrypt`
+- Environment variables: `ABC_CRYPT_PASSWORD` (required), `ABC_CRYPT_SALT` (optional)
+- Offline: No network, no external KMS — suitable for air-gapped environments
+- Storage: Secrets stored in `~/.abc/config.yaml` under the `secrets` section (encrypted)
+
+---
+
 ## `submit`
 
 Unified entry point. Auto-detects whether `<target>` is a Nextflow pipeline, an nf-core module,
@@ -122,13 +397,14 @@ abc submit <target> [flags]
 | Priority | Condition | Dispatches to |
 |----------|-----------|---------------|
 | 1 | `--type pipeline\|job\|module` | forced |
-| 2 | `--conda <spec>` or `--pixi` | `job run` with auto-generated wrapper |
-| 3 | `<target>` is a local file path | `job run --submit` |
-| 4 | `<target>` starts with `http://` or `https://` | `pipeline run` |
-| 5 | `<target>` has ≥ 3 path segments (e.g. `nf-core/modules/bwa/mem`) | `module run` |
-| 6 | `<target>` matches `owner/repo` (one `/`) | `pipeline run` |
-| 7 | `<target>` matches a saved pipeline name in Nomad Variables | `pipeline run` |
+| 2 | `<target>` is a local file path | `job run --submit` |
+| 3 | `<target>` starts with `http://` or `https://` | `pipeline run` |
+| 4 | `<target>` has ≥ 3 path segments (e.g. `nf-core/modules/bwa/mem`) | `module run` |
+| 5 | `<target>` matches `owner/repo` (one `/`) | `pipeline run` |
+| 6 | `<target>` matches a saved pipeline name in Nomad Variables | `pipeline run` |
 | — | no match | error — use `--type` |
+
+> **Conda/pixi:** To run a tool via conda or pixi, add `#ABC --conda=<spec>` or `#ABC --pixi` to your script preamble. `abc submit` does not accept `--conda` or `--pixi` flags directly.
 
 ### Flags
 
@@ -156,17 +432,13 @@ abc submit <target> [flags]
 | `--work-dir <path>` | Nextflow work directory |
 | `--nf-version <string>` | Nextflow Docker image tag |
 
-**Conda / job flags** *(active when mode = job with a wrapper)*
+**Job flags** *(active when mode = job)*
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--conda <spec>` | | Conda package spec; triggers conda wrapper mode |
-| `--conda-solver <name>` | `conda` | Solver used to activate the env: `conda`, `mamba`, or `micromamba` |
-| `--pixi` | | Run `<target>` via `pixi run`; triggers pixi wrapper mode |
-| `--cores <int>` | | CPU cores |
-| `--mem <size>` | | Memory, e.g. `4G`, `512M` |
-| `--time <HH:MM:SS>` | | Walltime limit |
-| `--tool-arg <string>` | | Extra arg appended to the tool invocation (repeatable; conda/pixi modes) |
+| Flag | Description |
+|------|-------------|
+| `--cores <int>` | CPU cores |
+| `--mem <size>` | Memory, e.g. `4G`, `512M` |
+| `--time <HH:MM:SS>` | Walltime limit |
 
 **Shared**
 
@@ -194,20 +466,11 @@ abc submit nf-core/modules/bwa/mem --input samplesheet.csv
 # Submit a local script with input data
 abc submit align.sh --input /data/reads
 
-# Run a conda tool (auto-generates wrapper using conda)
-abc submit fastqc --conda fastqc --input /data/reads --output /results
-
-# Use mamba as the solver instead of conda
-abc submit fastqc --conda fastqc --conda-solver mamba --input /data/reads
-
-# Use micromamba
-abc submit fastqc --conda fastqc --conda-solver micromamba --input /data/reads
-
-# Run a pixi task
-abc submit fastqc --pixi --input /data/reads --output /results
-
 # Force pipeline mode and stream logs
 abc submit my-analysis --type pipeline --wait --logs
+
+# Dry-run — print generated HCL without submitting
+abc submit nf-core/rnaseq --dry-run
 ```
 
 ---
@@ -330,11 +593,18 @@ abc pipeline update rnaseq --cpu 2000 --memory 4096
 
 ### `pipeline delete <name>`
 
-Remove a saved pipeline from the cluster.
+Remove a saved pipeline from the cluster. By default only the spec (Nomad Variables entry) is deleted.
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip confirmation prompt |
+| `--with-data` | Also delete associated MinIO data buckets |
+| `--with-jobs` | Also stop and purge Nomad jobs for this pipeline |
 
 ```bash
 abc pipeline delete rnaseq
-abc pipeline delete rnaseq --yes   # skip confirmation
+abc pipeline delete rnaseq --yes           # skip confirmation
+abc pipeline delete rnaseq --with-data --with-jobs --yes
 ```
 
 ### `pipeline export <name> [output-file]`
@@ -353,6 +623,21 @@ Import a pipeline configuration from a YAML file.
 ```bash
 abc pipeline import rnaseq.yaml
 abc pipeline import rnaseq.yaml --name rnaseq-v2   # override name
+```
+
+### `pipeline params <name>`
+
+Show or validate the parameter schema for a saved pipeline. With `--auto-latest`, fetches the
+upstream schema from the repository and merges it with locally saved overrides.
+
+| Flag | Description |
+|------|-------------|
+| `--auto-latest` | Fetch latest parameter schema from the upstream repository (stub) |
+| `--json` | Output params as JSON |
+
+```bash
+abc pipeline params rnaseq
+abc pipeline params rnaseq --auto-latest
 ```
 
 ---
@@ -432,7 +717,9 @@ abc job run <script> [flags]
 | `--submit`      | Submit the job to Nomad instead of printing HCL              |
 | `--dry-run`     | Plan the job server-side without submitting                  |
 | `--watch`       | Stream logs immediately after `--submit`                     |
-| `--output-file` | Write generated HCL to a file instead of stdout             |
+| `--output-file` | Write generated HCL to a file instead of stdout              |
+| `--ssh`         | Execute the job on a remote host via SSH instead of Nomad    |
+| `--ssh-timeout` | Timeout for SSH job execution (e.g. `30m`, `2h`); `0` = none |
 
 ### Scheduler flags (Class 1)
 
@@ -510,6 +797,13 @@ block so the script can read the value at execution time.
 | `--alloc_dir`      | `NOMAD_ALLOC_DIR`     | Shared across the task group       |
 | `--task_dir`       | `NOMAD_TASK_DIR`      | Per-task private scratch space     |
 | `--secrets_dir`    | `NOMAD_SECRETS_DIR`   | In-memory, noexec                  |
+
+### Package manager directives
+
+| Preamble directive | Description |
+|--------------------|-------------|
+| `#ABC --conda=<spec>` | Run the script inside a conda environment (`spec` = package name or env file path). Recorded as `abc_conda` in Nomad meta. |
+| `#ABC --pixi` | Run the script via `pixi run`. Recorded as `abc_pixi=true` in Nomad meta. |
 
 ### Meta flags (Class 3)
 
@@ -756,6 +1050,27 @@ abc job translate slurm-job.sh --strict
 
 ---
 
+## `job trace`
+
+Show a detailed execution trace for a Nomad job: allocation placement, task lifecycle events,
+resource usage, and log excerpts in one view. *(stub — not yet implemented)*
+
+```
+abc job trace <job-id> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output trace as JSON |
+| `--alloc` | Restrict trace to a specific allocation ID |
+
+```bash
+abc job trace nextflow-head-abc123
+abc job trace my-job --alloc a1b2c3d4
+```
+
+---
+
 ## `logs` (alias)
 
 Top-level alias for `abc job logs`. Accepts all the same flags.
@@ -804,23 +1119,43 @@ abc data upload ./data.csv --clear && abc data upload ./data.csv --no-resume
 
 ## `data encrypt`
 
-Encrypt a file or folder with rclone crypt format.
+Encrypt a file or folder with rclone-compatible crypt format.
+
+Two encryption modes are supported:
+
+- **Managed** (default, not yet available): key is derived from your control-plane session token.
+  Provides managed key storage and recovery. Requires an authenticated session.
+- **Unsafe** (`--unsafe`): key is derived from a locally-provided password and salt.
+  No key management — if you lose the password, your data cannot be recovered.
+  You accept this risk explicitly by passing `--unsafe`.
 
 ```
 abc data encrypt <path> [flags]
 ```
 
-| Flag               | Description                                          |
-|--------------------|------------------------------------------------------|
-| `--crypt-password` | rclone crypt password (**required**)                 |
-| `--crypt-salt`     | rclone crypt salt (password2)                        |
-| `--output`         | Output file path (single-file encryption)            |
-| `--output-dir`     | Output directory (folder encryption)                 |
-| `--progress`       | Show live progress bars (default: `true`)            |
+| Flag               | Description                                                               |
+|--------------------|---------------------------------------------------------------------------|
+| `--unsafe`         | Encrypt with a locally-provided password instead of the managed key       |
+| `--crypt-password` | rclone crypt password (requires `--unsafe`)                               |
+| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe`)                       |
+| `--output`         | Output file path (single-file encryption)                                 |
+| `--output-dir`     | Output directory (folder encryption)                                      |
+| `--progress`       | Show live progress bars (default: `true`)                                 |
+
+Output files are written with the `.bin` suffix by default.
 
 ```bash
-abc data encrypt ./data.csv --crypt-password "secret"
-abc data encrypt ./dataset --crypt-password "secret" --crypt-salt "pepper"
+# Local password (unsafe mode — key not managed)
+abc data encrypt ./data.csv --unsafe --crypt-password "secret"
+abc data encrypt ./dataset  --unsafe --crypt-password "secret" --crypt-salt "pepper"
+```
+
+Expected output:
+```
+WARNING: --unsafe mode active. Encryption key is NOT managed by the control plane.
+         If you lose your password, your data cannot be recovered.
+File encrypted successfully.
+  Output: ./data.csv.bin
 ```
 
 ---
@@ -829,19 +1164,36 @@ abc data encrypt ./dataset --crypt-password "secret" --crypt-salt "pepper"
 
 Decrypt a file or folder previously encrypted with `abc data encrypt` or rclone crypt.
 
+Mirrors the two-mode model of `abc data encrypt`:
+
+- **Managed** (default, not yet available): key derived from control-plane session token.
+- **Unsafe** (`--unsafe`): decrypt with a locally-provided password — must match the password used during `--unsafe` encryption.
+
 ```
 abc data decrypt <path> [flags]
 ```
 
-| Flag               | Description                                          |
-|--------------------|------------------------------------------------------|
-| `--crypt-password` | rclone crypt password (**required**)                 |
-| `--crypt-salt`     | rclone crypt salt (password2)                        |
-| `--output`         | Output file path (single-file decryption)            |
-| `--output-dir`     | Output directory (folder decryption)                 |
+| Flag               | Description                                                               |
+|--------------------|---------------------------------------------------------------------------|
+| `--unsafe`         | Decrypt with a locally-provided password instead of the managed key       |
+| `--crypt-password` | rclone crypt password (requires `--unsafe`)                               |
+| `--crypt-salt`     | rclone crypt salt / password2 (requires `--unsafe`)                       |
+| `--output`         | Output file path (single-file decryption)                                 |
+| `--output-dir`     | Output directory (folder decryption)                                      |
+
+If `--output` is omitted, the `.bin` suffix is stripped from the filename. If the resulting path already exists, `.dec` is appended.
 
 ```bash
-abc data decrypt ./data.csv.bin --crypt-password "secret" --output ./data.csv
+# Local password (unsafe mode — must match encryption password)
+abc data decrypt ./data.csv.bin --unsafe --crypt-password "secret"
+abc data decrypt ./data.csv.bin --unsafe --crypt-password "secret" --output ./data.csv
+```
+
+Expected output:
+```
+WARNING: --unsafe mode active. Decrypting with locally-provided password (no key management).
+File decrypted successfully.
+  Output: ./data.csv
 ```
 
 ---
@@ -875,7 +1227,7 @@ abc data download --params-file fetchngs-params.yaml
 
 ---
 
-## `node add`
+## `infra node add`
 
 Add a compute node to the cluster. Runs preflight checks, installs Nomad (and optionally
 Tailscale and community task drivers), and registers the node.
@@ -883,7 +1235,7 @@ Tailscale and community task drivers), and registers the node.
 Requires `--sudo`.
 
 ```
-abc node add [flags]
+abc infra node add [flags]
 ```
 
 ### Transport mode (one required)
@@ -980,45 +1332,65 @@ Before installing, `node add` validates:
 
 ```bash
 # Install on the current machine
-abc --sudo node add --local --server-join 10.0.0.1:4647
+abc --sudo infra node add --local --server-join 10.0.0.1:4647
 
 # Install on a remote machine via SSH
-abc --sudo node add --host 10.0.0.5 --user ubuntu --server-join 10.0.0.1:4647
+abc --sudo infra node add --host 10.0.0.5 --user ubuntu --server-join 10.0.0.1:4647
 
 # Install with password auth (no SSH key)
-abc --sudo node add --host 10.0.0.5 --user ubuntu --password mypassword \
+abc --sudo infra node add --host 10.0.0.5 --user ubuntu --password mypassword \
   --server-join 10.0.0.1:4647
 
 # Install via a bastion host
-abc --sudo node add --host 10.0.0.5 --user ubuntu \
+abc --sudo infra node add --host 10.0.0.5 --user ubuntu \
   --jump-host bastion.example.com --jump-user ec2-user \
   --server-join 10.0.0.1:4647
 
 # Install with Tailscale auto-key creation
-abc --sudo node add --host 10.0.0.5 --user ubuntu \
+abc --sudo infra node add --host 10.0.0.5 --user ubuntu \
   --tailscale --tailscale-key-ephemeral \
   --server-join 10.0.0.1:4647
 
 # Generate a self-contained install script (no execution)
-abc --sudo node add --host 10.0.0.5 --print-commands > install.sh
+abc --sudo infra node add --host 10.0.0.5 --print-commands > install.sh
 
 # Install with community containerd driver (experimental)
-abc --sudo --exp node add --host 10.0.0.5 --user ubuntu \
+abc --sudo --exp infra node add --host 10.0.0.5 --user ubuntu \
   --community-driver containerd \
   --server-join 10.0.0.1:4647
 
 # Dry-run — show what would be executed
-abc --sudo node add --host 10.0.0.5 --user ubuntu --dry-run
+abc --sudo infra node add --host 10.0.0.5 --user ubuntu --dry-run
 ```
 
 ---
 
-## `storage size`
+## `infra node probe`
+
+Test connectivity and readiness of a registered cluster node. *(stub — not yet implemented)*
+
+```
+abc infra node probe <node-id> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--ssh` | Test SSH connectivity |
+| `--drivers` | Test Nomad task driver availability on the node |
+
+```bash
+abc infra node probe nomad-client-02
+abc infra node probe nomad-client-02 --ssh --drivers
+```
+
+---
+
+## `infra storage size`
 
 Display storage size and usage for local server volumes and buckets.
 
 ```
-abc storage size [flags]
+abc infra storage size [flags]
 ```
 
 | Flag          | Description                          |
@@ -1029,32 +1401,32 @@ abc storage size [flags]
 | `--namespace` | Nomad namespace                      |
 
 ```bash
-abc storage size --all
-abc storage size --buckets
+abc infra storage size --all
+abc infra storage size --buckets
 ```
 
 ---
 
-## `namespace`
+## `admin services nomad namespace`
 
 Manage cluster namespaces. Read operations are available to all users; write operations require `--sudo`.
 
-### `namespace list`
+### `admin services nomad namespace list`
 
 ```bash
-abc namespace list
+abc admin services nomad namespace list
 ```
 
-### `namespace show <name>`
+### `admin services nomad namespace show <name>`
 
 ```bash
-abc namespace show my-ns
+abc admin services nomad namespace show my-ns
 ```
 
-### `namespace create` (requires `--sudo`)
+### `admin services nomad namespace create` (requires `--sudo`)
 
 ```
-abc --sudo namespace create [flags]
+abc --sudo admin services nomad namespace create [flags]
 ```
 
 | Flag            | Description                                          |
@@ -1067,15 +1439,15 @@ abc --sudo namespace create [flags]
 | `--node-pool`   | Default node pool                                    |
 
 ```bash
-abc --sudo namespace create --name team-alpha \
+abc --sudo admin services nomad namespace create --name team-alpha \
   --description "Alpha team namespace" \
   --group alpha --contact alpha@lab.org
 ```
 
-### `namespace delete <name>` (requires `--sudo`)
+### `admin services nomad namespace delete <name>` (requires `--sudo`)
 
 ```
-abc --sudo namespace delete <name> [flags]
+abc --sudo admin services nomad namespace delete <name> [flags]
 ```
 
 | Flag      | Description                                          |
@@ -1084,7 +1456,7 @@ abc --sudo namespace delete <name> [flags]
 | `--drain` | Stop all running jobs before deletion                |
 
 ```bash
-abc --sudo namespace delete team-alpha --drain --yes
+abc --sudo admin services nomad namespace delete team-alpha --drain --yes
 ```
 
 ---
@@ -1147,29 +1519,29 @@ abc --cloud cluster decommission my-cluster --yes
 
 ---
 
-## `budget`
+## `cost`
 
 View and manage namespace spend budgets. Read operations are available to all users;
-`budget set` requires `--cloud`.
+`cost set` requires `--cloud`.
 
-### `budget list` (requires `--cloud`)
+### `cost list` (requires `--cloud`)
 
 ```bash
-abc --cloud budget list
+abc --cloud cost list
 ```
 
-### `budget show` (requires `--cloud`)
+### `cost show` (requires `--cloud`)
 
 ```
-abc --cloud budget show [--namespace <name>]
+abc --cloud cost show [--namespace <name>]
 ```
 
-### `budget set` (requires `--cloud`)
+### `cost set` (requires `--cloud`)
 
 Set or update the spend cap for a namespace.
 
 ```
-abc --cloud budget set [flags]
+abc --cloud cost set [flags]
 ```
 
 | Flag          | Description                                                   | Default |
@@ -1177,37 +1549,38 @@ abc --cloud budget set [flags]
 | `--namespace` | Namespace to configure (**required**)                         |         |
 | `--monthly`   | Monthly spend cap in workspace currency (`0` = unlimited)     | `0`     |
 | `--currency`  | Currency code (e.g. `USD`, `ZAR`, `EUR`)                      | `USD`   |
-| `--alert-at`  | Alert threshold as a fraction of cap (0.0–1.0)               | `0.8`   |
-| `--block-at`  | Submission block threshold as a fraction of cap (0.0–1.0)    | `1.0`   |
+| `--alert-at`  | Alert threshold as a fraction of cap (0.0–1.0)                | `0.8`   |
+| `--block-at`  | Submission block threshold as a fraction of cap (0.0–1.0)     | `1.0`   |
 
 ```bash
-abc --cloud budget set --namespace team-alpha --monthly 500 --currency USD --alert-at 0.8
+abc --cloud cost set --namespace team-alpha --monthly 500 --currency USD --alert-at 0.8
 ```
 
 ---
 
-## `service`
+## `admin services`
 
 Inspect backend service health and versions.
 
-Valid service names: `nomad`, `jurist`, `minio`, `api`, `tus`, `cloud-gateway`
+Valid service names: `nomad`, `jurist`, `minio`, `api`, `tus`, `cloud-gateway`, `xtdb`, `supabase`, `tailscale`, `khan`
 
-### `service ping <service>`
+### `admin services ping <service>`
 
 Check connectivity to a specific backend service.
 
 ```bash
-abc service ping nomad
-abc service ping minio
+abc admin services ping nomad
+abc admin services ping minio
+abc admin services ping xtdb
 ```
 
-### `service version <service>`
+### `admin services version <service>`
 
 Show the version of a specific backend service.
 
 ```bash
-abc service version nomad
-abc service version jurist
+abc admin services version nomad
+abc admin services version jurist
 ```
 
 ---

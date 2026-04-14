@@ -10,19 +10,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the "budget" subcommand group.
+// NewCmd returns the "cost" subcommand group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "budget",
+		Use:   "cost",
 		Short: "View and manage namespace spend budgets",
 		Long: `Commands for viewing and managing cloud spend budgets per namespace.
 
 Reading budgets is available to all users.
 Setting budget caps requires --cloud and an infrastructure-tier token.
 
-  abc budget list --cloud
-  abc budget show --cloud --namespace=nf-genomics-lab
-  abc budget set --cloud --namespace=nf-genomics-lab --monthly=500`,
+  abc cost list --cloud
+  abc cost show --cloud --namespace=nf-genomics-lab
+  abc cost set --cloud --namespace=nf-genomics-lab --monthly=500`,
 	}
 
 	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
@@ -60,7 +60,8 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 
 func requireCloud(cmd *cobra.Command) error {
 	if !utils.CloudFromCmd(cmd) {
-		return fmt.Errorf("budget write operations require --cloud (or ABC_CLI_CLOUD_MODE=1)")
+		return fmt.Errorf("cost write operations require --cloud (or ABC_CLI_CLOUD_MODE=1)")
 	}
 	return nil
 }
+
