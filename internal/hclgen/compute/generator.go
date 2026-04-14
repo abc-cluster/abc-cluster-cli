@@ -16,16 +16,6 @@ const (
 )
 
 var (
-	defaultDockerExtraLabels = []string{
-		"job_name",
-		"job_id",
-		"task_group_name",
-		"task_name",
-		"namespace",
-		"node_name",
-		"node_id",
-	}
-
 	// HashiCorp-supported external task driver plugins from Nomad task-driver docs.
 	hashicorpTaskDriverPlugins = []string{
 		"exec2",
@@ -244,16 +234,6 @@ func HostVolumePaths(volumes []NomadHostVolume) []string {
 }
 
 func appendDefaultTaskDriverConfig(root *hclwrite.Body, cfg NodeConfig) {
-	dockerPlugin := root.AppendNewBlock("plugin", []string{"docker"}).Body()
-	dockerCfg := dockerPlugin.AppendNewBlock("config", nil).Body()
-	dockerGC := dockerCfg.AppendNewBlock("gc", nil).Body()
-	dockerGC.SetAttributeValue("image_delay", cty.StringVal("48h"))
-	dockerCfg.SetAttributeValue("allow_privileged", cty.BoolVal(true))
-	dockerVolumes := dockerCfg.AppendNewBlock("volumes", nil).Body()
-	dockerVolumes.SetAttributeValue("enabled", cty.BoolVal(true))
-	dockerCfg.SetAttributeValue("extra_labels", stringListValue(defaultDockerExtraLabels))
-	root.AppendNewline()
-
 	rawExecPlugin := root.AppendNewBlock("plugin", []string{"raw_exec"}).Body()
 	rawExecCfg := rawExecPlugin.AppendNewBlock("config", nil).Body()
 	rawExecCfg.SetAttributeValue("enabled", cty.BoolVal(true))
@@ -300,14 +280,6 @@ func appendDefaultTaskDriverConfig(root *hclwrite.Body, cfg NodeConfig) {
 		root.AppendNewBlock("plugin", []string{name})
 		root.AppendNewline()
 	}
-}
-
-func stringListValue(values []string) cty.Value {
-	out := make([]cty.Value, 0, len(values))
-	for _, v := range values {
-		out = append(out, cty.StringVal(v))
-	}
-	return cty.ListVal(out)
 }
 
 func ExternalTaskDriverNotes() string {
