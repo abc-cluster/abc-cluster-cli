@@ -38,8 +38,6 @@ Examples:
   abc secrets get my-api-key --unsafe-local
   abc secrets list
   abc secrets delete my-api-key --unsafe-local`,
-
-
 	}
 
 	cmd.AddCommand(
@@ -66,7 +64,6 @@ Examples:
   abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe-local
   abc secrets set db-url "postgres://user:pass@localhost/db" --unsafe-local`,
 
-
 		Args: cobra.ExactArgs(2),
 		RunE: runSetSecret,
 	}
@@ -89,7 +86,6 @@ Examples:
   export ABC_CRYPT_PASSWORD="passphrase"
   abc secrets get aws-access-key --unsafe-local
   abc secrets get db-url --unsafe-local | xargs echo "DB URL:"`,
-
 
 		Args: cobra.ExactArgs(1),
 		RunE: runGetSecret,
@@ -344,4 +340,3 @@ func resolveSecretCredentials(cmd *cobra.Command, cfg *config.Config, envPasswor
 
 	return envPassword, envSalt, nil
 }
-

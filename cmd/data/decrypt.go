@@ -79,7 +79,7 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 			if cfg.Defaults.CryptPassword != opts.cryptPassword {
 				return fmt.Errorf(
 					"crypt password already exists in config file.\n" +
-					"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
+						"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
 			}
 		} else {
 			cfg.Defaults.CryptPassword = opts.cryptPassword
@@ -91,7 +91,7 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 			if cfg.Defaults.CryptSalt != opts.cryptSalt {
 				return fmt.Errorf(
 					"crypt salt already exists in config file.\n" +
-					"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
+						"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
 			}
 		} else {
 			cfg.Defaults.CryptSalt = opts.cryptSalt
@@ -117,7 +117,7 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		} else {
 			return fmt.Errorf(
 				"managed decryption (control-plane key) is not yet available.\n" +
-				"To decrypt with a local password, pass --crypt-password <password>.")
+					"To decrypt with a local password, pass --crypt-password <password>.")
 		}
 	}
 

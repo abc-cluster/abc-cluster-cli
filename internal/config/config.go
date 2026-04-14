@@ -14,6 +14,8 @@
 //	contexts:
 //	  org-a-za-cpt:
 //	    endpoint:        "https://api.abc-cluster.io"
+//	    upload_endpoint: "https://uploads.abc-cluster.io/files/"
+//	    upload_token:    "s.abc123..."
 //	    access_token:    "eyJ..."
 //	    cluster:         "dev-cluster"
 //	    organization_id: "org-dev"
@@ -54,14 +56,16 @@ func DefaultConfigPath() string {
 
 // Context holds connection details for one named context.
 type Context struct {
-	Endpoint    string `yaml:"endpoint"`
-	AccessToken string `yaml:"access_token"`
-	Cluster     string `yaml:"cluster,omitempty"`
-	OrgID       string `yaml:"organization_id,omitempty"`
-	WorkspaceID string `yaml:"workspace_id,omitempty"`
-	Region      string `yaml:"region,omitempty"`
-	NomadAddr   string `yaml:"nomad_addr,omitempty"`
-	NomadToken  string `yaml:"nomad_token,omitempty"`
+	Endpoint       string `yaml:"endpoint"`
+	UploadEndpoint string `yaml:"upload_endpoint,omitempty"`
+	UploadToken    string `yaml:"upload_token,omitempty"`
+	AccessToken    string `yaml:"access_token"`
+	Cluster        string `yaml:"cluster,omitempty"`
+	OrgID          string `yaml:"organization_id,omitempty"`
+	WorkspaceID    string `yaml:"workspace_id,omitempty"`
+	Region         string `yaml:"region,omitempty"`
+	NomadAddr      string `yaml:"nomad_addr,omitempty"`
+	NomadToken     string `yaml:"nomad_token,omitempty"`
 }
 
 // Defaults holds user-level default values.
@@ -216,6 +220,10 @@ func (c *Config) Get(key string) (string, bool) {
 		switch parts[2] {
 		case "endpoint":
 			return ctx.Endpoint, true
+		case "upload_endpoint":
+			return ctx.UploadEndpoint, true
+		case "upload_token":
+			return ctx.UploadToken, true
 		case "access_token":
 			return ctx.AccessToken, true
 		case "cluster":
@@ -264,6 +272,10 @@ func (c *Config) Set(key, value string) error {
 		switch parts[2] {
 		case "endpoint":
 			ctx.Endpoint = value
+		case "upload_endpoint":
+			ctx.UploadEndpoint = value
+		case "upload_token":
+			ctx.UploadToken = value
 		case "access_token":
 			ctx.AccessToken = value
 		case "cluster":
@@ -318,6 +330,10 @@ func (c *Config) Unset(key string) error {
 		switch parts[2] {
 		case "endpoint":
 			ctx.Endpoint = ""
+		case "upload_endpoint":
+			ctx.UploadEndpoint = ""
+		case "upload_token":
+			ctx.UploadToken = ""
 		case "access_token":
 			ctx.AccessToken = ""
 		case "cluster":
@@ -350,6 +366,12 @@ func (c *Config) AllKeys() [][2]string {
 	out = append(out, [2]string{"defaults.region", c.Defaults.Region})
 	for name, ctx := range c.Contexts {
 		out = append(out, [2]string{"contexts." + name + ".endpoint", ctx.Endpoint})
+		if ctx.UploadEndpoint != "" {
+			out = append(out, [2]string{"contexts." + name + ".upload_endpoint", ctx.UploadEndpoint})
+		}
+		if ctx.UploadToken != "" {
+			out = append(out, [2]string{"contexts." + name + ".upload_token", maskToken(ctx.UploadToken)})
+		}
 		out = append(out, [2]string{"contexts." + name + ".access_token", maskToken(ctx.AccessToken)})
 		if ctx.Cluster != "" {
 			out = append(out, [2]string{"contexts." + name + ".cluster", ctx.Cluster})

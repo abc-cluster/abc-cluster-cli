@@ -24,7 +24,7 @@ func TestDataUpload_StatusNoStateFound(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	out, err := executeCmd(t, cmd, "upload", tmpFile, "--status")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -64,7 +64,7 @@ func TestDataUpload_StatusShowsStoredURL(t *testing.T) {
 	recorder := &factoryRecorder{uploader: mock}
 	accessToken := "token"
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	out, err := executeCmd(t, cmd, "upload", tmpFile, "--status")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -109,7 +109,7 @@ func TestDataUpload_ClearRemovesStoredState(t *testing.T) {
 	recorder := &factoryRecorder{uploader: mock}
 	accessToken := "token"
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	out, err := executeCmd(t, cmd, "upload", tmpFile, "--clear")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -140,7 +140,7 @@ func TestDataUpload_ClearNoStateIsNotAnError(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--clear")
 	if err != nil {
 		t.Fatalf("unexpected error clearing non-existent state: %v", err)
@@ -161,7 +161,7 @@ func TestDataUpload_StatusAndClearMutuallyExclusive(t *testing.T) {
 	accessToken := "token"
 	workspace := ""
 
-	cmd := buildCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--status", "--clear")
 	if err == nil {
 		t.Fatal("expected error when both --status and --clear are set")

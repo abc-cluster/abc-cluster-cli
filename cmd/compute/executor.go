@@ -119,7 +119,7 @@ type sshExec struct {
 	jumpClient   *ssh.Client // non-nil when a jump hop was used; closed in Close()
 	goos         string
 	goarch       string
-	sudoPassword string      // from SSHConfig.Password; injected into sudo calls via stdin
+	sudoPassword string       // from SSHConfig.Password; injected into sudo calls via stdin
 	log          *slog.Logger // debug logger from context; noop when --debug not set
 }
 

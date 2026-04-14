@@ -26,6 +26,7 @@ func TestContextAddAndUse(t *testing.T) {
 	out, err := executeContextCmd(cmd,
 		"add", "org-a-za-cpt",
 		"--endpoint", "https://api.abc-cluster.io",
+		"--upload-endpoint", "https://uploads.abc-cluster.io/files/",
 		"--access-token", "token-value",
 		"--cluster", "dev-cluster",
 		"--organization-id", "org-dev",

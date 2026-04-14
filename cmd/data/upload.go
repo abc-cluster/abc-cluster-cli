@@ -21,8 +21,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bdragon300/tusgo"
+	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/bdragon300/tusgo"
 	"github.com/spf13/cobra"
 )
 
@@ -130,6 +131,32 @@ func uploadPrintfFromContext(ctx context.Context) func(string, ...interface{}) {
 	return fn
 }
 
+func defaultUploadEndpoint() string {
+	if envEndpoint := strings.TrimSpace(os.Getenv("ABC_UPLOAD_ENDPOINT")); envEndpoint != "" {
+		return envEndpoint
+	}
+
+	c, err := cfg.Load()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(c.ActiveCtx().UploadEndpoint)
+}
+
+func defaultUploadToken() string {
+	if envToken := strings.TrimSpace(os.Getenv("ABC_UPLOAD_TOKEN")); envToken != "" {
+		return envToken
+	}
+
+	c, err := cfg.Load()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(c.ActiveCtx().UploadToken)
+}
+
 type uploadPreflightChecker interface {
 	PreflightNetwork(ctx context.Context) error
 }
@@ -155,15 +182,15 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.filePath = args[0]
-			return runUpload(cmd, opts, *serverURL, *accessToken, *workspace, factory)
+			return runUpload(cmd, opts, *serverURL, *accessToken, factory)
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.name, "name", "", "display name for the uploaded file")
-	cmd.Flags().StringVar(&opts.endpoint, "endpoint", os.Getenv("ABC_UPLOAD_ENDPOINT"), "tus upload endpoint URL (or set ABC_UPLOAD_ENDPOINT; defaults to <url>/data/uploads)")
+	cmd.Flags().StringVar(&opts.endpoint, "endpoint", defaultUploadEndpoint(), "tus upload endpoint URL (or set ABC_UPLOAD_ENDPOINT/contexts.<name>.upload_endpoint; defaults to <url>/data/uploads)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
-	cmd.Flags().StringVar(&opts.token, "upload-token", os.Getenv("ABC_UPLOAD_TOKEN"), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN); falls back to --access-token")
+	cmd.Flags().StringVar(&opts.token, "upload-token", defaultUploadToken(), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN/contexts.<name>.upload_token); falls back to --access-token")
 	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in tus upload metadata")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
 	cmd.Flags().BoolVar(&opts.parallel, "parallel", true, "upload directory files in parallel")
@@ -178,7 +205,7 @@ Examples:
 	return cmd
 }
 
-func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, workspace string, factory ClientFactory) error {
+func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken string, factory ClientFactory) error {
 	if strings.TrimSpace(opts.filePath) == "" {
 		return inputError("upload path is empty; provide a local file or directory path")
 	}
@@ -188,7 +215,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	}
 
 	if opts.status || opts.clear {
-		endpoint, err := resolveEndpoint(opts.endpoint, serverURL, workspace)
+		endpoint, err := resolveEndpoint(opts.endpoint, serverURL)
 		if err != nil {
 			return err
 		}
@@ -246,7 +273,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 		}
 	}
 
-	endpoint, err := resolveEndpoint(opts.endpoint, serverURL, workspace)
+	endpoint, err := resolveEndpoint(opts.endpoint, serverURL)
 	if err != nil {
 		return err
 	}
@@ -312,14 +339,14 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken, 
 	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress, extraMeta)
 }
 
-func resolveEndpoint(endpoint, serverURL, workspace string) (string, error) {
+func resolveEndpoint(endpoint, serverURL string) (string, error) {
 	if endpoint == "" {
-		return buildDefaultEndpoint(serverURL, workspace)
+		return buildDefaultEndpoint(serverURL)
 	}
-	return applyWorkspace(normalizeTusEndpoint(endpoint), workspace)
+	return endpoint, nil
 }
 
-func buildDefaultEndpoint(serverURL, workspace string) (string, error) {
+func buildDefaultEndpoint(serverURL string) (string, error) {
 	parsed, err := url.Parse(serverURL)
 	if err != nil {
 		return "", inputError("invalid server URL %q: %w", serverURL, err)
@@ -330,39 +357,6 @@ func buildDefaultEndpoint(serverURL, workspace string) (string, error) {
 	} else {
 		parsed.Path = "/" + trimmedPath + "/data/uploads/"
 	}
-	return applyWorkspace(parsed.String(), workspace)
-}
-
-func normalizeTusEndpoint(endpoint string) string {
-	parsed, err := url.Parse(endpoint)
-	if err != nil {
-		return endpoint
-	}
-	if parsed.Path == "" {
-		parsed.Path = "/"
-	} else if !strings.HasSuffix(parsed.Path, "/") {
-		parsed.Path += "/"
-	}
-	return parsed.String()
-}
-
-func applyWorkspace(endpoint, workspace string) (string, error) {
-	if workspace == "" {
-		return endpoint, nil
-	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil {
-		return "", inputError("invalid upload endpoint %q: %w", endpoint, err)
-	}
-	q := parsed.Query()
-	if existing := q.Get("workspaceId"); existing != "" {
-		if existing != workspace {
-			return "", fmt.Errorf("upload endpoint workspaceId %q does not match requested workspace %q", existing, workspace)
-		}
-		return parsed.String(), nil
-	}
-	q.Set("workspaceId", workspace)
-	parsed.RawQuery = q.Encode()
 	return parsed.String(), nil
 }
 

@@ -105,6 +105,12 @@ func newShowCmd() *cobra.Command {
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Name: %s\n", name)
 			fmt.Fprintf(cmd.OutOrStdout(), "Endpoint: %s\n", ctx.Endpoint)
+			if ctx.UploadEndpoint != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Upload endpoint: %s\n", ctx.UploadEndpoint)
+			}
+			if ctx.UploadToken != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Upload token: %s\n", maskToken(ctx.UploadToken))
+			}
 			if ctx.Cluster != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Cluster: %s\n", ctx.Cluster)
 			}
@@ -158,6 +164,8 @@ func newUseCmd() *cobra.Command {
 
 func newAddCmd() *cobra.Command {
 	var endpoint string
+	var uploadEndpoint string
+	var uploadToken string
 	var token string
 	var cluster string
 	var organizationID string
@@ -169,8 +177,8 @@ func newAddCmd() *cobra.Command {
 		Short: "Add a new saved context",
 		Long: `Add a new named context and make it active.
 
-A context includes endpoint, access token, optional cluster and organization IDs,
-optional workspace ID, and optional region.
+A context includes endpoint, upload endpoint, upload token, access token,
+optional cluster and organization IDs, optional workspace ID, and optional region.
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -192,12 +200,14 @@ optional workspace ID, and optional region.
 			}
 
 			c.SetContext(name, cfg.Context{
-				Endpoint:    endpoint,
-				AccessToken: token,
-				Cluster:     cluster,
-				OrgID:       organizationID,
-				WorkspaceID: workspaceID,
-				Region:      region,
+				Endpoint:       endpoint,
+				UploadEndpoint: uploadEndpoint,
+				UploadToken:    uploadToken,
+				AccessToken:    token,
+				Cluster:        cluster,
+				OrgID:          organizationID,
+				WorkspaceID:    workspaceID,
+				Region:         region,
 			})
 
 			if err := c.Save(); err != nil {
@@ -210,6 +220,8 @@ optional workspace ID, and optional region.
 	}
 
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "API endpoint URL")
+	cmd.Flags().StringVar(&uploadEndpoint, "upload-endpoint", "", "Tus upload endpoint URL")
+	cmd.Flags().StringVar(&uploadToken, "upload-token", "", "Tus upload token")
 	cmd.Flags().StringVar(&token, "access-token", "", "API access token")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Cluster ID/name")
 	cmd.Flags().StringVar(&organizationID, "organization-id", "", "Organization ID")
