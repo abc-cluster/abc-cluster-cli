@@ -57,6 +57,7 @@ The generated job has two phases:
 	cmd.Flags().Bool("wait", false, "Block until module run job completes")
 	cmd.Flags().Bool("logs", false, "Stream module run logs after submit")
 	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
+	cmd.Flags().Bool("pipeline-gen-no-run-manifest", false, "Pass --no-run-manifest to nf-pipeline-gen (omit run-manifest.json in each driver)")
 
 	return cmd
 }
@@ -110,6 +111,9 @@ func runModule(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("minio-endpoint"); v != "" {
 		spec.MinioEndpoint = v
+	}
+	if v, _ := cmd.Flags().GetBool("pipeline-gen-no-run-manifest"); v {
+		spec.PipelineGenNoRunManifest = true
 	}
 	if ns != "" {
 		spec.Namespace = ns
