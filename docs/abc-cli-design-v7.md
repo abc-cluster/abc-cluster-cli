@@ -662,6 +662,75 @@ abc pipeline run <name-or-url> [flags]
     abc job show nextflow-head-rnaseq-a1b2c3
 ```
 
+#### ABC-native pipeline UX (intervention-first)
+
+The user experience for `abc pipeline run` should center on resilient execution in constrained infrastructure, not only happy-path submission.
+
+**Differentiation pillars:**
+- Intervention-first run model (control plane can adapt/recover on behalf of users)
+- Explainability UX (clear "why" for placement, policy, cost, and reschedule decisions)
+- Constraint-native onboarding (users declare goals; control plane chooses strategy)
+- Collaboration semantics (ownership, approvals, handoff in run lifecycle)
+- Recovery-by-default (fallback profiles and rescheduling as first-class behavior)
+
+```mermaid
+flowchart LR
+UserCmd["User: abc pipeline run rnaseq --mode resilient --cost-cap 120 --deadline 6h"] --> Resolve["CLI Resolve"]
+Resolve --> Explain["CLI Explain Layer"]
+Explain --> Intent["ControlPlane Run Intent"]
+Intent --> Policy["Policy Engine"]
+Intent --> Planner["Scheduling Planner"]
+Planner --> Submit["Execution Submit"]
+Submit --> Observe["Intervention Event Stream"]
+Observe --> CliUx["CLI Watch Explain"]
+CliUx --> Outcome["Completed Or Replanned"]
+```
+
+```mermaid
+flowchart TD
+Run["abc pipeline run"] --> DryRun["--dry-run --explain"]
+Run --> Submit["--submit intent"]
+Run --> Watch["pipeline watch <run-id>"]
+Run --> Profiles["--mode fast balanced economy resilient"]
+
+DryRun --> ExplainBlocks["resolved source\nresolved constraints\npolicy validations"]
+Submit --> Guardrails["cost-cap\ndeadline\npolicy-profile\nreschedule-mode"]
+Watch --> Events["placement_failure\npolicy_adjustment\ncost_guardrail\nrescheduled\nfallback_profile_applied"]
+Profiles --> PresetMap["preset to scheduler and policy hints"]
+```
+
+```mermaid
+flowchart LR
+RunIntent["RunIntent"] --> Validate["Validate auth policy quota locality"]
+Validate -->|pass| PlanPrimary["Primary Plan"]
+Validate -->|conditional| PlanFallback["Fallback Plan"]
+PlanPrimary --> Execute["Nomad HPC Execute"]
+PlanFallback --> Execute
+Execute --> Signal["Runtime Signals"]
+Signal --> Decide["Intervention Decision"]
+Decide --> ActResched["Reschedule"]
+Decide --> ActQueue["Queue Partition Change"]
+Decide --> ActFallback["Apply Fallback Profile"]
+Decide --> ActApproval["Pause For Approval"]
+ActResched --> EventLog["Event Rationale"]
+ActQueue --> EventLog
+ActFallback --> EventLog
+ActApproval --> EventLog
+EventLog --> WatchCli["CLI Watch"]
+```
+
+```mermaid
+flowchart TD
+HappyPath["Tower-style happy path"] --> HappySubmit["Submit"]
+HappySubmit --> HappyObserve["Observe"]
+
+AbcPath["ABC differentiated path"] --> AbcExplain["Intent Explain"]
+AbcExplain --> AbcPolicy["Policy-aware planning"]
+AbcPolicy --> AbcIntervene["Runtime intervention"]
+AbcIntervene --> AbcWhy["Why-driven UX"]
+AbcWhy --> AbcOutcome["Policy cost collaboration outcomes"]
+```
+
 ### `abc pipeline add <repository>`
 
 Save a pipeline configuration.
