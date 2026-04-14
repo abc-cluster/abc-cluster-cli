@@ -29,14 +29,18 @@ func newDecryptCmd() *cobra.Command {
 By default, decryption uses a key derived from your control-plane session token
 (matching the managed encryption path). This requires an authenticated session.
 
-Use --unsafe-local to decrypt with a locally-provided password and salt — required when
-the file was encrypted with abc data encrypt --unsafe-local.
+Use --crypt-password to decrypt with a locally-provided password — required when
+the file was encrypted with abc data encrypt --crypt-password. Credentials are
+stored in ~/.abc/config.yaml for reuse in future encryption/decryption operations.
 
   # Managed (default — requires authenticated session, not yet available)
   abc data decrypt ./data.csv.bin
 
-  # Local password — must match the password used during --unsafe-local encryption
-  abc data decrypt ./data.csv.bin --unsafe-local --crypt-password "my-secret"`,
+  # Local password — credentials stored in config for future use
+  abc data decrypt ./data.csv.bin --crypt-password "my-secret"
+
+  # Explicit local mode using stored config credentials
+  abc data decrypt ./data.csv.bin --unsafe-local`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.inputPath = args[0]
@@ -46,10 +50,10 @@ the file was encrypted with abc data encrypt --unsafe-local.
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file decryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder decryption")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (requires --unsafe-local)")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (requires --unsafe-local)")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (stored in config for future use)")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (optional; only used with --crypt-password)")
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
-		"use a locally-provided password instead of the control-plane managed key")
+		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 
 	return cmd
 }
@@ -60,19 +64,65 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		return fmt.Errorf("failed to access path %q: %w", opts.inputPath, err)
 	}
 
-	if !opts.unsafeLocal {
-		// Managed decryption path — not yet implemented.
-		return fmt.Errorf(
-			"managed decryption (control-plane key) is not yet available.\n" +
-			"To decrypt with a local password, pass --unsafe-local --crypt-password <password>.")
+	// Load config to manage crypt credentials
+	cfg, err := loadOrCreateConfig()
+	if err != nil {
+		return err
+	}
+
+	passwordProvided := opts.cryptPassword != ""
+	saltProvided := opts.cryptSalt != ""
+
+	configChanged := false
+	if passwordProvided {
+		if cfg.Defaults.CryptPassword != "" {
+			if cfg.Defaults.CryptPassword != opts.cryptPassword {
+				return fmt.Errorf(
+					"crypt password already exists in config file.\n" +
+					"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
+			}
+		} else {
+			cfg.Defaults.CryptPassword = opts.cryptPassword
+			configChanged = true
+		}
+	}
+	if saltProvided {
+		if cfg.Defaults.CryptSalt != "" {
+			if cfg.Defaults.CryptSalt != opts.cryptSalt {
+				return fmt.Errorf(
+					"crypt salt already exists in config file.\n" +
+					"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
+			}
+		} else {
+			cfg.Defaults.CryptSalt = opts.cryptSalt
+			configChanged = true
+		}
+	}
+	if configChanged {
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+	}
+
+	if opts.unsafeLocal {
+		if cfg.Defaults.CryptPassword == "" {
+			return fmt.Errorf("--crypt-password is required in --unsafe-local mode")
+		}
+		opts.cryptPassword = cfg.Defaults.CryptPassword
+		opts.cryptSalt = cfg.Defaults.CryptSalt
+	} else if !passwordProvided {
+		if cfg.Defaults.CryptPassword != "" {
+			opts.cryptPassword = cfg.Defaults.CryptPassword
+			opts.cryptSalt = cfg.Defaults.CryptSalt
+		} else {
+			return fmt.Errorf(
+				"managed decryption (control-plane key) is not yet available.\n" +
+				"To decrypt with a local password, pass --crypt-password <password>.")
+		}
 	}
 
 	fmt.Fprintln(cmd.ErrOrStderr(),
-		"WARNING: --unsafe-local mode active. Decrypting with locally-provided password (no key management).")
-
-	if opts.cryptPassword == "" {
-		return fmt.Errorf("--crypt-password is required in --unsafe-local mode")
-	}
+		"WARNING: local decryption active. Decrypting with locally-provided password (no key management).")
 	if opts.outputPath != "" && info.IsDir() {
 		return fmt.Errorf("--output can only be used when decrypting a single file")
 	}

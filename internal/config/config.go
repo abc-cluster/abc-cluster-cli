@@ -58,8 +58,10 @@ type Context struct {
 
 // Defaults holds user-level default values.
 type Defaults struct {
-	Output string `yaml:"output,omitempty"`
-	Region string `yaml:"region,omitempty"`
+	Output       string `yaml:"output,omitempty"`
+	Region       string `yaml:"region,omitempty"`
+	CryptPassword string `yaml:"crypt_password,omitempty"`
+	CryptSalt    string `yaml:"crypt_salt,omitempty"`
 }
 
 // Config is the in-memory representation of ~/.abc/config.yaml.
