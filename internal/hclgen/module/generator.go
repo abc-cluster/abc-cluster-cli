@@ -39,6 +39,9 @@ type Spec struct {
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
+
+	// PipelineGenNoRunManifest, when true, passes --no-run-manifest to nf-pipeline-gen.
+	PipelineGenNoRunManifest bool
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +356,10 @@ java -jar "$JAR_PATH" module \
   --config-file "$MODULE_CONFIG" \
   --revision "$MODULES_REVISION" \
   --outdir "$OUTDIR" \
+  --force \
+{{ if .PipelineGenNoRunManifest }}
+  --no-run-manifest \
+{{ end }}
   "$MODULE_NAME"
 test -d "$OUTDIR"
 test -f "$OUTDIR/main.nf"
@@ -362,12 +369,13 @@ echo "Generated outdir: $OUTDIR"
 `))
 
 type generateScriptData struct {
-	StateFile          string
-	GenOutdirExpr      string // includes literal shell ${RUN_ID} suffix
-	PipelineGenRepo    string
-	PipelineGenVersion string
-	Module             string
-	OutputPrefix       string
+	StateFile                string
+	GenOutdirExpr            string // includes literal shell ${RUN_ID} suffix
+	PipelineGenRepo          string
+	PipelineGenVersion       string
+	Module                   string
+	OutputPrefix             string
+	PipelineGenNoRunManifest bool
 }
 
 func buildGenerateScript(spec Spec) string {
@@ -376,12 +384,13 @@ func buildGenerateScript(spec Spec) string {
 	outputPrefix := trimTrailingSlash(spec.OutputPrefix)
 
 	data := generateScriptData{
-		StateFile:          stateFile,
-		GenOutdirExpr:      genOutPrefix + "-${RUN_ID}",
-		PipelineGenRepo:    spec.PipelineGenRepo,
-		PipelineGenVersion: spec.PipelineGenVersion,
-		Module:             spec.Module,
-		OutputPrefix:       outputPrefix,
+		StateFile:                stateFile,
+		GenOutdirExpr:            genOutPrefix + "-${RUN_ID}",
+		PipelineGenRepo:          spec.PipelineGenRepo,
+		PipelineGenVersion:       spec.PipelineGenVersion,
+		Module:                   spec.Module,
+		OutputPrefix:             outputPrefix,
+		PipelineGenNoRunManifest: spec.PipelineGenNoRunManifest,
 	}
 	var buf bytes.Buffer
 	if err := generateScriptTmpl.Execute(&buf, data); err != nil {

@@ -23,7 +23,8 @@ func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) 
 		Namespace:          spec.Namespace,
 		Datacenters:        spec.Datacenters,
 		MinioEndpoint:      spec.MinioEndpoint,
-		ParamsYAMLContent:  spec.ParamsYAMLContent,
-		ConfigYAMLContent:  spec.ConfigYAMLContent,
+		ParamsYAMLContent:        spec.ParamsYAMLContent,
+		ConfigYAMLContent:        spec.ConfigYAMLContent,
+		PipelineGenNoRunManifest: spec.PipelineGenNoRunManifest,
 	}, nomadAddr, nomadToken, runUUID)
 }

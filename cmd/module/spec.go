@@ -29,6 +29,9 @@ type RunSpec struct {
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
+
+	// PipelineGenNoRunManifest passes --no-run-manifest to nf-pipeline-gen in the Nomad prestart script.
+	PipelineGenNoRunManifest bool
 }
 
 func (s *RunSpec) defaults() {
