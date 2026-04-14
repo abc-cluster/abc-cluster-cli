@@ -343,11 +343,7 @@ func TestJobRun_ShebanLineNotTreatedAsDirective(t *testing.T) {
 // ── A.6 Directive precedence — params file ────────────────────────────────────
 
 func TestJobRun_ParamsFileOverridesPreamble(t *testing.T) {
-	// In the current implementation, params file is applied AFTER preamble and
-	// therefore overrides it. Precedence (highest→lowest):
-	//   CLI flags > params file > #ABC preamble > #NOMAD > NOMAD_* env vars
-	// Note: the design doc lists params as lowest priority — this reflects the
-	// actual behaviour of the current implementation.
+	// params file is lowest-priority input and should not override preamble.
 	script := "#!/bin/bash\n#ABC --name=preamble-check\n#ABC --cores=8\necho hi\n"
 	p := writeTempScript(t, "preamble_check.sh", script)
 	paramsPath := filepath.Join(t.TempDir(), "p.yaml")
@@ -358,9 +354,20 @@ func TestJobRun_ParamsFileOverridesPreamble(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// params file (cores=2) wins over preamble (cores=8) in current implementation.
-	if !regexp.MustCompile(`cores\s*=\s*2`).MatchString(out) {
-		t.Errorf("expected params file cores=2 to win over preamble cores=8, got:\n%s", out)
+	if !regexp.MustCompile(`cores\s*=\s*8`).MatchString(out) {
+		t.Errorf("expected preamble cores=8 to win over params file cores=2, got:\n%s", out)
+	}
+}
+
+func TestJobRun_ConstraintLTEOperator(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=lte-op\n#ABC --constraint=cpu<=8\necho hi\n"
+	p := writeTempScript(t, "lte_op.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `operator  = "<="`) {
+		t.Errorf("expected <= operator in constraint, got:\n%s", out)
 	}
 }
 

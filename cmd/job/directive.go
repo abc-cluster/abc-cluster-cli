@@ -141,8 +141,8 @@ func applySBATCHDirective(spec *jobSpec, directive string) error {
 				spec.SlurmWorkDir = val
 				spec.ChDir = val
 			}
-		// Intentionally ignored SBATCH flags (cluster-topology or unsupported):
-		// --nodes, --exclusive, --gres, --qos, --constraint, --reservation, etc.
+			// Intentionally ignored SBATCH flags (cluster-topology or unsupported):
+			// --nodes, --exclusive, --gres, --qos, --constraint, --reservation, etc.
 		}
 	}
 	return nil
@@ -161,6 +161,17 @@ const (
 // fills in defaults. slurmDirs contains raw #SBATCH directive strings; mode
 // controls which sets are active. The defaultName is used when no --name is found.
 func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mode preambleMode) (*jobSpec, error) {
+	spec, useSBATCH, err := resolveSpecRaw(abcDirs, nomadDirs, slurmDirs, mode)
+	if err != nil {
+		return nil, err
+	}
+	if err := applySpecDefaults(spec, defaultName, useSBATCH); err != nil {
+		return nil, err
+	}
+	return spec, nil
+}
+
+func resolveSpecRaw(abcDirs, nomadDirs, slurmDirs []string, mode preambleMode) (*jobSpec, bool, error) {
 	spec := &jobSpec{}
 
 	// Determine whether to honour SBATCH directives.
@@ -168,7 +179,7 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 	switch mode {
 	case preambleModeSlurm:
 		if len(slurmDirs) == 0 {
-			return nil, fmt.Errorf("--preamble-mode slurm requires at least one #SBATCH directive in the script")
+			return nil, false, fmt.Errorf("--preamble-mode slurm requires at least one #SBATCH directive in the script")
 		}
 		useSBATCH = true
 	case preambleModeAuto:
@@ -181,7 +192,7 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 	if useSBATCH {
 		for _, d := range slurmDirs {
 			if err := applySBATCHDirective(spec, d); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 	}
@@ -190,7 +201,7 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 	if mode != preambleModeSlurm {
 		for _, d := range nomadDirs {
 			if err := applyDirective(spec, d, "NOMAD"); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 	}
@@ -199,11 +210,15 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 	if mode != preambleModeSlurm {
 		for _, d := range abcDirs {
 			if err := applyDirective(spec, d, "ABC"); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 	}
 
+	return spec, useSBATCH, nil
+}
+
+func applySpecDefaults(spec *jobSpec, defaultName string, useSBATCH bool) error {
 	if spec.Name == "" {
 		spec.Name = defaultName
 	}
@@ -260,12 +275,12 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 		}
 	}
 	if spec.NoNetwork && len(spec.Ports) > 0 {
-		return nil, fmt.Errorf("no-network cannot be combined with port mapping")
+		return fmt.Errorf("no-network cannot be combined with port mapping")
 	}
 	if spec.Name == "" {
-		return nil, fmt.Errorf("job name is required: set #ABC --name=<n>, #NOMAD --name=<n>, or NOMAD_JOB_NAME")
+		return fmt.Errorf("job name is required: set #ABC --name=<n>, #NOMAD --name=<n>, or NOMAD_JOB_NAME")
 	}
-	return spec, nil
+	return nil
 }
 
 // applyDirective parses a single whitespace-separated directive string and
@@ -530,7 +545,7 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 
 func parseConstraint(expr string) (nomadConstraint, error) {
 	expr = strings.TrimSpace(expr)
-	ops := []string{"==", "!=", "=~", "!~", "<", "<=", ">", ">="}
+	ops := []string{"==", "!=", "=~", "!~", "<=", ">=", "<", ">"}
 	for _, op := range ops {
 		if idx := strings.Index(expr, op); idx >= 0 {
 			attr := strings.TrimSpace(expr[:idx])

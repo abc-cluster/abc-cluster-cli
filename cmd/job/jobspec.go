@@ -169,6 +169,39 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	if override.Driver != "" {
 		base.Driver = override.Driver
 	}
+	if override.RescheduleMode != "" {
+		base.RescheduleMode = override.RescheduleMode
+	}
+	if override.RescheduleAttempts != 0 {
+		base.RescheduleAttempts = override.RescheduleAttempts
+	}
+	if override.RescheduleInterval != "" {
+		base.RescheduleInterval = override.RescheduleInterval
+	}
+	if override.RescheduleDelay != "" {
+		base.RescheduleDelay = override.RescheduleDelay
+	}
+	if override.RescheduleMaxDelay != "" {
+		base.RescheduleMaxDelay = override.RescheduleMaxDelay
+	}
+	if override.OutputLog != "" {
+		base.OutputLog = override.OutputLog
+	}
+	if override.ErrorLog != "" {
+		base.ErrorLog = override.ErrorLog
+	}
+	if override.Conda != "" {
+		base.Conda = override.Conda
+	}
+	if override.NoNetwork {
+		base.NoNetwork = true
+	}
+	if len(override.Constraints) > 0 {
+		base.Constraints = append([]nomadConstraint(nil), override.Constraints...)
+	}
+	if len(override.Affinities) > 0 {
+		base.Affinities = append([]nomadAffinity(nil), override.Affinities...)
+	}
 	if override.DriverConfig != nil {
 		if base.DriverConfig == nil {
 			base.DriverConfig = map[string]string{}

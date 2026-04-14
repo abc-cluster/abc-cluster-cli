@@ -147,6 +147,7 @@ EXAMPLES
 	cmd.Flags().Bool("submit", false, "Submit job to Nomad instead of printing HCL")
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
 	cmd.Flags().Bool("watch", false, "Stream logs after --submit")
+	cmd.Flags().Duration("watch-timeout", 0, "Timeout for --watch log streaming (0 = no timeout)")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
 
 	// Scheduler overrides (mirror preamble Class 1)
@@ -334,13 +335,13 @@ func runJob(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	scriptSpec, err := resolveSpec(abcDirs, nomadDirs, slurmDirs, defaultName, mode)
+	scriptSpec, useSBATCH, err := resolveSpecRaw(abcDirs, nomadDirs, slurmDirs, mode)
 	if err != nil {
 		return err
 	}
 
-	// Env vars override script preamble; CLI flags override everything.
-	spec := mergeSpec(scriptSpec, readNomadEnvVars())
+	// Merge in documented precedence: CLI > preamble > env > params.
+	spec := &jobSpec{}
 
 	if paramsFile, _ := cmd.Flags().GetString("params-file"); paramsFile != "" {
 		params, err := loadParamsFile(paramsFile)
@@ -355,8 +356,13 @@ func runJob(cmd *cobra.Command, args []string) error {
 		}
 		spec = mergeSpec(spec, paramsSpec)
 	}
+	spec = mergeSpec(spec, readNomadEnvVars())
+	spec = mergeSpec(spec, scriptSpec)
 
 	if err := applyCLIFlags(cmd, spec); err != nil {
+		return err
+	}
+	if err := applySpecDefaults(spec, defaultName, useSBATCH); err != nil {
 		return err
 	}
 
@@ -452,6 +458,10 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 	}
 
 	if watch, _ := cmd.Flags().GetBool("watch"); watch {
+		watchTimeout, _ := cmd.Flags().GetDuration("watch-timeout")
+		if watchTimeout <= 0 {
+			watchTimeout = 0
+		}
 		fmt.Fprintln(cmd.ErrOrStderr(), "\n  Waiting for allocation...")
 		return watchJobLogs(ctx, nc, spec.Name, spec.Namespace, out, watchDelay, watchTimeout)
 	}
@@ -481,8 +491,7 @@ func printPlan(cmd *cobra.Command, hcl string, plan *NomadPlanResponse) {
 }
 
 const (
-	watchDelay   = 10 * time.Second
-	watchTimeout = 5 * time.Minute
+	watchDelay = 10 * time.Second
 )
 
 func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string,
