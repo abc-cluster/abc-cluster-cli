@@ -206,11 +206,11 @@ func RunPreflight(ctx context.Context, ex Executor, w io.Writer, sudoPassword st
 
   The SSH user lacks passwordless sudo. To fix this, pick one option:
     1. Supply the user's sudo password:
-         abc node add --host=<host> --password=<pass>
+         abc node add --remote=<host> --password=<pass>
          (or set ABC_NODE_PASSWORD=<pass> in the environment)
     2. Add the user to sudoers for passwordless access on the remote host:
          echo "<user> ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/<user>
-    3. Connect as root:  abc node add --host=<host> --user=root
+    3. Connect as root:  abc node add --remote=<host> --user=root
     4. Use --skip-preflight if you have already configured sudo`, res.OS)
 	}
 	if res.OS == "linux" && res.InitSystem != "systemd" {

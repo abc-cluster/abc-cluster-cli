@@ -1,11 +1,11 @@
 // Package config provides encryption support for secrets managed via 'abc secrets' command.
 //
-// Encryption is password-based (mozilla/sops --unsafe mode) and uses the same
+// Encryption is password-based (local password mode) and uses the same
 // salt/password as the data encryption/decryption module. Users must explicitly
-// invoke 'abc secrets' with --unsafe flag to encrypt/decrypt secrets.
+// invoke 'abc secrets' with --unsafe-local flag to encrypt/decrypt secrets.
 //
 // Environment Variables:
-//   ABC_CRYPT_PASSWORD  — encryption password (required for --unsafe operations)
+//   ABC_CRYPT_PASSWORD  — encryption password (required for --unsafe-local operations)
 //   ABC_CRYPT_SALT      — optional salt for key derivation (same as data encryption)
 //
 // Secrets are stored in the config file under the 'secrets' section:

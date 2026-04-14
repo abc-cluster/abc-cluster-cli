@@ -1,8 +1,8 @@
 // Package secrets implements the "abc secrets" command group.
 //
 // Manages encrypted secrets stored in the config file using password-based
-// encryption (mozilla/sops --unsafe mode). All write operations require the
-// --unsafe flag and ABC_CRYPT_PASSWORD environment variable.
+// encryption (mozilla/sops local encryption mode). All write operations require the
+// --unsafe-local flag and ABC_CRYPT_PASSWORD environment variable.
 //
 // Schema (in ~/.abc/config.yaml):
 //
@@ -28,15 +28,15 @@ func NewCmd() *cobra.Command {
 		Short: "Manage encrypted secrets stored in config file",
 		Long: `Manage encrypted secrets without exposing credentials.
 
-Secrets are encrypted locally using password-based encryption (--unsafe mode).
+Secrets are encrypted locally using password-based encryption (local password mode).
 All operations require ABC_CRYPT_PASSWORD environment variable.
 
 Examples:
   export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-  abc secrets set my-api-key "sk-1234567890abcdef" --unsafe
-  abc secrets get my-api-key --unsafe
+  abc secrets set my-api-key "sk-1234567890abcdef" --unsafe-local
+  abc secrets get my-api-key --unsafe-local
   abc secrets list
-  abc secrets delete my-api-key --unsafe`,
+  abc secrets delete my-api-key --unsafe-local`,
 	}
 
 	cmd.AddCommand(
@@ -56,17 +56,17 @@ func newSetCmd() *cobra.Command {
 		Short: "Store an encrypted secret",
 		Long: `Store a value as an encrypted secret in the config file.
 
-Requires --unsafe flag and ABC_CRYPT_PASSWORD environment variable.
+Requires --unsafe-local flag and ABC_CRYPT_PASSWORD environment variable.
 
 Examples:
   export ABC_CRYPT_PASSWORD="passphrase"
-  abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe
-  abc secrets set db-url "postgres://user:pass@localhost/db" --unsafe`,
+  abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe-local
+  abc secrets set db-url "postgres://user:pass@localhost/db" --unsafe-local`,
 		Args: cobra.ExactArgs(2),
 		RunE: runSetSecret,
 	}
 
-	cmd.Flags().Bool("unsafe", false, "Allow writing encrypted secrets (requires ABC_CRYPT_PASSWORD)")
+	cmd.Flags().Bool("unsafe-local", false, "Allow writing encrypted secrets locally (requires ABC_CRYPT_PASSWORD)")
 
 	return cmd
 }
@@ -78,17 +78,17 @@ func newGetCmd() *cobra.Command {
 		Short: "Retrieve and decrypt a secret",
 		Long: `Get a secret by key, decrypting it on output.
 
-Requires --unsafe flag and ABC_CRYPT_PASSWORD environment variable.
+Requires --unsafe-local flag and ABC_CRYPT_PASSWORD environment variable.
 
 Examples:
   export ABC_CRYPT_PASSWORD="passphrase"
-  abc secrets get aws-access-key --unsafe
-  abc secrets get db-url --unsafe | xargs echo "DB URL:"`,
+  abc secrets get aws-access-key --unsafe-local
+  abc secrets get db-url --unsafe-local | xargs echo "DB URL:"`,
 		Args: cobra.ExactArgs(1),
 		RunE: runGetSecret,
 	}
 
-	cmd.Flags().Bool("unsafe", false, "Allow reading encrypted secrets (requires ABC_CRYPT_PASSWORD)")
+	cmd.Flags().Bool("unsafe-local", false, "Allow reading encrypted secrets locally (requires ABC_CRYPT_PASSWORD)")
 
 	return cmd
 }
@@ -100,18 +100,18 @@ func newListCmd() *cobra.Command {
 		Short: "List all secret keys",
 		Long: `List all secrets stored in the config file.
 
-Without --unsafe: shows only key names.
-With --unsafe: decrypts and displays all secrets (requires ABC_CRYPT_PASSWORD).
+Without --unsafe-local: shows only key names.
+With --unsafe-local: decrypts and displays all secrets (requires ABC_CRYPT_PASSWORD).
 
 Examples:
   abc secrets list                           # List key names only
   export ABC_CRYPT_PASSWORD="passphrase"
-  abc secrets list --unsafe                  # List with decrypted values`,
+  abc secrets list --unsafe-local                  # List with decrypted values`,
 		Args: cobra.NoArgs,
 		RunE: runListSecrets,
 	}
 
-	cmd.Flags().Bool("unsafe", false, "Decrypt and display secret values (requires ABC_CRYPT_PASSWORD)")
+	cmd.Flags().Bool("unsafe-local", false, "Decrypt and display secret values locally (requires ABC_CRYPT_PASSWORD)")
 
 	return cmd
 }
@@ -123,26 +123,26 @@ func newDeleteCmd() *cobra.Command {
 		Short: "Delete a secret",
 		Long: `Remove a secret from the config file.
 
-Requires --unsafe flag.
+Requires --unsafe-local flag.
 
 Examples:
-  abc secrets delete aws-access-key --unsafe
-  abc secrets delete old-credential --unsafe`,
+  abc secrets delete aws-access-key --unsafe-local
+  abc secrets delete old-credential --unsafe-local`,
 		Args: cobra.ExactArgs(1),
 		RunE: runDeleteSecret,
 	}
 
-	cmd.Flags().Bool("unsafe", false, "Allow deleting secrets")
+	cmd.Flags().Bool("unsafe-local", false, "Allow deleting secrets")
 	cmd.Flags().Bool("yes", false, "Skip confirmation prompt")
 
 	return cmd
 }
 
-// runSetSecret handles "abc secrets set <key> <value> --unsafe"
+// runSetSecret handles "abc secrets set <key> <value> --unsafe-local"
 func runSetSecret(cmd *cobra.Command, args []string) error {
-	unsafe, _ := cmd.Flags().GetBool("unsafe")
-	if !unsafe {
-		return fmt.Errorf("set requires --unsafe flag")
+	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
+	if !unsafeLocal {
+		return fmt.Errorf("set requires --unsafe-local flag")
 	}
 
 	password := os.Getenv("ABC_CRYPT_PASSWORD")
@@ -179,11 +179,11 @@ func runSetSecret(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runGetSecret handles "abc secrets get <key> --unsafe"
+// runGetSecret handles "abc secrets get <key> --unsafe-local"
 func runGetSecret(cmd *cobra.Command, args []string) error {
-	unsafe, _ := cmd.Flags().GetBool("unsafe")
-	if !unsafe {
-		return fmt.Errorf("get requires --unsafe flag")
+	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
+	if !unsafeLocal {
+		return fmt.Errorf("get requires --unsafe-local flag")
 	}
 
 	password := os.Getenv("ABC_CRYPT_PASSWORD")
@@ -215,9 +215,9 @@ func runGetSecret(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runListSecrets handles "abc secrets list [--unsafe]"
+// runListSecrets handles "abc secrets list [--unsafe-local]"
 func runListSecrets(cmd *cobra.Command, args []string) error {
-	unsafe, _ := cmd.Flags().GetBool("unsafe")
+	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -229,7 +229,7 @@ func runListSecrets(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if unsafe {
+	if unsafeLocal {
 		password := os.Getenv("ABC_CRYPT_PASSWORD")
 		if password == "" {
 			return fmt.Errorf("ABC_CRYPT_PASSWORD not set")
@@ -250,17 +250,17 @@ func runListSecrets(cmd *cobra.Command, args []string) error {
 		for key := range cfg.Secrets {
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", key)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "\nUse --unsafe to view decrypted values (requires ABC_CRYPT_PASSWORD)\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "\nUse --unsafe-local to view decrypted values (requires ABC_CRYPT_PASSWORD)\n")
 	}
 
 	return nil
 }
 
-// runDeleteSecret handles "abc secrets delete <key> --unsafe"
+// runDeleteSecret handles "abc secrets delete <key> --unsafe-local"
 func runDeleteSecret(cmd *cobra.Command, args []string) error {
-	unsafe, _ := cmd.Flags().GetBool("unsafe")
-	if !unsafe {
-		return fmt.Errorf("delete requires --unsafe flag")
+	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
+	if !unsafeLocal {
+		return fmt.Errorf("delete requires --unsafe-local flag")
 	}
 
 	key := args[0]
