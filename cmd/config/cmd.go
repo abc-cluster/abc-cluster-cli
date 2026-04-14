@@ -82,10 +82,12 @@ func newSetCmd() *cobra.Command {
 Supported keys follow a dot-separated path:
   defaults.output               table, json, or yaml
   defaults.region               Nomad region (e.g., za-cpt)
-  contexts.<name>.endpoint      API endpoint URL
-  contexts.<name>.access_token  Access token
-  contexts.<name>.workspace_id  Workspace ID
-  contexts.<name>.region        Region override for context
+	contexts.<name>.endpoint          API endpoint URL
+	contexts.<name>.access_token      Access token
+	contexts.<name>.cluster           Cluster ID/name
+	contexts.<name>.organization_id   Organization ID
+	contexts.<name>.workspace_id      Workspace ID
+	contexts.<name>.region            Region override for context
 
 Example:
   abc config set defaults.output json

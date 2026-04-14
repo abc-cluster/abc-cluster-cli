@@ -24,6 +24,8 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/context"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
@@ -148,6 +150,37 @@ func cancelledActionFromArgs(args []string) string {
 var version = "dev"
 
 func init() {
+	cfg, err := config.Load()
+	activeCtx := config.Context{}
+	if err == nil {
+		activeCtx = cfg.ActiveCtx()
+	}
+
+	if v := os.Getenv("ABC_API_ENDPOINT"); v != "" {
+		serverURL = v
+	} else if activeCtx.Endpoint != "" {
+		serverURL = activeCtx.Endpoint
+	} else {
+		serverURL = "https://api.abc-cluster.io"
+	}
+
+	if v := os.Getenv("ABC_ACCESS_TOKEN"); v != "" {
+		accessToken = v
+	} else if activeCtx.AccessToken != "" {
+		accessToken = activeCtx.AccessToken
+	}
+
+	if v := os.Getenv("ABC_WORKSPACE_ID"); v != "" {
+		workspace = v
+	} else if activeCtx.WorkspaceID != "" {
+		workspace = activeCtx.WorkspaceID
+	}
+
+	clusterDefault := utils.EnvOrDefault("ABC_CLUSTER")
+	if clusterDefault == "" && activeCtx.Cluster != "" {
+		clusterDefault = activeCtx.Cluster
+	}
+
 	// Elevation flags.
 	rootCmd.PersistentFlags().Bool("sudo", false,
 		"Elevate to cluster-admin scope (requires admin token; or set ABC_CLI_SUDO_MODE)")
@@ -155,7 +188,7 @@ func init() {
 		"Elevate to infrastructure scope — fleet-wide + cloud provider APIs (or set ABC_CLI_CLOUD_MODE)")
 	rootCmd.PersistentFlags().Bool("exp", false,
 		"Enable experimental CLI features (or set ABC_CLI_EXP_MODE)")
-	rootCmd.PersistentFlags().String("cluster", utils.EnvOrDefault("ABC_CLUSTER"),
+	rootCmd.PersistentFlags().String("cluster", clusterDefault,
 		"Target a specific named cluster in the fleet (requires --cloud; or set ABC_CLUSTER)")
 	rootCmd.PersistentFlags().String("user", utils.EnvOrDefault("ABC_AS_USER"),
 		"Act on behalf of this user email — admin only (or set ABC_AS_USER)")
@@ -175,13 +208,13 @@ func init() {
 
 	// Flags for the data command (ABC REST API).
 	rootCmd.PersistentFlags().StringVar(&serverURL, "url",
-		getEnvOrDefault("ABC_API_ENDPOINT", "https://api.abc-cluster.io"),
+		serverURL,
 		"abc-cluster API endpoint URL (or set ABC_API_ENDPOINT)")
 	rootCmd.PersistentFlags().StringVar(&accessToken, "access-token",
-		os.Getenv("ABC_ACCESS_TOKEN"),
+		accessToken,
 		"abc-cluster access token (or set ABC_ACCESS_TOKEN)")
 	rootCmd.PersistentFlags().StringVar(&workspace, "workspace",
-		os.Getenv("ABC_WORKSPACE_ID"),
+		workspace,
 		"workspace ID (or set ABC_WORKSPACE_ID)")
 
 	rootCmd.AddCommand(pipeline.NewCmd())
@@ -196,6 +229,7 @@ func init() {
 	rootCmd.AddCommand(budget.NewCmd())
 	rootCmd.AddCommand(service.NewStatusCmd())
 	rootCmd.AddCommand(auth.NewCmd())
+	rootCmd.AddCommand(contextcmd.NewCmd())
 	rootCmd.AddCommand(cfgcmd.NewCmd())
 	rootCmd.AddCommand(secrets.NewCmd())
 }

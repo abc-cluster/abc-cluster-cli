@@ -83,6 +83,47 @@ abc auth whoami
 ```
 
 
+---
+
+## Exercise 1.5: Soft Onboarding (Nomad Dev Mode)
+
+You can experience infrastructure commands without joining a real ABC cluster.
+
+### 1.5.1 Start local Nomad in dev mode
+
+```bash
+abc --sudo infra compute add --local --dev-mode
+```
+
+**What you should see:**
+- Nomad installation/config/service setup output
+- Final message indicating dev mode (soft onboarding)
+
+### 1.5.2 Inspect nodes in table format
+
+```bash
+abc --sudo infra compute list
+```
+
+### 1.5.3 Inspect nodes in JSON format
+
+```bash
+abc --sudo infra compute list --output json
+```
+
+### 1.5.4 Extract a single field via JSON path
+
+```bash
+# First node name
+abc --sudo infra compute list --output json --json-path 0.Name
+
+# Node eligibility (replace <node-id>)
+abc --sudo infra compute show <node-id> --output json --json-path node.SchedulingEligibility
+```
+
+JSON path currently supports dot notation and array indexes (`foo.bar.0.baz` or `foo[0].bar`).
+
+
 
 ---
 
@@ -141,7 +182,36 @@ abc secrets get demo-api-key --unsafe-local
 - If `~/.abc/config.yaml` already contains `crypt_password`/`crypt_salt`, those are used preferentially
 - If env vars differ from config, the CLI warns and uses the config values
 
-### 2.5 List all secrets
+### 2.5 Manage contexts
+
+You can view and switch between saved contexts using `abc context`.
+
+```bash
+abc context list
+abc context use dev
+abc context show
+```
+
+Example dev/staging setup:
+```bash
+abc context add dev \
+  --endpoint https://dev.abc-cluster.cloud \
+  --access-token "TOKEN" \
+  --cluster dev-cluster \
+  --organization-id org-dev \
+  --workspace-id ws-dev \
+  --region za-cpt
+
+abc context add staging \
+  --endpoint https://staging.abc-cluster.cloud \
+  --access-token "TOKEN" \
+  --cluster staging-cluster \
+  --organization-id org-staging \
+  --workspace-id ws-staging \
+  --region eu-cpt
+```
+
+### 2.6 List all secrets
 
 ```bash
 abc secrets list

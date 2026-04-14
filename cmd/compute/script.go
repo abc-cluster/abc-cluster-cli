@@ -69,7 +69,7 @@ func printSetupScript(
 			fmt.Fprintf(w, "# Node class: %s\n", cfg.NodeConfig.NodeClass)
 		}
 		fmt.Fprintln(w)
-		printWindowsScript(w, version, releaseOS, releaseArch, binPath, cfgPath, dataDir, hostVolumeDirs, hclContent, useTailscale, tsKey, tsHostname, skipEnable, skipStart)
+		printWindowsScript(w, version, releaseOS, releaseArch, binPath, cfgPath, dataDir, hostVolumeDirs, hclContent, useTailscale, tsKey, tsHostname, cfg.DevMode, skipEnable, skipStart)
 		return nil
 	}
 
@@ -231,11 +231,11 @@ func printSetupScript(
 	fmt.Fprintf(w, "# ── 5. Service registration ──────────────────────────────────────────────────\n")
 	switch goos {
 	case "linux":
-		if packageInstallMethod == packageInstallMethodPackageManager {
+		if packageInstallMethod == packageInstallMethodPackageManager && !cfg.DevMode {
 			fmt.Fprintf(w, "sudo systemctl daemon-reload\n")
 		} else {
 			fmt.Fprintf(w, "sudo tee /etc/systemd/system/nomad.service > /dev/null <<'UNIT'\n")
-			fmt.Fprint(w, nomadSystemdUnit)
+			fmt.Fprint(w, renderNomadSystemdUnit(cfg.DevMode))
 			fmt.Fprintf(w, "UNIT\n")
 			fmt.Fprintf(w, "sudo chown root:root /etc/systemd/system/nomad.service\n")
 			fmt.Fprintf(w, "sudo systemctl daemon-reload\n")
@@ -253,7 +253,7 @@ func printSetupScript(
 	case "darwin":
 		const plistPath = "/Library/LaunchDaemons/nomad.plist"
 		fmt.Fprintf(w, "sudo tee \"%s\" > /dev/null <<'PLIST'\n", plistPath)
-		fmt.Fprint(w, nomadLaunchdPlist)
+		fmt.Fprint(w, renderNomadLaunchdPlist(cfg.DevMode))
 		fmt.Fprintf(w, "PLIST\n")
 		fmt.Fprintf(w, "sudo chown root:wheel \"%s\"\n", plistPath)
 		if !skipEnable && !skipStart {
@@ -302,7 +302,7 @@ func printSetupScript(
 
 // printWindowsScript emits PowerShell-style comments and commands for Windows.
 // Full automation is not supported on Windows; the output is a documented guide.
-func printWindowsScript(w io.Writer, version, releaseOS, releaseArch, binPath, cfgPath, dataDir string, hostVolumeDirs []string, hclContent string, useTailscale bool, tsKey, tsHostname string, skipEnable, skipStart bool) {
+func printWindowsScript(w io.Writer, version, releaseOS, releaseArch, binPath, cfgPath, dataDir string, hostVolumeDirs []string, hclContent string, useTailscale bool, tsKey, tsHostname string, devMode, skipEnable, skipStart bool) {
 	fmt.Fprintf(w, "# ── 1. Tailscale ────────────────────────────────────────────────────────────\n")
 	if useTailscale {
 		fmt.Fprintf(w, "# Ensure Tailscale is installed: https://tailscale.com/download/windows\n")
@@ -357,7 +357,11 @@ func printWindowsScript(w io.Writer, version, releaseOS, releaseArch, binPath, c
 
 	fmt.Fprintf(w, "# ── 5. Service registration ─────────────────────────────────────────────────\n")
 	fmt.Fprintf(w, "# Windows Service registration (run as Administrator):\n")
-	fmt.Fprintf(w, "#   sc.exe create nomad binPath= \"\\\"%s\\\" agent -config \\\"%s\\\"\"\n", binPath, cfgPath)
+	agentArgs := "agent -config"
+	if devMode {
+		agentArgs = "agent -dev -config"
+	}
+	fmt.Fprintf(w, "#   sc.exe create nomad binPath= \"\\\"%s\\\" %s \\\"%s\\\"\"\n", binPath, agentArgs, cfgPath)
 	if !skipStart {
 		fmt.Fprintf(w, "#   sc.exe start nomad\n")
 	}

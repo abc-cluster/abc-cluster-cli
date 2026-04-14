@@ -480,6 +480,17 @@ command with the `--unsafe-local` flag.
 | `abc secrets list --unsafe-local` | List keys and decrypted values | Yes (`ABC_CRYPT_PASSWORD`) |
 | `abc secrets delete <key>` | Remove a secret | Yes |
 
+## 6.2 Context Management
+
+Users can manage saved authentication contexts with `abc context`. This command enables:
+- `abc context list` to enumerate saved context names and display the active context
+- `abc context show [name]` to inspect endpoint, workspace, region, and masked token
+- `abc context use <name>` to switch the active context for subsequent CLI commands
+- `abc context add <name> --endpoint <url> --access-token <token> [--workspace-id] [--region]` to add a new saved context
+- `abc context delete <name>` to remove an existing saved context
+
+Contexts are stored in `~/.abc/config.yaml` under `contexts.<name>`, with `active_context` pointing to the current selection.
+
 **Encryption:**
 
 - Algorithm: AES-256-GCM with random nonce
@@ -810,6 +821,9 @@ Translate SLURM/PBS script to `#ABC` directives.
 
 Requires `--sudo`. Runs preflight, installs Nomad, registers node.
 
+Supports **soft onboarding** via `--dev-mode`, which starts Nomad as `agent -dev`
+for local/remote evaluation without joining an ABC cluster.
+
 **Transport mode (one required):**
 
 | Flag | Description |
@@ -841,6 +855,7 @@ Requires `--sudo`. Runs preflight, installs Nomad, registers node.
 | `--datacenter` | `default` | Nomad datacenter label |
 | `--node-class` | | Nomad node class |
 | `--server-join` | | Server address(es) to join (repeatable) |
+| `--dev-mode` | `false` | Run Nomad in dev mode (cannot be combined with `--server-join`) |
 | `--network-interface` | `tailscale0` (if Tailscale) | Network interface |
 | `--host-volume` | | `name=path[:read_only]` (repeatable) |
 | `--scratch-host-volume` | `true` | Configure default scratch volume |
@@ -873,18 +888,45 @@ Requires `--sudo`. Runs preflight, installs Nomad, registers node.
   Node registered as nomad-client-03 in datacenter dc1.
 ```
 
-### `abc infra compute probe <compute-id>` *(stub)*
+### `abc infra compute probe <node-id>`
 
 ```
-abc infra compute probe <compute-id> [--ssh] [--drivers]
+abc infra compute probe <node-id> [flags]
 ```
+
+Implements a parameterized **system** Nomad job (`abc-node-probe-system`) that:
+- embeds the `abc-node-probe` binary,
+- dispatches to one selected node via `meta.node_id`,
+- streams probe output to the CLI.
+
+| Flag | Description |
+|------|-------------|
+| `--binary` | Path to `abc-node-probe` Linux binary |
+| `--jurisdiction` | Optional jurisdiction forwarded to probe |
+| `--skip-categories` | Optional comma-separated probe categories to skip |
+| `--json` | Pass `--json` to probe |
+| `--fail-fast` | Pass `--fail-fast` to probe |
+| `--detach` | Submit without log streaming |
+| `--wait-timeout` | Maximum wait while streaming logs |
 
 **Expected output:**
 ```
-  abc infra compute probe "nomad-client-02": not yet implemented.
+  ✓ Probe dispatched
+  Node           nomad-client-02 (abc123de)
+  Nomad job ID   abc-node-probe-system/dispatch-...
+  Evaluation ID  a1b2c3d4-...
+
+  Streaming probe output...
+  ...
 ```
 
 ### `abc infra compute list`
+
+Supports structured output selection:
+- `--output table|json` (default `table`)
+- `--json-path <path>` (only valid with `--output=json`)
+
+JSON path supports dot notation and array indices (for example `0.Name`, `node.Region`, `active_allocations[0].JobID`).
 
 **Expected output:**
 ```
@@ -892,6 +934,36 @@ abc infra compute probe <compute-id> [--ssh] [--drivers]
   abc123de               nomad-client-01     ready     dc1
   def456gh               nomad-client-02     ready     dc1
 ```
+
+```json
+[
+  {
+    "ID": "abc123de-...",
+    "Name": "nomad-client-01",
+    "Datacenter": "dc1"
+  }
+]
+```
+
+### `abc infra compute show <node-id>`
+
+Supports the same structured output flags as `compute list`:
+- `--output table|json`
+- `--json-path <path>`
+
+JSON output payload schema:
+- `node`: full Nomad node object
+- `active_allocations`: filtered active allocations for that node
+
+### Output/JSON-path implementation notes
+
+Current implementation uses standard library JSON handling (`encoding/json`) with
+lightweight internal path parsing in `cmd/compute/output.go`.
+
+Alternative Go libraries suitable for richer querying include:
+- `github.com/tidwall/gjson` (fast, expressive read-only extraction)
+- `k8s.io/client-go/util/jsonpath` (Kubernetes-style JSONPath templates)
+- `github.com/PaesslerAG/jsonpath` (full JSONPath support)
 
 ### `abc infra compute drain <node-id>`
 
