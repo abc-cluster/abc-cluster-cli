@@ -773,6 +773,17 @@ func (c *NomadClient) DeleteVariable(ctx context.Context, path, namespace string
 // its logs to w. Intended for post-submit log tailing.
 func WatchJobLogs(ctx context.Context, nc *NomadClient, jobID, namespace string,
 	w io.Writer, delay, timeout time.Duration) error {
+	return watchJobLogsInternal(ctx, nc, jobID, namespace, "", w, delay, timeout)
+}
+
+// WatchJobLogsForTask is the same as WatchJobLogs but forces a specific task name.
+func WatchJobLogsForTask(ctx context.Context, nc *NomadClient, jobID, namespace, task string,
+	w io.Writer, delay, timeout time.Duration) error {
+	return watchJobLogsInternal(ctx, nc, jobID, namespace, task, w, delay, timeout)
+}
+
+func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace, taskOverride string,
+	w io.Writer, delay, timeout time.Duration) error {
 	start := time.Now()
 	for {
 		if ctx.Err() != nil {
@@ -796,10 +807,13 @@ func WatchJobLogs(ctx context.Context, nc *NomadClient, jobID, namespace string,
 			}
 		}
 		if chosen != nil {
-			task := "main"
-			for t := range chosen.TaskStates {
-				task = t
-				break
+			task := strings.TrimSpace(taskOverride)
+			if task == "" {
+				task = "main"
+				for t := range chosen.TaskStates {
+					task = t
+					break
+				}
 			}
 			follow := chosen.ClientStatus == "running"
 			if err := nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, follow, w); err != nil {

@@ -2,6 +2,7 @@ package compute
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,11 +17,11 @@ const (
 	// nodeProbeInstalledPath is the fallback location of abc-node-probe on cluster nodes.
 	// The CLI will first attempt to download the latest release from GitHub, then fall back
 	// to this path if download fails or the network is unavailable.
-	nodeProbeInstalledPath = "/opt/nomad/abc-node-probe"
-	nodeProbeJobID         = "abc-node-probe-system"
+	nodeProbeInstalledPath  = "/opt/nomad/abc-node-probe"
+	nodeProbeJobID          = "abc-node-probe-system"
 	defaultProbeWaitTimeout = 5 * time.Minute
 	defaultProbeWatchDelay  = 2 * time.Second
-	
+
 	// GitHub release details for abc-node-probe
 	probeGitHubOwner = "abc-cluster"
 	probeGitHubRepo  = "abc-node-probe"
@@ -52,9 +53,46 @@ var nodeProbeJobTemplate = template.Must(template.New("node_probe_job").Parse(`j
 			driver = "raw_exec"
 
 			config {
-				command = {{printf "%q" .BinaryPath}}
-				args    = {{printf "%#v" .Args}}
+				command = {{printf "%q" .Command}}
+				args    = {{.ArgsHCL}}
 			}
+
+{{- if .DownloadURL }}
+			template {
+				data = <<SCRIPT
+#!/usr/bin/env bash
+set -euo pipefail
+
+BIN_PATH="${NOMAD_TASK_DIR}/abc-node-probe"
+FALLBACK_PATH="/opt/nomad/abc-node-probe"
+DOWNLOAD_URL={{printf "%q" .DownloadURL}}
+
+if [ ! -x "$BIN_PATH" ]; then
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 5 --retry-delay 1 --retry-all-errors --connect-timeout 20 --max-time 300 "$DOWNLOAD_URL" -o "$BIN_PATH" || true
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --tries=5 --timeout=30 -O "$BIN_PATH" "$DOWNLOAD_URL" || true
+  fi
+  if [ -f "$BIN_PATH" ]; then
+    chmod 755 "$BIN_PATH" || true
+  fi
+fi
+
+if [ ! -x "$BIN_PATH" ] && [ -x "$FALLBACK_PATH" ]; then
+  BIN_PATH="$FALLBACK_PATH"
+fi
+
+if [ ! -x "$BIN_PATH" ]; then
+  echo "abc-node-probe binary not available" >&2
+  exit 1
+fi
+
+exec "$BIN_PATH" "$@"
+SCRIPT
+				destination = "local/probe.sh"
+				perms       = "0755"
+			}
+{{- end }}
 
 			resources {
 				cpu    = 500
@@ -106,9 +144,12 @@ func runProbe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Get the probe binary path - download latest release or fall back to pre-installed
-	probePath := utils.GetOrDownloadReleaseBinary(probeGitHubOwner, probeGitHubRepo, probeBinaryName, nodeProbeInstalledPath)
-	version, _ := utils.GetReleaseVersion(probeGitHubOwner, probeGitHubRepo)
+	// Resolve latest release asset for in-job download; fall back to pre-installed path.
+	targetOS, targetArch := platformFromNode(node)
+	downloadURL, version, err := utils.GetLatestReleaseAssetURLForPlatform(probeGitHubOwner, probeGitHubRepo, probeBinaryName, targetOS, targetArch)
+	if err != nil {
+		downloadURL = ""
+	}
 	if version == "" {
 		version = "unknown"
 	}
@@ -118,7 +159,7 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	// Always use nomad-mode since we're running in a Nomad job context
 	probeArgs = append(probeArgs, "--nomad-mode")
 	probeArgs = append(probeArgs, "--mode=stdout")
-	
+
 	if v, _ := cmd.Flags().GetString("jurisdiction"); strings.TrimSpace(v) != "" {
 		probeArgs = append(probeArgs, fmt.Sprintf("--jurisdiction=%s", strings.TrimSpace(v)))
 	}
@@ -132,7 +173,7 @@ func runProbe(cmd *cobra.Command, args []string) error {
 		probeArgs = append(probeArgs, "--fail-fast")
 	}
 
-	probeHCL := buildNodeProbeJobHCL(node.Datacenter, node.ID, probePath, probeArgs)
+	probeHCL := buildNodeProbeJobHCL(node.Datacenter, node.ID, nodeProbeInstalledPath, downloadURL, probeArgs)
 	jobJSON, err := nc.ParseHCL(cmd.Context(), probeHCL)
 	if err != nil {
 		return fmt.Errorf("nomad HCL parse for %q: %w", nodeProbeJobID, err)
@@ -145,7 +186,7 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	meta := map[string]string{}
 	// Note: parameterized job metadata is still accepted for backward compatibility,
 	// but is no longer used since we invoke the binary directly with args.
-	
+
 	resp, err := nc.DispatchJob(cmd.Context(), nodeProbeJobID, meta, nil)
 	if err != nil {
 		return fmt.Errorf("dispatching probe job for node %q: %w", node.ID, err)
@@ -165,10 +206,31 @@ func runProbe(cmd *cobra.Command, args []string) error {
 
 	waitTimeout, _ := cmd.Flags().GetDuration("wait-timeout")
 	fmt.Fprintf(out, "\n  Streaming probe output...\n\n")
-	if err := utils.WatchJobLogs(cmd.Context(), nc, resp.DispatchedJobID, "", out, defaultProbeWatchDelay, waitTimeout); err != nil {
+	if err := utils.WatchJobLogsForTask(cmd.Context(), nc, resp.DispatchedJobID, "", "probe", out, defaultProbeWatchDelay, waitTimeout); err != nil {
 		return fmt.Errorf("streaming probe output: %w", err)
 	}
 	return nil
+}
+
+func platformFromNode(node *utils.NomadNode) (string, string) {
+	if node == nil || node.Attributes == nil {
+		return "linux", "amd64"
+	}
+
+	goos := strings.TrimSpace(node.Attributes["kernel.name"])
+	if goos == "" {
+		goos = strings.TrimSpace(node.Attributes["os.name"])
+	}
+	if goos == "" {
+		goos = "linux"
+	}
+
+	goarch := strings.TrimSpace(node.Attributes["cpu.arch"])
+	if goarch == "" {
+		goarch = "amd64"
+	}
+
+	return goos, goarch
 }
 
 func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*utils.NomadNode, error) {
@@ -208,7 +270,7 @@ func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*uti
 	return resolved, nil
 }
 
-func buildNodeProbeJobHCL(datacenter, nodeID, probePath string, probeArgs []string) string {
+func buildNodeProbeJobHCL(datacenter, nodeID, probePath, downloadURL string, probeArgs []string) string {
 	datacenter = strings.TrimSpace(datacenter)
 	if datacenter == "" {
 		datacenter = "dc1"
@@ -218,19 +280,32 @@ func buildNodeProbeJobHCL(datacenter, nodeID, probePath string, probeArgs []stri
 	if probePath == "" {
 		probePath = nodeProbeInstalledPath
 	}
+	command := probePath
+	if strings.TrimSpace(downloadURL) != "" {
+		command = "local/probe.sh"
+	}
+
+	argsHCL := "[]"
+	if len(probeArgs) > 0 {
+		if b, err := json.Marshal(probeArgs); err == nil {
+			argsHCL = string(b)
+		}
+	}
 
 	data := struct {
-		JobID      string
-		Datacenter string
-		NodeID     string
-		BinaryPath string
-		Args       []string
+		JobID       string
+		Datacenter  string
+		NodeID      string
+		Command     string
+		ArgsHCL     string
+		DownloadURL string
 	}{
-		JobID:      nodeProbeJobID,
-		Datacenter: datacenter,
-		NodeID:     nodeID,
-		BinaryPath: probePath,
-		Args:       probeArgs,
+		JobID:       nodeProbeJobID,
+		Datacenter:  datacenter,
+		NodeID:      nodeID,
+		Command:     command,
+		ArgsHCL:     argsHCL,
+		DownloadURL: strings.TrimSpace(downloadURL),
 	}
 
 	var b bytes.Buffer

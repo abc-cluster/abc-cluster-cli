@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,13 +20,24 @@ const (
 	GitHubRawURL = "https://raw.githubusercontent.com"
 	// DefaultCacheTTL is the default time-to-live for cached binaries.
 	DefaultCacheTTL = 24 * time.Hour
+	// RequestTimeout is the timeout for GitHub API and asset download requests.
+	RequestTimeout = 30 * time.Second
+	// MaxRequestAttempts is the maximum number of HTTP attempts per request.
+	MaxRequestAttempts = 3
 )
+
+var defaultHTTPClient = &http.Client{
+	Timeout: RequestTimeout,
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+	},
+}
 
 // GitHubRelease represents a GitHub release from the API.
 type GitHubRelease struct {
-	TagName string                `json:"tag_name"`
-	Assets  []GitHubReleaseAsset   `json:"assets"`
-	Prerelease bool                `json:"prerelease"`
+	TagName    string               `json:"tag_name"`
+	Assets     []GitHubReleaseAsset `json:"assets"`
+	Prerelease bool                 `json:"prerelease"`
 }
 
 // GitHubReleaseAsset represents a release asset (binary).
@@ -61,41 +73,42 @@ func isCacheValid(filePath string, ttl time.Duration) bool {
 // FetchLatestRelease fetches the latest release information from GitHub.
 func FetchLatestRelease(owner, repo string) (*GitHubRelease, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", GitHubAPIURL, owner, repo)
-	
-	resp, err := http.Get(url)
+
+	req, err := newGETRequest(url)
+	if err != nil {
+		return nil, fmt.Errorf("building release request: %w", err)
+	}
+
+	resp, err := doRequestWithRetry(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching release info: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("GitHub API error: %d - %s", resp.StatusCode, string(body))
 	}
-	
+
 	var release GitHubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, fmt.Errorf("decoding release: %w", err)
 	}
-	
+
 	return &release, nil
 }
 
 // getPlatformBinaryName returns the expected binary name for the current platform.
 // E.g., "abc-node-probe-linux-amd64" for Linux amd64.
 func getPlatformBinaryName(binaryBase string) string {
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
-	
-	// Normalize architectures to match Makefile naming
-	if goarch == "amd64" {
-		goarch = "amd64"
-	} else if goarch == "arm64" {
-		goarch = "arm64"
-	}
-	
-	name := fmt.Sprintf("%s-%s-%s", binaryBase, goos, goarch)
-	if goos == "windows" {
+	return getPlatformBinaryNameFor(binaryBase, runtime.GOOS, runtime.GOARCH)
+}
+
+func getPlatformBinaryNameFor(binaryBase, goos, goarch string) string {
+	normOS := normalizeGOOS(goos)
+	normArch := normalizeGOARCH(goarch)
+	name := fmt.Sprintf("%s-%s-%s", binaryBase, normOS, normArch)
+	if normOS == "windows" {
 		name += ".exe"
 	}
 	return name
@@ -103,7 +116,11 @@ func getPlatformBinaryName(binaryBase string) string {
 
 // findAssetForPlatform finds the release asset matching the current platform.
 func findAssetForPlatform(release *GitHubRelease, binaryBase string) *GitHubReleaseAsset {
-	expectedName := getPlatformBinaryName(binaryBase)
+	return findAssetForPlatformTarget(release, binaryBase, runtime.GOOS, runtime.GOARCH)
+}
+
+func findAssetForPlatformTarget(release *GitHubRelease, binaryBase, goos, goarch string) *GitHubReleaseAsset {
+	expectedName := getPlatformBinaryNameFor(binaryBase, goos, goarch)
 	for i, asset := range release.Assets {
 		if asset.Name == expectedName {
 			return &release.Assets[i]
@@ -119,66 +136,96 @@ func DownloadReleaseAsset(owner, repo, binaryBase string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	release, err := FetchLatestRelease(owner, repo)
 	if err != nil {
 		return "", err
 	}
-	
+
 	asset := findAssetForPlatform(release, binaryBase)
 	if asset == nil {
 		return "", fmt.Errorf("no release asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
-	
+
 	// Cache path: ~/.cache/abc-cli/releases/<tag>/<binary-name>
 	cachePath := filepath.Join(cacheDir, release.TagName, asset.Name)
-	
+
 	// Check if already cached and valid
 	if isCacheValid(cachePath, DefaultCacheTTL) {
 		return cachePath, nil
 	}
-	
+
 	// Ensure the versioned cache directory exists
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 		return "", fmt.Errorf("creating versioned cache directory: %w", err)
 	}
-	
+
 	// Download the asset
-	resp, err := http.Get(asset.DownloadURL)
+	req, err := newGETRequest(asset.DownloadURL)
+	if err != nil {
+		return "", fmt.Errorf("building download request: %w", err)
+	}
+
+	resp, err := doRequestWithRetry(req)
 	if err != nil {
 		return "", fmt.Errorf("downloading asset: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
 	}
-	
+
 	// Write to temporary file first, then move to final location
-	tmpFile := cachePath + ".tmp"
-	file, err := os.Create(tmpFile)
+	tmp, err := os.CreateTemp(filepath.Dir(cachePath), asset.Name+".*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("creating cache file: %w", err)
 	}
-	defer file.Close()
-	
-	if _, err := io.Copy(file, resp.Body); err != nil {
+	tmpFile := tmp.Name()
+
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		tmp.Close()
 		os.Remove(tmpFile)
 		return "", fmt.Errorf("writing cache file: %w", err)
 	}
-	
+
+	// Validate size when GitHub reports it to catch truncated downloads.
+	if asset.Size > 0 {
+		info, err := tmp.Stat()
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmpFile)
+			return "", fmt.Errorf("reading temp file size: %w", err)
+		}
+		if info.Size() != int64(asset.Size) {
+			tmp.Close()
+			os.Remove(tmpFile)
+			return "", fmt.Errorf("downloaded size mismatch: expected %d bytes, got %d bytes", asset.Size, info.Size())
+		}
+	}
+
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpFile)
+		return "", fmt.Errorf("syncing cache file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpFile)
+		return "", fmt.Errorf("closing cache file: %w", err)
+	}
+
 	// Make executable
 	if err := os.Chmod(tmpFile, 0755); err != nil {
 		os.Remove(tmpFile)
 		return "", fmt.Errorf("making executable: %w", err)
 	}
-	
+
 	// Move from temp to final location
 	if err := os.Rename(tmpFile, cachePath); err != nil {
 		os.Remove(tmpFile)
 		return "", fmt.Errorf("finalizing cached file: %w", err)
 	}
-	
+
 	return cachePath, nil
 }
 
@@ -190,12 +237,12 @@ func GetOrDownloadReleaseBinary(owner, repo, binaryBase, preInstalledPath string
 	if err == nil {
 		return binaryPath
 	}
-	
+
 	// Fall back to pre-installed path if available
 	if _, err := os.Stat(preInstalledPath); err == nil {
 		return preInstalledPath
 	}
-	
+
 	// If neither works, return the pre-installed path anyway (let it fail at runtime)
 	return preInstalledPath
 }
@@ -207,4 +254,143 @@ func GetReleaseVersion(owner, repo string) (string, error) {
 		return "", err
 	}
 	return strings.TrimPrefix(release.TagName, "v"), nil
+}
+
+// GetLatestReleaseAssetURL returns the asset download URL and version for the latest release.
+func GetLatestReleaseAssetURL(owner, repo, binaryBase string) (string, string, error) {
+	return GetLatestReleaseAssetURLForPlatform(owner, repo, binaryBase, runtime.GOOS, runtime.GOARCH)
+}
+
+// GetLatestReleaseAssetURLForPlatform returns the asset URL and version for a target platform.
+func GetLatestReleaseAssetURLForPlatform(owner, repo, binaryBase, goos, goarch string) (string, string, error) {
+	release, err := FetchLatestRelease(owner, repo)
+	if err != nil {
+		return "", "", err
+	}
+	asset := findAssetForPlatformTarget(release, binaryBase, goos, goarch)
+	if asset == nil {
+		return "", "", fmt.Errorf("no release asset found for platform %s/%s", normalizeGOOS(goos), normalizeGOARCH(goarch))
+	}
+	version := strings.TrimPrefix(release.TagName, "v")
+	return asset.DownloadURL, version, nil
+}
+
+func normalizeGOOS(goos string) string {
+	switch strings.ToLower(strings.TrimSpace(goos)) {
+	case "macos", "osx":
+		return "darwin"
+	default:
+		return strings.ToLower(strings.TrimSpace(goos))
+	}
+}
+
+func normalizeGOARCH(goarch string) string {
+	switch strings.ToLower(strings.TrimSpace(goarch)) {
+	case "x86_64", "x64":
+		return "amd64"
+	case "aarch64", "armv8":
+		return "arm64"
+	default:
+		return strings.ToLower(strings.TrimSpace(goarch))
+	}
+}
+
+func newGETRequest(url string) (*http.Request, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "abc-cluster-cli")
+
+	if token, ok := getGitHubToken(); ok && req.URL.Host == "api.github.com" && req.URL.Scheme == "https" {
+		req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	}
+
+	return req, nil
+}
+
+func doRequestWithRetry(req *http.Request) (*http.Response, error) {
+	var lastErr error
+	for attempt := 1; attempt <= MaxRequestAttempts; attempt++ {
+		tryReq := req.Clone(req.Context())
+		resp, err := defaultHTTPClient.Do(tryReq)
+		retryAfterSeconds := 0
+		if err != nil {
+			lastErr = err
+		} else if !shouldRetryStatus(resp.StatusCode) {
+			return resp, nil
+		} else {
+			lastErr = fmt.Errorf("request failed with status %d", resp.StatusCode)
+			retryAfterSeconds = respRetryAfterSeconds(resp)
+			resp.Body.Close()
+		}
+
+		if attempt < MaxRequestAttempts {
+			time.Sleep(retryDelay(attempt, retryAfterSeconds))
+		}
+	}
+
+	return nil, lastErr
+}
+
+func shouldRetryStatus(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError
+}
+
+func retryDelay(attempt int, retryAfterSeconds int) time.Duration {
+	if retryAfterSeconds > 0 {
+		return time.Duration(retryAfterSeconds) * time.Second
+	}
+
+	// Simple bounded exponential backoff.
+	delay := time.Duration(1<<uint(attempt-1)) * time.Second
+	if delay > 5*time.Second {
+		return 5 * time.Second
+	}
+	return delay
+}
+
+func respRetryAfterSeconds(resp *http.Response) int {
+	if resp == nil {
+		return 0
+	}
+	value := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if value == "" {
+		return 0
+	}
+	secs, convErr := strconv.Atoi(value)
+	if convErr != nil || secs < 0 {
+		return 0
+	}
+	return secs
+}
+
+func getGitHubToken() (string, bool) {
+	raw := os.Getenv("EGET_GITHUB_TOKEN")
+	if raw == "" {
+		raw = os.Getenv("GITHUB_TOKEN")
+	}
+	if raw == "" {
+		return "", false
+	}
+
+	token, err := tokenFrom(raw)
+	if err != nil {
+		return "", false
+	}
+	return token, token != ""
+}
+
+func tokenFrom(input string) (string, error) {
+	if strings.HasPrefix(input, "@") {
+		tokenPath := strings.TrimPrefix(input, "@")
+		data, err := os.ReadFile(tokenPath)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	return strings.TrimSpace(input), nil
 }
