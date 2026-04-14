@@ -745,6 +745,8 @@ Save a pipeline configuration.
 
 ## 8. `abc job`
 
+**Operational dependency note (hybrid/slurm modes):** Successful `job run` submission for `slurm`/`hpc-bridge` drivers depends on controller bootstrap health outside CLI parsing logic. In infrastructure automation, enforce deterministic startup ordering and fail-fast gates: `munge` -> `mariadb` -> `slurmdbd` (port `6819`) -> accounting seed (`sacctmgr`) -> `slurmctld` (port `6817`, `scontrol ping`) -> `nomad` client startup. Persist `slurm.conf` locally and to shared storage, and provide fallback regeneration if shared config is temporarily unavailable.
+
 ### `abc job run <script>`
 
 Parses `#ABC`/`#NOMAD` preamble directives from an annotated shell script and produces a Nomad
