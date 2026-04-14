@@ -5,17 +5,47 @@ import (
 	"encoding/base64"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"text/template"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+type Spec struct {
+	JobName string
+	Module  string
+
+	Profile      string
+	WorkDir      string
+	OutputPrefix string
+
+	PipelineGenRepo    string
+	PipelineGenVersion string
+	ModuleRevision     string
+	GitHubToken        string
+
+	CPU      int
+	MemoryMB int
+
+	NfVersion       string
+	NfPluginVersion string
+
+	Namespace   string
+	Datacenters []string
+
+	MinioEndpoint string
+
+	ParamsYAMLContent string
+	ConfigYAMLContent string
+}
 
 // ---------------------------------------------------------------------------
 // HCL generation
 // ---------------------------------------------------------------------------
 
-func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) string {
+func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	f := hclwrite.NewEmptyFile()
 	root := f.Body()
 
@@ -124,7 +154,7 @@ func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) 
 	runRes.SetAttributeValue("cpu", cty.NumberIntVal(int64(spec.CPU)))
 	runRes.SetAttributeValue("memory", cty.NumberIntVal(int64(spec.MemoryMB)))
 
-	return string(f.Bytes())
+	return utils.PrettyPrintHCL(string(f.Bytes()))
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +370,7 @@ type generateScriptData struct {
 	OutputPrefix       string
 }
 
-func buildGenerateScript(spec *RunSpec) string {
+func buildGenerateScript(spec Spec) string {
 	stateFile := filepath.ToSlash(filepath.Join(spec.WorkDir, "abc-module-run-outdir.txt"))
 	genOutPrefix := filepath.ToSlash(filepath.Join(spec.WorkDir, "generated-"+moduleSlug(spec.Module)))
 	outputPrefix := trimTrailingSlash(spec.OutputPrefix)
@@ -421,7 +451,7 @@ type clusterConfigData struct {
 	WorkDir         string
 }
 
-func buildClusterNextflowConfig(spec *RunSpec) string {
+func buildClusterNextflowConfig(spec Spec) string {
 	var buf bytes.Buffer
 	if err := clusterNextflowConfigTmpl.Execute(&buf, clusterConfigData{
 		NfPluginVersion: spec.NfPluginVersion,
@@ -459,7 +489,7 @@ type runScriptData struct {
 	Profile   string
 }
 
-func buildRunScript(spec *RunSpec) string {
+func buildRunScript(spec Spec) string {
 	stateFile := filepath.ToSlash(filepath.Join(spec.WorkDir, "abc-module-run-outdir.txt"))
 	var buf bytes.Buffer
 	if err := runScriptTmpl.Execute(&buf, runScriptData{
@@ -476,4 +506,22 @@ func trimTrailingSlash(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+func moduleSlug(moduleName string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(moduleName) {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlphaNum {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteRune('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

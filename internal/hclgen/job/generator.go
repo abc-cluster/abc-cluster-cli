@@ -10,8 +10,81 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// generateHCL builds a Nomad HCL job spec from spec.
-func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
+type Constraint struct {
+	Attribute string
+	Operator  string
+	Value     string
+}
+
+type Affinity struct {
+	Attribute string
+	Operator  string
+	Value     string
+	Weight    int
+}
+
+type Spec struct {
+	Name               string
+	Namespace          string
+	Region             string
+	Datacenters        []string
+	Priority           int
+	Nodes              int
+	Cores              int
+	MemoryMB           int
+	GPUs               int
+	WalltimeSecs       int
+	ChDir              string
+	Depend             string
+	Driver             string
+	DriverConfig       map[string]string
+	RescheduleMode     string
+	RescheduleAttempts int
+	RescheduleInterval string
+	RescheduleDelay    string
+	RescheduleMaxDelay string
+	OutputLog          string
+	ErrorLog           string
+	NoNetwork          bool
+	Constraints        []Constraint
+	Affinities         []Affinity
+
+	SlurmPartition  string
+	SlurmAccount    string
+	SlurmWorkDir    string
+	SlurmStdoutFile string
+	SlurmStderrFile string
+	SlurmNTasks     int
+
+	IncludeHPCCompatEnv bool
+
+	Meta  map[string]string
+	Conda string
+	Pixi  bool
+
+	Ports []string
+
+	ExposeAllocID      bool
+	ExposeShortAllocID bool
+	ExposeAllocName    bool
+	ExposeAllocIndex   bool
+	ExposeJobID        bool
+	ExposeJobName      bool
+	ExposeParentJobID  bool
+	ExposeGroupName    bool
+	ExposeTaskName     bool
+	ExposeNamespaceEnv bool
+	ExposeDCEnv        bool
+	ExposeCPULimit     bool
+	ExposeCPUCores     bool
+	ExposeMemLimit     bool
+	ExposeMemMaxLimit  bool
+	ExposeAllocDir     bool
+	ExposeTaskDir      bool
+	ExposeSecretsDir   bool
+}
+
+func Generate(spec Spec, scriptName, scriptContent string) string {
 	f := hclwrite.NewEmptyFile()
 	root := f.Body()
 
@@ -47,7 +120,7 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	}
 	if len(spec.Meta) > 0 {
 		metaBody := jobBody.AppendNewBlock("meta", nil).Body()
-		for _, k := range sortedKeys(spec.Meta) {
+		for _, k := range utils.SortedKeys(spec.Meta) {
 			metaBody.SetAttributeValue(k, cty.StringVal(spec.Meta[k]))
 		}
 	}
@@ -85,9 +158,6 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 	cfgBody := mainBody.AppendNewBlock("config", nil).Body()
 	appendTaskConfig(cfgBody, spec, scriptName, scriptContent)
 
-	// Non-slurm drivers execute from local/<scriptName>, so render the script to
-	// the task local directory. For slurm, we execute script content inline in
-	// config.args to avoid depending on local/<script> visibility in Slurm nodes.
 	if spec.Driver != "slurm" {
 		tmplBody := mainBody.AppendNewBlock("template", nil).Body()
 		tmplBody.SetAttributeValue("data", cty.StringVal(scriptContent))
@@ -112,12 +182,10 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 
 	appendEnvBlock(mainBody, spec)
 
-	return string(f.Bytes())
+	return utils.PrettyPrintHCL(string(f.Bytes()))
 }
 
-// appendTaskConfig writes the config block for the main task, handling
-// walltime wrapping and optional stdout/stderr file redirection.
-func appendTaskConfig(cfgBody *hclwrite.Body, spec *jobSpec, scriptName, scriptContent string) {
+func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptContent string) {
 	scriptArg := fmt.Sprintf("local/%s", scriptName)
 	if spec.Driver == "slurm" {
 		inlineScript := escapeNomadInterpolation(scriptContent)
@@ -197,7 +265,7 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec *jobSpec, scriptName, scriptC
 	if spec.Driver != "slurm" && spec.ChDir != "" {
 		cfgBody.SetAttributeValue("work_dir", cty.StringVal(spec.ChDir))
 	}
-	for _, k := range sortedKeys(spec.DriverConfig) {
+	for _, k := range utils.SortedKeys(spec.DriverConfig) {
 		cfgBody.SetAttributeValue(k, cty.StringVal(strings.TrimSpace(spec.DriverConfig[k])))
 	}
 }
@@ -218,15 +286,12 @@ func escapeNomadInterpolation(s string) string {
 	return s
 }
 
-// appendEnvBlock emits the env block containing optional PBS_*/SLURM_* aliases
-// plus any explicitly requested NOMAD_* runtime-exposure variables.
-func appendEnvBlock(taskBody *hclwrite.Body, spec *jobSpec) {
+func appendEnvBlock(taskBody *hclwrite.Body, spec Spec) {
 	if !spec.IncludeHPCCompatEnv && !hasExplicitRuntimeExposure(spec) && len(spec.Ports) == 0 {
 		return
 	}
 	envBody := taskBody.AppendNewBlock("env", nil).Body()
 
-	// Optional HPC compatibility layer for legacy PBS/SLURM scripts.
 	if spec.IncludeHPCCompatEnv {
 		envBody.SetAttributeValue("SLURM_JOB_ID", cty.StringVal("${NOMAD_ALLOC_ID}"))
 		envBody.SetAttributeValue("PBS_JOBID", cty.StringVal("${NOMAD_ALLOC_ID}"))
@@ -246,7 +311,6 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec *jobSpec) {
 		envBody.SetAttributeValue("PBS_MEM", cty.StringVal("${NOMAD_MEMORY_LIMIT}"))
 	}
 
-	// Explicit runtime-exposure directives.
 	type runtimeVar struct {
 		flag bool
 		env  string
@@ -284,7 +348,7 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec *jobSpec) {
 	}
 }
 
-func hasExplicitRuntimeExposure(spec *jobSpec) bool {
+func hasExplicitRuntimeExposure(spec Spec) bool {
 	return spec.ExposeAllocID ||
 		spec.ExposeShortAllocID ||
 		spec.ExposeAllocName ||
@@ -304,9 +368,3 @@ func hasExplicitRuntimeExposure(spec *jobSpec) bool {
 		spec.ExposeTaskDir ||
 		spec.ExposeSecretsDir
 }
-
-// ── Helpers (delegating to shared utils) ─────────────────────────────────────
-
-func parseMemoryMB(s string) (int, error)     { return utils.ParseMemoryMB(s) }
-func walltimeToSeconds(t string) (int, error) { return utils.WalltimeToSeconds(t) }
-func sortedKeys(m map[string]string) []string { return utils.SortedKeys(m) }

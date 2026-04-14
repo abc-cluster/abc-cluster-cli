@@ -10,6 +10,11 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+const (
+	defaultContainerdDriverRuntime = "io.containerd.runc.v2"
+	defaultContainerdStatsInterval = "5s"
+)
+
 var (
 	defaultDockerExtraLabels = []string{
 		"job_name",
@@ -80,7 +85,7 @@ type NodeConfig struct {
 
 // GenerateClientHCL emits a Nomad client configuration file using hclwrite.
 // Follows the same hclwrite pattern as cmd/job/hclgen.go.
-func GenerateClientHCL(cfg NodeConfig) string {
+func Generate(cfg NodeConfig) string {
 	if cfg.DataDir == "" {
 		cfg.DataDir = "/opt/nomad/data"
 	}
@@ -202,10 +207,10 @@ func GenerateClientHCL(cfg NodeConfig) string {
 		}
 	}
 	base := string(bytes.TrimRight(f.Bytes(), "\n")) + "\n"
-	return base + "\n" + externalTaskDriverNotes()
+	return base + "\n" + ExternalTaskDriverNotes()
 }
 
-func nomadClientServerAddr(addr string) string {
+func NomadClientServerAddr(addr string) string {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		return ""
@@ -221,7 +226,7 @@ func nomadClientServerAddr(addr string) string {
 	return addr + ":4647"
 }
 
-func hostVolumePaths(volumes []NomadHostVolume) []string {
+func HostVolumePaths(volumes []NomadHostVolume) []string {
 	uniq := make(map[string]struct{}, len(volumes))
 	for _, v := range volumes {
 		path := strings.TrimSpace(v.Path)
@@ -305,7 +310,7 @@ func stringListValue(values []string) cty.Value {
 	return cty.ListVal(out)
 }
 
-func externalTaskDriverNotes() string {
+func ExternalTaskDriverNotes() string {
 	lines := []string{
 		"# Optional external task drivers (not auto-enabled by abc node add):",
 		"# HashiCorp plugin drivers listed in Nomad task-driver docs:",
