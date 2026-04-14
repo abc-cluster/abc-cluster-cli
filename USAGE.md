@@ -311,9 +311,13 @@ $ abc config unset contexts.myorg.region
 Manage encrypted credentials stored in the config file without exposing them to the backend.
 Uses password-based encryption (local password mode) with no external KMS required.
 
+Values from `~/.abc/config.yaml` take precedence. If no crypt password is configured there, `ABC_CRYPT_PASSWORD` and optional `ABC_CRYPT_SALT` are used and cached for future operations.
+
 ### `secrets set KEY VALUE`
 
-Store an encrypted credential. Requires `--unsafe-local` flag and `ABC_CRYPT_PASSWORD` environment variable.
+Store an encrypted credential. Requires `--unsafe-local` flag.
+
+Values from `~/.abc/config.yaml` are canonical; if `ABC_CRYPT_PASSWORD` differs from config, the config value is used and a warning is emitted.
 
 ```bash
 $ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
@@ -326,7 +330,9 @@ $ abc secrets set db-password "postgres://user:pass@localhost/db" --unsafe-local
 
 ### `secrets get KEY`
 
-Retrieve and decrypt a secret. Requires `--unsafe-local` flag and `ABC_CRYPT_PASSWORD` environment variable.
+Retrieve and decrypt a secret. Requires `--unsafe-local` flag.
+
+Values from `~/.abc/config.yaml` are canonical; if `ABC_CRYPT_PASSWORD` differs from config, the config value is used and a warning is emitted.
 
 ```bash
 $ export ABC_CRYPT_PASSWORD="my-secret-passphrase"

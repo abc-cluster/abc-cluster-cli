@@ -115,6 +115,7 @@ abc secrets set demo-api-key "sk-1234567890abcdef" --unsafe-local
 - No output (silent success)
 - Secret is encrypted with AES-256-GCM
 - Stored in `~/.abc/config.yaml` under a `secrets:` section
+- If the config already contains `crypt_password`/`crypt_salt`, those values are canonical and will be used instead of any env vars
 
 ### 2.3 Verify it's encrypted
 
@@ -137,7 +138,8 @@ abc secrets get demo-api-key --unsafe-local
 
 **What you should see:**
 - Your original plaintext value: `sk-1234567890abcdef`
-- Only works if ABC_CRYPT_PASSWORD is set correctly
+- If `~/.abc/config.yaml` already contains `crypt_password`/`crypt_salt`, those are used preferentially
+- If env vars differ from config, the CLI warns and uses the config values
 
 ### 2.5 List all secrets
 
