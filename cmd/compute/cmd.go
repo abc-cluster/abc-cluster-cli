@@ -1,8 +1,8 @@
-// Package node implements the "abc node" command group.
+// Package compute implements the "abc infra compute" command group.
 //
-// All node operations require --sudo. The X-ABC-Sudo header is forwarded
+// All compute operations require --sudo. The X-ABC-Sudo header is forwarded
 // to jurist, which enforces the caller's actual permission tier.
-package node
+package compute
 
 import (
 	"fmt"
@@ -11,19 +11,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the "node" subcommand group.
+// NewCmd returns the "compute" subcommand group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "node",
-		Short: "Inspect and manage cluster nodes (requires --sudo)",
-		Long: `Commands for inspecting and managing compute nodes on the ABC-cluster platform.
+		Use:   "compute",
+		Short: "Inspect and manage cluster compute resources (requires --sudo)",
+		Long: `Commands for inspecting and managing compute resources on the ABC-cluster platform.
 
-All node operations require --sudo and an admin-tier token.
+All compute operations require --sudo and an admin-tier token.
 
-  abc node list --sudo
-  abc node show --sudo nomad-client-02
-  abc node drain --sudo nomad-client-02 --deadline=1h --wait
-  abc node undrain --sudo nomad-client-02`,
+  abc infra compute list --sudo
+  abc infra compute show --sudo nomad-client-02
+  abc infra compute add nomad-client-03 --remote=10.0.0.5
+  abc infra compute terminate --sudo nomad-client-02`,
 	}
 
 	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
@@ -36,8 +36,6 @@ All node operations require --sudo and an admin-tier token.
 	cmd.AddCommand(
 		newListCmd(),
 		newShowCmd(),
-		newDrainCmd(),
-		newUndrainCmd(),
 		newAddCmd(),
 		newTerminateCmd(),
 		newProbeCmd(),
