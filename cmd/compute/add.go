@@ -34,33 +34,33 @@ TAILSCALE_API_KEY.
 
 Examples:
   # Cloud-provisioned VM
-  abc node add --cloud --cluster=za-cpt --type=n2-standard-8 --count=2
+  abc infra compute add --cloud --cluster=za-cpt --type=n2-standard-8 --count=2
 
   # Remote Linux server via SSH (direct-join, no Tailscale)
-  abc node add --remote=192.168.1.50 --user=ubuntu \
+  abc infra compute add --remote=192.168.1.50 --user=ubuntu \
     --server-join=10.0.0.1 --datacenter=za-cpt
 
   # Remote Linux server via SSH (with Tailscale)
-  abc node add --remote=192.168.1.50 --user=ubuntu \
+  abc infra compute add --remote=192.168.1.50 --user=ubuntu \
     --tailscale --tailscale-auth-key=tskey-auth-... \
     --server-join=100.64.0.1 --datacenter=za-cpt
 
   # Remote Linux server via SSH (with Tailscale, auth key auto-created from TAILSCALE_API_KEY)
-  abc node add --remote=192.168.1.50 --user=ubuntu \
+  abc infra compute add --remote=192.168.1.50 --user=ubuntu \
     --tailscale --tailscale-key-ephemeral --tailscale-key-expiry=2h \
     --server-join=100.64.0.1 --datacenter=za-cpt
 
   # Local machine (direct-join)
-  abc node add --local \
+  abc infra compute add --local \
     --server-join=10.0.0.5 --node-class=workstation
 
   # Remote server via SSH jump/bastion host
-  abc node add --remote=10.10.0.50 --user=ubuntu \
+  abc infra compute add --remote=10.10.0.50 --user=ubuntu \
     --jump-host=bastion.example.com --jump-user=ec2-user \
     --server-join=10.10.0.1 --datacenter=za-cpt
 
   # Print a self-contained install script (no SSH connection made)
-  abc node add --remote=10.10.0.50 --print-commands \
+  abc infra compute add --remote=10.10.0.50 --print-commands \
     --target-os=linux/amd64 --server-join=10.10.0.1`,
 		RunE: runNodeAdd,
 	}
