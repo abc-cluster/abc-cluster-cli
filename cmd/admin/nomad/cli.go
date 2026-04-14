@@ -11,7 +11,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [nomad-args...]",
 		Short:              "Run the local Nomad CLI with abc context defaults",
-		Long:               "Run the local nomad binary as a preconfigured alias. Nomad address, token, and region are resolved from the active abc config context when not provided via flags.",
+		Long:               "Run the local nomad binary as a preconfigured alias. Nomad address, token, and region are resolved from the active abc config context when not provided via flags. Use --binary-location to select a specific nomad binary.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runNomadCLI,
@@ -20,8 +20,16 @@ func newCLICmd() *cobra.Command {
 }
 
 func runNomadCLI(cmd *cobra.Command, args []string) error {
+	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
+	if err != nil {
+		return err
+	}
+	if binaryLocation == "" {
+		binaryLocation = utils.EnvOrDefault("ABC_NOMAD_CLI_BINARY", "NOMAD_CLI_BINARY", "NOMAD_BINARY")
+	}
+
 	addr, token, region := nomadConnectionFromCmd(cmd)
-	return utils.RunNomadCLI(cmd.Context(), args, addr, token, region, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return utils.RunNomadCLI(cmd.Context(), passthroughArgs, binaryLocation, addr, token, region, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 func nomadConnectionFromCmd(cmd *cobra.Command) (addr, token, region string) {
