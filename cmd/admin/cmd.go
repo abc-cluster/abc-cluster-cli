@@ -7,8 +7,11 @@ package admin
 
 import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/minio"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nebula"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nomad"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rustfs"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tailscale"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/vault"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +28,9 @@ func NewCmd() *cobra.Command {
 	abc admin services nomad cli status     Run the preconfigured Nomad CLI
 	abc admin services tailscale cli status Run the local Tailscale CLI
 	abc admin services minio cli ls local   Run the local MinIO client CLI
+	abc admin services nebula cli -version  Run the local Nebula CLI
+	abc admin services rustfs cli status    Run the local RustFS CLI
+	abc admin services vault cli status     Run the local Vault/OpenBao CLI
   abc admin services nomad namespace list            List all namespaces
   abc admin services nomad namespace create --sudo   Create a namespace (requires --sudo)
   abc admin services nomad namespace delete --sudo   Delete a namespace (requires --sudo)`,
@@ -39,6 +45,9 @@ func NewCmd() *cobra.Command {
 	svcCmd.AddCommand(nomad.NewCmd())
 	svcCmd.AddCommand(tailscale.NewCmd())
 	svcCmd.AddCommand(minio.NewCmd())
+	svcCmd.AddCommand(nebula.NewCmd())
+	svcCmd.AddCommand(rustfs.NewCmd())
+	svcCmd.AddCommand(vault.NewCmd())
 	cmd.AddCommand(svcCmd)
 
 	// app sub-group — application-level entity management.
