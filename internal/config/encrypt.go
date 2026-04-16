@@ -161,6 +161,86 @@ func DecryptField(encryptedBase64, password, salt string) (string, error) {
 	return string(plaintext), nil
 }
 
+func encryptNomadTokenInNomadMap(nomad map[string]interface{}, password, salt string) (bool, error) {
+	if nomad == nil {
+		return false, nil
+	}
+	token, ok := nomad["nomad_token"].(string)
+	if !ok || token == "" {
+		return false, nil
+	}
+	encrypted, err := EncryptField(token, password, salt)
+	if err != nil {
+		return false, fmt.Errorf("encrypt nomad_token: %w", err)
+	}
+	nomad["nomad_token"] = encrypted
+	return true, nil
+}
+
+func encryptNomadTokenFieldsInContext(ctx map[string]interface{}, password, salt string) (bool, error) {
+	has := false
+	if admin, ok := ctx["admin"].(map[string]interface{}); ok {
+		if svc, ok := admin["services"].(map[string]interface{}); ok {
+			if nomad, ok := svc["nomad"].(map[string]interface{}); ok {
+				ok2, err := encryptNomadTokenInNomadMap(nomad, password, salt)
+				if err != nil {
+					return false, err
+				}
+				has = has || ok2
+			}
+		}
+	}
+	if serv, ok := ctx["services"].(map[string]interface{}); ok {
+		if nomad, ok := serv["nomad"].(map[string]interface{}); ok {
+			ok2, err := encryptNomadTokenInNomadMap(nomad, password, salt)
+			if err != nil {
+				return false, err
+			}
+			has = has || ok2
+		}
+	}
+	if token, ok := ctx["nomad_token"].(string); ok && token != "" {
+		encrypted, err := EncryptField(token, password, salt)
+		if err != nil {
+			return has, fmt.Errorf("encrypt nomad_token: %w", err)
+		}
+		ctx["nomad_token"] = encrypted
+		has = true
+	}
+	return has, nil
+}
+
+func decryptNomadTokenInNomadMap(nomad map[string]interface{}, password, salt string) {
+	if nomad == nil {
+		return
+	}
+	if token, ok := nomad["nomad_token"].(string); ok && token != "" {
+		if decrypted, err := DecryptField(token, password, salt); err == nil {
+			nomad["nomad_token"] = decrypted
+		}
+	}
+}
+
+func decryptNomadTokenFieldsInContext(ctx map[string]interface{}, password, salt string) {
+	if admin, ok := ctx["admin"].(map[string]interface{}); ok {
+		if svc, ok := admin["services"].(map[string]interface{}); ok {
+			if nomad, ok := svc["nomad"].(map[string]interface{}); ok {
+				decryptNomadTokenInNomadMap(nomad, password, salt)
+			}
+		}
+	}
+	if serv, ok := ctx["services"].(map[string]interface{}); ok {
+		if nomad, ok := serv["nomad"].(map[string]interface{}); ok {
+			decryptNomadTokenInNomadMap(nomad, password, salt)
+		}
+	}
+	if token, ok := ctx["nomad_token"].(string); ok && token != "" {
+		if decrypted, err := DecryptField(token, password, salt); err == nil {
+			ctx["nomad_token"] = decrypted
+		}
+	}
+}
+
 // EncryptConfigFields encrypts all marked fields in a config YAML string.
 // Adds SOPS metadata to mark encrypted regions.
 func EncryptConfigFields(configYAML string, password, salt string) (string, error) {
@@ -171,7 +251,7 @@ func EncryptConfigFields(configYAML string, password, salt string) (string, erro
 
 	hasEncrypted := false
 
-	// Encrypt access_token and nomad_token fields in all contexts
+	// Encrypt access_token and nomad_token (all supported YAML shapes) in all contexts.
 	if contexts, ok := data["contexts"].(map[string]interface{}); ok {
 		for _, ctxInterface := range contexts {
 			if ctx, ok := ctxInterface.(map[string]interface{}); ok {
@@ -183,14 +263,11 @@ func EncryptConfigFields(configYAML string, password, salt string) (string, erro
 					ctx["access_token"] = encrypted
 					hasEncrypted = true
 				}
-				if token, ok := ctx["nomad_token"].(string); ok && token != "" {
-					encrypted, err := EncryptField(token, password, salt)
-					if err != nil {
-						return "", fmt.Errorf("encrypt nomad_token: %w", err)
-					}
-					ctx["nomad_token"] = encrypted
-					hasEncrypted = true
+				okNomad, err := encryptNomadTokenFieldsInContext(ctx, password, salt)
+				if err != nil {
+					return "", err
 				}
+				hasEncrypted = hasEncrypted || okNomad
 			}
 		}
 	}
@@ -199,11 +276,11 @@ func EncryptConfigFields(configYAML string, password, salt string) (string, erro
 	if hasEncrypted {
 		if sopsData, ok := data["sops"].(map[string]interface{}); !ok {
 			data["sops"] = map[string]interface{}{
-				"encrypted_regex": "^(contexts\\..*\\.(access_token|nomad_token))$",
+				"encrypted_regex": "^(contexts\\..*\\.access_token|contexts\\..*\\.nomad_token|contexts\\..*\\.services\\.nomad\\.nomad_token|contexts\\..*\\.admin\\.services\\.nomad\\.nomad_token)$",
 				"version":         "3.7.0",
 			}
 		} else {
-			sopsData["encrypted_regex"] = "^(contexts\\..*\\.(access_token|nomad_token))$"
+			sopsData["encrypted_regex"] = "^(contexts\\..*\\.access_token|contexts\\..*\\.nomad_token|contexts\\..*\\.services\\.nomad\\.nomad_token|contexts\\..*\\.admin\\.services\\.nomad\\.nomad_token)$"
 			sopsData["version"] = "3.7.0"
 		}
 	}
@@ -225,7 +302,7 @@ func DecryptConfigFields(configYAML string, password, salt string) (string, erro
 		return "", fmt.Errorf("parse YAML: %w", err)
 	}
 
-	// Try to decrypt access_token and nomad_token fields in all contexts
+	// Try to decrypt access_token and nomad_token fields in all contexts (all shapes).
 	if contexts, ok := data["contexts"].(map[string]interface{}); ok {
 		for _, ctxInterface := range contexts {
 			if ctx, ok := ctxInterface.(map[string]interface{}); ok {
@@ -237,12 +314,7 @@ func DecryptConfigFields(configYAML string, password, salt string) (string, erro
 					}
 					// Silently ignore decryption errors (token might be plaintext)
 				}
-				if token, ok := ctx["nomad_token"].(string); ok && token != "" {
-					decrypted, err := DecryptField(token, password, salt)
-					if err == nil {
-						ctx["nomad_token"] = decrypted
-					}
-				}
+				decryptNomadTokenFieldsInContext(ctx, password, salt)
 			}
 		}
 	}

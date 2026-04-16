@@ -70,11 +70,11 @@ func ensureNomadEnv() {
 		return
 	}
 	ctx := cfg.ActiveCtx()
-	if addr == "" && strings.TrimSpace(ctx.NomadAddr) != "" {
-		_ = os.Setenv("NOMAD_ADDR", strings.TrimSpace(ctx.NomadAddr))
+	if addr == "" && strings.TrimSpace(ctx.NomadAddr()) != "" {
+		_ = os.Setenv("NOMAD_ADDR", strings.TrimSpace(ctx.NomadAddr()))
 	}
-	if token == "" && strings.TrimSpace(ctx.NomadToken) != "" {
-		_ = os.Setenv("NOMAD_TOKEN", strings.TrimSpace(ctx.NomadToken))
+	if token == "" && strings.TrimSpace(ctx.NomadToken()) != "" {
+		_ = os.Setenv("NOMAD_TOKEN", strings.TrimSpace(ctx.NomadToken()))
 	}
 }
 

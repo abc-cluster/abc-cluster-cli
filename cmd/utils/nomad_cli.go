@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -23,31 +22,28 @@ func RunNomadCLI(ctx context.Context, args []string, binaryLocation, addr, token
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
-	env := os.Environ()
 	if addr == "" || token == "" || region == "" {
 		if cfg, err := config.Load(); err == nil && cfg != nil {
 			active := cfg.ActiveCtx()
 			if addr == "" {
-				addr = active.NomadAddr
+				addr = active.NomadAddr()
 			}
 			if token == "" {
-				token = active.NomadToken
+				token = active.NomadToken()
 			}
 			if region == "" {
-				region = active.Region
+				region = active.NomadRegion()
 			}
 		}
 	}
 	if addr != "" {
-		env = append(env, "NOMAD_ADDR="+addr)
+		addr = NormalizeNomadAPIAddr(addr)
 	}
-	if token != "" {
-		env = append(env, "NOMAD_TOKEN="+token)
-	}
-	if region != "" {
-		env = append(env, "NOMAD_REGION="+region)
-	}
-	cmd.Env = env
+	cmd.Env = upsertEnv(cmd.Environ(), map[string]string{
+		"NOMAD_ADDR":   addr,
+		"NOMAD_TOKEN":  token,
+		"NOMAD_REGION": region,
+	})
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run %s %v: %w", binary, args, err)

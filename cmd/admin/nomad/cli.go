@@ -90,5 +90,5 @@ func nomadDefaultsFromConfigFirst() (addr, token, region string) {
 		return "", "", ""
 	}
 	active := cfg.ActiveCtx()
-	return active.NomadAddr, active.NomadToken, active.Region
+	return active.NomadAddr(), active.NomadToken(), active.NomadRegion()
 }
