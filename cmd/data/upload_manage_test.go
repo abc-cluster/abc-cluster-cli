@@ -49,8 +49,8 @@ func TestDataUpload_StatusShowsStoredURL(t *testing.T) {
 
 	serverURL := "https://api.example.com"
 	workspace := ""
-	endpoint := "https://api.example.com/data/uploads/"
-	const location = "https://api.example.com/data/uploads/files/abc123"
+	endpoint := "https://api.example.com/files/"
+	const location = "https://api.example.com/files/abc123"
 
 	statePath, err := data.UploadResumeStatePrimaryPathExported(endpoint, tmpFile)
 	if err != nil {
@@ -91,8 +91,8 @@ func TestDataUpload_ClearRemovesStoredState(t *testing.T) {
 
 	serverURL := "https://api.example.com"
 	workspace := ""
-	endpoint := "https://api.example.com/data/uploads/"
-	const location = "https://api.example.com/data/uploads/files/todelete"
+	endpoint := "https://api.example.com/files/"
+	const location = "https://api.example.com/files/todelete"
 
 	statePath, err := data.UploadResumeStatePrimaryPathExported(endpoint, tmpFile)
 	if err != nil {

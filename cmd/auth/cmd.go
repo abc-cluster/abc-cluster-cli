@@ -120,13 +120,18 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	contextName := deriveContextName(endpoint, region)
 
 	// Save the context
+	var uploadEp string
+	if d, err := config.DeriveUploadEndpointFromAPI(endpoint); err == nil {
+		uploadEp = d
+	}
 	ctx2 := config.Context{
-		Endpoint:    endpoint,
-		AccessToken: token,
-		Cluster:     cluster,
-		OrgID:       organizationID,
-		WorkspaceID: workspace,
-		Region:      region,
+		Endpoint:       endpoint,
+		UploadEndpoint: uploadEp,
+		AccessToken:    token,
+		Cluster:        cluster,
+		OrgID:          organizationID,
+		WorkspaceID:    workspace,
+		Region:         region,
 	}
 	cfg.SetContext(contextName, ctx2)
 

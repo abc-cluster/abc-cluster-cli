@@ -21,6 +21,7 @@ This document describes every command available in the `abc` CLI.
   - [config list](#config-list)
   - [config unset](#config-unset-key)
 - [secrets](#secrets)
+  - [secrets init](#secrets-init)
   - [secrets set](#secrets-set-key-value)
   - [secrets get](#secrets-get-key)
   - [secrets list](#secrets-list)
@@ -236,7 +237,7 @@ active_context: org-a-za-cpt
 contexts:
   org-a-za-cpt:
     endpoint: https://api.org-a.example
-    upload_endpoint: https://uploads.org-a.example/files/  # optional; tus endpoint override
+    upload_endpoint: https://api.org-a.example/files/  # optional; defaults from endpoint + /files/
     upload_token: s.abc123...                # optional; tus auth override
     access_token: eyJ...
     cluster: dev-cluster          # optional; set by abc auth login or abc infra compute add
@@ -351,7 +352,7 @@ active_context: dev
 contexts:
   dev:
     endpoint: "https://dev.abc-cluster.cloud"
-    upload_endpoint: "https://uploads.dev.abc-cluster.cloud/files/"
+    upload_endpoint: "https://dev.abc-cluster.cloud/files/"
     upload_token: "s.dev-upload-token"
     access_token: "eyJ..."
     cluster: "dev-cluster"
@@ -360,6 +361,7 @@ contexts:
     region: "za-cpt"
   staging:
     endpoint: "https://staging.abc-cluster.cloud"
+    upload_endpoint: "https://staging.abc-cluster.cloud/files/"
     access_token: "eyJ..."
     cluster: "staging-cluster"
     organization_id: "org-staging"
@@ -397,18 +399,26 @@ $ abc context use org-a-za-cpt
 
 ### `context add <name>`
 
-Add a new named context and make it active.
+Add a new named context and make it active. If `--upload-endpoint` is omitted, `upload_endpoint` is set to `<endpoint>/files/` (normalized, no `//` in the path).
 
 ```bash
 $ abc context add dev \
   --endpoint https://dev.abc-cluster.cloud \
-  --upload-endpoint https://uploads.dev.abc-cluster.cloud/files/ \
-  --upload-token "UPLOAD_TOKEN" \
   --access-token "TOKEN" \
   --cluster dev-cluster \
   --organization-id org-dev \
   --workspace-id ws-dev \
   --region za-cpt
+```
+
+Optional tus overrides:
+
+```bash
+$ abc context add dev \
+  --endpoint https://dev.abc-cluster.cloud \
+  --upload-endpoint https://uploads.dev.example/files/ \
+  --upload-token "UPLOAD_TOKEN" \
+  --access-token "TOKEN"
 ```
 
 ### `context delete <name>`
@@ -427,6 +437,20 @@ Manage encrypted credentials stored in the config file without exposing them to 
 Uses password-based encryption (local password mode) with no external KMS required.
 
 Values from `~/.abc/config.yaml` take precedence. If no crypt password is configured there, `ABC_CRYPT_PASSWORD` and optional `ABC_CRYPT_SALT` are used and cached for future operations.
+
+### `secrets init`
+
+Generate `defaults.crypt_password` and `defaults.crypt_salt` in the config file when they are not already set (so you can use `abc secrets` / `abc data encrypt` without exporting `ABC_CRYPT_PASSWORD` every time). Requires `--unsafe-local`.
+
+| Flag | Description |
+|------|-------------|
+| `--unsafe-local` | Required — allow writing crypt defaults to local config |
+| `--force` | Regenerate password and salt even if both are already present |
+
+```bash
+abc secrets init --unsafe-local
+abc secrets init --unsafe-local --force   # rotate stored crypt material
+```
 
 ### `secrets set KEY VALUE`
 
@@ -1213,7 +1237,7 @@ abc data upload <path> [flags]
 | Flag               | Env var               | Description                                                         |
 |--------------------|-----------------------|---------------------------------------------------------------------|
 | `--name`           |                       | Display name for the uploaded file                                  |
-| `--endpoint`       | `ABC_UPLOAD_ENDPOINT` | Tus endpoint URL (default: context upload endpoint or `<url>/data/uploads`) |
+| `--endpoint`       | `ABC_UPLOAD_ENDPOINT` | Tus endpoint URL (default: context upload endpoint or `<url>/files/` from API URL) |
 | `--upload-token`   | `ABC_UPLOAD_TOKEN`    | Bearer token for tus (or context upload token; falls back to `--access-token`) |
 | `--crypt-password` |                       | rclone crypt password for client-side encryption                    |
 | `--crypt-salt`     |                       | rclone crypt salt (password2)                                       |
@@ -1333,29 +1357,56 @@ File decrypted successfully.
 
 ## `data download`
 
-Submit an [nf-core/fetchngs](https://github.com/nf-core/fetchngs) pipeline run as a data
-download job on the cluster.
+Two modes:
+
+1. **Nextflow / fetchngs** — when `--tool` is `nextflow` (explicit or default overridden), submit an [nf-core/fetchngs](https://github.com/nf-core/fetchngs) pipeline run via the control plane.
+2. **Ad-hoc transfer tools** — when `--tool` is `aria2`, `rclone`, `wget`, or `s5cmd`, the CLI generates a shell script and runs `abc job run --submit` so Nomad executes downloads (and optional follow-up upload) on the cluster.
 
 ```
 abc data download [flags]
 ```
 
+### Nextflow mode (`--tool nextflow`)
+
 | Flag            | Description                                                      |
 |-----------------|------------------------------------------------------------------|
-| `--accession`   | Accession(s) to fetch (repeatable; e.g. SRR, ERR, DRR IDs)      |
+| `--accession`   | Accession(s) to fetch (repeatable; e.g. SRR, ERR, DRR IDs)       |
 | `--params-file` | Path to a YAML or JSON params file                               |
 | `--name`        | Custom name for this download run                                |
 | `--config`      | Path to a Nextflow config file                                   |
 | `--profile`     | Nextflow profile(s) to use                                       |
 | `--work-dir`    | Work directory for pipeline execution                            |
-| `--revision`    | Pipeline revision (branch, tag, or commit SHA)                   |
+| `--revision`    | Pipeline revision (branch, tag, or commit SHA)                  |
 
-At least one `--accession` or a `--params-file` is required.
+At least one `--accession` or `--params-file` is required.
 
 ```bash
-abc data download --accession SRR1234567
-abc data download --accession SRR1234567 --accession SRR1234568
-abc data download --params-file fetchngs-params.yaml
+abc data download --tool nextflow --accession SRR1234567
+abc data download --tool nextflow --accession SRR1234567 --accession SRR1234568
+abc data download --tool nextflow --params-file fetchngs-params.yaml
+```
+
+### Tool mode (`aria2`, `rclone`, `wget`, `s5cmd`)
+
+| Flag | Description |
+|------|-------------|
+| `--tool` | Download tool (default `aria2`) |
+| `--driver` | Nomad task driver: `exec` or `docker` (default `exec`) |
+| `--source` | Source URL or path (unless `--url-file` is set) |
+| `--url-file` | Newline-separated list of URLs |
+| `--destination` | Directory on the **task** filesystem where files are written (or a special target such as `abc-bucket`) |
+| `--node` | Nomad **node** placement: full node UUID, or `node.unique.name` value — emits `#ABC --constraint=...` in the generated job script |
+| `--parallel` | Parallelism hint for the tool (default `4`) |
+| `--tool-args` | Extra arguments appended to the tool command |
+| `--name` | Passed through as `#ABC --name` on the generated script |
+
+**Placement:** UUIDs (36 hex chars with hyphens) map to `node.unique.id==<uuid>`; any other string maps to `node.unique.name==<value>`. With `--driver=exec`, the chosen tool must exist on that node; with `--driver=docker`, the CLI pins a known-good image per tool (recommended when combining placement with non-`wget` tools).
+
+**`--destination abc-bucket`:** After download, the script runs `abc data upload` for each file under that directory, using the same tus resolution as the CLI (`ABC_UPLOAD_*`, context `upload_endpoint` / `upload_token`, or `--url`-derived `<api>/files/` and `--access-token`).
+
+```bash
+abc data download --tool wget --source https://example.com/file.zip --destination /tmp/my-dl --driver docker
+abc data download --tool aria2 --source https://example.com/a.bin --destination /tmp/out --node compute-01 --driver docker
 ```
 
 ---

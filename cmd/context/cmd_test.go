@@ -2,6 +2,7 @@ package contextcmd
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,5 +60,23 @@ func TestContextAddAndUse(t *testing.T) {
 	}
 	if !strings.Contains(out, "Switched active context to org-a-za-cpt") {
 		t.Fatalf("unexpected output on use: %q", out)
+	}
+}
+
+func TestContextAddDerivesUploadEndpointWhenOmitted(t *testing.T) {
+	tmpConfig := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("ABC_CONFIG_FILE", tmpConfig)
+
+	cmd := NewCmd()
+	_, err := executeContextCmd(cmd, "add", "dev", "--endpoint", "https://api.example.com/v1", "--access-token", "tok")
+	if err != nil {
+		t.Fatalf("add context: %v", err)
+	}
+	raw, err := os.ReadFile(tmpConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "https://api.example.com/v1/files/") {
+		t.Fatalf("expected derived upload_endpoint in config, got:\n%s", raw)
 	}
 }

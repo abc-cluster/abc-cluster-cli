@@ -99,7 +99,7 @@ func TestDataUpload_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if recorder.endpoint != "https://api.example.com/data/uploads/" {
+	if recorder.endpoint != "https://api.example.com/files/" {
 		t.Fatalf("unexpected endpoint: %s", recorder.endpoint)
 	}
 	if recorder.accessToken != accessToken {
@@ -178,6 +178,84 @@ func TestDataUpload_UploadTokenOverridesAccessToken(t *testing.T) {
 	}
 }
 
+func TestDataUpload_EndpointDerivedFromContextAPIEndpoint(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+	setTestConfigEnv(t)
+	cfgPath := os.Getenv("ABC_CONFIG_FILE")
+	yaml := `version: "1"
+active_context: x
+contexts:
+  x:
+    endpoint: https://api.example.com/corp/v2
+    access_token: api-tok
+`
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockUploader{location: "https://api.example.com/corp/v2/files/1"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://other.example.com"
+	accessToken := "cli-token"
+	workspace := ""
+	cmd := data.NewCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.endpoint != "https://api.example.com/corp/v2/files/" {
+		t.Fatalf("endpoint from derived context API URL: got %q", recorder.endpoint)
+	}
+}
+
+func TestDataUpload_EndpointAndTokenFromContext(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+	// Do not use buildCmd here: it calls setTestConfigEnv again and would move ABC_CONFIG_FILE
+	// to a fresh empty config after we write our test YAML.
+	setTestConfigEnv(t)
+	cfgPath := os.Getenv("ABC_CONFIG_FILE")
+	yaml := `version: "1"
+active_context: dev
+contexts:
+  dev:
+    endpoint: https://api.example.com
+    upload_endpoint: https://uploads.test/files/
+    upload_token: tus-from-context
+    access_token: api-token-in-context
+`
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.test/files/1"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "cli-access-token-fallback"
+	workspace := "ws-1"
+
+	cmd := data.NewCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.endpoint != "https://uploads.test/files/" {
+		t.Fatalf("endpoint from context: got %q", recorder.endpoint)
+	}
+	if recorder.accessToken != "tus-from-context" {
+		t.Fatalf("tus bearer from context upload_token: got %q", recorder.accessToken)
+	}
+}
+
 func TestDataUpload_WithWorkspace(t *testing.T) {
 	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
 	t.Setenv("ABC_UPLOAD_TOKEN", "")
@@ -203,7 +281,7 @@ func TestDataUpload_WithWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid endpoint: %v", err)
 	}
-	if parsed.Path != "/v1/data/uploads/" {
+	if parsed.Path != "/v1/files/" {
 		t.Fatalf("unexpected endpoint path: %s", parsed.Path)
 	}
 	if parsed.RawQuery != "" {
