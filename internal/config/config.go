@@ -21,8 +21,12 @@
 //	    organization_id: "org-dev"
 //	    workspace_id:    ""
 //	    region:          ""
-//	    nomad_addr:      "http://100.70.185.46:4646"
-//	    nomad_token:     "s.123..."
+//	    admin:
+//	      services:
+//	        nomad:
+//	          nomad_addr:  "http://100.70.185.46:4646"
+//	          nomad_token: "s.123..."
+//	          nomad_region: "global"   # optional; Nomad RPC region (not the same as contexts.region)
 //	defaults:
 //	  output: "table"
 //	  region: ""
@@ -64,8 +68,12 @@ type Context struct {
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
-	NomadAddr      string `yaml:"nomad_addr,omitempty"`
-	NomadToken     string `yaml:"nomad_token,omitempty"`
+	Admin          Admin    `yaml:"admin,omitempty"`
+
+	// Deprecated YAML keys; normalized into admin on load (see normalizeContextNomad).
+	ServicesLegacy   Services `yaml:"services,omitempty"`
+	LegacyNomadAddr  string   `yaml:"nomad_addr,omitempty"`
+	LegacyNomadToken string   `yaml:"nomad_token,omitempty"`
 }
 
 // Defaults holds user-level default values.
@@ -136,6 +144,10 @@ func LoadFrom(path string) (*Config, error) {
 	if cfg.Version == "" {
 		cfg.Version = CurrentVersion
 	}
+	for name, ctx := range cfg.Contexts {
+		normalizeContextNomad(&ctx)
+		cfg.Contexts[name] = ctx
+	}
 	return &cfg, nil
 }
 
@@ -194,8 +206,10 @@ func (c *Config) ClearContext(name string) {
 // Get returns a config value by dot-separated key path.
 // Supported paths: active_context, defaults.output, defaults.region,
 // contexts.<name>.endpoint, contexts.<name>.access_token, etc.
+//
+// Nomad: contexts.<name>.admin.services.nomad.nomad_addr / nomad_token / nomad_region.
 func (c *Config) Get(key string) (string, bool) {
-	parts := strings.SplitN(key, ".", 3)
+	parts := strings.Split(key, ".")
 	switch parts[0] {
 	case "active_context":
 		return c.ActiveContext, true
@@ -217,6 +231,24 @@ func (c *Config) Get(key string) (string, bool) {
 		if !ok {
 			return "", false
 		}
+		// contexts.<name>.admin.services.nomad.<field>
+		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
+			if ctx.Admin.Services.Nomad == nil {
+				return "", false
+			}
+			switch parts[5] {
+			case "nomad_addr":
+				return ctx.Admin.Services.Nomad.Addr, true
+			case "nomad_token":
+				return ctx.Admin.Services.Nomad.Token, true
+			case "nomad_region":
+				return ctx.Admin.Services.Nomad.Region, true
+			}
+			return "", false
+		}
+		if len(parts) != 3 {
+			return "", false
+		}
 		switch parts[2] {
 		case "endpoint":
 			return ctx.Endpoint, true
@@ -234,10 +266,6 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.WorkspaceID, true
 		case "region":
 			return ctx.Region, true
-		case "nomad_addr":
-			return ctx.NomadAddr, true
-		case "nomad_token":
-			return ctx.NomadToken, true
 		}
 	}
 	return "", false
@@ -265,10 +293,32 @@ func (c *Config) Set(key, value string) error {
 		}
 		return nil
 	case "contexts":
+		parts := strings.Split(key, ".")
 		if len(parts) < 3 {
 			return fmt.Errorf("unknown config key %q; use contexts.<name>.<field>", key)
 		}
-		ctx := c.Contexts[parts[1]]
+		name := parts[1]
+		ctx := c.Contexts[name]
+		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
+			if ctx.Admin.Services.Nomad == nil {
+				ctx.Admin.Services.Nomad = &NomadService{}
+			}
+			switch parts[5] {
+			case "nomad_addr":
+				ctx.Admin.Services.Nomad.Addr = value
+			case "nomad_token":
+				ctx.Admin.Services.Nomad.Token = value
+			case "nomad_region":
+				ctx.Admin.Services.Nomad.Region = value
+			default:
+				return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+			}
+			c.Contexts[name] = ctx
+			return nil
+		}
+		if len(parts) != 3 {
+			return fmt.Errorf("unknown config key %q", key)
+		}
 		switch parts[2] {
 		case "endpoint":
 			ctx.Endpoint = value
@@ -286,14 +336,10 @@ func (c *Config) Set(key, value string) error {
 			ctx.WorkspaceID = value
 		case "region":
 			ctx.Region = value
-		case "nomad_addr":
-			ctx.NomadAddr = value
-		case "nomad_token":
-			ctx.NomadToken = value
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
-		c.Contexts[parts[1]] = ctx
+		c.Contexts[name] = ctx
 		return nil
 	}
 	return fmt.Errorf("unknown config key %q", key)
@@ -320,12 +366,37 @@ func (c *Config) Unset(key string) error {
 		}
 		return nil
 	case "contexts":
+		parts := strings.Split(key, ".")
 		if len(parts) < 3 {
 			return fmt.Errorf("use 'abc config unset contexts.<name>' to remove an entire context")
 		}
-		ctx, ok := c.Contexts[parts[1]]
+		name := parts[1]
+		ctx, ok := c.Contexts[name]
 		if !ok {
-			return fmt.Errorf("context %q not found", parts[1])
+			return fmt.Errorf("context %q not found", name)
+		}
+		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
+			if ctx.Admin.Services.Nomad == nil {
+				return nil
+			}
+			switch parts[5] {
+			case "nomad_addr":
+				ctx.Admin.Services.Nomad.Addr = ""
+			case "nomad_token":
+				ctx.Admin.Services.Nomad.Token = ""
+			case "nomad_region":
+				ctx.Admin.Services.Nomad.Region = ""
+			default:
+				return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+			}
+			if ctx.Admin.Services.Nomad.Addr == "" && ctx.Admin.Services.Nomad.Token == "" && ctx.Admin.Services.Nomad.Region == "" {
+				ctx.Admin.Services.Nomad = nil
+			}
+			c.Contexts[name] = ctx
+			return nil
+		}
+		if len(parts) != 3 {
+			return fmt.Errorf("unknown config key %q", key)
 		}
 		switch parts[2] {
 		case "endpoint":
@@ -344,14 +415,10 @@ func (c *Config) Unset(key string) error {
 			ctx.WorkspaceID = ""
 		case "region":
 			ctx.Region = ""
-		case "nomad_addr":
-			ctx.NomadAddr = ""
-		case "nomad_token":
-			ctx.NomadToken = ""
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
-		c.Contexts[parts[1]] = ctx
+		c.Contexts[name] = ctx
 		return nil
 	}
 	return fmt.Errorf("unknown config key %q", key)
@@ -385,11 +452,16 @@ func (c *Config) AllKeys() [][2]string {
 		if ctx.Region != "" {
 			out = append(out, [2]string{"contexts." + name + ".region", ctx.Region})
 		}
-		if ctx.NomadAddr != "" {
-			out = append(out, [2]string{"contexts." + name + ".nomad_addr", ctx.NomadAddr})
-		}
-		if ctx.NomadToken != "" {
-			out = append(out, [2]string{"contexts." + name + ".nomad_token", maskToken(ctx.NomadToken)})
+		if ctx.Admin.Services.Nomad != nil {
+			if ctx.Admin.Services.Nomad.Addr != "" {
+				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_addr", ctx.Admin.Services.Nomad.Addr})
+			}
+			if ctx.Admin.Services.Nomad.Token != "" {
+				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_token", maskToken(ctx.Admin.Services.Nomad.Token)})
+			}
+			if ctx.Admin.Services.Nomad.Region != "" {
+				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_region", ctx.Admin.Services.Nomad.Region})
+			}
 		}
 	}
 	return out

@@ -70,7 +70,7 @@ abc config init
 ### 1.1 Create a context
 
 ```bash
-abc context add dev2 \
+abc context add dev \
   --endpoint https://dev.abc-cluster.cloud \
   --upload-token "UPLOAD_TOKEN" \
   --access-token "TOKEN" \
@@ -378,7 +378,7 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
 
 ### 5.4 Example: cluster download job (optional)
 
-Pick a small public URL for a smoke test. This submits a Nomad job; you need a working `abc` context with Nomad (`nomad_addr` / `nomad_token` from `abc infra compute add` or your operator).
+Pick a small public URL for a smoke test. This submits a Nomad job; you need a working `abc` context with Nomad (`contexts.<name>.admin.services.nomad` from `abc infra compute add` or your operator).
 
 ```bash
 # Pin to a node you can access (UUID from `nomad node status` or node name).

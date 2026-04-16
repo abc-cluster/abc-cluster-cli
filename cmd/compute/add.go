@@ -1064,10 +1064,13 @@ func persistNomadContext(advertiseAddr, token string) error {
 		ctxName = "default"
 	}
 	ctx := cfg.Contexts[ctxName]
-	if strings.TrimSpace(advertiseAddr) != "" {
-		ctx.NomadAddr = "http://" + strings.TrimSpace(advertiseAddr) + ":4646"
+	if ctx.Admin.Services.Nomad == nil {
+		ctx.Admin.Services.Nomad = &appconfig.NomadService{}
 	}
-	ctx.NomadToken = token
+	if strings.TrimSpace(advertiseAddr) != "" {
+		ctx.Admin.Services.Nomad.Addr = "http://" + strings.TrimSpace(advertiseAddr) + ":4646"
+	}
+	ctx.Admin.Services.Nomad.Token = token
 	cfg.Contexts[ctxName] = ctx
 	cfg.ActiveContext = ctxName
 	return cfg.Save()
@@ -1107,7 +1110,7 @@ func resolveNomadTokenForNode() string {
 		ctxName = "default"
 	}
 	ctx := cfg.Contexts[ctxName]
-	return strings.TrimSpace(ctx.NomadToken)
+	return strings.TrimSpace(ctx.NomadToken())
 }
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────

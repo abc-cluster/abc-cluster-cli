@@ -90,8 +90,9 @@ Supported keys follow a dot-separated path:
 	contexts.<name>.organization_id   Organization ID
 	contexts.<name>.workspace_id      Workspace ID
 	contexts.<name>.region            Region override for context
-		contexts.<name>.nomad_addr        Node-specific Nomad API address
-		contexts.<name>.nomad_token       Node-specific Nomad ACL token
+		contexts.<name>.admin.services.nomad.nomad_addr   Node-specific Nomad API address
+		contexts.<name>.admin.services.nomad.nomad_token   Node-specific Nomad ACL token
+		contexts.<name>.admin.services.nomad.nomad_region Nomad RPC region (e.g. global); not contexts.region
 
 Example:
   abc config set defaults.output json

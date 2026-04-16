@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strings"
 )
 
 // ExtractBinaryLocationFlag parses passthrough CLI args and extracts
@@ -40,6 +42,12 @@ func ExtractBinaryLocationFlag(args []string) (binaryLocation string, passthroug
 // If binaryLocation is empty, the first available binary in binaryCandidates is
 // selected from PATH.
 func RunExternalCLI(ctx context.Context, args []string, binaryLocation string, binaryCandidates []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return RunExternalCLIWithEnv(ctx, args, binaryLocation, binaryCandidates, nil, stdin, stdout, stderr)
+}
+
+// RunExternalCLIWithEnv runs a local CLI binary with passthrough args and
+// optional environment overrides.
+func RunExternalCLIWithEnv(ctx context.Context, args []string, binaryLocation string, binaryCandidates []string, envOverrides map[string]string, stdin io.Reader, stdout, stderr io.Writer) error {
 	binary, err := resolveCLIBinary(binaryLocation, binaryCandidates)
 	if err != nil {
 		return err
@@ -49,11 +57,39 @@ func RunExternalCLI(ctx context.Context, args []string, binaryLocation string, b
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.Env = upsertEnv(os.Environ(), envOverrides)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run %s %v: %w", binary, args, err)
 	}
 	return nil
+}
+
+func upsertEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+	indices := make(map[string]int, len(base))
+	out := make([]string, len(base))
+	copy(out, base)
+	for i, kv := range out {
+		if eq := strings.IndexByte(kv, '='); eq > 0 {
+			indices[kv[:eq]] = i
+		}
+	}
+	for k, v := range overrides {
+		if strings.TrimSpace(k) == "" || v == "" {
+			continue
+		}
+		kv := k + "=" + v
+		if idx, ok := indices[k]; ok {
+			out[idx] = kv
+			continue
+		}
+		indices[k] = len(out)
+		out = append(out, kv)
+	}
+	return out
 }
 
 func resolveCLIBinary(binaryLocation string, binaryCandidates []string) (string, error) {

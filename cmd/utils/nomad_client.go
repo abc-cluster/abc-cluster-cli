@@ -63,6 +63,8 @@ func (c *NomadClient) WithUser(email string) *NomadClient {
 func NewNomadClient(addr, token, region string) *NomadClient {
 	if addr == "" {
 		addr = "http://127.0.0.1:4646"
+	} else {
+		addr = NormalizeNomadAPIAddr(addr)
 	}
 	return &NomadClient{
 		addr:   strings.TrimRight(addr, "/"),
@@ -80,7 +82,7 @@ func NomadDefaultsFromConfig() (addr, token, region string) {
 		return "", "", ""
 	}
 	active := cfg.ActiveCtx()
-	return active.NomadAddr, active.NomadToken, active.Region
+	return active.NomadAddr(), active.NomadToken(), active.NomadRegion()
 }
 
 // ── Wire types ────────────────────────────────────────────────────────────────

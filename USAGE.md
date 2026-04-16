@@ -243,9 +243,13 @@ contexts:
     cluster: dev-cluster          # optional; set by abc auth login or abc infra compute add
     organization_id: org-a        # optional; set by abc auth login
     workspace_id: ws-org-a-01    # optional; set by abc auth login
-    region: za-cpt               # optional; set by abc auth login
-    nomad_addr: http://10.70.185.46:4646  # set by abc infra compute add
-    nomad_token: s.123...                  # set by abc infra compute add
+    region: za-cpt               # optional; ABC / datacenter label (auth); not Nomad's RPC region
+    admin:                        # optional; Nomad defaults for job/pipeline commands
+      services:
+        nomad:
+          nomad_addr: http://10.70.185.46:4646  # set by abc infra compute add
+          nomad_token: s.123...                  # set by abc infra compute add
+          nomad_region: global                  # optional; Nomad multi-region ID only if not default
 defaults:
   output: table
   region: za-cpt
@@ -253,9 +257,13 @@ secrets:                          # encrypted credentials, managed via abc secre
   GITHUB_TOKEN: "ENC[AES256_GCM,...]"
 ```
 
-The `nomad_addr` and `nomad_token` fields are automatically populated when you provision or
+The `admin.services.nomad` block is automatically populated when you provision or
 add a node via `abc infra compute add`. Once set, `abc job`, `abc pipeline`, and `abc submit`
-will use them as defaults without requiring the `--nomad-addr` / `--nomad-token` flags.
+will use it as defaults without requiring the `--nomad-addr` / `--nomad-token` flags.
+
+`contexts.<name>.region` (and `defaults.region`) are **not** sent as Nomad’s `region` query parameter.
+Nomad uses `admin.services.nomad.nomad_region` when you need an explicit scheduler region (for example
+federated clusters). Leave `nomad_region` unset for typical single-region clusters so Nomad defaults apply.
 
 ### `config init`
 
@@ -296,9 +304,10 @@ $ abc config set contexts.myorg.endpoint https://api.myorg.example
 | `contexts.<name>.cluster` | Cluster ID/name | `dev-cluster` |
 | `contexts.<name>.organization_id` | Organization ID | `org-a` |
 | `contexts.<name>.workspace_id` | Default workspace | `ws-org-a-01` |
-| `contexts.<name>.region` | Region override for this context | `za-cpt` |
-| `contexts.<name>.nomad_addr` | Node Nomad API URL (set by infra) | `http://10.70.185.46:4646` |
-| `contexts.<name>.nomad_token` | Nomad ACL token (set by infra) | `s.123...` |
+| `contexts.<name>.region` | ABC / workspace region label (not Nomad RPC region) | `za-cpt` |
+| `contexts.<name>.admin.services.nomad.nomad_addr` | Node Nomad API URL (set by infra) | `http://10.70.185.46:4646` |
+| `contexts.<name>.admin.services.nomad.nomad_token` | Nomad ACL token (set by infra) | `s.123...` |
+| `contexts.<name>.admin.services.nomad.nomad_region` | Nomad scheduler region if required | `global` |
 
 ### `config get KEY`
 
