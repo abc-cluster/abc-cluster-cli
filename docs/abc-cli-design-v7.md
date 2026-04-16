@@ -18,7 +18,7 @@
 |--------|--------|---------|
 | Remove `--conda`/`--pixi`/`--tool-arg` from `abc submit` | ✅ Done | `cmd/submit/cmd.go`, `detect.go`, `submit.go` |
 | Add `#ABC --pixi` preamble directive to job scripts | ✅ Done | `cmd/job/directive.go`, `cmd/job/jobspec.go` |
-| Rename `abc budget` → `abc cost` | ✅ Done | `cmd/budget/cmd.go`, `cmd/root.go` |
+| Rename `abc cost` / `abc budget` → **`abc accounting`** (aliases retained) | ✅ Done | `cmd/accounting/cmd.go`, `cmd/root.go` |
 | Create `abc infra` group (node, storage) | ✅ Done | `cmd/infra/cmd.go` |
 | Remove top-level `abc node` and `abc storage` | ✅ Done | `cmd/root.go` |
 | Add `--user <email>` global flag + `X-ABC-As-User` header | ✅ Done | `cmd/root.go`, `cmd/utils/nomad_client.go`, `cmd/utils/util.go` |
@@ -38,8 +38,7 @@
 
 ### 0.2 Structural decisions
 
-- **No deprecated aliases.** We are in dev stage — old command names (`abc node`, `abc budget`,
-  `abc namespace`, `abc service`) have been removed cleanly without backward-compat shims.
+- **Aliases:** `abc accounting` is canonical for cloud spend / namespace caps; `abc cost` and `abc budget` remain **aliases**. Other old names (`abc node`, `abc namespace`, `abc service`) have been removed cleanly without backward-compat shims.
 - **`abc admin app`** subgroup holds application-level entity management (workspace, organization).
   This is extensible: new entity types are added as subcommands under `app`.
 - **`abc admin services`** holds service health checks (ping, version) and Nomad operations that are
@@ -130,7 +129,7 @@ All flags are defined as persistent flags on the root command and available on e
 |------|------|-------|-------------|
 | 0 — user | *(none)* | Own namespace, own jobs | `submit`, `pipeline`, `job`, `data`, `module` |
 | 1 — cluster-admin | `--sudo` | Namespace-wide or cluster-wide | `admin services nomad namespace create/delete`, `infra compute add/drain` |
-| 2 — infrastructure | `--cloud` | Fleet-wide, cloud provider APIs | `cluster provision/decommission`, `cost set` |
+| 2 — infrastructure | `--cloud` | Fleet-wide, cloud provider APIs | `cluster provision/decommission`, `accounting set` |
 | 3 — impersonation | `--sudo --user <email>` | Acts as another user | Admin only — sends `X-ABC-As-User` |
 
 ---
@@ -222,7 +221,7 @@ abc
 │   └── decommission <name> [flags]
 │
 │  ── Cost / Budget ───────────────────────────────────────────────────────
-├── cost                                         (was: budget)
+├── accounting                                   (aliases: cost, budget; optional --budget)
 │   ├── list     [flags]
 │   ├── show     [--namespace <name>]
 │   └── set      [flags]                        (requires --cloud)
@@ -1157,11 +1156,13 @@ Force-terminates a node (requires `--sudo`).
 
 ---
 
-## 10. `abc cost` (was `abc budget`)
+## 10. `abc accounting` (aliases: `cost`, `budget`)
 
-Read operations are available to all users. `cost set` requires `--cloud`.
+Cloud accounting: namespace spend caps via the cloud gateway. Optional **`--budget <id>`** for allocation filters when supported.
 
-### `abc cost list`
+Read operations require `--cloud`. `accounting set` requires `--cloud` and gateway policy.
+
+### `abc accounting list`
 
 **Expected output:**
 ```
@@ -1170,7 +1171,7 @@ Read operations are available to all users. `cost set` requires `--cloud`.
   chipseq-lab     $200          $31.10            $160
 ```
 
-### `abc cost show [--namespace <name>]`
+### `abc accounting show [--namespace <name>]`
 
 **Expected output:**
 ```
@@ -1181,7 +1182,7 @@ Read operations are available to all users. `cost set` requires `--cloud`.
   Block at     100% ($500.00)
 ```
 
-### `abc cost set` (requires `--cloud`)
+### `abc accounting set` (requires `--cloud`)
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -1561,7 +1562,7 @@ a "not yet implemented" message at runtime.
 | `service` | `cmd/service/` | `abc admin services *` + `abc status` |
 | `namespace` | `cmd/namespace/` | `abc admin services nomad namespace *` |
 | `cluster` | `cmd/cluster/` | `abc cluster *` |
-| `budget` | `cmd/budget/` | `abc cost *` (package named budget, Use="cost") |
+| `accounting` | `cmd/accounting/` | `abc accounting *` (aliases: `cost`, `budget`; optional `--budget`) |
 | `utils` | `cmd/utils/` | NomadClient, utility helpers |
 | `debuglog` | `internal/debuglog/` | Debug logging subsystem |
 
