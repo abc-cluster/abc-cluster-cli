@@ -3157,7 +3157,7 @@ The old `--env=NOMAD_VAR` form is replaced by semantic boolean flags. `--region`
 | `#ABC --env=NOMAD_TASK_NAME` | `#ABC --task_name` | — |
 | `#ABC --env=NOMAD_GROUP_NAME` | `#ABC --group_name` | — |
 | `#ABC --env=NOMAD_NAMESPACE` | `#ABC --namespace` | Env exposure only; use `#ABC --namespace=<ns>` for scheduler placement |
-| `#ABC --env=NOMAD_REGION=global` | `#ABC --region=za-cpt` | **Breaking:** `--region` is now a scheduler directive. `NOMAD_REGION` is automatic — no exposure directive needed |
+| `#ABC --env=NOMAD_REGION=global` | `#ABC --region=global` | **Breaking:** `--region` is a **Nomad RPC region** directive (e.g. `global`), not the ABC workspace label in `contexts.*.region` (e.g. `za-cpt`). `NOMAD_REGION` is otherwise injected by Nomad at runtime — no exposure directive needed for the default case |
 | `#ABC --env=NOMAD_DC` | `#ABC --dc` | `--dc=<n>` is the scheduler directive; bare `--dc` exposes the runtime var |
 | `#ABC --env=NOMAD_ALLOC_DIR` | `#ABC --alloc_dir` | — |
 | `#ABC --env=NOMAD_TASK_DIR` | `#ABC --task_dir` | — |

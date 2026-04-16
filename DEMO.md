@@ -83,17 +83,16 @@ abc context add dev \
 ### 1.2 Activate and inspect the context
 
 ```bash
-abc context use dev2
+abc context use dev
 abc context show
 abc context list
 
 ```
 
 **What you should see:**
-- `dev2` listed as active context
+- `dev` listed as active context
 - Endpoint/cluster/workspace/region values
 - Config keys in the local config store
-
 
 ---
 
@@ -378,7 +377,7 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
 
 ### 5.4 Example: cluster download job (optional)
 
-Pick a small public URL for a smoke test. This submits a Nomad job; you need a working `abc` context with Nomad (`contexts.<name>.admin.services.nomad` from `abc infra compute add` or your operator).
+Pick a small public URL for a smoke test. This submits a Nomad job, so your machine must reach the Nomad API (normally after an operator runs `abc infra compute add`, or by exporting `NOMAD_ADDR` and `NOMAD_TOKEN` for this shell). Use `--region global` on submit only when your cluster expects that Nomad RPC region (see **USAGE.md** if unsure).
 
 ```bash
 # Pin to a node you can access (UUID from `nomad node status` or node name).
@@ -468,6 +467,8 @@ rm -f ./large-sample.bin ./large-sample.bin.encrypted
 
 Use `abc job run` to submit shell scripts with `#ABC` directives.
 This exercise shows both pure ABC execution and SLURM-enabled execution.
+
+**Nomad connectivity:** Commands that use `--submit` talk to Nomad from your laptop. In real clusters an operator usually runs `abc infra compute add` once so your active context picks up connection defaults; for ad-hoc use you can `export NOMAD_ADDR=...` and `export NOMAD_TOKEN=...` (include `:4646` in the address unless your operator documents otherwise).
 
 ### 7.1 Pure ABC job (no SLURM)
 
@@ -559,7 +560,7 @@ After completing these exercises, you understand:
 3. **Encryption:** Local encryption with `abc data encrypt` before upload
 4. **Upload:** TUS resumable uploads; endpoint/token resolved from flags, env, or context
 5. **Download:** Tool-based downloads run as Nomad jobs; `--destination` is the task path; `--node` pins placement
-6. **Job execution:** ABC-native and SLURM-enabled jobs via `abc job run`
+6. **Job execution:** ABC-native and SLURM-enabled jobs via `abc job run` (with Nomad reachable via `abc infra compute add` or `NOMAD_ADDR` / `NOMAD_TOKEN` in the environment)
 
 ---
 
@@ -594,6 +595,11 @@ export ABC_CRYPT_PASSWORD="your-password"
 ### "Upload fails without endpoint"
 - Set `upload_endpoint` on the context (or rely on default `<endpoint>/files/` from `abc context add`), or export `ABC_UPLOAD_ENDPOINT`, or pass `--endpoint` to `abc data upload`
 - Ensure the tus root returns `Tus-Version` on `OPTIONS`
+
+### "No path to region" or other Nomad errors on `abc job run` / `abc data download`
+- For `--submit`, ensure `NOMAD_ADDR` includes the Nomad HTTP port (usually **`:4646`**).
+- The `--region` flag on `abc job run` is Nomad’s **RPC** region (often `global`), not the same value as `--region` on `abc context add` (that one is an ABC workspace label).
+- Ask your operator to run `abc infra compute add` so your context gets Nomad defaults, or keep using `NOMAD_ADDR` / `NOMAD_TOKEN` exports for the session.
 
 ---
 

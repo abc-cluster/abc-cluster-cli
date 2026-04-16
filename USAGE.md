@@ -975,9 +975,9 @@ block so the script can read the value at execution time.
 
 | Flag            | Env var                       | Description             | Default                 |
 |-----------------|-------------------------------|-------------------------|-------------------------|
-| `--nomad-addr`  | `ABC_ADDR` / `NOMAD_ADDR`     | Nomad API address       | `http://127.0.0.1:4646` |
+| `--nomad-addr`  | `ABC_ADDR` / `NOMAD_ADDR`     | Nomad API base URL (paths like `/v1/jobs` are appended). Bare `http://host` gets port **4646**. | `http://127.0.0.1:4646` |
 | `--nomad-token` | `ABC_TOKEN` / `NOMAD_TOKEN`   | Nomad ACL token         | *(unset)*               |
-| `--region`      | `ABC_REGION` / `NOMAD_REGION` | Nomad region            | *(unset)*               |
+| `--region`      | `ABC_REGION` / `NOMAD_REGION` | Nomad **RPC** region (e.g. `global`). Not the same as `contexts.<name>.region` (ABC label). Config: `admin.services.nomad.nomad_region`. | *(unset)*               |
 
 ### Directive precedence
 
