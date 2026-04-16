@@ -6,6 +6,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 )
 
 // stripInlineComment removes a trailing shell comment from a directive string.
@@ -279,6 +281,9 @@ func applySpecDefaults(spec *jobSpec, defaultName string, useSBATCH bool) error 
 	}
 	if spec.Name == "" {
 		return fmt.Errorf("job name is required: set #ABC --name=<n>, #NOMAD --name=<n>, or NOMAD_JOB_NAME")
+	}
+	if spec.Driver != "" {
+		spec.Driver = utils.NormalizeNomadTaskDriver(spec.Driver)
 	}
 	return nil
 }

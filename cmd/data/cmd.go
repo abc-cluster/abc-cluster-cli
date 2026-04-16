@@ -62,5 +62,7 @@ func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFact
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
+	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace))
+	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace))
 	return cmd
 }

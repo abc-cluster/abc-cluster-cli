@@ -28,8 +28,12 @@ func newRunCmd() *cobra.Command {
 as a Nomad batch job in one command.
 
 The generated job has two phases:
-  1) prestart task: downloads nf-pipeline-gen release + nf-core/modules and generates driver
-  2) main task: runs the generated driver with Nextflow`,
+  1) prestart task: downloads nf-pipeline-gen + nf-core/modules, then runs the JAR
+     (module … --outdir … --force; add --pipeline-gen-no-run-manifest to pass --no-run-manifest)
+  2) main task: runs the generated driver with Nextflow
+
+For several drivers from one params/config (tool comparison), use nf-pipeline-gen's matrix
+subcommand locally or in CI; each abc module run still targets a single module.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runModule,
 	}
@@ -182,6 +186,13 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 		slog.Int("hcl_bytes", len(hcl)),
 		slog.Int64("duration_ms", time.Since(t).Milliseconds()),
 	)
+
+	if err := nc.PreflightJobTaskDrivers(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "module.run.failed",
+			debuglog.AttrsError("module.driver_preflight", err)...,
+		)
+		return err
+	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting module run job to Nomad...\n")
 	t = time.Now()

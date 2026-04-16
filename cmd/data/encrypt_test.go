@@ -9,9 +9,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// writeMinimalDataCLIConfig writes a config with one context so ContextForSecrets resolves.
+func writeMinimalDataCLIConfig(t *testing.T, path string) {
+	t.Helper()
+	const contents = `version: "1"
+active_context: test
+contexts:
+  test:
+    endpoint: "http://localhost"
+`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDataEncrypt_FileDefaultOutput(t *testing.T) {
 	// Isolate config so stored crypt credentials don't bleed between tests.
-	t.Setenv("ABC_CONFIG_FILE", filepath.Join(t.TempDir(), "config.yaml"))
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeMinimalDataCLIConfig(t, cfgPath)
+	t.Setenv("ABC_CONFIG_FILE", cfgPath)
 
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "sample.txt")

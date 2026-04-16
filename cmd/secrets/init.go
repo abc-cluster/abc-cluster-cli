@@ -13,8 +13,8 @@ func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Generate crypt password/salt for the active context (local)",
-		Long: `Generate defaults.crypt_password and defaults.crypt_salt in ~/.abc/config.yaml
-when they are not already set. Use --force to replace existing values.
+		Long: `Generate contexts.<name>.crypt.password and crypt.salt in ~/.abc/config.yaml
+for the active (or sole) context when they are not already set. Use --force to replace existing values.
 
 Requires --unsafe-local.`,
 		Args: cobra.NoArgs,
@@ -39,16 +39,21 @@ func runInitCrypt(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	if cfg.Defaults.CryptPassword != "" && cfg.Defaults.CryptSalt != "" && !force {
-		fmt.Fprintln(cmd.OutOrStdout(), "Crypt password and salt already set in config; nothing to do. Use --force to regenerate.")
+	ctxName, ctx, err := cfg.ContextForSecrets()
+	if err != nil {
+		return err
+	}
+
+	if ctx.Crypt.Password != "" && ctx.Crypt.Salt != "" && !force {
+		fmt.Fprintln(cmd.OutOrStdout(), "Crypt password and salt already set for this context; nothing to do. Use --force to regenerate.")
 		return nil
 	}
 
-	if !force && cfg.Defaults.CryptPassword != "" {
-		return fmt.Errorf("crypt_password is set but crypt_salt is missing; set salt manually or use --force to regenerate both")
+	if !force && ctx.Crypt.Password != "" {
+		return fmt.Errorf("crypt.password is set but crypt.salt is missing; set salt manually or use --force to regenerate both")
 	}
-	if !force && cfg.Defaults.CryptSalt != "" {
-		return fmt.Errorf("crypt_salt is set but crypt_password is missing; set password manually or use --force to regenerate both")
+	if !force && ctx.Crypt.Salt != "" {
+		return fmt.Errorf("crypt.salt is set but crypt.password is missing; set password manually or use --force to regenerate both")
 	}
 
 	passBytes := make([]byte, 32)
@@ -60,14 +65,15 @@ func runInitCrypt(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("generate salt: %w", err)
 	}
 
-	cfg.Defaults.CryptPassword = base64.RawURLEncoding.EncodeToString(passBytes)
-	cfg.Defaults.CryptSalt = base64.RawURLEncoding.EncodeToString(saltBytes)
+	ctx.Crypt.Password = base64.RawURLEncoding.EncodeToString(passBytes)
+	ctx.Crypt.Salt = base64.RawURLEncoding.EncodeToString(saltBytes)
+	cfg.Contexts[ctxName] = ctx
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Generated defaults.crypt_password and defaults.crypt_salt in config.")
+	fmt.Fprintf(cmd.OutOrStdout(), "Generated contexts.%s.crypt.password and crypt.salt in config.\n", ctxName)
 	fmt.Fprintln(cmd.OutOrStdout(), "You can now use abc secrets and abc data encrypt/decrypt without exporting ABC_CRYPT_PASSWORD.")
 	return nil
 }

@@ -9,11 +9,12 @@
 //	ABC_CRYPT_PASSWORD  — encryption password (required for --unsafe-local operations)
 //	ABC_CRYPT_SALT      — optional salt for key derivation (same as data encryption)
 //
-// Secrets are stored in the config file under the 'secrets' section:
+// Secrets are stored per context under contexts.<name>.secrets (see ContextForSecrets).
 //
-//	secrets:
-//	  my-api-key: "ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]"
-//	  db-password: "ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]"
+//	contexts:
+//	  my-ctx:
+//	    secrets:
+//	      my-api-key: "<base64 ciphertext>"
 //
 // This module exports functions for use by cmd/secrets/ subcommand:
 // - EncryptField: Encrypt a single value

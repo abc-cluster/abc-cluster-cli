@@ -90,6 +90,9 @@ Supported keys follow a dot-separated path:
 	contexts.<name>.organization_id   Organization ID
 	contexts.<name>.workspace_id      Workspace ID
 	contexts.<name>.region            Region override for context
+	contexts.<name>.crypt.password    Local crypt / secrets key material (per context)
+	contexts.<name>.crypt.salt        Optional salt for contexts.<name>.crypt.password
+	contexts.<name>.secrets.*         Encrypted values managed via abc secrets (per context)
 		contexts.<name>.admin.services.nomad.nomad_addr   Node-specific Nomad API address
 		contexts.<name>.admin.services.nomad.nomad_token   Node-specific Nomad ACL token
 		contexts.<name>.admin.services.nomad.nomad_region Nomad RPC region (e.g. global); not contexts.region

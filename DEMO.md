@@ -348,7 +348,7 @@ abc data download --help
 - **`--source` / `--url-file`:** What to download
 - **`--destination`:** Path **inside the task** where files are written (e.g. `/tmp/my-dl`), or a special target such as `abc-bucket`
 - **`--node`:** Nomad **node** placement — full node UUID or node name; adds `#ABC --constraint=node.unique.id==...` or `node.unique.name==...` to the generated script
-- **`--driver`:** `exec` (host binaries) or `docker` (pinned images; recommended with `--node` unless the node already has your tool)
+- **`--driver`:** `exec` (host binaries), `containerd` (pinned OCI images via nomad-driver-containerd; recommended with `--node`), or `docker` (pinned images)
 - **`--parallel`**, **`--tool-args`**, **`--name`**
 
 ### 5.2 Example: cluster download job (optional)
@@ -357,10 +357,10 @@ Pick a small public URL for a smoke test. This submits a Nomad job, so your mach
 
 ```bash
 # Pin to a node you can access (UUID from `nomad node status` or node name).
-# Prefer --driver docker so the image provides wget; with --driver=exec the node must have wget.
+# Prefer --driver containerd so the image provides wget; with --driver=exec the node must have wget.
 abc data download \
   --tool wget \
-  --driver docker \
+  --driver containerd \
   --source https://speed.hetzner.de/100MB.bin \
   --destination /tmp/abc-demo-dl \
   --node YOUR_NOMAD_NODE_NAME_OR_UUID \

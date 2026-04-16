@@ -9,6 +9,8 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/minio"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nebula"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nomad"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/probe"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rclone"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rustfs"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tailscale"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/vault"
@@ -31,7 +33,9 @@ func NewCmd() *cobra.Command {
 	abc admin services minio cli ls local   Run the local MinIO client CLI
 	abc admin services nebula cli -version  Run the local Nebula CLI
 	abc admin services rustfs cli status    Run the local RustFS CLI
-	abc admin services vault cli status     Run the local Vault/OpenBao CLI`,
+	abc admin services vault cli status     Run the local Vault/OpenBao CLI
+	abc admin services rclone cli version   Run the managed rclone CLI
+	abc admin services probe cli --help     Run the abc-node-probe CLI`,
 	}
 
 	// services sub-group — reuses the existing service package.
@@ -41,11 +45,13 @@ func NewCmd() *cobra.Command {
 
 	// Add nomad sub-group under services (for Nomad-specific operations)
 	svcCmd.AddCommand(nomad.NewCmd())
+	svcCmd.AddCommand(probe.NewCmd())
 	svcCmd.AddCommand(tailscale.NewCmd())
 	svcCmd.AddCommand(minio.NewCmd())
 	svcCmd.AddCommand(nebula.NewCmd())
 	svcCmd.AddCommand(rustfs.NewCmd())
 	svcCmd.AddCommand(vault.NewCmd())
+	svcCmd.AddCommand(rclone.NewCmd())
 	cmd.AddCommand(svcCmd)
 
 	// app sub-group — application-level entity management.

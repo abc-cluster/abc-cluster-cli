@@ -21,6 +21,11 @@
 //	    organization_id: "org-dev"
 //	    workspace_id:    ""
 //	    region:          ""
+//	    crypt:           # optional; local rclone crypt + abc secrets key material
+//	      password: "..."
+//	      salt:     "..."
+//	    secrets:         # encrypted map; managed via abc secrets
+//	      my-key: "base64..."
 //	    admin:
 //	      services:
 //	        nomad:
@@ -70,6 +75,13 @@ type Context struct {
 	Region         string `yaml:"region,omitempty"`
 	Admin          Admin    `yaml:"admin,omitempty"`
 
+	// Per-context encrypted secrets (abc secrets) and local crypt key material (rclone crypt / secrets).
+	Secrets map[string]string `yaml:"secrets,omitempty"`
+	Crypt   ContextCrypt      `yaml:"crypt,omitempty"`
+	// Deprecated flat YAML keys; normalized into Crypt on load (see normalizeContextCrypt).
+	FlatCryptPassword string `yaml:"crypt_password,omitempty"`
+	FlatCryptSalt     string `yaml:"crypt_salt,omitempty"`
+
 	// Deprecated YAML keys; normalized into admin on load (see normalizeContextNomad).
 	ServicesLegacy   Services `yaml:"services,omitempty"`
 	LegacyNomadAddr  string   `yaml:"nomad_addr,omitempty"`
@@ -78,19 +90,16 @@ type Context struct {
 
 // Defaults holds user-level default values.
 type Defaults struct {
-	Output        string `yaml:"output,omitempty"`
-	Region        string `yaml:"region,omitempty"`
-	CryptPassword string `yaml:"crypt_password,omitempty"`
-	CryptSalt     string `yaml:"crypt_salt,omitempty"`
+	Output string `yaml:"output,omitempty"`
+	Region string `yaml:"region,omitempty"`
 }
 
 // Config is the in-memory representation of ~/.abc/config.yaml.
 type Config struct {
 	Version       string             `yaml:"version,omitempty"`
 	ActiveContext string             `yaml:"active_context,omitempty"`
-	Contexts      map[string]Context `yaml:"contexts,omitempty"`
-	Defaults      Defaults           `yaml:"defaults,omitempty"`
-	Secrets       map[string]string  `yaml:"secrets,omitempty"` // Encrypted secrets managed via 'abc secrets'
+	Contexts map[string]Context `yaml:"contexts,omitempty"`
+	Defaults Defaults           `yaml:"defaults,omitempty"`
 }
 
 // Load reads the config file. If the file does not exist, an empty Config is
@@ -125,7 +134,6 @@ func LoadFrom(path string) (*Config, error) {
 			return &Config{
 				Version:  CurrentVersion,
 				Contexts: map[string]Context{},
-				Secrets:  map[string]string{},
 			}, nil
 		}
 		return nil, fmt.Errorf("read config %q: %w", path, err)
@@ -138,16 +146,15 @@ func LoadFrom(path string) (*Config, error) {
 	if cfg.Contexts == nil {
 		cfg.Contexts = map[string]Context{}
 	}
-	if cfg.Secrets == nil {
-		cfg.Secrets = map[string]string{}
-	}
 	if cfg.Version == "" {
 		cfg.Version = CurrentVersion
 	}
 	for name, ctx := range cfg.Contexts {
 		normalizeContextNomad(&ctx)
+		normalizeContextCrypt(&ctx)
 		cfg.Contexts[name] = ctx
 	}
+	migrateLegacySecretsAndCrypt(data, &cfg)
 	return &cfg, nil
 }
 
@@ -229,6 +236,16 @@ func (c *Config) Get(key string) (string, bool) {
 		}
 		ctx, ok := c.Contexts[parts[1]]
 		if !ok {
+			return "", false
+		}
+		// contexts.<name>.crypt.password | contexts.<name>.crypt.salt
+		if len(parts) == 4 && parts[2] == "crypt" {
+			switch parts[3] {
+			case "password":
+				return ctx.Crypt.Password, true
+			case "salt":
+				return ctx.Crypt.Salt, true
+			}
 			return "", false
 		}
 		// contexts.<name>.admin.services.nomad.<field>
@@ -316,6 +333,18 @@ func (c *Config) Set(key, value string) error {
 			c.Contexts[name] = ctx
 			return nil
 		}
+		if len(parts) == 4 && parts[2] == "crypt" {
+			switch parts[3] {
+			case "password":
+				ctx.Crypt.Password = value
+			case "salt":
+				ctx.Crypt.Salt = value
+			default:
+				return fmt.Errorf("unknown crypt field %q (expected password or salt)", parts[3])
+			}
+			c.Contexts[name] = ctx
+			return nil
+		}
 		if len(parts) != 3 {
 			return fmt.Errorf("unknown config key %q", key)
 		}
@@ -395,6 +424,18 @@ func (c *Config) Unset(key string) error {
 			c.Contexts[name] = ctx
 			return nil
 		}
+		if len(parts) == 4 && parts[2] == "crypt" {
+			switch parts[3] {
+			case "password":
+				ctx.Crypt.Password = ""
+			case "salt":
+				ctx.Crypt.Salt = ""
+			default:
+				return fmt.Errorf("unknown crypt field %q (expected password or salt)", parts[3])
+			}
+			c.Contexts[name] = ctx
+			return nil
+		}
 		if len(parts) != 3 {
 			return fmt.Errorf("unknown config key %q", key)
 		}
@@ -462,6 +503,15 @@ func (c *Config) AllKeys() [][2]string {
 			if ctx.Admin.Services.Nomad.Region != "" {
 				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_region", ctx.Admin.Services.Nomad.Region})
 			}
+		}
+		if ctx.Crypt.Password != "" {
+			out = append(out, [2]string{"contexts." + name + ".crypt.password", maskToken(ctx.Crypt.Password)})
+		}
+		if ctx.Crypt.Salt != "" {
+			out = append(out, [2]string{"contexts." + name + ".crypt.salt", maskToken(ctx.Crypt.Salt)})
+		}
+		for sk := range ctx.Secrets {
+			out = append(out, [2]string{"contexts." + name + ".secrets." + sk, maskToken(ctx.Secrets[sk])})
 		}
 	}
 	return out
