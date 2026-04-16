@@ -30,10 +30,7 @@ func NewCmd() *cobra.Command {
 	abc admin services minio cli ls local   Run the local MinIO client CLI
 	abc admin services nebula cli -version  Run the local Nebula CLI
 	abc admin services rustfs cli status    Run the local RustFS CLI
-	abc admin services vault cli status     Run the local Vault/OpenBao CLI
-  abc admin services nomad namespace list            List all namespaces
-  abc admin services nomad namespace create --sudo   Create a namespace (requires --sudo)
-  abc admin services nomad namespace delete --sudo   Delete a namespace (requires --sudo)`,
+	abc admin services vault cli status     Run the local Vault/OpenBao CLI`,
 	}
 
 	// services sub-group — reuses the existing service package.
@@ -62,8 +59,7 @@ func newAppCmd() *cobra.Command {
 		Use:   "app",
 		Short: "Manage application-level entities: workspaces, organizations",
 		Long: `Commands for managing application-level entities on the ABC-cluster platform.
-
-(Application-level namespaces are managed via: abc admin services nomad namespace)`,
+`,
 	}
 
 	return cmd

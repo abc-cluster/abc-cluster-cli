@@ -1,15 +1,14 @@
 // Package nomad implements the "abc admin services nomad" command group.
 //
 // This group stays focused on ABC-cluster-specific Nomad operations such as
-// namespaces and node lifecycle management. The `cli` subcommand is a
-// preconfigured passthrough alias to the local Nomad CLI for operations that
-// abc does not yet implement natively.
+// node lifecycle management. The `cli` subcommand is a preconfigured
+// passthrough alias to the local Nomad CLI for operations that abc does not
+// yet implement natively.
 package nomad
 
 import (
 	"fmt"
 
-	"github.com/abc-cluster/abc-cluster-cli/cmd/namespace"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
@@ -22,9 +21,6 @@ func NewCmd() *cobra.Command {
 		Long: `Commands for managing Nomad cluster resources on the ABC-cluster platform.
 
 	abc admin services nomad cli status                                   Run the local Nomad CLI with abc config defaults
-  abc admin services nomad namespace list                                 List all namespaces
-  abc admin services nomad namespace create --sudo --name=my-lab         Create a namespace
-  abc admin services nomad namespace delete --sudo my-lab                Delete a namespace
   abc admin services nomad node drain --sudo nomad-client-02 --wait      Drain a Nomad node
   abc admin services nomad node undrain --sudo nomad-client-02           Restore a Nomad node`,
 	}
@@ -36,8 +32,7 @@ func NewCmd() *cobra.Command {
 	cmd.PersistentFlags().String("region", utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION"),
 		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
 
-	// Add namespace and node sub-groups
-	cmd.AddCommand(namespace.NewCmd())
+	// Add node and cli sub-groups
 	cmd.AddCommand(newNodeCmd())
 	cmd.AddCommand(newCLICmd())
 
