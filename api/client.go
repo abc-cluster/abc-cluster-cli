@@ -137,3 +137,45 @@ func (c *Client) GetKhanRcloneConfig() (string, error) {
 
 	return string(respBody), nil
 }
+
+// GetV1 performs GET {baseURL}{path} with optional query parameters (path must start with '/').
+// Used for porcelain v1 resources such as /v1/emissions and /v1/compliance.
+func (c *Client) GetV1(path string, query url.Values) ([]byte, error) {
+	base := strings.TrimSuffix(strings.TrimSpace(c.baseURL), "/")
+	if base == "" {
+		return nil, fmt.Errorf("API base URL is empty")
+	}
+	if path == "" || path[0] != '/' {
+		return nil, fmt.Errorf("path must be non-empty and start with /, got %q", path)
+	}
+	reqURL := base + path
+	if len(query) > 0 {
+		reqURL += "?" + query.Encode()
+	}
+
+	httpReq, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	if c.accessToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.accessToken)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return respBody, nil
+}

@@ -226,6 +226,9 @@ abc
 │   ├── show     [--namespace <name>]
 │   └── set      [flags]                        (requires --cloud)
 │
+├── emissions                                  GET /v1/emissions (--from, --to)
+├── compliance                                 GET /v1/compliance (--scope)
+│
 │  ── Administration ──────────────────────────────────────────────────────
 ├── admin
 │   ├── services                                 (was: abc service)
