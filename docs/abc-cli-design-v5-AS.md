@@ -3475,6 +3475,15 @@ abc
 | `abc auth` | 🔲 Planned | |
 | `abc config` | 🔲 Planned | |
 | `abc context` | 🔲 Planned | |
+
+### Wrapped CLI bootstrap (current behavior)
+
+- `abc admin services cli setup` is the porcelain entrypoint for downloading wrapped binaries.
+- It currently manages `nomad`, `abc-node-probe`, and `tailscale`.
+- Binaries are installed into `~/.abc/binaries` and downloads are skipped when binaries are already available in `PATH`.
+- Wrapper-specific setup commands remain available:
+  - `abc admin services nomad cli setup`
+  - `abc admin services tailscale cli setup`
 | `abc workspace` | 🔲 Planned | |
 | `abc automation` | 🔲 Planned | |
 | `abc policy` | 🔲 Planned | |

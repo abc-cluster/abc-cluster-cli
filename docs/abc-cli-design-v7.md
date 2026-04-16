@@ -44,10 +44,12 @@
   This is extensible: new entity types are added as subcommands under `app`.
 - **`abc admin services`** holds service health checks (ping, version) and Nomad operations that are
   directly relevant to the ABC-cluster platform. Organized as: `abc admin services ping`,
-  `abc admin services version`, `abc admin services nomad namespace <subcommand>`,
+  `abc admin services version`, `abc admin services cli setup`,
   `abc admin services nomad node <subcommand>`, and `abc admin services nomad cli <args...>`.
   The `cli` subcommand is a preconfigured passthrough alias to the local Nomad CLI for operations
   that abc does not yet implement natively.
+  The porcelain wrapper `abc admin services cli setup` bootstraps all wrapped binaries (`nomad`,
+  `abc-node-probe`, `tailscale`) into `~/.abc/binaries` (future: config/env override path).
   **Note:** The goal is not to provide full-fledged API clients or duplicate existing service APIs,
   but to build just enough functionality to test our use-cases for the ABC-cluster platform.
 - **`abc infra`** holds infrastructure operations (node, storage).

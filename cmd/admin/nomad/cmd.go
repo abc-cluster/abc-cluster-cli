@@ -21,6 +21,7 @@ func NewCmd() *cobra.Command {
 		Long: `Commands for managing Nomad cluster resources on the ABC-cluster platform.
 
 	abc admin services nomad cli status                                   Run the local Nomad CLI with abc config defaults
+  abc admin services nomad cli setup                                    Install wrapped nomad + abc-node-probe binaries
   abc admin services nomad node drain --sudo nomad-client-02 --wait      Drain a Nomad node
   abc admin services nomad node undrain --sudo nomad-client-02           Restore a Nomad node`,
 	}

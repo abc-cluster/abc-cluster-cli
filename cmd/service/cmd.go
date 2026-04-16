@@ -39,6 +39,7 @@ Valid service names: nomad, jurist, minio, api, tus, cloud-gateway, xtdb, supaba
 		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
 
 	cmd.AddCommand(newPingCmd(), newVersionCmd())
+	cmd.AddCommand(newCLICmd())
 	return cmd
 }
 
@@ -160,5 +161,53 @@ func runAllStatus(cmd *cobra.Command, _ []string) error {
 	if unhealthy > 0 {
 		return fmt.Errorf("%d service(s) are not healthy", unhealthy)
 	}
+	return nil
+}
+
+func newCLICmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cli",
+		Short: "Porcelain wrappers for local service CLIs",
+		Long: `Convenience wrappers for setting up local service CLIs used by abc wrappers.
+
+  abc admin services cli setup`,
+	}
+	cmd.AddCommand(newCLISetupCmd())
+	return cmd
+}
+
+func newCLISetupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Download all wrapped CLI binaries if missing",
+		Long: `Download wrapped service binaries into ~/.abc/binaries (or ABC_BINARIES_DIR).
+
+This checks PATH first and skips download when a binary is already available.
+Current managed binaries:
+  - nomad
+  - abc-node-probe
+  - tailscale`,
+		RunE: runCLISetup,
+	}
+}
+
+func runCLISetup(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
+	dir, err := utils.ManagedBinaryDir()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Setting up wrapped binaries in %s\n", dir)
+	fmt.Fprintln(out, "Checking PATH first, then downloading missing binaries...")
+
+	if _, err := utils.SetupNomadAndProbeBinaries(out); err != nil {
+		return err
+	}
+	if _, err := utils.SetupTailscaleBinary(out); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, "Setup complete.")
+	fmt.Fprintf(out, "Tip: prepend %s to PATH to prefer managed binaries.\n", dir)
 	return nil
 }

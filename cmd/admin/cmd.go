@@ -25,6 +25,7 @@ func NewCmd() *cobra.Command {
 
   abc admin services ping nomad           Check connectivity to a backend service
   abc admin services version api          Show a service version
+  abc admin services cli setup            Install all wrapped service CLIs
 	abc admin services nomad cli status     Run the preconfigured Nomad CLI
 	abc admin services tailscale cli status Run the local Tailscale CLI
 	abc admin services minio cli ls local   Run the local MinIO client CLI
