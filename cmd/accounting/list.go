@@ -1,4 +1,4 @@
-package budget
+package accounting
 
 import (
 	"fmt"
@@ -18,7 +18,7 @@ type BudgetStub struct {
 func newListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List budgets for all namespaces (requires --cloud)",
+		Short: "List namespace spend caps for all namespaces (requires --cloud)",
 		RunE:  runBudgetList,
 	}
 }

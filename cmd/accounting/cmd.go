@@ -1,7 +1,9 @@
-// Package budget implements the "abc budget" command group.
+// Package accounting implements the "abc accounting" command group (cloud spend /
+// allocation caps via the cloud gateway). Aliases: cost, budget.
 //
-// Read operations work for all users. Write operations (set) require --cloud.
-package budget
+// Read operations require --cloud. Write operations (set) require --cloud and
+// appropriate gateway policy.
+package accounting
 
 import (
 	"fmt"
@@ -10,21 +12,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the "cost" subcommand group.
+// NewCmd returns the "accounting" subcommand group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cost",
-		Short: "View and manage namespace spend budgets",
-		Long: `Commands for viewing and managing cloud spend budgets per namespace.
+		Use:     "accounting",
+		Aliases: []string{"cost", "budget"},
+		Short:   "Accounting: cloud spend and namespace budget caps",
+		Long: `View and manage cloud accounting data (namespace spend caps via the cloud gateway).
 
-Reading budgets is available to all users.
-Setting budget caps requires --cloud and an infrastructure-tier token.
+Subcommands focus on per-namespace budgets (monthly caps, alerts). Use --budget on the
+parent command to pass an optional allocation / budget id when supported by the gateway.
 
-  abc cost list --cloud
-  abc cost show --cloud --namespace=nf-genomics-lab
-  abc cost set --cloud --namespace=nf-genomics-lab --monthly=500`,
+  abc --cloud accounting list
+  abc --cloud accounting show --namespace=nf-genomics-lab
+  abc --cloud accounting set --namespace=nf-genomics-lab --monthly=500
+
+Legacy: abc cost … and abc budget … are aliases for abc accounting …`,
 	}
 
+	cmd.PersistentFlags().String("budget", "",
+		"optional budget / allocation id (for future filters; reserved when gateway supports it)")
 	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
 		"Cloud gateway address (or set ABC_ADDR/NOMAD_ADDR)")
 	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
@@ -72,7 +79,7 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 
 func requireCloud(cmd *cobra.Command) error {
 	if !utils.CloudFromCmd(cmd) {
-		return fmt.Errorf("cost write operations require --cloud (or ABC_CLI_CLOUD_MODE=1)")
+		return fmt.Errorf("accounting commands require --cloud (or ABC_CLI_CLOUD_MODE=1)")
 	}
 	return nil
 }

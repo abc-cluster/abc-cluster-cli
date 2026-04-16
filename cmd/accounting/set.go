@@ -1,4 +1,4 @@
-package budget
+package accounting
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 func newSetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set",
-		Short: "Set or update the budget cap for a namespace (requires --cloud)",
+		Short: "Set or update the namespace spend cap (requires --cloud)",
 		RunE:  runBudgetSet,
 	}
 	cmd.Flags().String("namespace", utils.EnvOrDefault("ABC_NAMESPACE", "NOMAD_NAMESPACE"),

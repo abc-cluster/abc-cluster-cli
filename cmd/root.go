@@ -12,7 +12,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/auth"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/budget"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/accounting"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/cluster"
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/context"
@@ -242,7 +242,7 @@ func init() {
 	rootCmd.AddCommand(job.NewCmd())
 	rootCmd.AddCommand(job.NewLogsCmd())
 	rootCmd.AddCommand(cluster.NewCmd())
-	rootCmd.AddCommand(budget.NewCmd())
+	rootCmd.AddCommand(accounting.NewCmd())
 	rootCmd.AddCommand(service.NewStatusCmd())
 	rootCmd.AddCommand(auth.NewCmd())
 	rootCmd.AddCommand(contextcmd.NewCmd())

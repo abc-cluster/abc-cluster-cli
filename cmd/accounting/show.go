@@ -1,4 +1,4 @@
-package budget
+package accounting
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ type BudgetDetail struct {
 func newShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show",
-		Short: "Show budget detail for a namespace (requires --cloud)",
+		Short: "Show spend cap detail for a namespace (requires --cloud)",
 		RunE:  runBudgetShow,
 	}
 	cmd.Flags().String("namespace", utils.EnvOrDefault("ABC_NAMESPACE", "NOMAD_NAMESPACE"),

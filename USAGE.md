@@ -61,7 +61,7 @@ This document describes every command available in the `abc` CLI.
 - [admin services rustfs cli](#admin-services-rustfs-cli)
 - [admin services vault cli](#admin-services-vault-cli)
 - [cluster](#cluster)
-- [cost](#cost)
+- [accounting](#accounting)
 - [admin services](#admin-services)
 - [status (alias)](#status-alias)
 
@@ -80,7 +80,7 @@ These flags are available on every `abc` command.
 | `--quiet` / `-q` |                      | Suppress informational output to stderr          | `false`                      |
 | `--debug[=N]`    | `ABC_DEBUG`          | Write structured JSON debug log (see [Debug logging](#debug-logging)) | `0` (off) |
 | `--sudo`         | `ABC_CLI_SUDO_MODE`  | Elevate to cluster-admin scope (required for admin/node write ops) | `false` |
-| `--cloud`        | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope (required for cluster/cost write ops) | `false` |
+| `--cloud`        | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope (required for cluster/accounting write ops) | `false` |
 | `--exp`          | `ABC_CLI_EXP_MODE`   | Enable experimental CLI features                 | `false`                      |
 | `--user <email>` | `ABC_AS_USER`        | Act on behalf of this user email — admin only    | *(unset)*                    |
 
@@ -94,7 +94,7 @@ These flags are available on every `abc` command.
 |-----------|---------------------|------------------------------------------------|
 | *(none)*  | User operations     | pipeline, job, data, module, submit                           |
 | `--sudo`  | Cluster-admin       | `admin services nomad cli namespace apply/delete`, `infra compute add/drain`   |
-| `--cloud` | Infrastructure      | `cluster provision/decommission`, `cost set`                  |
+| `--cloud` | Infrastructure      | `cluster provision/decommission`, `accounting set`            |
 | `--user`  | Impersonation       | Act as another user (admin-only; forwarded as `X-ABC-As-User`)|
 | `--exp`   | Experimental        | Community task drivers, unreleased features                   |
 
@@ -1824,29 +1824,33 @@ abc --cloud cluster decommission my-cluster --yes
 
 ---
 
-## `cost`
+## `accounting`
 
-View and manage namespace spend budgets. Read operations are available to all users;
-`cost set` requires `--cloud`.
+Accounting: cloud spend and per-namespace **budget** caps (via the cloud gateway).
+Aliases: **`cost`**, **`budget`** (same command).
 
-### `cost list` (requires `--cloud`)
+Optional parent flag **`--budget <id>`** is reserved for allocation / budget id filters when the gateway supports it.
+
+All subcommands below require **`--cloud`**.
+
+### `accounting list`
 
 ```bash
-abc --cloud cost list
+abc --cloud accounting list
 ```
 
-### `cost show` (requires `--cloud`)
+### `accounting show`
 
 ```
-abc --cloud cost show [--namespace <name>]
+abc --cloud accounting show [--namespace <name>]
 ```
 
-### `cost set` (requires `--cloud`)
+### `accounting set`
 
-Set or update the spend cap for a namespace.
+Set or update the spend cap (budget) for a namespace.
 
 ```
-abc --cloud cost set [flags]
+abc --cloud accounting set [flags]
 ```
 
 | Flag          | Description                                                   | Default |
@@ -1858,7 +1862,7 @@ abc --cloud cost set [flags]
 | `--block-at`  | Submission block threshold as a fraction of cap (0.0–1.0)     | `1.0`   |
 
 ```bash
-abc --cloud cost set --namespace team-alpha --monthly 500 --currency USD --alert-at 0.8
+abc --cloud accounting set --namespace team-alpha --monthly 500 --currency USD --alert-at 0.8
 ```
 
 ---
