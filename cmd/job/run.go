@@ -46,7 +46,7 @@ CLASS 1 — SCHEDULER  (configure HCL stanza fields)
   --gpus=<int>                 GPU count (nvidia/gpu device plugin)
   --time=<HH:MM:SS>            Walltime limit; wraps command in timeout(1)
   --chdir=<path>               Working directory inside task sandbox
-  --driver=<string>            Task driver: exec (default), hpc-bridge, docker
+  --driver=<string>            Task driver: exec (default), raw_exec, hpc-bridge, docker, containerd (→ containerd-driver)
   --depend=<complete:job-id>   Block on another job via prestart lifecycle hook
   --output=<filename>          Tee stdout to $NOMAD_TASK_DIR/<filename>
   --error=<filename>           Tee stderr to $NOMAD_TASK_DIR/<filename>
@@ -163,7 +163,7 @@ EXAMPLES
 	cmd.Flags().String("time", "", "Walltime limit HH:MM:SS")
 	cmd.Flags().String("chdir", "", "Working directory inside task sandbox")
 	cmd.Flags().String("depend", "", "Dependency spec (complete:<job-id>)")
-	cmd.Flags().String("driver", "", "Task driver (exec, hpc-bridge, docker)")
+	cmd.Flags().String("driver", "", "Task driver (exec, raw_exec, hpc-bridge, docker, containerd aliases to containerd-driver)")
 	cmd.Flags().String("output", "", "Tee stdout to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("error", "", "Tee stderr to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
@@ -241,7 +241,7 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 		spec.Depend = v
 	}
 	if v, _ := cmd.Flags().GetString("driver"); v != "" {
-		spec.Driver = v
+		spec.Driver = utils.NormalizeNomadTaskDriver(v)
 	}
 	if v, _ := cmd.Flags().GetString("reschedule-mode"); v != "" {
 		spec.RescheduleMode = v
@@ -415,6 +415,13 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 		slog.Int("hcl_bytes", len(hcl)),
 		slog.Int64("duration_ms", time.Since(t).Milliseconds()),
 	)
+
+	if err := nc.PreflightJobTaskDrivers(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "job.run.failed",
+			debuglog.AttrsError("job.driver_preflight", err)...,
+		)
+		return err
+	}
 
 	if dryRun {
 		t = time.Now()

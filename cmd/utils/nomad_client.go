@@ -1,7 +1,7 @@
 // Package utils provides shared utilities for abc-cluster CLI command groups.
 //
-// nomad_client.go — exported Nomad HTTP API client used across cmd/job and
-// cmd/pipeline. Zero external dependencies beyond the Go standard library.
+// nomad_client.go — exported Nomad HTTP API client used across cmd/job,
+// cmd/pipeline, cmd/submit, and related packages.
 package utils
 
 import (
@@ -300,8 +300,9 @@ type NomadNode struct {
 
 // NomadDriverInfo is a simplified driver status entry.
 type NomadDriverInfo struct {
-	Detected bool `json:"Detected"`
-	Healthy  bool `json:"Healthy"`
+	Detected          bool   `json:"Detected"`
+	Healthy           bool   `json:"Healthy"`
+	HealthDescription string `json:"HealthDescription,omitempty"`
 }
 
 // NomadNamespace is a Nomad namespace with optional metadata.

@@ -237,6 +237,18 @@ func TestJobRun_DockerDriverCLIFlag(t *testing.T) {
 	}
 }
 
+func TestJobRun_RawExecDriverCLIFlag(t *testing.T) {
+	script := "#!/bin/bash\necho hi\n"
+	p := writeTempScript(t, "raw_exec_cli.sh", script)
+	out, err := executeCmd(t, p, "--driver", "raw_exec")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `driver = "raw_exec"`) {
+		t.Errorf("expected raw_exec driver from CLI flag, got:\n%s", out)
+	}
+}
+
 func TestJobRun_DockerDriverWithResources(t *testing.T) {
 	script := `#!/bin/bash
 #ABC --name=docker-res
@@ -273,6 +285,18 @@ func TestJobRun_HpcBridgeDriver(t *testing.T) {
 	}
 	if !strings.Contains(out, `driver = "hpc-bridge"`) {
 		t.Errorf("expected hpc-bridge driver, got:\n%s", out)
+	}
+}
+
+func TestJobRun_RawExecDriver(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=raw-exec-job\n#ABC --driver=raw_exec\necho hi\n"
+	p := writeTempScript(t, "rawexec.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `driver = "raw_exec"`) {
+		t.Errorf("expected raw_exec driver, got:\n%s", out)
 	}
 }
 

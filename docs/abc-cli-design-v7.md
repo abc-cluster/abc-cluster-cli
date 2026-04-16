@@ -1427,6 +1427,7 @@ Two-phase Nomad job: Phase 1 generates a Nextflow driver via nf-pipeline-gen; Ph
 | `--module-revision` | Module revision | |
 | `--pipeline-gen-repo` | nf-pipeline-gen repo | `abc-cluster/nf-pipeline-gen` |
 | `--pipeline-gen-version` | Release version | `latest` |
+| `--pipeline-gen-no-run-manifest` | Pass `--no-run-manifest` to nf-pipeline-gen in prestart | (unset) |
 | `--github-token` | GitHub access token | `GITHUB_TOKEN` / `GH_TOKEN` |
 | `--nf-version` | Nextflow image tag | `25.10.4` |
 | `--nf-plugin-version` | nf-nomad plugin version | `0.4.0-edge3` |
@@ -1437,6 +1438,12 @@ Two-phase Nomad job: Phase 1 generates a Nextflow driver via nf-pipeline-gen; Ph
 | `--wait` | Block until complete | |
 | `--logs` | Stream logs after submit | |
 | `--dry-run` | Print HCL without submitting | |
+
+### Design note: comparing two tools on the same dataset
+
+`abc module run` is **one module per Nomad job**. To compare two nf-core modules on the same biological inputs, the intended pattern is **two explicit submissions** (same or different `--params-file` / `--config-file` / `--output-prefix` as appropriate). That keeps logs, retries, failure domains, and output layout per tool.
+
+The **`matrix`** subcommand in **nf-pipeline-gen** (not invoked by this CLI) helps **generate** multiple aligned driver directories locally or in CI from one params/config pair; it does not replace two cluster runs. Full rationale: [nf-pipeline-gen `docs/design.md` — §2.1.1](https://github.com/abc-cluster/nf-pipeline-gen/blob/main/docs/design.md#211-comparing-two-tools-on-the-same-dataset-matrix-vs-two-cluster-jobs).
 
 ---
 

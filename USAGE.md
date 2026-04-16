@@ -801,8 +801,10 @@ abc pipeline params rnaseq --auto-latest
 Generate and run an nf-core module driver pipeline using
 [nf-pipeline-gen](https://github.com/abc-cluster/nf-pipeline-gen) as a two-phase Nomad batch job.
 
-**Phase 1 (prestart task):** Downloads the nf-pipeline-gen release binary, fetches the nf-core/modules
-repository, and generates a minimal Nextflow driver pipeline for the requested module.
+**Phase 1 (prestart task):** Downloads the nf-pipeline-gen release JAR, fetches the nf-core/modules
+tree, then runs `java -jar … module … --outdir … --force` (and **`--no-run-manifest`** when you pass
+`--pipeline-gen-no-run-manifest` to `abc module run`) so the driver directory is regenerated idempotently
+before the main task starts.
 
 **Phase 2 (main task):** Runs the generated driver with Nextflow on the cluster.
 
@@ -823,6 +825,7 @@ abc module run <nf-core/module> [flags]
 | `--module-revision`     | Override module revision recorded in generated driver                     |         |
 | `--pipeline-gen-repo`   | GitHub repository for nf-pipeline-gen release assets (`owner/repo`)       | `abc-cluster/nf-pipeline-gen` |
 | `--pipeline-gen-version`| nf-pipeline-gen release version                                           | `latest` |
+| `--pipeline-gen-no-run-manifest` | Pass `--no-run-manifest` to nf-pipeline-gen (omit `run-manifest.json` in the generated driver) | (unset) |
 | `--github-token`        | GitHub token for release API/download access (or `GITHUB_TOKEN`/`GH_TOKEN`) |       |
 | `--nf-version`          | Nextflow Docker image tag                                                 | `25.10.4` |
 | `--nf-plugin-version`   | nf-nomad plugin version for execution config                              | `0.4.0-edge3` |
@@ -850,7 +853,22 @@ abc module run nf-core/modules/samtools/sort \
 
 # Dry-run to inspect generated HCL
 abc module run nf-core/modules/bwa/mem --dry-run
+
+# Supply params/config for nf-pipeline-gen (typical for real inputs)
+abc module run nf-core/modules/fastqc \
+  --params-file ./params.yml \
+  --config-file ./module.config
+
+# Omit run-manifest.json in the driver (smaller tree; less metadata on disk)
+abc module run nf-core/modules/fastqc \
+  --params-file ./params.yml \
+  --config-file ./module.config \
+  --pipeline-gen-no-run-manifest
 ```
+
+For **multiple drivers from one params/config** (tool comparison on the same dataset), run
+[`nf-pipeline-gen` `matrix`](https://github.com/abc-cluster/nf-pipeline-gen) locally or in CI; `abc module run`
+still submits a **single** module per Nomad job.
 
 ---
 
@@ -892,7 +910,7 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--gpus`                        | `--gpus=<int>`                      | GPU count (nvidia/gpu device plugin)                              |
 | `--time`                        | `--time=<HH:MM:SS>`                 | Walltime limit; wraps command in `timeout(1)`                     |
 | `--chdir`                       | `--chdir=<path>`                    | Working directory inside the task sandbox                         |
-| `--driver`                      | `--driver=<string>`                 | Task driver: `exec` (default), `hpc-bridge`, `docker`             |
+| `--driver`                      | `--driver=<string>`                 | Task driver: `exec` (default), `hpc-bridge`, `docker`, `containerd` |
 | `--depend`                      | `--depend=<complete:job-id>`        | Block on another job via prestart lifecycle hook                  |
 | `--output`                      | `--output=<filename>`               | Tee stdout to `$NOMAD_TASK_DIR/<filename>`                        |
 | `--error`                       | `--error=<filename>`                | Tee stderr to `$NOMAD_TASK_DIR/<filename>`                        |
@@ -1400,7 +1418,7 @@ abc data download --tool nextflow --params-file fetchngs-params.yaml
 | Flag | Description |
 |------|-------------|
 | `--tool` | Download tool (default `aria2`) |
-| `--driver` | Nomad task driver: `exec` or `docker` (default `exec`) |
+| `--driver` | Nomad task driver: `exec`, `docker`, or `containerd` (default `exec`; `containerd` uses nomad-driver-containerd + OCI `image=`) |
 | `--source` | Source URL or path (unless `--url-file` is set) |
 | `--url-file` | Newline-separated list of URLs |
 | `--destination` | Directory on the **task** filesystem where files are written (or a special target such as `abc-bucket`) |
@@ -1409,13 +1427,13 @@ abc data download --tool nextflow --params-file fetchngs-params.yaml
 | `--tool-args` | Extra arguments appended to the tool command |
 | `--name` | Passed through as `#ABC --name` on the generated script |
 
-**Placement:** UUIDs (36 hex chars with hyphens) map to `node.unique.id==<uuid>`; any other string maps to `node.unique.name==<value>`. With `--driver=exec`, the chosen tool must exist on that node; with `--driver=docker`, the CLI pins a known-good image per tool (recommended when combining placement with non-`wget` tools).
+**Placement:** UUIDs (36 hex chars with hyphens) map to `node.unique.id==<uuid>`; any other string maps to `node.unique.name==<value>`. With `--driver=exec`, the chosen tool must exist on that node; with `--driver=containerd` or `--driver=docker`, the CLI pins a known-good OCI image per tool (recommended when combining placement with non-`wget` tools).
 
 **`--destination abc-bucket`:** After download, the script runs `abc data upload` for each file under that directory, using the same tus resolution as the CLI (`ABC_UPLOAD_*`, context `upload_endpoint` / `upload_token`, or `--url`-derived `<api>/files/` and `--access-token`).
 
 ```bash
-abc data download --tool wget --source https://example.com/file.zip --destination /tmp/my-dl --driver docker
-abc data download --tool aria2 --source https://example.com/a.bin --destination /tmp/out --node compute-01 --driver docker
+abc data download --tool wget --source https://example.com/file.zip --destination /tmp/my-dl --driver containerd
+abc data download --tool aria2 --source https://example.com/a.bin --destination /tmp/out --node compute-01 --driver containerd
 ```
 
 ---

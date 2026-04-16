@@ -61,7 +61,7 @@ func SetupNomadAndProbeBinaries(w io.Writer) ([]BinarySetupResult, error) {
 	}
 	results = append(results, nomadRes)
 
-	probeRes, err := setupNodeProbeBinary(w)
+	probeRes, err := SetupNodeProbeBinary(w)
 	if err != nil {
 		return results, err
 	}
@@ -69,8 +69,18 @@ func SetupNomadAndProbeBinaries(w io.Writer) ([]BinarySetupResult, error) {
 	return results, nil
 }
 
+// SetupNodeProbeBinary downloads abc-node-probe from GitHub releases into the managed binary dir.
+func SetupNodeProbeBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupNodeProbeBinary(w)
+}
+
 func SetupTailscaleBinary(w io.Writer) (BinarySetupResult, error) {
 	return setupGitHubArchiveBinary(w, "tailscale", "tailscale", "tailscale", []string{".tgz", ".tar.gz"}, "tar.gz")
+}
+
+// SetupRcloneBinary downloads the latest rclone release from GitHub into the managed binary dir.
+func SetupRcloneBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "rclone", "rclone", "rclone", []string{".zip"}, "zip")
 }
 
 func setupNomadBinary(w io.Writer) (BinarySetupResult, error) {
@@ -146,7 +156,8 @@ func findArchiveAssetForPlatform(release *GitHubRelease, archiveExts []string) (
 	}
 	osAliases := []string{goos}
 	if goos == "darwin" {
-		osAliases = append(osAliases, "macos")
+		// GitHub assets often use "osx" (e.g. rclone) or "macos" instead of "darwin".
+		osAliases = append(osAliases, "macos", "osx")
 	}
 
 	extReParts := make([]string, 0, len(archiveExts))

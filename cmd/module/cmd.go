@@ -16,7 +16,8 @@ and running them on Nomad as batch jobs.
 Examples:
   abc module run nf-core/fastqc
   abc module run nf-core/cat/fastq --wait --logs
-  abc module run nf-core/fastqc --params-file params.yml --config-file module.config`,
+  abc module run nf-core/fastqc --params-file params.yml --config-file module.config
+  abc module run nf-core/fastqc --params-file params.yml --config-file module.config --pipeline-gen-no-run-manifest`,
 	}
 
 	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),

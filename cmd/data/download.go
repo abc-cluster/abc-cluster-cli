@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"regexp"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/api"
@@ -33,8 +31,6 @@ type downloadOptions struct {
 	placementNode string
 }
 
-var nomadNodeUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
 const defaultDockerImage = "ghcr.io/abc-cluster/abc-data-transfer:v2026-01-01"
 
 var dockerImageByTool = map[string]string{
@@ -53,7 +49,7 @@ func newDownloadCmd(serverURL, accessToken, workspace *string, factory PipelineC
 		Short: "Download data via various tools",
 		Long: `Download data via selected tool and dispatch as Nomad job.
 
-Supports driver selection (exec/docker) with pinned docker image.
+Supports driver selection (exec, raw_exec, docker, or containerd) with a pinned OCI image when using docker or containerd; Nomad registers Roblox nomad-driver-containerd as task driver "containerd-driver" (the CLI maps --driver=containerd to that name).
 
 Use --destination for the directory on the task filesystem where files are written.
 Use --node to pin the job to a specific Nomad node (node UUID or node name).
@@ -72,7 +68,7 @@ Use --node to pin the job to a specific Nomad node (node UUID or node name).
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "nextflow revision tag/commit")
 
 	cmd.Flags().StringVar(&opts.tool, "tool", "aria2", "download tool: aria2,rclone,wget,s5cmd,nextflow")
-	cmd.Flags().StringVar(&opts.driver, "driver", "exec", "nomad driver: exec or docker")
+	cmd.Flags().StringVar(&opts.driver, "driver", "exec", "nomad driver: exec, raw_exec, docker, or containerd (oci drivers need image; containerd → Nomad task driver containerd-driver)")
 	cmd.Flags().StringVar(&opts.source, "source", "", "source URL/path")
 	cmd.Flags().StringVar(&opts.destination, "destination", "", "directory on the task filesystem for downloaded files (or a special target such as abc-bucket)")
 	cmd.Flags().StringVar(&opts.placementNode, "node", "", "Nomad node to run the download job on (node UUID or node name; adds a placement constraint)")
@@ -95,10 +91,10 @@ func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessTok
 	driver := strings.ToLower(opts.driver)
 
 	if tool != "nextflow" {
-		if driver != "exec" && driver != "docker" {
-			return fmt.Errorf("unsupported driver %q", driver)
+		if driver != "exec" && driver != "raw_exec" && driver != "docker" && driver != "containerd" && driver != "containerd-driver" {
+			return fmt.Errorf("unsupported driver %q (use exec, raw_exec, docker, or containerd)", driver)
 		}
-		if driver == "docker" && opts.destination == "" {
+		if (driver == "docker" || driver == "containerd" || driver == "containerd-driver") && opts.destination == "" {
 			opts.destination = "/tmp/abc-data-download"
 		}
 		uploadEndpoint, err := resolveUploadEndpoint(cmd, "", serverURL)
@@ -107,8 +103,8 @@ func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessTok
 		}
 		uploadToken := resolveUploadToken(cmd, "", accessToken)
 
-		if strings.TrimSpace(opts.placementNode) != "" && driver == "exec" && tool != "wget" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[abc] warning: --node pins the job to a node; with --driver=exec the node must have %q installed. Prefer --driver=docker for pinned tool images.\n", tool)
+		if strings.TrimSpace(opts.placementNode) != "" && (driver == "exec" || driver == "raw_exec") && tool != "wget" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[abc] warning: --node pins the job to a node; with --driver=%s the node must have %q installed. Prefer --driver=containerd (Nomad: containerd-driver) or --driver=docker for pinned OCI images.\n", driver, tool)
 		}
 
 		downloadsScript, err := buildToolScript(opts, serverURL, accessToken, workspace, uploadEndpoint, uploadToken)
@@ -326,74 +322,11 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, u
 	return sb.String(), nil
 }
 
-func placementConstraintPreamble(node string) string {
-	node = strings.TrimSpace(node)
-	if node == "" {
-		return ""
-	}
-	if nomadNodeUUIDPattern.MatchString(node) {
-		return fmt.Sprintf("#ABC --constraint=node.unique.id==%s", node)
-	}
-	return fmt.Sprintf("#ABC --constraint=node.unique.name==%s", node)
-}
-
 func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, driver string) error {
-	// create wrapper script with prefix
-	tmpScript, err := os.CreateTemp("", "abc-data-download-*.sh")
-	if err != nil {
-		return fmt.Errorf("failed to create temp script: %w", err)
-	}
-	defer os.Remove(tmpScript.Name())
-
-	if _, err := tmpScript.WriteString("#!/bin/sh\nset -euo pipefail\n"); err != nil {
-		return fmt.Errorf("failed to write script header: %w", err)
-	}
-	if opts.runName != "" {
-		if _, err := tmpScript.WriteString(fmt.Sprintf("#ABC --name=%s\n", opts.runName)); err != nil {
-			return err
-		}
-	}
-	if line := placementConstraintPreamble(opts.placementNode); line != "" {
-		if _, err := tmpScript.WriteString(line + "\n"); err != nil {
-			return err
-		}
-	}
-	if _, err := tmpScript.WriteString(fmt.Sprintf("#ABC --driver=%s\n", driver)); err != nil {
-		return err
-	}
-	if _, err := tmpScript.WriteString(taskBody); err != nil {
-		return err
-	}
-	if err := tmpScript.Close(); err != nil {
-		return fmt.Errorf("unable to close temp script: %w", err)
-	}
-
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("unable to resolve executable path: %w", err)
-	}
-
-	image := defaultDockerImage
-	if img, ok := dockerImageByTool[strings.ToLower(opts.tool)]; ok {
-		image = img
-	}
-
-	var jobArgs []string
-	if driver == "docker" {
-		jobArgs = []string{"job", "run", "--submit", "--driver", "docker", "--driver.config", fmt.Sprintf("image=%s", image), tmpScript.Name()}
-	} else {
-		jobArgs = []string{"job", "run", "--submit", "--driver=exec", tmpScript.Name()}
-	}
-	if opts.runName != "" {
-		if driver == "docker" {
-			jobArgs = []string{"job", "run", "--submit", "--name", opts.runName, "--driver", "docker", "--driver.config", fmt.Sprintf("image=%s", image), tmpScript.Name()}
-		} else {
-			jobArgs = []string{"job", "run", "--submit", "--name", opts.runName, "--driver=exec", tmpScript.Name()}
-		}
-	}
-
-	task := exec.Command(execPath, jobArgs...)
-	task.Stdout = cmd.OutOrStdout()
-	task.Stderr = cmd.ErrOrStderr()
-	return task.Run()
+	return submitDataNomadScript(cmd, dataNomadScriptOpts{
+		RunName:       opts.runName,
+		PlacementNode: opts.placementNode,
+		Driver:        driver,
+		Tool:          opts.tool,
+	}, taskBody)
 }

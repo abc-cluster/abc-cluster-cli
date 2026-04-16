@@ -11,10 +11,10 @@ import (
 
 // ServiceHealth is the health summary for one backend service.
 type ServiceHealth struct {
-	Name    string `json:"Name"`
-	Status  string `json:"Status"`
-	Version string `json:"Version"`
-	LatencyMs int  `json:"LatencyMs"`
+	Name      string `json:"Name"`
+	Status    string `json:"Status"`
+	Version   string `json:"Version"`
+	LatencyMs int    `json:"LatencyMs"`
 }
 
 // NewCmd returns the "service" subcommand group.
@@ -186,7 +186,8 @@ This checks PATH first and skips download when a binary is already available.
 Current managed binaries:
   - nomad
   - abc-node-probe
-  - tailscale`,
+  - tailscale
+  - rclone`,
 		RunE: runCLISetup,
 	}
 }
@@ -204,6 +205,9 @@ func runCLISetup(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if _, err := utils.SetupTailscaleBinary(out); err != nil {
+		return err
+	}
+	if _, err := utils.SetupRcloneBinary(out); err != nil {
 		return err
 	}
 

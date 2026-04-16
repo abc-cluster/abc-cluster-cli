@@ -113,7 +113,7 @@ abc data encrypt ./data.csv --crypt-password "secret"
 abc data upload ./data.csv.encrypted
 
 # Cluster-side download job (Nomad): --destination is path inside the task; --node pins placement
-abc data download --tool wget --driver docker --source https://example.com/file.zip --destination /tmp/dl --node my-nomad-node
+abc data download --tool wget --driver containerd --source https://example.com/file.zip --destination /tmp/dl --node my-nomad-node
 ```
 
 ## Development

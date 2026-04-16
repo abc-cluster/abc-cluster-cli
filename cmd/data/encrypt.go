@@ -82,47 +82,67 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	passwordProvided := opts.cryptPassword != ""
 	saltProvided := opts.cryptSalt != ""
 
+	ctxName, ctx, ctxErr := cfg.ContextForSecrets()
+	storedPW, storedSalt := "", ""
+	if ctxErr == nil {
+		storedPW, storedSalt = ctx.Crypt.Password, ctx.Crypt.Salt
+	}
+
 	configChanged := false
 	if passwordProvided {
-		if cfg.Defaults.CryptPassword != "" {
-			if cfg.Defaults.CryptPassword != opts.cryptPassword {
+		if storedPW != "" {
+			if storedPW != opts.cryptPassword {
 				return inputError(
 					"crypt password already exists in config file.\n" +
 						"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
 			}
 		} else {
-			cfg.Defaults.CryptPassword = opts.cryptPassword
+			if ctxErr != nil {
+				return inputError(
+					"cannot save crypt password without a saved context: %v\n"+
+						"Run abc auth login (or add a context) and abc context use <name>, then retry.", ctxErr)
+			}
+			ctx.Crypt.Password = opts.cryptPassword
 			configChanged = true
 		}
 	}
 	if saltProvided {
-		if cfg.Defaults.CryptSalt != "" {
-			if cfg.Defaults.CryptSalt != opts.cryptSalt {
+		if storedSalt != "" {
+			if storedSalt != opts.cryptSalt {
 				return inputError(
 					"crypt salt already exists in config file.\n" +
 						"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
 			}
 		} else {
-			cfg.Defaults.CryptSalt = opts.cryptSalt
+			if ctxErr != nil {
+				return inputError(
+					"cannot save crypt salt without a saved context: %v\n"+
+						"Run abc auth login (or add a context) and abc context use <name>, then retry.", ctxErr)
+			}
+			ctx.Crypt.Salt = opts.cryptSalt
 			configChanged = true
 		}
 	}
 	if configChanged {
+		cfg.Contexts[ctxName] = ctx
 		if err := cfg.Save(); err != nil {
 			return err
 		}
 	}
 
 	if opts.unsafeLocal {
-		if cfg.Defaults.CryptPassword == "" {
+		if ctxErr != nil {
+			return inputError("--unsafe-local requires a saved context; %v", ctxErr)
+		}
+		if ctx.Crypt.Password == "" {
 			return inputError("--crypt-password is required in --unsafe-local mode")
 		}
-		opts.cryptPassword = cfg.Defaults.CryptPassword
-		opts.cryptSalt = cfg.Defaults.CryptSalt
+		opts.cryptPassword = ctx.Crypt.Password
+		opts.cryptSalt = ctx.Crypt.Salt
 	} else if !passwordProvided {
-		if cfg.Defaults.CryptPassword != "" {
-			opts.cryptPassword = cfg.Defaults.CryptPassword
-			opts.cryptSalt = cfg.Defaults.CryptSalt
+		if ctxErr == nil && ctx.Crypt.Password != "" {
+			opts.cryptPassword = ctx.Crypt.Password
+			opts.cryptSalt = ctx.Crypt.Salt
 		} else {
 			return inputError(
 				"managed encryption (control-plane key) is not yet available.\n" +

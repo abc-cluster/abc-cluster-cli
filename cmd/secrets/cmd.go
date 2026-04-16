@@ -4,13 +4,15 @@
 // encryption (mozilla/sops local encryption mode). All write operations require the
 // --unsafe-local flag and ABC_CRYPT_PASSWORD environment variable.
 //
-// Schema (in ~/.abc/config.yaml):
+// Schema (in ~/.abc/config.yaml): per active context (see contexts.<name>.secrets).
 //
-//	secrets:
-//	  my-api-key: |
-//	    ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]
-//	  db-password: |
-//	    ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]
+//	contexts:
+//	  my-ctx:
+//	    crypt:
+//	      password: "..."
+//	      salt: "..."
+//	    secrets:
+//	      my-api-key: "<base64 ciphertext>"
 package secrets
 
 import (
@@ -163,11 +165,16 @@ func runSetSecret(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	ctxName, ctx, err := cfg.ContextForSecrets()
+	if err != nil {
+		return err
+	}
+
 	key := args[0]
 	value := args[1]
 
-	if cfg.Secrets == nil {
-		cfg.Secrets = map[string]string{}
+	if ctx.Secrets == nil {
+		ctx.Secrets = map[string]string{}
 	}
 
 	// Encrypt the value
@@ -176,7 +183,8 @@ func runSetSecret(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("encrypt secret: %w", err)
 	}
 
-	cfg.Secrets[key] = encrypted
+	ctx.Secrets[key] = encrypted
+	cfg.Contexts[ctxName] = ctx
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
@@ -206,9 +214,14 @@ func runGetSecret(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	_, ctx, err := cfg.ContextForSecrets()
+	if err != nil {
+		return err
+	}
+
 	key := args[0]
 
-	encrypted, ok := cfg.Secrets[key]
+	encrypted, ok := ctx.Secrets[key]
 	if !ok {
 		return fmt.Errorf("secret %q not found", key)
 	}
@@ -233,8 +246,13 @@ func runListSecrets(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	if len(cfg.Secrets) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No secrets stored.\n")
+	ctxName, ctx, err := cfg.ContextForSecrets()
+	if err != nil {
+		return err
+	}
+
+	if len(ctx.Secrets) == 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "No secrets stored for context %q.\n", ctxName)
 		return nil
 	}
 
@@ -248,7 +266,7 @@ func runListSecrets(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "KEY\tVALUE\n")
-		for key, encrypted := range cfg.Secrets {
+		for key, encrypted := range ctx.Secrets {
 			decrypted, err := config.DecryptField(encrypted, password, salt)
 			if err != nil {
 				fmt.Fprintf(cmd.OutOrStderr(), "Warning: could not decrypt %q: %v\n", key, err)
@@ -257,8 +275,8 @@ func runListSecrets(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", key, decrypted)
 		}
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "SECRETS (%d):\n", len(cfg.Secrets))
-		for key := range cfg.Secrets {
+		fmt.Fprintf(cmd.OutOrStdout(), "SECRETS (context %q, %d keys):\n", ctxName, len(ctx.Secrets))
+		for key := range ctx.Secrets {
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", key)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "\nUse --unsafe-local to view decrypted values (requires ABC_CRYPT_PASSWORD)\n")
@@ -281,7 +299,12 @@ func runDeleteSecret(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	if _, ok := cfg.Secrets[key]; !ok {
+	ctxName, ctx, err := cfg.ContextForSecrets()
+	if err != nil {
+		return err
+	}
+
+	if _, ok := ctx.Secrets[key]; !ok {
 		return fmt.Errorf("secret %q not found", key)
 	}
 
@@ -295,7 +318,8 @@ func runDeleteSecret(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	delete(cfg.Secrets, key)
+	delete(ctx.Secrets, key)
+	cfg.Contexts[ctxName] = ctx
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
@@ -310,34 +334,40 @@ func resolveSecretCredentials(cmd *cobra.Command, cfg *config.Config, envPasswor
 	saltProvided := envSalt != ""
 	configChanged := false
 
-	if cfg.Defaults.CryptPassword != "" {
-		if passwordProvided && envPassword != cfg.Defaults.CryptPassword {
+	ctxName, ctx, err := cfg.ContextForSecrets()
+	if err != nil {
+		return "", "", err
+	}
+
+	if ctx.Crypt.Password != "" {
+		if passwordProvided && envPassword != ctx.Crypt.Password {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: ABC_CRYPT_PASSWORD differs from config; using config value from ~/.abc/config.yaml\n")
 		}
-		envPassword = cfg.Defaults.CryptPassword
+		envPassword = ctx.Crypt.Password
 	} else if passwordProvided {
-		cfg.Defaults.CryptPassword = envPassword
+		ctx.Crypt.Password = envPassword
 		configChanged = true
 	}
 
-	if cfg.Defaults.CryptSalt != "" {
-		if saltProvided && envSalt != cfg.Defaults.CryptSalt {
+	if ctx.Crypt.Salt != "" {
+		if saltProvided && envSalt != ctx.Crypt.Salt {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: ABC_CRYPT_SALT differs from config; using config value from ~/.abc/config.yaml\n")
 		}
-		envSalt = cfg.Defaults.CryptSalt
+		envSalt = ctx.Crypt.Salt
 	} else if saltProvided {
-		cfg.Defaults.CryptSalt = envSalt
+		ctx.Crypt.Salt = envSalt
 		configChanged = true
 	}
 
 	if configChanged {
+		cfg.Contexts[ctxName] = ctx
 		if err := cfg.Save(); err != nil {
 			return "", "", fmt.Errorf("save config: %w", err)
 		}
 	}
 
 	if envPassword == "" {
-		return "", "", fmt.Errorf("ABC_CRYPT_PASSWORD not set and no crypt password stored in config; set ABC_CRYPT_PASSWORD or add crypt_password to ~/.abc/config.yaml")
+		return "", "", fmt.Errorf("ABC_CRYPT_PASSWORD not set and no contexts.<name>.crypt.password on the active context; set ABC_CRYPT_PASSWORD or run: abc secrets init --unsafe-local (after abc context use <name>)")
 	}
 
 	return envPassword, envSalt, nil
