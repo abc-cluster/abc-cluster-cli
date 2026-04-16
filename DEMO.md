@@ -6,7 +6,7 @@ A step-by-step walkthrough of the ABC CLI focused on data management: encryption
 
 This guide covers:
 
-1. **Authentication & Configuration** — Set up API endpoint and credentials
+1. **Context & Configuration** — Set up endpoint, cluster/workspace context, and token
 2. **Encrypted Secrets Management** — Store API keys and credentials securely (AES-256-GCM)
 3. **Local Data Encryption/Decryption** — Prepare sensitive data before upload
 4. **Resumable Data Upload** — Upload files with checkpoint recovery (TUS protocol)
@@ -40,8 +40,8 @@ This is your working directory for all exercises.
 
 ```bash
 abc --version
-abc auth --help
 abc config --help
+abc context --help
 abc secrets --help
 abc data --help
 ```
@@ -50,37 +50,35 @@ abc data --help
 
 ---
 
-## Exercise 1: Authentication & Configuration (5 minutes)
+## Exercise 1: Context & Configuration (5 minutes)
 
-Your first step is to set up authentication so the CLI knows where to send uploads.
+The current CLI uses context/config commands (not `abc auth`) to define endpoint, token, cluster, org, and workspace.
 
-### 1.1 Interactive login
+### 1.1 Create a context
 
 ```bash
-abc auth login
+abc context add dev \
+  --endpoint https://dev.abc-cluster.cloud \
+  --access-token "TOKEN" \
+  --cluster dev-cluster \
+  --organization-id org-dev \
+  --workspace-id ws-dev \
+  --region za-cpt
 ```
 
-**You'll be prompted for:**
-- **API endpoint:** The URL of the ABC platform (e.g., `https://api.abc-cluster.io`)
-- **Access token:** Your authentication token
-
-If you don't have a platform endpoint yet, press Enter and skip this step.
-
-### 1.2 Check what was saved
+### 1.2 Activate and inspect the context
 
 ```bash
+abc context use dev
+abc context show
+abc context list
 abc config list
 ```
 
 **What you should see:**
-- Your context name (auto-generated from endpoint + region)
-- All saved configuration keys
-
-### 1.3 View your current identity
-
-```bash
-abc auth whoami
-```
+- `dev` listed as active context
+- Endpoint/cluster/workspace/region values
+- Config keys in the local config store
 
 
 ---
@@ -476,7 +474,7 @@ abc secrets delete upload-token --unsafe-local
 
 After completing these exercises, you understand:
 
-1. **Authentication:** Login with `abc auth login` to set up your platform endpoint
+1. **Context setup:** Use `abc context add/use` to set endpoint, token, cluster, org, and workspace
 2. **Secrets:** Use `abc secrets --unsafe-local` for encrypted credential storage
 3. **Encryption:** Local encryption with `abc data encrypt` before upload
 4. **Upload:** TUS protocol enables resumable transfers with metadata tracking
@@ -514,7 +512,7 @@ export ABC_CRYPT_PASSWORD="your-password"
 
 ### "Upload fails without endpoint"
 - This is expected - you need a running ABC platform
-- When ready, set with `abc auth login`
+- When ready, configure via `abc context add ...` and `abc context use ...`
 
 ---
 
@@ -522,7 +520,9 @@ export ABC_CRYPT_PASSWORD="your-password"
 
 | Task | Command | Notes |
 |------|---------|-------|
-| Login | `abc auth login` | Interactive setup |
+| Add context | `abc context add <name> ...` | Endpoint/token/cluster/workspace setup |
+| Use context | `abc context use <name>` | Switch active context |
+| Show context | `abc context show` | Inspect active context |
 | Show config | `abc config list` | View all settings |
 | Set secret | `abc secrets set KEY VALUE --unsafe-local` | Encrypted storage |
 | Get secret | `abc secrets get KEY --unsafe-local` | Decrypt and display |
@@ -531,5 +531,4 @@ export ABC_CRYPT_PASSWORD="your-password"
 | Decrypt file | `abc data decrypt FILE.encrypted` | Creates FILE.decrypted |
 | Upload | `abc data upload FILE --endpoint ... --metadata ...` | Requires platform |
 | Download | `abc data download --source ... --destination ... --tool aria2` | Choose tool for source type |
-| Check identity | `abc auth whoami` | Show authenticated user |
 | Get help | `abc --help` or `abc COMMAND --help` | Detailed command info |
