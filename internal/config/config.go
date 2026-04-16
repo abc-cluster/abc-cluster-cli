@@ -2,6 +2,10 @@
 //
 // The config file is stored at ~/.abc/config.yaml by default.
 // The location can be overridden with the ABC_CONFIG_FILE environment variable.
+// After load, ABC_ACTIVE_CONTEXT (if set) overrides active_context in memory only
+// when contexts.<name> exists (the file on disk is unchanged). If the name is not
+// defined, the env var is ignored so minimal configs in unit tests still load.
+// Example: ABC_ACTIVE_CONTEXT=aither go test -tags integration -v ./cmd/job/...
 //
 // Schema versioning:
 // The config file includes a version field for forward/backward compatibility.
@@ -73,7 +77,7 @@ type Context struct {
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
-	Admin          Admin    `yaml:"admin,omitempty"`
+	Admin          Admin  `yaml:"admin,omitempty"`
 
 	// Per-context encrypted secrets (abc secrets) and local crypt key material (rclone crypt / secrets).
 	Secrets map[string]string `yaml:"secrets,omitempty"`
@@ -98,8 +102,8 @@ type Defaults struct {
 type Config struct {
 	Version       string             `yaml:"version,omitempty"`
 	ActiveContext string             `yaml:"active_context,omitempty"`
-	Contexts map[string]Context `yaml:"contexts,omitempty"`
-	Defaults Defaults           `yaml:"defaults,omitempty"`
+	Contexts      map[string]Context `yaml:"contexts,omitempty"`
+	Defaults      Defaults           `yaml:"defaults,omitempty"`
 }
 
 // Load reads the config file. If the file does not exist, an empty Config is
@@ -155,7 +159,22 @@ func LoadFrom(path string) (*Config, error) {
 		cfg.Contexts[name] = ctx
 	}
 	migrateLegacySecretsAndCrypt(data, &cfg)
+	if err := applyActiveContextEnvOverride(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+func applyActiveContextEnvOverride(cfg *Config) error {
+	name := strings.TrimSpace(os.Getenv("ABC_ACTIVE_CONTEXT"))
+	if name == "" {
+		return nil
+	}
+	if _, ok := cfg.Contexts[name]; !ok {
+		return nil
+	}
+	cfg.ActiveContext = name
+	return nil
 }
 
 // Save writes the config to the default path, creating parent directories as
