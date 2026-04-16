@@ -351,31 +351,7 @@ abc data download --help
 - **`--driver`:** `exec` (host binaries) or `docker` (pinned images; recommended with `--node` unless the node already has your tool)
 - **`--parallel`**, **`--tool-args`**, **`--name`**
 
-### 5.2 Understand download tool selection
-
-**Choose your tool based on source:**
-
-| Source | Recommended | Why |
-|--------|-------------|-----|
-| S3 bucket | `s5cmd` or `rclone` | Cloud-optimized, handles credentials |
-| Google Cloud Storage | `rclone` | Better GCS integration |
-| HTTP/HTTPS URL | `aria2` or `wget` | Simple HTTP protocol |
-| Local NFS mount | `wget` or direct cp | No remote tool needed |
-
-### 5.3 Credentials for cloud sources
-
-For S3 or GCS downloads, ensure credentials are configured:
-
-```bash
-# AWS S3 (use your actual credentials)
-export AWS_ACCESS_KEY_ID="your-access-key"
-export AWS_SECRET_ACCESS_KEY="your-secret-key"
-
-# Google Cloud Storage
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
-```
-
-### 5.4 Example: cluster download job (optional)
+### 5.2 Example: cluster download job (optional)
 
 Pick a small public URL for a smoke test. This submits a Nomad job, so your machine must reach the Nomad API (normally after an operator runs `abc infra compute add`, or by exporting `NOMAD_ADDR` and `NOMAD_TOKEN` for this shell). Use `--region global` on submit only when your cluster expects that Nomad RPC region (see **USAGE.md** if unsure).
 
@@ -393,7 +369,7 @@ abc data download \
 
 After the job completes, use the downloaded bytes on that node as input to other steps (re-upload, checksum, encrypt) by wrapping further commands in your own `abc job run` script or extending the download script pattern.
 
-### 5.5 Local temp file for other commands
+### 5.3 Local temp file for other commands
 
 When you only need a **local** large object to practice `abc data upload` (no cluster), create a sparse 1 GiB file so disk usage stays small:
 
