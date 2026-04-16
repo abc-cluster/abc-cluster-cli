@@ -6,6 +6,24 @@ It brings abc-cluster concepts like pipelines and ad-hoc Nomad jobs to the termi
 
 ## Installation
 
+Install from GitHub releases using the installer script:
+
+```bash
+# Download the correct binary for your OS/arch into current directory
+curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash
+
+# Install to /usr/local/bin/abc (prompts for sudo password)
+curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash -s -- --sudo
+```
+
+Install a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash -s -- --version v1.2.3
+```
+
+Alternative install methods:
+
 ```bash
 go install github.com/abc-cluster/abc-cluster-cli@latest
 ```
@@ -39,7 +57,7 @@ Additional optional environment variables:
 |---------------------|---------------------------------------------------|--------------------------------|
 | `ABC_API_ENDPOINT`  | abc-cluster API URL                               | `https://api.abc-cluster.io`   |
 | `ABC_WORKSPACE_ID`  | Workspace ID to use for operations                | *(user's default workspace)*   |
-| `ABC_UPLOAD_ENDPOINT` | Tus upload endpoint used by `abc data upload` (falls back to context upload endpoint or `<url>/data/uploads`) | *(unset)* |
+| `ABC_UPLOAD_ENDPOINT` | Tus upload endpoint used by `abc data upload` (falls back to context upload endpoint or `<url>/files/` from the API URL) | *(unset)* |
 | `ABC_UPLOAD_TOKEN`  | Bearer token used by `abc data upload` for tus auth (falls back to context upload token or `ABC_ACCESS_TOKEN`) | *(unset)* |
 
 ## Usage
@@ -68,8 +86,11 @@ abc job run myjob.sh
 # Submit a job directly to Nomad and stream logs
 abc job run myjob.sh --submit --watch
 
-# Upload a file
+# Upload a file (tus endpoint / token from context, ABC_UPLOAD_*, or flags)
 abc data upload ./data.csv
+
+# Generate local crypt defaults once (optional)
+abc secrets init --unsafe-local
 
 # Run open-source service CLIs through abc wrappers
 abc admin services nebula cli -version
@@ -78,7 +99,10 @@ abc admin services vault cli status
 
 # Encrypt a file before uploading
 abc data encrypt ./data.csv --crypt-password "secret"
-abc data upload ./data.csv.bin
+abc data upload ./data.csv.encrypted
+
+# Cluster-side download job (Nomad): --destination is path inside the task; --node pins placement
+abc data download --tool wget --driver docker --source https://example.com/file.zip --destination /tmp/dl --node my-nomad-node
 ```
 
 ## Development

@@ -14,7 +14,7 @@
 //	contexts:
 //	  org-a-za-cpt:
 //	    endpoint:        "https://api.abc-cluster.io"
-//	    upload_endpoint: "https://uploads.abc-cluster.io/files/"
+//	    upload_endpoint: "https://api.abc-cluster.io/files/"  // defaults from endpoint + /files/
 //	    upload_token:    "s.abc123..."
 //	    access_token:    "eyJ..."
 //	    cluster:         "dev-cluster"

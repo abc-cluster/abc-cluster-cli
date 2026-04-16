@@ -49,6 +49,7 @@ var rootCmd = &cobra.Command{
 	Short:         "abc-cluster CLI",
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	Version:       buildVersionString(),
 	Long: `abc is the command line interface for the abc-cluster platform.
 
 It allows you to manage and run pipelines and batch jobs on the abc-cluster platform
@@ -148,6 +149,21 @@ func cancelledActionFromArgs(args []string) string {
 // version is set at build time via -ldflags "-X cmd.version=v1.2.3".
 // Falls back to "dev" when not set.
 var version = "dev"
+
+// commit is set at build time via -ldflags "-X cmd.commit=<git-sha>".
+// Falls back to "unknown" when not set.
+var commit = "unknown"
+
+func buildVersionString() string {
+	short := strings.TrimSpace(commit)
+	if short == "" || short == "unknown" {
+		return version
+	}
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	return fmt.Sprintf("%s (%s)", version, short)
+}
 
 func init() {
 	cfg, err := config.Load()

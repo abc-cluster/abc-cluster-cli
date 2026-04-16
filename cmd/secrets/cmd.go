@@ -33,6 +33,7 @@ All operations use password-based local encryption.
 Values from ~/.abc/config.yaml take precedence; otherwise ABC_CRYPT_PASSWORD and optional ABC_CRYPT_SALT are used.
 
 Examples:
+  abc secrets init --unsafe-local
   export ABC_CRYPT_PASSWORD="my-secret-passphrase"
   abc secrets set my-api-key "sk-1234567890abcdef" --unsafe-local
   abc secrets get my-api-key --unsafe-local
@@ -41,6 +42,7 @@ Examples:
 	}
 
 	cmd.AddCommand(
+		newInitCmd(),
 		newSetCmd(),
 		newGetCmd(),
 		newListCmd(),

@@ -179,6 +179,8 @@ func newAddCmd() *cobra.Command {
 
 A context includes endpoint, upload endpoint, upload token, access token,
 optional cluster and organization IDs, optional workspace ID, and optional region.
+
+If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate slashes).
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -199,9 +201,18 @@ optional cluster and organization IDs, optional workspace ID, and optional regio
 				return fmt.Errorf("context %q already exists", name)
 			}
 
+			uploadEp := strings.TrimSpace(uploadEndpoint)
+			if uploadEp == "" {
+				derived, err := cfg.DeriveUploadEndpointFromAPI(endpoint)
+				if err != nil {
+					return fmt.Errorf("derive upload endpoint from --endpoint: %w", err)
+				}
+				uploadEp = derived
+			}
+
 			c.SetContext(name, cfg.Context{
 				Endpoint:       endpoint,
-				UploadEndpoint: uploadEndpoint,
+				UploadEndpoint: uploadEp,
 				UploadToken:    uploadToken,
 				AccessToken:    token,
 				Cluster:        cluster,
@@ -220,7 +231,7 @@ optional cluster and organization IDs, optional workspace ID, and optional regio
 	}
 
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "API endpoint URL")
-	cmd.Flags().StringVar(&uploadEndpoint, "upload-endpoint", "", "Tus upload endpoint URL")
+	cmd.Flags().StringVar(&uploadEndpoint, "upload-endpoint", "", "Tus upload endpoint URL (default: <endpoint>/files/)")
 	cmd.Flags().StringVar(&uploadToken, "upload-token", "", "Tus upload token")
 	cmd.Flags().StringVar(&token, "access-token", "", "API access token")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Cluster ID/name")

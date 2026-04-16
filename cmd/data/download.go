@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/api"
@@ -27,7 +28,12 @@ type downloadOptions struct {
 	urlFile     string
 	parallel    int
 	toolArgs    string
+
+	// placementNode is a Nomad node ID (UUID) or node name; adds a placement constraint to the generated job script.
+	placementNode string
 }
+
+var nomadNodeUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 const defaultDockerImage = "ghcr.io/abc-cluster/abc-data-transfer:v2026-01-01"
 
@@ -48,6 +54,9 @@ func newDownloadCmd(serverURL, accessToken, workspace *string, factory PipelineC
 		Long: `Download data via selected tool and dispatch as Nomad job.
 
 Supports driver selection (exec/docker) with pinned docker image.
+
+Use --destination for the directory on the task filesystem where files are written.
+Use --node to pin the job to a specific Nomad node (node UUID or node name).
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDownload(cmd, opts, *serverURL, *accessToken, *workspace, factory)
@@ -65,7 +74,8 @@ Supports driver selection (exec/docker) with pinned docker image.
 	cmd.Flags().StringVar(&opts.tool, "tool", "aria2", "download tool: aria2,rclone,wget,s5cmd,nextflow")
 	cmd.Flags().StringVar(&opts.driver, "driver", "exec", "nomad driver: exec or docker")
 	cmd.Flags().StringVar(&opts.source, "source", "", "source URL/path")
-	cmd.Flags().StringVar(&opts.destination, "dest", "", "destination path")
+	cmd.Flags().StringVar(&opts.destination, "destination", "", "directory on the task filesystem for downloaded files (or a special target such as abc-bucket)")
+	cmd.Flags().StringVar(&opts.placementNode, "node", "", "Nomad node to run the download job on (node UUID or node name; adds a placement constraint)")
 	cmd.Flags().StringVar(&opts.urlFile, "url-file", "", "newline-separated URL file")
 	cmd.Flags().IntVar(&opts.parallel, "parallel", 4, "parallelism")
 	cmd.Flags().StringVar(&opts.toolArgs, "tool-args", "", "extra flags for tool")
@@ -91,7 +101,17 @@ func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessTok
 		if driver == "docker" && opts.destination == "" {
 			opts.destination = "/tmp/abc-data-download"
 		}
-		downloadsScript, err := buildToolScript(opts, serverURL, accessToken, workspace)
+		uploadEndpoint, err := resolveUploadEndpoint(cmd, "", serverURL)
+		if err != nil {
+			return err
+		}
+		uploadToken := resolveUploadToken(cmd, "", accessToken)
+
+		if strings.TrimSpace(opts.placementNode) != "" && driver == "exec" && tool != "wget" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[abc] warning: --node pins the job to a node; with --driver=exec the node must have %q installed. Prefer --driver=docker for pinned tool images.\n", tool)
+		}
+
+		downloadsScript, err := buildToolScript(opts, serverURL, accessToken, workspace, uploadEndpoint, uploadToken)
 		if err != nil {
 			return err
 		}
@@ -256,7 +276,7 @@ func isClusterOrBucketTarget(dest string) bool {
 	return true
 }
 
-func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace string) (string, error) {
+func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, uploadEndpoint, uploadToken string) (string, error) {
 	cmdLine, err := buildToolCommand(opts)
 	if err != nil {
 		return "", err
@@ -281,7 +301,14 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace st
 	}
 
 	if opts.destination == "abc-bucket" {
-		uploadCmd := fmt.Sprintf("abc data upload --url=%s --access-token=%s --workspace=%s", shellEscape(serverURL), shellEscape(accessToken), shellEscape(workspace))
+		if strings.TrimSpace(uploadEndpoint) == "" {
+			return "", fmt.Errorf("upload endpoint is empty; set contexts.<name>.upload_endpoint, ABC_UPLOAD_ENDPOINT, or a valid API --url for derived <api>/files/")
+		}
+		uploadCmd := fmt.Sprintf("abc data upload --url=%s --endpoint=%s", shellEscape(serverURL), shellEscape(uploadEndpoint))
+		if strings.TrimSpace(uploadToken) != "" {
+			uploadCmd += fmt.Sprintf(" --upload-token=%s", shellEscape(uploadToken))
+		}
+		uploadCmd += fmt.Sprintf(" --access-token=%s --workspace=%s", shellEscape(accessToken), shellEscape(workspace))
 		sb.WriteString("echo '=== TASK 2: Uploading to TUS (abc-bucket) ==='\n")
 		sb.WriteString(fmt.Sprintf("find %s -type f -print0 | while IFS= read -r -d '' f; do %s \"$f\"; done\n", shellEscape(dest), uploadCmd))
 		return sb.String(), nil
@@ -299,6 +326,17 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace st
 	return sb.String(), nil
 }
 
+func placementConstraintPreamble(node string) string {
+	node = strings.TrimSpace(node)
+	if node == "" {
+		return ""
+	}
+	if nomadNodeUUIDPattern.MatchString(node) {
+		return fmt.Sprintf("#ABC --constraint=node.unique.id==%s", node)
+	}
+	return fmt.Sprintf("#ABC --constraint=node.unique.name==%s", node)
+}
+
 func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, driver string) error {
 	// create wrapper script with prefix
 	tmpScript, err := os.CreateTemp("", "abc-data-download-*.sh")
@@ -312,6 +350,11 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 	}
 	if opts.runName != "" {
 		if _, err := tmpScript.WriteString(fmt.Sprintf("#ABC --name=%s\n", opts.runName)); err != nil {
+			return err
+		}
+	}
+	if line := placementConstraintPreamble(opts.placementNode); line != "" {
+		if _, err := tmpScript.WriteString(line + "\n"); err != nil {
 			return err
 		}
 	}

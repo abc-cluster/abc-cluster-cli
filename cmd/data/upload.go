@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/bdragon300/tusgo"
 	"github.com/spf13/cobra"
@@ -131,32 +131,6 @@ func uploadPrintfFromContext(ctx context.Context) func(string, ...interface{}) {
 	return fn
 }
 
-func defaultUploadEndpoint() string {
-	if envEndpoint := strings.TrimSpace(os.Getenv("ABC_UPLOAD_ENDPOINT")); envEndpoint != "" {
-		return envEndpoint
-	}
-
-	c, err := cfg.Load()
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(c.ActiveCtx().UploadEndpoint)
-}
-
-func defaultUploadToken() string {
-	if envToken := strings.TrimSpace(os.Getenv("ABC_UPLOAD_TOKEN")); envToken != "" {
-		return envToken
-	}
-
-	c, err := cfg.Load()
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(c.ActiveCtx().UploadToken)
-}
-
 type uploadPreflightChecker interface {
 	PreflightNetwork(ctx context.Context) error
 }
@@ -187,10 +161,10 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&opts.name, "name", "", "display name for the uploaded file")
-	cmd.Flags().StringVar(&opts.endpoint, "endpoint", defaultUploadEndpoint(), "tus upload endpoint URL (or set ABC_UPLOAD_ENDPOINT/contexts.<name>.upload_endpoint; defaults to <url>/data/uploads)")
+	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "tus upload endpoint URL (or set ABC_UPLOAD_ENDPOINT / context upload_endpoint; defaults to <url>/files/ from API --url or context endpoint)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
-	cmd.Flags().StringVar(&opts.token, "upload-token", defaultUploadToken(), "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN/contexts.<name>.upload_token); falls back to --access-token")
+	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN / context upload_token; falls back to --access-token)")
 	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in tus upload metadata")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
 	cmd.Flags().BoolVar(&opts.parallel, "parallel", true, "upload directory files in parallel")
@@ -215,7 +189,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 	}
 
 	if opts.status || opts.clear {
-		endpoint, err := resolveEndpoint(opts.endpoint, serverURL)
+		endpoint, err := resolveUploadEndpoint(cmd, opts.endpoint, serverURL)
 		if err != nil {
 			return err
 		}
@@ -273,7 +247,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 		}
 	}
 
-	endpoint, err := resolveEndpoint(opts.endpoint, serverURL)
+	endpoint, err := resolveUploadEndpoint(cmd, opts.endpoint, serverURL)
 	if err != nil {
 		return err
 	}
@@ -283,11 +257,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 		return err
 	}
 
-	authToken := strings.TrimSpace(opts.token)
-	if authToken == "" {
-		authToken = accessToken
-	}
-	authToken = strings.TrimSpace(authToken)
+	authToken := resolveUploadToken(cmd, opts.token, accessToken)
 
 	var chunkSize int64
 	if opts.rawChunkSize != "" {
@@ -347,17 +317,11 @@ func resolveEndpoint(endpoint, serverURL string) (string, error) {
 }
 
 func buildDefaultEndpoint(serverURL string) (string, error) {
-	parsed, err := url.Parse(serverURL)
+	out, err := abccfg.DeriveUploadEndpointFromAPI(serverURL)
 	if err != nil {
 		return "", inputError("invalid server URL %q: %w", serverURL, err)
 	}
-	trimmedPath := strings.Trim(parsed.Path, "/")
-	if trimmedPath == "" {
-		parsed.Path = "/data/uploads/"
-	} else {
-		parsed.Path = "/" + trimmedPath + "/data/uploads/"
-	}
-	return parsed.String(), nil
+	return out, nil
 }
 
 type uploadResult struct {

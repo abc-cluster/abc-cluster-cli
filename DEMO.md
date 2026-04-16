@@ -36,29 +36,43 @@ cd ~/abc-demo
 
 This is your working directory for all exercises.
 
+### Generate local crypt defaults (recommended)
+
+Stores `defaults.crypt_password` / `defaults.crypt_salt` in `~/.abc/config.yaml` so `abc secrets` and `abc data encrypt` can run without exporting `ABC_CRYPT_PASSWORD` each time:
+
+```bash
+abc secrets init --unsafe-local
+```
+
 ### Verify ABC CLI is installed
 
 ```bash
 abc --version
-abc config --help
-abc context --help
-abc secrets --help
-abc data --help
 ```
 
-**What you should see:** Help text for each command group.
+**What you should see:** Help text for the CLI.
 
 ---
 
-## Exercise 1: Context & Configuration (5 minutes)
+## Exercise 1: Configuration and Context (5 minutes)
 
 The current CLI uses context/config commands (not `abc auth`) to define endpoint, token, cluster, org, and workspace.
+
+Create a config file and add a context to it.
+```bash
+abc config init
+```
+
+**What you should see:**
+- Config file created at `~/.abc/config.yaml`
+- Context added to the config file
 
 ### 1.1 Create a context
 
 ```bash
-abc context add dev \
+abc context add dev2 \
   --endpoint https://dev.abc-cluster.cloud \
+  --upload-token "UPLOAD_TOKEN" \
   --access-token "TOKEN" \
   --cluster dev-cluster \
   --organization-id org-dev \
@@ -69,73 +83,16 @@ abc context add dev \
 ### 1.2 Activate and inspect the context
 
 ```bash
-abc context use dev
+abc context use dev2
 abc context show
 abc context list
-abc config list
+
 ```
 
 **What you should see:**
-- `dev` listed as active context
+- `dev2` listed as active context
 - Endpoint/cluster/workspace/region values
 - Config keys in the local config store
-
-
----
-
-## Exercise 1.5: Soft Onboarding (Nomad Dev Mode)
-
-You can experience infrastructure commands without joining a real ABC cluster.
-
-### 1.5.1 Start local Nomad in dev mode
-
-```bash
-abc --sudo infra compute add --local --dev-mode
-```
-
-**What you should see:**
-- Nomad installation/config/service setup output
-- Final message indicating dev mode (soft onboarding)
-
-### 1.5.2 Inspect nodes in table format
-
-```bash
-abc --sudo infra compute list
-```
-
-### 1.5.3 Inspect nodes in JSON format
-
-```bash
-abc --sudo infra compute list --output json
-```
-
-### 1.5.4 Extract a single field via JSON path
-
-```bash
-# First node name
-abc --sudo infra compute list --output json --json-path 0.Name
-
-# Node eligibility (replace <node-id>)
-abc --sudo infra compute show <node-id> --output json --json-path node.SchedulingEligibility
-```
-
-JSON path currently supports dot notation and array indexes (`foo.bar.0.baz` or `foo[0].bar`).
-
-### 1.5.5 Reuse the saved Nomad context
-
-After `abc infra compute add` stores the node-specific Nomad address and token in the active config,
-the job/pipeline/admin Nomad interfaces reuse them automatically:
-
-```bash
-abc --sudo job list
-abc pipeline run nextflow-io/hello --dry-run
-abc admin services nomad cli status
-```
-
-**What you should see:**
-- `job list` and `pipeline run` use the saved Nomad context when explicit flags are omitted
-- `admin services nomad cli` behaves like a preconfigured `nomad` command using the same context
-
 
 
 ---
@@ -144,18 +101,17 @@ abc admin services nomad cli status
 
 The `abc secrets` command lets you safely store sensitive credentials (tokens, API keys) encrypted at rest. This is useful for storing multiple credentials locally or for different services.
 
-### 2.1 Set your encryption password
+### 2.1 Encryption password
 
-First, you need a password for encrypting secrets. This is the same password used for data encryption:
+If you already ran `abc secrets init --unsafe-local` in the setup phase, the CLI uses the generated `crypt_password` / `crypt_salt` from config for `abc secrets` and `abc data encrypt`.
+
+Otherwise, export a passphrase for this session (same variable used for data encryption):
 
 ```bash
 export ABC_CRYPT_PASSWORD="my-secret-password-123"
 ```
 
-**Security Note:** In production, you would:
-- Use a strong, random password (e.g., `openssl rand -base64 32`)
-- Store it securely (e.g., in a password manager)
-- **Never commit it to version control**
+**Security Note:** In production, prefer `abc secrets init --unsafe-local` or a strong random passphrase (`openssl rand -base64 32`), store it in a password manager, and **never commit it to version control**.
 
 ### 2.2 Store an encrypted secret
 
@@ -266,8 +222,16 @@ EOF
 
 ### 3.2 Encrypt the file
 
+With `defaults.crypt_password` from `abc secrets init --unsafe-local`, or after a first encrypt with `--crypt-password`, you can encrypt without flags:
+
 ```bash
 abc data encrypt sample_data.txt
+```
+
+Or pass a password explicitly (stored in config for later commands):
+
+```bash
+abc data encrypt sample_data.txt --crypt-password "demo-secret"
 ```
 
 **What you should see:**
@@ -290,18 +254,19 @@ cat sample_data.txt.encrypted | head -c 50
 
 ### 3.4 Decrypt the file
 
+Because the plaintext `sample_data.txt` still exists, decryption writes to a sibling path to avoid overwriting:
+
 ```bash
-abc data decrypt sample_data.txt.encrypted
+abc data decrypt sample_data.txt.encrypted --output sample_data.roundtrip.txt
 ```
 
 **What you should see:**
-- New file: `sample_data.txt.decrypted`
-- Contains your original content
+- New file: `sample_data.roundtrip.txt` with your original content
 
 ### 3.5 Verify decryption matches original
 
 ```bash
-diff sample_data.txt sample_data.txt.decrypted
+diff sample_data.txt sample_data.roundtrip.txt
 ```
 
 **What you should see:**
@@ -311,14 +276,14 @@ diff sample_data.txt sample_data.txt.decrypted
 ### 3.6 Clean up
 
 ```bash
-rm sample_data.txt sample_data.txt.encrypted sample_data.txt.decrypted
+rm -f sample_data.txt sample_data.txt.encrypted sample_data.roundtrip.txt
 ```
 
 ---
 
 ## Exercise 4: Understanding Data Upload (10 minutes)
 
-Data upload uses the TUS protocol for resumable transfers. This exercise shows you the workflow without requiring a running platform.
+Data upload uses the TUS protocol for resumable transfers. Endpoint and bearer token are resolved at run time in this order: non-empty `--endpoint` / `--upload-token` if you passed them, then `ABC_UPLOAD_ENDPOINT` / `ABC_UPLOAD_TOKEN`, then the active context’s `upload_endpoint` / `upload_token`, then `<API url>/files/` (derived from the context or `--url` API endpoint, without duplicate slashes), then `--access-token`.
 
 ### 4.1 Review upload capabilities
 
@@ -326,14 +291,12 @@ Data upload uses the TUS protocol for resumable transfers. This exercise shows y
 abc data upload --help
 ```
 
-**What you should see:**
-- **Required flags:**
-  - `--endpoint`: TUS server endpoint (e.g., `https://api.example.com/files/`)
-  - `--metadata key=value`: Add metadata to track uploaded files
-- **Optional flags:**
-  - `--catalog-api-key`: For live platform integration
-  - `--dataset-name`: Tag uploads to a dataset
-  - `--sample-type`: Classify file type
+**What you should see (high level):**
+- `--endpoint` — tus root URL (optional when context or env configures it)
+- `--upload-token` — bearer for tus (optional; falls back to context or `--access-token`)
+- `--meta key=value` — extra tus metadata (repeatable)
+- `--status` / `--clear` — inspect or clear local resume state
+- Client-side encryption flags: `--crypt-password`, `--crypt-salt`
 
 ### 4.2 Understand TUS resumable transfers
 
@@ -353,15 +316,14 @@ The TUS (Tus Resumable Upload Protocol) is designed for:
 
 ### 4.3 Metadata best practices
 
-When uploading, always include metadata for tracking:
+When uploading, include metadata for tracking:
 
 ```bash
-# Example (requires platform endpoint):
-# abc data upload sample.fastq.gz \
-#   --endpoint https://api.example.com/files/ \
-#   --metadata researcher=alice \
-#   --metadata project=malaria-study \
-#   --metadata date=$(date -u +%Y-%m-%d)
+# With upload_endpoint + upload_token on the active context (see context add):
+# abc data upload ./sample.fastq.gz \
+#   --meta researcher=alice \
+#   --meta project=malaria-study \
+#   --meta date=$(date -u +%Y-%m-%d)
 ```
 
 **Metadata helps with:**
@@ -374,26 +336,21 @@ When uploading, always include metadata for tracking:
 
 ## Exercise 5: Data Download Workflows (10 minutes)
 
-Downloads support multiple tools (aria2, rclone, wget, s5cmd) for flexibility based on your environment.
+For tools other than `nextflow`, `abc data download` builds a small shell script and runs `abc job run --submit` so the transfer runs on your Nomad cluster (not necessarily on your laptop).
 
-### 5.1 Review download tools
+### 5.1 Review download flags
 
 ```bash
 abc data download --help
 ```
 
 **What you should see:**
-- **Tool options:**
-  - `--tool aria2`: Fast parallel downloads (default)
-  - `--tool rclone`: Cloud-friendly (S3, GCS, etc.)
-  - `--tool wget`: Simple, always available
-  - `--tool s5cmd`: S3-optimized
-- **Source flags:**
-  - `--source <uri>`: File to download (s3://, gs://, https://, local path, etc.)
-  - `--source-type auto|s3|gs|http|local`: Help tool identify source
-- **Destination flags:**
-  - `--destination <path>`: Where to save locally
-  - `--parallel N`: Maximum parallel connections
+- **`--tool`:** `aria2` (default), `rclone`, `wget`, `s5cmd`, or `nextflow` (fetchngs pipeline mode)
+- **`--source` / `--url-file`:** What to download
+- **`--destination`:** Path **inside the task** where files are written (e.g. `/tmp/my-dl`), or a special target such as `abc-bucket`
+- **`--node`:** Nomad **node** placement — full node UUID or node name; adds `#ABC --constraint=node.unique.id==...` or `node.unique.name==...` to the generated script
+- **`--driver`:** `exec` (host binaries) or `docker` (pinned images; recommended with `--node` unless the node already has your tool)
+- **`--parallel`**, **`--tool-args`**, **`--name`**
 
 ### 5.2 Understand download tool selection
 
@@ -419,92 +376,129 @@ export AWS_SECRET_ACCESS_KEY="your-secret-key"
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
 ```
 
+### 5.4 Example: cluster download job (optional)
+
+Pick a small public URL for a smoke test. This submits a Nomad job; you need a working `abc` context with Nomad (`nomad_addr` / `nomad_token` from `abc infra compute add` or your operator).
+
+```bash
+# Pin to a node you can access (UUID from `nomad node status` or node name).
+# Prefer --driver docker so the image provides wget; with --driver=exec the node must have wget.
+abc data download \
+  --tool wget \
+  --driver docker \
+  --source https://speed.hetzner.de/100MB.bin \
+  --destination /tmp/abc-demo-dl \
+  --node YOUR_NOMAD_NODE_NAME_OR_UUID \
+  --name demo-dl-smoke
+```
+
+After the job completes, use the downloaded bytes on that node as input to other steps (re-upload, checksum, encrypt) by wrapping further commands in your own `abc job run` script or extending the download script pattern.
+
+### 5.5 Local temp file for other commands
+
+When you only need a **local** large object to practice `abc data upload` (no cluster), create a sparse 1 GiB file so disk usage stays small:
+
+```bash
+# macOS — sparse 1 GiB file
+mkfile -n 1g ./large-sample.bin
+
+# Linux — dense 1 GiB (takes real disk); use fallocate -l 1G where available for sparse
+if command -v mkfile >/dev/null 2>&1; then mkfile -n 1g ./large-sample.bin
+elif command -v truncate >/dev/null 2>&1; then truncate -s 1G ./large-sample.bin
+else dd if=/dev/zero of=./large-sample.bin bs=1M count=1024
+fi
+```
+
+Use `./large-sample.bin` with `abc data upload` in the next exercise.
+
 ---
 
-## Exercise 6: Complete Workflow Example (5 minutes)
+## Exercise 6: Complete Workflow Example (10 minutes)
 
-Putting it all together: encrypt → store credential → simulate upload flow.
+Large upload smoke test: local sparse file → optional encrypt → upload using context tus settings.
 
-### 6.1 Create a realistic file
-
-```bash
-cat > genomics_data.fasta << 'EOF'
->sequence_001
-ATCGATCGATCGATCGATCGATCGATCG
->sequence_002
-GCTAGCTAGCTAGCTAGCTAGCTAGCTA
-EOF
-```
-
-### 6.2 Encrypt it
+### 6.1 Create a ~1 GiB test file
 
 ```bash
-abc data encrypt genomics_data.fasta
+# macOS (sparse)
+mkfile -n 1g ./large-sample.bin
+
+# Linux: see §5.5 for truncate/dd fallback
 ```
 
-### 6.3 Store upload credentials
+### 6.2 (Optional) Encrypt before upload
+
+Encrypting 1 GiB can take noticeable CPU time; skip this step if you only want to exercise tus:
+
+```bash
+abc data encrypt ./large-sample.bin --output ./large-sample.bin.encrypted
+```
+
+### 6.3 Ensure tus settings are on the context
+
+Prefer `upload_endpoint` / `upload_token` on the context (see Exercise 1.1) or set `ABC_UPLOAD_ENDPOINT` / `ABC_UPLOAD_TOKEN`. You can still store a long-lived tus token as a secret:
 
 ```bash
 abc secrets set upload-token "token-from-platform" --unsafe-local
 ```
 
-### 6.4 Review what you would upload
-
-In a real scenario, you would:
+### 6.4 Upload (uses context / env resolution)
 
 ```bash
-# (Requires running platform - shown for reference)
-# UPLOAD_TOKEN=$(abc secrets get upload-token --unsafe-local)
-# abc data upload genomics_data.fasta.encrypted \
-#   --endpoint https://api.example.com/files/ \
-#   --metadata researcher=alice \
-#   --metadata analysis=genomics_study
+# When upload_endpoint + upload_token are configured on the active context:
+# abc data upload ./large-sample.bin \
+#   --meta researcher=alice \
+#   --meta analysis=demo-large-upload
+
+# If you kept the tus token only in secrets, pass it explicitly:
+# abc data upload ./large-sample.bin \
+#   --upload-token "$(abc secrets get upload-token --unsafe-local)" \
+#   --meta analysis=demo-large-upload
 ```
 
 ### 6.5 Clean up
 
 ```bash
-rm genomics_data.fasta genomics_data.fasta.encrypted
-abc secrets delete upload-token --unsafe-local
+rm -f ./large-sample.bin ./large-sample.bin.encrypted
 ```
 
 ---
 
-## Exercise 7: `abc job run` (Nomad and SLURM) (10 minutes)
+## Exercise 7: `abc job run` (ABC and SLURM) (10 minutes)
 
 Use `abc job run` to submit shell scripts with `#ABC` directives.
-This exercise shows both pure Nomad execution and SLURM-enabled execution.
+This exercise shows both pure ABC execution and SLURM-enabled execution.
 
-### 7.1 Pure Nomad job (no SLURM)
+### 7.1 Pure ABC job (no SLURM)
 
-Create a Nomad-native smoke script:
+Create a ABC-native smoke script:
 
 ```bash
-cat > nomad-smoke.sh << 'EOF'
+cat > ABC-smoke.sh << 'EOF'
 #!/bin/bash
-#ABC --name=nomad-smoke-demo
+#ABC --name=ABC-smoke-demo
 #ABC --driver=raw_exec
 #ABC --dc=gcp-slurm
 #ABC --cores=1
 #ABC --mem=128M
 set -euo pipefail
-echo "NOMAD smoke test"
+echo "ABC smoke test"
 echo "HOSTNAME=$(hostname)"
 echo "DATE=$(date -Is)"
 EOF
-chmod +x nomad-smoke.sh
+chmod +x ABC-smoke.sh
 ```
 
 Inspect generated HCL first:
 
 ```bash
-abc job run nomad-smoke.sh
+abc job run ABC-smoke.sh
 ```
 
 Submit and stream logs:
 
 ```bash
-abc job run nomad-smoke.sh --submit --watch --region global
+abc job run ABC-smoke.sh --submit --watch --region global
 ```
 
 ### 7.2 SLURM-enabled job (hybrid preamble)
@@ -529,7 +523,7 @@ EOF
 chmod +x hybrid-slurm-smoke.sh
 ```
 
-Inspect translation to Nomad HCL:
+Inspect translation to ABC HCL:
 
 ```bash
 abc job run hybrid-slurm-smoke.sh
@@ -547,12 +541,12 @@ abc job run hybrid-slurm-smoke.sh --submit --watch --region global
 abc job list --status running
 # Optionally stop a job:
 # abc job stop <job-id> --yes
-rm -f nomad-smoke.sh hybrid-slurm-smoke.sh
+rm -f ABC-smoke.sh hybrid-slurm-smoke.sh
 ```
 
 Notes:
-- Nomad example requires a reachable Nomad cluster and valid ACL token/context.
-- SLURM example also requires the `slurm` task driver to be available on eligible Nomad clients.
+- ABC example requires a reachable ABC cluster and valid ACL token/context.
+- SLURM example also requires the `slurm` task driver to be available on eligible ABC clients.
 
 ---
 
@@ -560,12 +554,12 @@ Notes:
 
 After completing these exercises, you understand:
 
-1. **Context setup:** Use `abc context add/use` to set endpoint, token, cluster, org, and workspace
-2. **Secrets:** Use `abc secrets --unsafe-local` for encrypted credential storage
+1. **Context setup:** Use `abc context add/use` to set API endpoint, optional tus `upload_endpoint` / `upload_token`, access token, cluster, org, and workspace
+2. **Secrets:** `abc secrets init --unsafe-local` for local crypt material; `abc secrets --unsafe-local` for encrypted credential storage
 3. **Encryption:** Local encryption with `abc data encrypt` before upload
-4. **Upload:** TUS protocol enables resumable transfers with metadata tracking
-5. **Download:** Multiple tools available depending on your source type
-6. **Job execution:** How to run both Nomad-native and SLURM-enabled jobs via `abc job run`
+4. **Upload:** TUS resumable uploads; endpoint/token resolved from flags, env, or context
+5. **Download:** Tool-based downloads run as Nomad jobs; `--destination` is the task path; `--node` pins placement
+6. **Job execution:** ABC-native and SLURM-enabled jobs via `abc job run`
 
 ---
 
@@ -574,7 +568,7 @@ After completing these exercises, you understand:
 With these fundamentals in place:
 
 - **Test with real data:** Try these workflows with your actual lab datasets
-- **Explore job submission:** Use `abc job run` (Nomad + SLURM paths) to execute analysis
+- **Explore job submission:** Use `abc job run` (ABC + SLURM paths) to execute analysis
 - **Set up monitoring:** Use `abc job logs` and `abc job status` to track runs
 - **Read the docs:** See `docs/abc-cli-design-v7.md` for complete reference
 - **Get help:** Run `abc --help` or `abc <command> --help` for more options
@@ -598,8 +592,8 @@ export ABC_CRYPT_PASSWORD="your-password"
 - Try encrypting a fresh copy
 
 ### "Upload fails without endpoint"
-- This is expected - you need a running ABC platform
-- When ready, configure via `abc context add ...` and `abc context use ...`
+- Set `upload_endpoint` on the context (or rely on default `<endpoint>/files/` from `abc context add`), or export `ABC_UPLOAD_ENDPOINT`, or pass `--endpoint` to `abc data upload`
+- Ensure the tus root returns `Tus-Version` on `OPTIONS`
 
 ---
 
@@ -611,13 +605,15 @@ export ABC_CRYPT_PASSWORD="your-password"
 | Use context | `abc context use <name>` | Switch active context |
 | Show context | `abc context show` | Inspect active context |
 | Show config | `abc config list` | View all settings |
+| Init crypt defaults | `abc secrets init --unsafe-local` | Writes `defaults.crypt_password` / `crypt_salt` |
 | Set secret | `abc secrets set KEY VALUE --unsafe-local` | Encrypted storage |
 | Get secret | `abc secrets get KEY --unsafe-local` | Decrypt and display |
 | List secrets | `abc secrets list` | Keys only; add --unsafe-local for values |
-| Encrypt file | `abc data encrypt FILE` | Creates FILE.encrypted |
-| Decrypt file | `abc data decrypt FILE.encrypted` | Creates FILE.decrypted |
-| Upload | `abc data upload FILE --endpoint ... --metadata ...` | Requires platform |
-| Download | `abc data download --source ... --destination ... --tool aria2` | Choose tool for source type |
-| Job run (Nomad) | `abc job run SCRIPT --submit --watch --region global` | Use `#ABC --driver=raw_exec` |
+| Encrypt file | `abc data encrypt FILE` | Creates `FILE.encrypted` by default |
+| Decrypt file | `abc data decrypt FILE.encrypted` | Strips `.encrypted` or use `--output` |
+| Upload | `abc data upload FILE [--meta k=v ...]` | Tus; endpoint/token from context/env/flags |
+| Download (tools) | `abc data download --tool wget --source URL --destination /tmp/x [--node NODE]` | Submits `abc job run --submit` |
+| Download (fetchngs) | `abc data download --tool nextflow --accession SRR...` | Pipeline mode |
+| Job run (ABC) | `abc job run SCRIPT --submit --watch --region global` | Use `#ABC --driver=raw_exec` |
 | Job run (SLURM) | `abc job run SCRIPT --submit --watch --region global` | Use `#ABC --driver=slurm` + `#SBATCH` |
 | Get help | `abc --help` or `abc COMMAND --help` | Detailed command info |
