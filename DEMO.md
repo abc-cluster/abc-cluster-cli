@@ -470,6 +470,92 @@ abc secrets delete upload-token --unsafe-local
 
 ---
 
+## Exercise 7: `abc job run` (Nomad and SLURM) (10 minutes)
+
+Use `abc job run` to submit shell scripts with `#ABC` directives.
+This exercise shows both pure Nomad execution and SLURM-enabled execution.
+
+### 7.1 Pure Nomad job (no SLURM)
+
+Create a Nomad-native smoke script:
+
+```bash
+cat > nomad-smoke.sh << 'EOF'
+#!/bin/bash
+#ABC --name=nomad-smoke-demo
+#ABC --driver=raw_exec
+#ABC --dc=gcp-slurm
+#ABC --cores=1
+#ABC --mem=128M
+set -euo pipefail
+echo "NOMAD smoke test"
+echo "HOSTNAME=$(hostname)"
+echo "DATE=$(date -Is)"
+EOF
+chmod +x nomad-smoke.sh
+```
+
+Inspect generated HCL first:
+
+```bash
+abc job run nomad-smoke.sh
+```
+
+Submit and stream logs:
+
+```bash
+abc job run nomad-smoke.sh --submit --watch --region global
+```
+
+### 7.2 SLURM-enabled job (hybrid preamble)
+
+Create a script that includes both `#SBATCH` and `#ABC` directives:
+
+```bash
+cat > hybrid-slurm-smoke.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=hybrid-slurm-smoke-demo
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=256M
+#SBATCH --time=00:02:00
+#ABC --name=hybrid-slurm-smoke-demo
+#ABC --driver=slurm
+#ABC --dc=gcp-slurm
+set -euo pipefail
+echo "Hybrid preamble smoke test"
+echo "HOSTNAME=$(hostname)"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}"
+EOF
+chmod +x hybrid-slurm-smoke.sh
+```
+
+Inspect translation to Nomad HCL:
+
+```bash
+abc job run hybrid-slurm-smoke.sh
+```
+
+Submit and stream logs:
+
+```bash
+abc job run hybrid-slurm-smoke.sh --submit --watch --region global
+```
+
+### 7.3 Verify status and cleanup
+
+```bash
+abc job list --status running
+# Optionally stop a job:
+# abc job stop <job-id> --yes
+rm -f nomad-smoke.sh hybrid-slurm-smoke.sh
+```
+
+Notes:
+- Nomad example requires a reachable Nomad cluster and valid ACL token/context.
+- SLURM example also requires the `slurm` task driver to be available on eligible Nomad clients.
+
+---
+
 ## Key Takeaways
 
 After completing these exercises, you understand:
@@ -479,6 +565,7 @@ After completing these exercises, you understand:
 3. **Encryption:** Local encryption with `abc data encrypt` before upload
 4. **Upload:** TUS protocol enables resumable transfers with metadata tracking
 5. **Download:** Multiple tools available depending on your source type
+6. **Job execution:** How to run both Nomad-native and SLURM-enabled jobs via `abc job run`
 
 ---
 
@@ -487,7 +574,7 @@ After completing these exercises, you understand:
 With these fundamentals in place:
 
 - **Test with real data:** Try these workflows with your actual lab datasets
-- **Explore job submission:** Use `abc job run` to execute analysis
+- **Explore job submission:** Use `abc job run` (Nomad + SLURM paths) to execute analysis
 - **Set up monitoring:** Use `abc job logs` and `abc job status` to track runs
 - **Read the docs:** See `docs/abc-cli-design-v7.md` for complete reference
 - **Get help:** Run `abc --help` or `abc <command> --help` for more options
@@ -531,4 +618,6 @@ export ABC_CRYPT_PASSWORD="your-password"
 | Decrypt file | `abc data decrypt FILE.encrypted` | Creates FILE.decrypted |
 | Upload | `abc data upload FILE --endpoint ... --metadata ...` | Requires platform |
 | Download | `abc data download --source ... --destination ... --tool aria2` | Choose tool for source type |
+| Job run (Nomad) | `abc job run SCRIPT --submit --watch --region global` | Use `#ABC --driver=raw_exec` |
+| Job run (SLURM) | `abc job run SCRIPT --submit --watch --region global` | Use `#ABC --driver=slurm` + `#SBATCH` |
 | Get help | `abc --help` or `abc COMMAND --help` | Detailed command info |
