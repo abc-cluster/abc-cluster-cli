@@ -64,6 +64,10 @@ run *args:
 test:
     go test -count=1 ./...
 
+# Same as test, but prefer Nomad/API defaults from this context when present in ~/.abc/config.yaml (ABC_ACTIVE_CONTEXT; see internal/config).
+test-context ctx="aither":
+    ABC_ACTIVE_CONTEXT="{{ctx}}" go test -count=1 ./...
+
 # Race detector (slower).
 test-race:
     go test -count=1 -race ./...
