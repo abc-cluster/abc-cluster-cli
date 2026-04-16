@@ -62,6 +62,8 @@ This document describes every command available in the `abc` CLI.
 - [admin services vault cli](#admin-services-vault-cli)
 - [cluster](#cluster)
 - [accounting](#accounting)
+- [emissions](#emissions)
+- [compliance](#compliance)
 - [admin services](#admin-services)
 - [status (alias)](#status-alias)
 
@@ -92,7 +94,7 @@ These flags are available on every `abc` command.
 
 | Flag      | Scope               | Required for                                   |
 |-----------|---------------------|------------------------------------------------|
-| *(none)*  | User operations     | pipeline, job, data, module, submit                           |
+| *(none)*  | User operations     | pipeline, job, data, module, submit, emissions, compliance      |
 | `--sudo`  | Cluster-admin       | `admin services nomad cli namespace apply/delete`, `infra compute add/drain`   |
 | `--cloud` | Infrastructure      | `cluster provision/decommission`, `accounting set`            |
 | `--user`  | Impersonation       | Act as another user (admin-only; forwarded as `X-ABC-As-User`)|
@@ -1863,6 +1865,37 @@ abc --cloud accounting set [flags]
 
 ```bash
 abc --cloud accounting set --namespace team-alpha --monthly 500 --currency USD --alert-at 0.8
+```
+
+---
+
+## `emissions`
+
+Fetch **carbon emissions** data from the ABC API (`GET /v1/emissions`). Uses global **`--url`**, **`--access-token`**, and optional **`--workspace`** (sent as `workspaceId` query parameter).
+
+| Flag     | Description                          |
+|----------|--------------------------------------|
+| `--from` | Optional reporting window start (`from` query) |
+| `--to`   | Optional reporting window end (`to` query)   |
+
+```bash
+abc emissions --workspace ws-123
+abc emissions --from 2026-01-01 --to 2026-03-31
+```
+
+---
+
+## `compliance`
+
+Fetch **compliance** posture from the ABC API (`GET /v1/compliance`). Uses global **`--url`**, **`--access-token`**, and optional **`--workspace`**.
+
+| Flag      | Description                          |
+|-----------|--------------------------------------|
+| `--scope` | Optional scope filter (`scope` query) |
+
+```bash
+abc compliance --workspace ws-123
+abc compliance --scope workspace
 ```
 
 ---
