@@ -57,7 +57,6 @@ This document describes every command available in the `abc` CLI.
 - [admin services nebula cli](#admin-services-nebula-cli)
 - [admin services rustfs cli](#admin-services-rustfs-cli)
 - [admin services vault cli](#admin-services-vault-cli)
-- [admin services nomad namespace](#admin-services-nomad-namespace)
 - [cluster](#cluster)
 - [cost](#cost)
 - [admin services](#admin-services)
@@ -77,7 +76,7 @@ These flags are available on every `abc` command.
 | `--cluster`      | `ABC_CLUSTER`        | Target a specific named cluster in the fleet     | *(unset)*                    |
 | `--quiet` / `-q` |                      | Suppress informational output to stderr          | `false`                      |
 | `--debug[=N]`    | `ABC_DEBUG`          | Write structured JSON debug log (see [Debug logging](#debug-logging)) | `0` (off) |
-| `--sudo`         | `ABC_CLI_SUDO_MODE`  | Elevate to cluster-admin scope (required for namespace/node write ops) | `false` |
+| `--sudo`         | `ABC_CLI_SUDO_MODE`  | Elevate to cluster-admin scope (required for admin/node write ops) | `false` |
 | `--cloud`        | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope (required for cluster/cost write ops) | `false` |
 | `--exp`          | `ABC_CLI_EXP_MODE`   | Enable experimental CLI features                 | `false`                      |
 | `--user <email>` | `ABC_AS_USER`        | Act on behalf of this user email — admin only    | *(unset)*                    |
@@ -91,7 +90,7 @@ These flags are available on every `abc` command.
 | Flag      | Scope               | Required for                                   |
 |-----------|---------------------|------------------------------------------------|
 | *(none)*  | User operations     | pipeline, job, data, module, submit                           |
-| `--sudo`  | Cluster-admin       | `admin services nomad namespace create/delete`, `infra compute add/drain`   |
+| `--sudo`  | Cluster-admin       | `admin services nomad cli namespace apply/delete`, `infra compute add/drain`   |
 | `--cloud` | Infrastructure      | `cluster provision/decommission`, `cost set`                  |
 | `--user`  | Impersonation       | Act as another user (admin-only; forwarded as `X-ABC-As-User`)|
 | `--exp`   | Experimental        | Community task drivers, unreleased features                   |
@@ -1603,10 +1602,6 @@ abc infra storage size --buckets
 
 ---
 
-## `admin services nomad namespace`
-
-Manage cluster namespaces. Read operations are available to all users; write operations require `--sudo`.
-
 ## `admin services nomad cli`
 
 Run the local `nomad` CLI as a preconfigured passthrough alias. Nomad address, token, and region are
@@ -1659,54 +1654,6 @@ abc admin services vault cli secrets list
 ```
 
 By default this command resolves `vault` first, then `openbao`, and also supports explicit binary overrides via `--binary-location`.
-
-### `admin services nomad namespace list`
-
-```bash
-abc admin services nomad namespace list
-```
-
-### `admin services nomad namespace show <name>`
-
-```bash
-abc admin services nomad namespace show my-ns
-```
-
-### `admin services nomad namespace create` (requires `--sudo`)
-
-```
-abc --sudo admin services nomad namespace create [flags]
-```
-
-| Flag            | Description                                          |
-|-----------------|------------------------------------------------------|
-| `--name`        | Namespace name (**required**)                        |
-| `--description` | Short description                                    |
-| `--group`       | Research group or team name                          |
-| `--contact`     | Contact email for the namespace owner                |
-| `--priority`    | Default job priority for this namespace              |
-| `--node-pool`   | Default node pool                                    |
-
-```bash
-abc --sudo admin services nomad namespace create --name team-alpha \
-  --description "Alpha team namespace" \
-  --group alpha --contact alpha@lab.org
-```
-
-### `admin services nomad namespace delete <name>` (requires `--sudo`)
-
-```
-abc --sudo admin services nomad namespace delete <name> [flags]
-```
-
-| Flag      | Description                                          |
-|-----------|------------------------------------------------------|
-| `--yes`   | Skip confirmation prompt                             |
-| `--drain` | Stop all running jobs before deletion                |
-
-```bash
-abc --sudo admin services nomad namespace delete team-alpha --drain --yes
-```
 
 ---
 
