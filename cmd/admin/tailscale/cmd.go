@@ -10,7 +10,8 @@ func NewCmd() *cobra.Command {
 		Long: `Commands for running Tailscale CLI operations.
 
   abc admin services tailscale cli status
-  abc admin services tailscale cli ip -4`,
+  abc admin services tailscale cli ip -4
+  abc admin services tailscale cli setup`,
 	}
 
 	cmd.AddCommand(newCLICmd())

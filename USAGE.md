@@ -54,6 +54,8 @@ This document describes every command available in the `abc` CLI.
 - [infra compute probe](#infra-compute-probe)
 - [infra storage size](#infra-storage-size)
 - [admin services nomad cli](#admin-services-nomad-cli)
+- [admin services cli setup](#admin-services-cli-setup)
+- [admin services tailscale cli](#admin-services-tailscale-cli)
 - [admin services nebula cli](#admin-services-nebula-cli)
 - [admin services rustfs cli](#admin-services-rustfs-cli)
 - [admin services vault cli](#admin-services-vault-cli)
@@ -1606,15 +1608,44 @@ abc infra storage size --buckets
 
 Run the local `nomad` CLI as a preconfigured passthrough alias. Nomad address, token, and region are
 resolved from the active abc config context when not explicitly provided via flags.
+Run `setup` to optionally download managed binaries into `~/.abc/binaries` (or `ABC_BINARIES_DIR`).
 
 ### `admin services nomad cli [nomad-args...]`
 
 ```bash
 abc admin services nomad cli status
 abc admin services nomad cli node status
+abc admin services nomad cli setup
 ```
 
 Use this command for Nomad operations that abc does not yet implement natively.
+
+## `admin services cli setup`
+
+Download all wrapped CLI binaries into `~/.abc/binaries` (or `ABC_BINARIES_DIR`).
+
+The setup command checks whether each binary is already available in `PATH` and skips downloads when possible.
+Managed binaries currently include:
+- `nomad`
+- `abc-node-probe`
+- `tailscale`
+
+```bash
+abc admin services cli setup
+```
+
+## `admin services tailscale cli`
+
+Run the local `tailscale` CLI as a passthrough alias.
+Run `setup` to optionally download a managed binary into `~/.abc/binaries` (or `ABC_BINARIES_DIR`).
+
+### `admin services tailscale cli [tailscale-args...]`
+
+```bash
+abc admin services tailscale cli status
+abc admin services tailscale cli ip -4
+abc admin services tailscale cli setup
+```
 
 ## `admin services nebula cli`
 
