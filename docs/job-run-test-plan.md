@@ -184,8 +184,8 @@ Full precedence stack: **CLI flags > #ABC > #NOMAD > NOMAD_* env vars > params f
 
 | # | Scenario | Key assertions |
 |---|----------|----------------|
-| A.14.1 | Active context has `nomad_addr` → used as default (verifiable from flag echo) | **new** |
-| A.14.2 | Active context has `nomad_token` → passed to client | **new** |
+| A.14.1 | Active context has `admin.services.nomad.nomad_addr` → used as default (verifiable from flag echo) | **new** |
+| A.14.2 | Active context has `admin.services.nomad.nomad_token` → passed to client | **new** |
 | A.14.3 | Config file missing → falls back to `http://127.0.0.1:4646` default | **new** |
 
 ---

@@ -51,6 +51,16 @@ You need an access token to interact with the abc-cluster API. Configure it in o
   abc --access-token=<your-access-token> <command>
   ```
 
+### Config file (`~/.abc/config.yaml`)
+
+Persistent settings live in `~/.abc/config.yaml` (override path with `ABC_CONFIG_FILE`). Use `abc context add` / `abc config set` to manage them. See **[USAGE.md](./USAGE.md)** for the full key list.
+
+Important distinctions:
+
+- **`contexts.<name>.endpoint`** — ABC control-plane API base URL (often ends with `/v1`).
+- **`contexts.<name>.region`** — ABC / workspace **label** (e.g. `za-cpt`), not Nomad’s RPC region.
+- **`contexts.<name>.admin.services.nomad`** — Defaults for Nomad: **`nomad_addr`** (use `http://host:4646`; bare `http://host` is normalized to port **4646**), **`nomad_token`**, optional **`nomad_region`** (Nomad multi-region id, e.g. `global`; omit for typical single-region clusters).
+
 Additional optional environment variables:
 
 | Variable            | Description                                       | Default                        |
@@ -59,6 +69,7 @@ Additional optional environment variables:
 | `ABC_WORKSPACE_ID`  | Workspace ID to use for operations                | *(user's default workspace)*   |
 | `ABC_UPLOAD_ENDPOINT` | Tus upload endpoint used by `abc data upload` (falls back to context upload endpoint or `<url>/files/` from the API URL) | *(unset)* |
 | `ABC_UPLOAD_TOKEN`  | Bearer token used by `abc data upload` for tus auth (falls back to context upload token or `ABC_ACCESS_TOKEN`) | *(unset)* |
+| `NOMAD_ADDR` / `NOMAD_TOKEN` / `NOMAD_REGION` | Override Nomad connection for one shell session | *(unset)* |
 
 ## Usage
 
@@ -111,13 +122,19 @@ abc data download --tool wget --driver docker --source https://example.com/file.
 # Run tests
 go test ./...
 
+# Or use Just (vet, mod verify, tests)
+just check
+
 # Build
 go build -o abc .
+
+# Install a release-style binary to ~/bin (from repo root when using this package’s justfile)
+just install-local
 
 # Build multi-platform binaries locally (linux/darwin/windows x amd64/arm64)
 bash scripts/local-matrix-build.sh
 
-# Diagnose Slurm control-plane connectivity from Nomad login node
+# Diagnose Slurm control-plane connectivity from Nomad login node (--region here is Nomad RPC region)
 abc job run scripts/slurm-cli-diagnose.sh --submit --watch --region global
 ```
 

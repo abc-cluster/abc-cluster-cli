@@ -6,7 +6,7 @@
 > vs stubbed for future work.
 >
 > Codebase: `github.com/abc-cluster/abc-cluster-cli`
-> Design epoch: 2026-04-14
+> Design epoch: 2026-04-16 (config: Nomad under `admin.services.nomad`; see §0.4, §5, §6)
 
 ---
 
@@ -74,23 +74,21 @@ The following items are explicitly tracked for the next iteration:
 Non-goal for this tracking item:
 - Replacing table UX defaults; table remains the default human-readable mode.
 
-### 0.4 Next Iteration: Config-Backed Nomad Access
+### 0.4 Config-Backed Nomad Access
 
-This iteration treats the active abc config context as the source of truth for node-specific Nomad connectivity.
-The immediate goal is for `abc job`, `abc pipeline`, and `abc submit` to work from saved context values without requiring ad-hoc `--nomad-addr` / `--nomad-token` flags.
+The active abc config context is the source of truth for node-specific Nomad connectivity so `abc job`, `abc pipeline`, and `abc submit` work without ad-hoc `--nomad-addr` / `--nomad-token` when those flags (and `ABC_*` / `NOMAD_*` env overrides) are absent.
 
-Planned behavior:
-
-| Item | Scope | Target |
-|------|-------|--------|
-| Save Nomad connection details in context | `abc infra compute add` | Persist `nomad_addr` and `nomad_token` into the active abc config context after successful node setup |
-| Resolve Nomad defaults from config | `abc job`, `abc pipeline`, `abc submit` | Use saved context values when command flags and root env defaults are absent |
-| Fallback for unsupported Nomad operations | Nomad-specific commands not yet implemented in abc | Shell out to the local `nomad` CLI with the resolved config context values |
+| Item | Scope | Behaviour |
+|------|-------|-----------|
+| Save Nomad connection details | `abc infra compute add` | Persist **`nomad_addr`**, **`nomad_token`** under **`contexts.<name>.admin.services.nomad`** on the active context |
+| Optional Nomad RPC region | Config / flags / env | **`nomad_region`** under the same block, or `--region` / `NOMAD_REGION` — **not** `contexts.<name>.region` (ABC / workspace label) |
+| Resolve Nomad defaults | `abc job`, `abc pipeline`, `abc submit`, `abc admin services nomad cli` | Use `admin.services.nomad.*` when flags and env are absent |
+| Fallback for unsupported Nomad operations | Passthrough | Invoke the local `nomad` CLI with the same resolved address, token, and optional Nomad RPC region |
 
 Fallback policy:
 
 - If abc already implements the operation, use the native implementation.
-- If the operation is Nomad-specific and not yet implemented, invoke the local `nomad` CLI using the resolved `nomad_addr`, `nomad_token`, and `region` from the active context.
+- If the operation is Nomad-specific and not yet implemented, invoke the local `nomad` CLI using **`admin.services.nomad`** (`nomad_addr`, `nomad_token`, optional **`nomad_region`**). Bare `http://host` for `nomad_addr` is normalized to **`http://host:4646`** before calls.
 - This keeps developer workflows moving while native coverage catches up.
 
 ---
@@ -106,7 +104,7 @@ All flags are defined as persistent flags on the root command and available on e
 | `--workspace` | `ABC_WORKSPACE_ID` | Workspace ID | *(user's default)* |
 | `--nomad-addr` | `ABC_ADDR` / `NOMAD_ADDR` | Nomad API address | `http://127.0.0.1:4646` |
 | `--nomad-token` | `ABC_TOKEN` / `NOMAD_TOKEN` | Nomad ACL token | *(unset)* |
-| `--region` | `ABC_REGION` / `NOMAD_REGION` | Nomad region | *(unset)* |
+| `--region` | `ABC_REGION` / `NOMAD_REGION` | Nomad **RPC** region (e.g. `global`). Distinct from `contexts.<name>.region` (ABC label). | *(unset)* |
 | `--cluster` | `ABC_CLUSTER` | Target a specific named cluster | *(unset)* |
 | `--sudo` | `ABC_CLI_SUDO_MODE` | Elevate to cluster-admin scope | `false` |
 | `--cloud` | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope | `false` |
@@ -381,9 +379,10 @@ Fields stored in the context:
 | Workspace ID | `contexts.<name>.workspace_id` | Default workspace for commands |
 | Organization ID | `contexts.<name>.organization_id` | Org identifier |
 | Cluster name | `contexts.<name>.cluster` | Default cluster for infra commands |
-| Region | `contexts.<name>.region` | Nomad region / jurisdiction |
-| Nomad addr | `contexts.<name>.nomad_addr` | Direct Nomad API endpoint (set by `abc infra compute add`) |
-| Nomad token | `contexts.<name>.nomad_token` | Nomad ACL token (set by `abc infra compute add`) |
+| Region | `contexts.<name>.region` | ABC / workspace region label (not Nomad’s `?region=` parameter) |
+| Nomad addr | `contexts.<name>.admin.services.nomad.nomad_addr` | Nomad HTTP API base (set by `abc infra compute add`); include `:4646` or rely on CLI normalization for bare `http://host` |
+| Nomad token | `contexts.<name>.admin.services.nomad.nomad_token` | Nomad ACL token (set by `abc infra compute add`) |
+| Nomad RPC region (optional) | `contexts.<name>.admin.services.nomad.nomad_region` | Nomad multi-region id when required (e.g. `global`); omit for typical single-region clusters |
 
 ### `abc auth logout`
 
@@ -452,9 +451,13 @@ contexts:
     cluster: dev-cluster          # set by abc auth login or abc infra compute add
     organization_id: org-a        # set by abc auth login
     workspace_id: ws-org-a-01    # set by abc auth login
-    region: za-cpt               # set by abc auth login
-    nomad_addr: http://100.70.185.46:4646  # set by abc infra compute add
-    nomad_token: s.123...                  # set by abc infra compute add
+    region: za-cpt               # ABC / workspace label (set by abc auth login)
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://100.70.185.46:4646  # set by abc infra compute add
+          nomad_token: s.123...                  # set by abc infra compute add
+          # nomad_region: global                 # optional; Nomad RPC region only if needed
 defaults:
   output: table
   region: za-cpt
@@ -470,13 +473,14 @@ Currently at v1. All new configs default to v1; legacy configs without a version
 with scrypt key derivation — equivalent to SOPS local password mode. Works offline without
 external KMS. Encrypted fields are marked with SOPS metadata in the YAML for compatibility.
 
-Node-specific Nomad connection details are also stored in the active context:
+Node-specific Nomad connection details are stored under **`contexts.<name>.admin.services.nomad`**:
 
-- `contexts.<name>.nomad_addr` for the Tailscale-reachable Nomad API endpoint
-- `contexts.<name>.nomad_token` for the ACL token associated with that node/context
+- **`nomad_addr`** — Nomad HTTP API base (reachable from where you run the CLI; often `:4646`)
+- **`nomad_token`** — ACL token for that cluster
+- **`nomad_region`** (optional) — Nomad RPC region id when not default; **not** the same field as `contexts.<name>.region`
 
-These values are treated as the default Nomad connection for `abc job`, `abc pipeline`, and
-`abc submit` when command flags are not provided.
+These values are the default Nomad connection for `abc job`, `abc pipeline`, `abc submit`, and
+`abc admin services nomad cli` when flags and `NOMAD_*` / `ABC_*` env overrides are absent.
 
 ### `abc config init`
 
@@ -506,9 +510,10 @@ Set a configuration key to a value.
 | `contexts.<name>.cluster` | Default cluster for infra commands | `dev-cluster` |
 | `contexts.<name>.organization_id` | Organization identifier | `org-a` |
 | `contexts.<name>.workspace_id` | Default workspace | `ws-org-a-01` |
-| `contexts.<name>.region` | Region override for this context | `za-cpt` |
-| `contexts.<name>.nomad_addr` | Node-specific Nomad API address (set by infra) | `http://100.70.185.46:4646` |
-| `contexts.<name>.nomad_token` | Node-specific Nomad ACL token (set by infra) | `s.123...` |
+| `contexts.<name>.region` | ABC / workspace region label (not Nomad RPC `?region=`) | `za-cpt` |
+| `contexts.<name>.admin.services.nomad.nomad_addr` | Nomad API base URL (set by infra) | `http://100.70.185.46:4646` |
+| `contexts.<name>.admin.services.nomad.nomad_token` | Nomad ACL token (set by infra) | `s.123...` |
+| `contexts.<name>.admin.services.nomad.nomad_region` | Nomad RPC region when required | `global` |
 
 **Expected output:**
 ```

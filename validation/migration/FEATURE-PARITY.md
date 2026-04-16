@@ -41,7 +41,7 @@ By default, ABC scripts should use `NOMAD_*` runtime variables. Legacy `SLURM_*`
 | Secrets dir | *(not available)* | *(not available)* | `$NOMAD_SECRETS_DIR` (`--secrets_dir`) |
 | Datacenter | *(not exposed)* | `$SLURM_CLUSTER_NAME` | `$NOMAD_DC` (`--dc`) |
 | Namespace | *(not available)* | *(not available)* | `$NOMAD_NAMESPACE` (`--namespace`) |
-| Region | *(not exposed)* | *(not exposed)* | `$NOMAD_REGION` *(always injected)* |
+| Region | *(not exposed)* | *(not exposed)* | `$NOMAD_REGION` *(Nomad scheduler region; injected at task runtime — not the same as `contexts.*.region` in `~/.abc/config.yaml`)* |
 | Alloc name | *(not available)* | *(not available)* | `$NOMAD_ALLOC_NAME` (`--alloc_name`) |
 | Parent job ID | *(not available)* | *(not available)* | `$NOMAD_JOB_PARENT_ID` (`--parent_job_id`) |
 
