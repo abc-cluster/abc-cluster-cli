@@ -26,6 +26,7 @@
 //	    organization_id: "org-dev"
 //	    workspace_id:    ""
 //	    region:          ""
+//	    cluster_type:    "abc-nodes"  # optional: abc-nodes | abc-cluster | abc-cloud
 //	    crypt:           # optional; local rclone crypt + abc secrets key material
 //	      password: "..."
 //	      salt:     "..."
@@ -78,7 +79,9 @@ type Context struct {
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
-	Admin          Admin  `yaml:"admin,omitempty"`
+	// ClusterType is one of abc-nodes | abc-cluster | abc-cloud (platform tier).
+	ClusterType string `yaml:"cluster_type,omitempty"`
+	Admin         Admin  `yaml:"admin,omitempty"`
 
 	// Per-context encrypted secrets (abc secrets) and local crypt key material (rclone crypt / secrets).
 	Secrets map[string]string `yaml:"secrets,omitempty"`
@@ -331,6 +334,8 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.WorkspaceID, true
 		case "region":
 			return ctx.Region, true
+		case "cluster_type":
+			return ctx.ClusterType, true
 		}
 	}
 	return "", false
@@ -417,6 +422,12 @@ func (c *Config) Set(key, value string) error {
 			ctx.WorkspaceID = value
 		case "region":
 			ctx.Region = value
+		case "cluster_type":
+			norm, ok := NormalizeClusterType(value)
+			if !ok {
+				return fmt.Errorf("invalid cluster_type %q (want %s, %s, or %s)", value, ClusterTypeABCNodes, ClusterTypeABCCluster, ClusterTypeABCCloud)
+			}
+			ctx.ClusterType = norm
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
@@ -509,6 +520,8 @@ func (c *Config) Unset(key string) error {
 			ctx.WorkspaceID = ""
 		case "region":
 			ctx.Region = ""
+		case "cluster_type":
+			ctx.ClusterType = ""
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
@@ -550,6 +563,9 @@ func (c *Config) AllKeys() [][2]string {
 		}
 		if ctx.Region != "" {
 			out = append(out, [2]string{"contexts." + name + ".region", ctx.Region})
+		}
+		if ctx.ClusterType != "" {
+			out = append(out, [2]string{"contexts." + name + ".cluster_type", ctx.ClusterType})
 		}
 		if ctx.Admin.Services.Nomad != nil {
 			if ctx.Admin.Services.Nomad.Addr != "" {

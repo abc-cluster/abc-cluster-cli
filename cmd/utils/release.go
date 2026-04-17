@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -121,12 +122,45 @@ func findAssetForPlatform(release *GitHubRelease, binaryBase string) *GitHubRele
 
 func findAssetForPlatformTarget(release *GitHubRelease, binaryBase, goos, goarch string) *GitHubReleaseAsset {
 	expectedName := getPlatformBinaryNameFor(binaryBase, goos, goarch)
-	for i, asset := range release.Assets {
-		if asset.Name == expectedName {
+	for i := range release.Assets {
+		if release.Assets[i].Name == expectedName {
+			return &release.Assets[i]
+		}
+	}
+	// Fallback: exact name not found (older releases, renames) — match by prefix or tokens.
+	normOS := normalizeGOOS(goos)
+	normArch := normalizeGOARCH(goarch)
+	prefix := strings.ToLower(fmt.Sprintf("%s-%s-%s", binaryBase, normOS, normArch))
+	for i := range release.Assets {
+		name := strings.ToLower(release.Assets[i].Name)
+		if releaseAssetLikelyAuxiliary(name) {
+			continue
+		}
+		if strings.HasPrefix(name, prefix) {
+			return &release.Assets[i]
+		}
+	}
+	baseLower := strings.ToLower(binaryBase)
+	osTok := strings.ToLower(normOS)
+	archTok := strings.ToLower(normArch)
+	for i := range release.Assets {
+		name := strings.ToLower(release.Assets[i].Name)
+		if releaseAssetLikelyAuxiliary(name) {
+			continue
+		}
+		if strings.Contains(name, baseLower) && strings.Contains(name, osTok) && strings.Contains(name, archTok) {
 			return &release.Assets[i]
 		}
 	}
 	return nil
+}
+
+func releaseAssetLikelyAuxiliary(name string) bool {
+	return strings.HasSuffix(name, ".txt") ||
+		strings.HasSuffix(name, ".md") ||
+		strings.HasSuffix(name, ".sig") ||
+		strings.Contains(name, "sha256") ||
+		strings.Contains(name, "checksum")
 }
 
 // DownloadReleaseAsset downloads a release asset and caches it locally.
@@ -142,6 +176,26 @@ func DownloadReleaseAsset(owner, repo, binaryBase string) (string, error) {
 		return "", err
 	}
 
+	preferName := getPlatformBinaryNameFor(binaryBase, runtime.GOOS, runtime.GOARCH)
+	tryPath := filepath.Join(cacheDir, release.TagName, preferName)
+
+	// Check if already cached and valid (preferred flat name first)
+	if isCacheValid(tryPath, DefaultCacheTTL) {
+		return tryPath, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(tryPath), 0755); err != nil {
+		return "", fmt.Errorf("creating versioned cache directory: %w", err)
+	}
+
+	// Prefer eget (https://github.com/zyedidia/eget) when installed — better
+	// asset matching and checksum verification for typical flat GitHub binaries.
+	if UseEgetForGitHubDownloads() {
+		if err := tryEgetDownloadFlatRelease(context.Background(), owner, repo, runtime.GOOS, runtime.GOARCH, preferName, tryPath); err == nil {
+			return tryPath, nil
+		}
+	}
+
 	asset := findAssetForPlatform(release, binaryBase)
 	if asset == nil {
 		return "", fmt.Errorf("no release asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -151,7 +205,7 @@ func DownloadReleaseAsset(owner, repo, binaryBase string) (string, error) {
 	cachePath := filepath.Join(cacheDir, release.TagName, asset.Name)
 
 	// Check if already cached and valid
-	if isCacheValid(cachePath, DefaultCacheTTL) {
+	if cachePath != tryPath && isCacheValid(cachePath, DefaultCacheTTL) {
 		return cachePath, nil
 	}
 
