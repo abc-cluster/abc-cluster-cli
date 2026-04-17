@@ -2,8 +2,10 @@ package compute
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"text/template"
@@ -53,46 +55,53 @@ var nodeProbeJobTemplate = template.Must(template.New("node_probe_job").Parse(`j
 			driver = "raw_exec"
 
 			config {
-				command = {{printf "%q" .Command}}
+				command = "local/probe.sh"
 				args    = {{.ArgsHCL}}
 			}
 
-{{- if .DownloadURL }}
 			template {
 				data = <<SCRIPT
 #!/usr/bin/env bash
 set -euo pipefail
 
 BIN_PATH="${NOMAD_TASK_DIR}/abc-node-probe"
-FALLBACK_PATH="/opt/nomad/abc-node-probe"
+FALLBACK_PATH={{printf "%q" .FallbackPath}}
 DOWNLOAD_URL={{printf "%q" .DownloadURL}}
 
-if [ ! -x "$BIN_PATH" ]; then
+download_via_https() {
+  local url="$1"
+  local out="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 5 --retry-delay 1 --retry-all-errors --connect-timeout 20 --max-time 300 "$DOWNLOAD_URL" -o "$BIN_PATH" || true
+    curl -fL --retry 5 --retry-delay 1 --retry-all-errors --connect-timeout 20 --max-time 300 "$url" -o "$out"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --tries=5 --timeout=30 -O "$BIN_PATH" "$DOWNLOAD_URL" || true
+    wget -q --tries=5 --timeout=30 -O "$out" "$url"
+  else
+    echo "abc-node-probe: need curl or wget to download release binary" >&2
+    return 1
   fi
-  if [ -f "$BIN_PATH" ]; then
-    chmod 755 "$BIN_PATH" || true
+}
+
+if [[ -n "${DOWNLOAD_URL}" ]]; then
+  if [[ ! -x "${BIN_PATH}" ]]; then
+    download_via_https "${DOWNLOAD_URL}" "${BIN_PATH}"
+    chmod 755 "${BIN_PATH}"
   fi
 fi
 
-if [ ! -x "$BIN_PATH" ] && [ -x "$FALLBACK_PATH" ]; then
-  BIN_PATH="$FALLBACK_PATH"
+if [[ ! -x "${BIN_PATH}" ]] && [[ -x "${FALLBACK_PATH}" ]]; then
+  BIN_PATH="${FALLBACK_PATH}"
 fi
 
-if [ ! -x "$BIN_PATH" ]; then
-  echo "abc-node-probe binary not available" >&2
+if [[ ! -x "${BIN_PATH}" ]]; then
+  echo "abc-node-probe binary not available (DOWNLOAD_URL empty means no GitHub URL was embedded; install to ${FALLBACK_PATH} or fix release resolution)" >&2
   exit 1
 fi
 
-exec "$BIN_PATH" "$@"
+exec "${BIN_PATH}" "$@"
 SCRIPT
 				destination = "local/probe.sh"
 				perms       = "0755"
 			}
-{{- end }}
 
 			resources {
 				cpu    = 500
@@ -114,9 +123,14 @@ to the specified node. The probe runs with --nomad-mode to exit cleanly (code 0)
 regardless of probe results. The actual node readiness verdict is in the JSON
 output and the summary section.
 
-The probe binary must be pre-installed at /opt/nomad/abc-node-probe on the target node.
+By default the job embeds a bootstrap script that downloads the latest matching
+release asset for the node's OS/architecture from GitHub. If GitHub cannot be
+resolved, the command fails unless you pass --installed-binary-only (expects
+the binary at /opt/nomad/abc-node-probe on the node).
 
-  abc infra compute probe nomad-client-02 --jurisdiction=ZA`,
+  abc infra compute probe nomad-client-02 --jurisdiction=ZA
+  abc infra compute probe nomad-client-02 --platform=linux/arm64
+  abc infra compute probe nomad-client-02 --installed-binary-only`,
 		Args: cobra.ExactArgs(1),
 		RunE: runProbe,
 	}
@@ -129,6 +143,10 @@ The probe binary must be pre-installed at /opt/nomad/abc-node-probe on the targe
 	cmd.Flags().Bool("detach", false, "Submit probe and return without waiting for logs")
 	cmd.Flags().Duration("wait-timeout", defaultProbeWaitTimeout,
 		"Maximum time to wait while streaming probe results")
+	cmd.Flags().String("platform", "",
+		"Override OS/arch for the downloaded probe binary (e.g. linux/arm64); default is inferred from Nomad node fingerprints")
+	cmd.Flags().Bool("installed-binary-only", false,
+		"Skip GitHub: only run the probe binary already installed at /opt/nomad/abc-node-probe (no download)")
 	return cmd
 }
 
@@ -144,10 +162,26 @@ func runProbe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve latest release asset for in-job download; fall back to pre-installed path.
-	downloadURL, version, err := utils.GetLatestReleaseAssetURL(probeGitHubOwner, probeGitHubRepo, probeBinaryName)
+	goos, goarch, err := resolveProbePlatform(cmd, node)
 	if err != nil {
+		return err
+	}
+
+	installedOnly, _ := cmd.Flags().GetBool("installed-binary-only")
+	var downloadURL, version string
+	if installedOnly {
 		downloadURL = ""
+		version = "installed-only"
+	} else {
+		var errGH error
+		downloadURL, version, errGH = utils.GetLatestReleaseAssetURLForPlatform(
+			probeGitHubOwner, probeGitHubRepo, probeBinaryName, goos, goarch)
+		if errGH != nil {
+			return fmt.Errorf("resolve GitHub release asset for probe (%s/%s): %w\n\n"+
+				"Hints: export GITHUB_TOKEN or GH_TOKEN if rate-limited; check --platform=os/arch; "+
+				"or use --installed-binary-only when %q is already on the node",
+				goos, goarch, errGH, nodeProbeInstalledPath)
+		}
 	}
 	if version == "" {
 		version = "unknown"
@@ -198,6 +232,7 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "  ✓ Probe dispatched\n")
 	fmt.Fprintf(out, "  Node           %s (%s)\n", node.Name, shortID(node.ID))
+	fmt.Fprintf(out, "  Node platform  %s/%s\n", goos, goarch)
 	fmt.Fprintf(out, "  Nomad job ID   %s\n", resp.DispatchedJobID)
 	fmt.Fprintf(out, "  Evaluation ID  %s\n", resp.EvalID)
 	fmt.Fprintf(out, "  Probe version  %s\n", version)
@@ -212,7 +247,58 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	if err := utils.WatchJobLogsForTask(cmd.Context(), nc, resp.DispatchedJobID, "", "probe", out, defaultProbeWatchDelay, waitTimeout); err != nil {
 		return fmt.Errorf("streaming probe output: %w", err)
 	}
+	if err := reportProbeTaskOutcome(cmd.Context(), nc, cmd.ErrOrStderr(), resp.DispatchedJobID, "probe"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func resolveProbePlatform(cmd *cobra.Command, node *utils.NomadNode) (goos, goarch string, err error) {
+	if p, _ := cmd.Flags().GetString("platform"); strings.TrimSpace(p) != "" {
+		parts := strings.SplitN(strings.TrimSpace(p), "/", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return "", "", fmt.Errorf("--platform must be os/arch, e.g. linux/arm64")
+		}
+		return strings.TrimSpace(strings.ToLower(parts[0])), strings.TrimSpace(strings.ToLower(parts[1])), nil
+	}
+	return utils.NomadNodeReleasePlatform(node)
+}
+
+func reportProbeTaskOutcome(ctx context.Context, nc *utils.NomadClient, errOut io.Writer, jobID, task string) error {
+	allocs, err := nc.GetJobAllocs(ctx, jobID, "", false)
+	if err != nil {
+		return fmt.Errorf("fetch allocations after probe: %w", err)
+	}
+	var latest *utils.NomadAllocStub
+	for i := range allocs {
+		a := &allocs[i]
+		if latest == nil || a.CreateTime > latest.CreateTime {
+			latest = a
+		}
+	}
+	if latest == nil {
+		return fmt.Errorf("no allocation found for probe job %q", jobID)
+	}
+
+	ts, ok := latest.TaskStates[task]
+	taskFailed := ok && ts.Failed && (strings.EqualFold(ts.State, "dead") || strings.EqualFold(ts.State, "failed"))
+	allocFailed := strings.EqualFold(latest.ClientStatus, "failed")
+
+	if !taskFailed && !allocFailed {
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(errOut, "\n--- probe stderr ---\n")
+	_ = nc.StreamLogs(ctx, latest.ID, task, "stderr", "start", 0, false, errOut)
+
+	if allocFailed && ok {
+		return fmt.Errorf("probe failed (allocation client_status=%s, task %q state=%s failed=%v)",
+			latest.ClientStatus, task, ts.State, ts.Failed)
+	}
+	if allocFailed {
+		return fmt.Errorf("probe failed (allocation client_status=%s)", latest.ClientStatus)
+	}
+	return fmt.Errorf("probe task %q failed (state=%s)", task, ts.State)
 }
 
 func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*utils.NomadNode, error) {
@@ -252,19 +338,15 @@ func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*uti
 	return resolved, nil
 }
 
-func buildNodeProbeJobHCL(datacenter, nodeID, probePath, downloadURL string, probeArgs []string) string {
+func buildNodeProbeJobHCL(datacenter, nodeID, fallbackProbePath, downloadURL string, probeArgs []string) string {
 	datacenter = strings.TrimSpace(datacenter)
 	if datacenter == "" {
 		datacenter = "dc1"
 	}
 	nodeID = strings.TrimSpace(nodeID)
-	probePath = strings.TrimSpace(probePath)
-	if probePath == "" {
-		probePath = nodeProbeInstalledPath
-	}
-	command := probePath
-	if strings.TrimSpace(downloadURL) != "" {
-		command = "local/probe.sh"
+	fallbackProbePath = strings.TrimSpace(fallbackProbePath)
+	if fallbackProbePath == "" {
+		fallbackProbePath = nodeProbeInstalledPath
 	}
 
 	argsHCL := "[]"
@@ -275,19 +357,19 @@ func buildNodeProbeJobHCL(datacenter, nodeID, probePath, downloadURL string, pro
 	}
 
 	data := struct {
-		JobID       string
-		Datacenter  string
-		NodeID      string
-		Command     string
-		ArgsHCL     string
-		DownloadURL string
+		JobID        string
+		Datacenter   string
+		NodeID       string
+		ArgsHCL      string
+		DownloadURL  string
+		FallbackPath string
 	}{
-		JobID:       nodeProbeJobID,
-		Datacenter:  datacenter,
-		NodeID:      nodeID,
-		Command:     command,
-		ArgsHCL:     argsHCL,
-		DownloadURL: strings.TrimSpace(downloadURL),
+		JobID:        nodeProbeJobID,
+		Datacenter:   datacenter,
+		NodeID:       nodeID,
+		ArgsHCL:      argsHCL,
+		DownloadURL:  strings.TrimSpace(downloadURL),
+		FallbackPath: fallbackProbePath,
 	}
 
 	var b bytes.Buffer

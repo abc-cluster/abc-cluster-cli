@@ -1641,13 +1641,20 @@ abc --sudo infra compute show nomad-client-02 --output json --json-path node.Sch
 
 Run `abc-node-probe` on a specific node via a parameterized system Nomad job.
 
+The job always runs a small `local/probe.sh` bootstrap that downloads the latest
+matching `abc-node-probe` GitHub release asset for the **target node's** OS/architecture
+(from Nomad node fingerprints), not the machine running `abc`. Override with
+`--platform=os/arch` if needed. If GitHub resolution fails, the command errors
+(unless `--installed-binary-only`).
+
 ```
 abc infra compute probe <node-id> [flags]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--binary` | Path to `abc-node-probe` Linux binary to deploy |
+| `--platform` | Override OS/arch for the downloaded probe binary (e.g. `linux/arm64`) |
+| `--installed-binary-only` | Skip GitHub; require `/opt/nomad/abc-node-probe` on the node |
 | `--jurisdiction` | Optional jurisdiction forwarded to probe |
 | `--skip-categories` | Optional comma-separated probe categories to skip |
 | `--json` | Request JSON-only probe output |
@@ -1658,6 +1665,7 @@ abc infra compute probe <node-id> [flags]
 ```bash
 abc --sudo infra compute probe nomad-client-02 --jurisdiction ZA
 abc --sudo infra compute probe nomad-client-02 --json --wait-timeout 2m
+abc --sudo infra compute probe nomad-arm-01 --platform=linux/arm64
 ```
 
 ---

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -127,14 +128,21 @@ func setupGitHubArchiveBinary(w io.Writer, name, owner, repo string, assetSuffix
 	}
 	version := strings.TrimPrefix(release.TagName, "v")
 
-	asset, err := findArchiveAssetForPlatform(release, assetSuffixes)
-	if err != nil {
-		return BinarySetupResult{}, fmt.Errorf("resolve %s asset for %s/%s: %w", name, runtime.GOOS, runtime.GOARCH, err)
-	}
-
 	dest, err := ManagedBinaryPath(name)
 	if err != nil {
 		return BinarySetupResult{}, err
+	}
+
+	if UseEgetForGitHubDownloads() {
+		if err := tryEgetInstallGitHubTool(context.Background(), owner, repo, name, dest); err == nil {
+			fmt.Fprintf(w, "  - %s: installed %s at %s (eget)\n", name, version, dest)
+			return BinarySetupResult{Name: name, Path: dest, Version: version}, nil
+		}
+	}
+
+	asset, err := findArchiveAssetForPlatform(release, assetSuffixes)
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("resolve %s asset for %s/%s: %w", name, runtime.GOOS, runtime.GOARCH, err)
 	}
 	if err := downloadAndExtractAsset(asset.DownloadURL, asset.Name, extractMode, name, dest); err != nil {
 		return BinarySetupResult{}, fmt.Errorf("install %s: %w", name, err)

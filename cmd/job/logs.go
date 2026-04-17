@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -84,7 +85,9 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		origin = "end"
 	}
 
-	if follow && target.ClientStatus != "running" {
+	// Only demote follow for terminal allocs. Pending/starting must keep
+	// follow=true or the log API returns a snapshot and EOF immediately.
+	if follow && utils.AllocClientTerminalStatus(target.ClientStatus) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Allocation %s is %s; showing completed logs and exiting.\n\n", target.ID[:8], target.ClientStatus)
 		follow = false
 		origin = "start"

@@ -9,11 +9,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -818,9 +820,63 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 					break
 				}
 			}
-			follow := chosen.ClientStatus == "running"
-			if err := nc.StreamLogs(ctx, chosen.ID, task, "stdout", "start", 0, follow, w); err != nil {
-				emsg := err.Error()
+			// Pending / starting allocs must use follow=true or Nomad closes the
+			// log stream immediately (snapshot EOF) and we would return below and
+			// exit the whole watch before the task runs. Terminal allocs only need
+			// a one-shot read.
+			terminal := AllocClientTerminalStatus(chosen.ClientStatus)
+			follow := !terminal
+
+			streamCtx := ctx
+			var streamCancel context.CancelFunc
+			if follow {
+				streamCtx, streamCancel = context.WithCancel(ctx)
+			}
+
+			var wg sync.WaitGroup
+			if follow && streamCancel != nil {
+				wg.Add(1)
+				allocID := chosen.ID
+				go func() {
+					defer wg.Done()
+					ticker := time.NewTicker(delay)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-streamCtx.Done():
+							return
+						case <-ticker.C:
+							allocs2, err := nc.GetJobAllocs(ctx, jobID, namespace, false)
+							if err != nil {
+								continue
+							}
+							for _, a := range allocs2 {
+								if a.ID != allocID {
+									continue
+								}
+								if AllocClientTerminalStatus(a.ClientStatus) {
+									streamCancel()
+									return
+								}
+								break
+							}
+						}
+					}
+				}()
+			}
+
+			streamErr := nc.StreamLogs(streamCtx, chosen.ID, task, "stdout", "start", 0, follow, w)
+			if streamCancel != nil {
+				streamCancel()
+				wg.Wait()
+			}
+			if streamErr != nil {
+				if errors.Is(streamErr, context.Canceled) {
+					streamErr = nil
+				}
+			}
+			if streamErr != nil {
+				emsg := streamErr.Error()
 				if strings.Contains(emsg, "404 Not Found") ||
 					strings.Contains(emsg, "not started yet") ||
 					strings.Contains(emsg, "No logs available") {
@@ -831,7 +887,7 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 					}
 					continue
 				}
-				return err
+				return streamErr
 			}
 			return nil
 		}
@@ -840,5 +896,16 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 			return nil
 		case <-SleepCh(int(delay.Seconds())):
 		}
+	}
+}
+
+// AllocClientTerminalStatus reports whether a Nomad allocation has finished from
+// the client's perspective (no longer running or pending placement).
+func AllocClientTerminalStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "complete", "failed", "lost":
+		return true
+	default:
+		return false
 	}
 }
