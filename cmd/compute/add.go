@@ -1063,7 +1063,11 @@ func persistNomadContext(advertiseAddr, token string) error {
 	if ctxName == "" {
 		ctxName = "default"
 	}
-	ctx := cfg.Contexts[ctxName]
+	if !cfg.HasDefinedContext(ctxName) {
+		return fmt.Errorf("no saved context %q (set active_context or run abc context use)", ctxName)
+	}
+	canon := cfg.ResolveContextName(ctxName)
+	ctx := cfg.Contexts[canon]
 	if ctx.Admin.Services.Nomad == nil {
 		ctx.Admin.Services.Nomad = &appconfig.NomadService{}
 	}
@@ -1071,7 +1075,7 @@ func persistNomadContext(advertiseAddr, token string) error {
 		ctx.Admin.Services.Nomad.Addr = "http://" + strings.TrimSpace(advertiseAddr) + ":4646"
 	}
 	ctx.Admin.Services.Nomad.Token = token
-	cfg.Contexts[ctxName] = ctx
+	cfg.Contexts[canon] = ctx
 	cfg.ActiveContext = ctxName
 	return cfg.Save()
 }
@@ -1109,7 +1113,10 @@ func resolveNomadTokenForNode() string {
 	if ctxName == "" {
 		ctxName = "default"
 	}
-	ctx := cfg.Contexts[ctxName]
+	ctx, ok := cfg.ContextNamed(ctxName)
+	if !ok {
+		return ""
+	}
 	return strings.TrimSpace(ctx.NomadToken())
 }
 

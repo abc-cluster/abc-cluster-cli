@@ -2,7 +2,6 @@ package contextcmd
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -18,8 +17,9 @@ func NewCmd() *cobra.Command {
 		Long: `Manage named authentication contexts for switching between clusters,
 orgs, workspaces, and regions.
 
-Contexts are stored in ~/.abc/config.yaml under contexts.<name>. The active
-context controls which endpoint, token, cluster, org, workspace, and region the CLI uses.
+Contexts are stored in ~/.abc/config.yaml under contexts.<name>. A context may be
+a full mapping, or a string alias (e.g. default: aither) that reuses another context.
+The active context controls which endpoint, token, cluster, org, workspace, and region the CLI uses.
 `,
 	}
 
@@ -44,28 +44,28 @@ func newListCmd() *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			names := make([]string, 0, len(c.Contexts))
-			for name := range c.Contexts {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-
+			names := c.AllContextEntryNames()
 			if len(names) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No contexts configured.")
 				return nil
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ACTIVE\tNAME\tCLUSTER\tORG\tWORKSPACE\tREGION\tENDPOINT\n")
+			fmt.Fprintf(w, "ACTIVE\tNAME\tALIAS OF\tCLUSTER\tORG\tWORKSPACE\tREGION\tENDPOINT\n")
 			for _, name := range names {
-				ctx := c.Contexts[name]
+				ctx, _ := c.ContextNamed(name)
+				aliasOf := ""
+				if t, ok := c.ContextAliases[name]; ok {
+					aliasOf = t
+				}
 				active := ""
 				if c.ActiveContext == name {
 					active = "*"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 					active,
 					name,
+					aliasOf,
 					ctx.Cluster,
 					ctx.OrgID,
 					ctx.WorkspaceID,
@@ -98,12 +98,15 @@ func newShowCmd() *cobra.Command {
 				return fmt.Errorf("no active context; specify a context name")
 			}
 
-			ctx, ok := c.Contexts[name]
+			ctx, ok := c.ContextNamed(name)
 			if !ok {
 				return fmt.Errorf("context %q not found", name)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Name: %s\n", name)
+			if t, ok := c.ContextAliases[name]; ok {
+				fmt.Fprintf(cmd.OutOrStdout(), "Alias of: %s\n", t)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Endpoint: %s\n", ctx.Endpoint)
 			if ctx.UploadEndpoint != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Upload endpoint: %s\n", ctx.UploadEndpoint)
@@ -147,7 +150,7 @@ func newUseCmd() *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			if _, ok := c.Contexts[name]; !ok {
+			if !c.HasDefinedContext(name) {
 				return fmt.Errorf("context %q not found", name)
 			}
 
@@ -197,8 +200,11 @@ If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate 
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			if _, ok := c.Contexts[name]; ok {
+			if _, def := c.Contexts[name]; def {
 				return fmt.Errorf("context %q already exists", name)
+			}
+			if _, al := c.ContextAliases[name]; al {
+				return fmt.Errorf("name %q is already a context alias", name)
 			}
 
 			uploadEp := strings.TrimSpace(uploadEndpoint)
@@ -255,7 +261,7 @@ func newDeleteCmd() *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			if _, ok := c.Contexts[name]; !ok {
+			if !c.HasDefinedContext(name) {
 				return fmt.Errorf("context %q not found", name)
 			}
 

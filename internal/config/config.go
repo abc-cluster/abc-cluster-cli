@@ -16,6 +16,7 @@
 //	version: "1"
 //	active_context: "org-a-za-cpt"
 //	contexts:
+//	  default: aither              # optional alias: contexts.<alias> is a string target name
 //	  org-a-za-cpt:
 //	    endpoint:        "https://api.abc-cluster.io"
 //	    upload_endpoint: "https://api.abc-cluster.io/files/"  // defaults from endpoint + /files/
@@ -100,10 +101,11 @@ type Defaults struct {
 
 // Config is the in-memory representation of ~/.abc/config.yaml.
 type Config struct {
-	Version       string             `yaml:"version,omitempty"`
-	ActiveContext string             `yaml:"active_context,omitempty"`
-	Contexts      map[string]Context `yaml:"contexts,omitempty"`
-	Defaults      Defaults           `yaml:"defaults,omitempty"`
+	Version        string             `yaml:"version,omitempty"`
+	ActiveContext  string             `yaml:"active_context,omitempty"`
+	Contexts       map[string]Context `yaml:"-"` // full definitions; YAML under contexts: is custom-parsed
+	ContextAliases map[string]string  `yaml:"-"` // alias name -> target context name (YAML: contexts.<alias>: <target>)
+	Defaults       Defaults           `yaml:"defaults,omitempty"`
 }
 
 // Load reads the config file. If the file does not exist, an empty Config is
@@ -120,8 +122,9 @@ func Create() (string, error) {
 		return path, nil // Already exists
 	}
 	cfg := &Config{
-		Version:  CurrentVersion,
-		Contexts: map[string]Context{},
+		Version:          CurrentVersion,
+		Contexts:         map[string]Context{},
+		ContextAliases:   map[string]string{},
 	}
 	if err := cfg.SaveTo(path); err != nil {
 		return "", err
@@ -136,19 +139,17 @@ func LoadFrom(path string) (*Config, error) {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &Config{
-				Version:  CurrentVersion,
-				Contexts: map[string]Context{},
+				Version:         CurrentVersion,
+				Contexts:        map[string]Context{},
+				ContextAliases:  map[string]string{},
 			}, nil
 		}
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
 
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	cfg, err := parseConfigYAML(data)
+	if err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	if cfg.Contexts == nil {
-		cfg.Contexts = map[string]Context{}
 	}
 	if cfg.Version == "" {
 		cfg.Version = CurrentVersion
@@ -158,11 +159,11 @@ func LoadFrom(path string) (*Config, error) {
 		normalizeContextCrypt(&ctx)
 		cfg.Contexts[name] = ctx
 	}
-	migrateLegacySecretsAndCrypt(data, &cfg)
-	if err := applyActiveContextEnvOverride(&cfg); err != nil {
+	migrateLegacySecretsAndCrypt(data, cfg)
+	if err := applyActiveContextEnvOverride(cfg); err != nil {
 		return nil, err
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
 func applyActiveContextEnvOverride(cfg *Config) error {
@@ -170,7 +171,7 @@ func applyActiveContextEnvOverride(cfg *Config) error {
 	if name == "" {
 		return nil
 	}
-	if _, ok := cfg.Contexts[name]; !ok {
+	if !cfg.HasDefinedContext(name) {
 		return nil
 	}
 	cfg.ActiveContext = name
@@ -192,7 +193,19 @@ func (c *Config) SaveTo(path string) error {
 	if c.Version == "" {
 		c.Version = CurrentVersion
 	}
-	data, err := yaml.Marshal(c)
+	contextsOut, err := c.marshalContextsYAML()
+	if err != nil {
+		return fmt.Errorf("marshal contexts: %w", err)
+	}
+	root := map[string]interface{}{
+		"version":         c.Version,
+		"active_context":  c.ActiveContext,
+		"contexts":        contextsOut,
+	}
+	if c.Defaults.Output != "" || c.Defaults.Region != "" {
+		root["defaults"] = c.Defaults
+	}
+	data, err := yaml.Marshal(root)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -208,7 +221,8 @@ func (c *Config) ActiveCtx() Context {
 	if c.ActiveContext == "" {
 		return Context{}
 	}
-	return c.Contexts[c.ActiveContext]
+	ctx, _ := c.ContextNamed(c.ActiveContext)
+	return ctx
 }
 
 // SetContext upserts a named context and marks it active.
@@ -216,6 +230,10 @@ func (c *Config) SetContext(name string, ctx Context) {
 	if c.Contexts == nil {
 		c.Contexts = map[string]Context{}
 	}
+	if c.ContextAliases == nil {
+		c.ContextAliases = map[string]string{}
+	}
+	delete(c.ContextAliases, name)
 	c.Contexts[name] = ctx
 	c.ActiveContext = name
 }
@@ -223,7 +241,17 @@ func (c *Config) SetContext(name string, ctx Context) {
 // ClearContext removes the named context. If it was the active context,
 // active_context is cleared.
 func (c *Config) ClearContext(name string) {
+	if c.ContextAliases != nil {
+		delete(c.ContextAliases, name)
+	}
 	delete(c.Contexts, name)
+	if c.ContextAliases != nil {
+		for k, v := range c.ContextAliases {
+			if v == name {
+				delete(c.ContextAliases, k)
+			}
+		}
+	}
 	if c.ActiveContext == name {
 		c.ActiveContext = ""
 	}
@@ -253,10 +281,11 @@ func (c *Config) Get(key string) (string, bool) {
 		if len(parts) < 3 {
 			return "", false
 		}
-		ctx, ok := c.Contexts[parts[1]]
-		if !ok {
+		canon := c.ResolveContextName(parts[1])
+		if canon == "" {
 			return "", false
 		}
+		ctx := c.Contexts[canon]
 		// contexts.<name>.crypt.password | contexts.<name>.crypt.salt
 		if len(parts) == 4 && parts[2] == "crypt" {
 			switch parts[3] {
@@ -334,7 +363,11 @@ func (c *Config) Set(key, value string) error {
 			return fmt.Errorf("unknown config key %q; use contexts.<name>.<field>", key)
 		}
 		name := parts[1]
-		ctx := c.Contexts[name]
+		canon := c.ResolveContextName(name)
+		if canon == "" {
+			return fmt.Errorf("unknown context %q", name)
+		}
+		ctx := c.Contexts[canon]
 		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
 			if ctx.Admin.Services.Nomad == nil {
 				ctx.Admin.Services.Nomad = &NomadService{}
@@ -349,7 +382,7 @@ func (c *Config) Set(key, value string) error {
 			default:
 				return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
 			}
-			c.Contexts[name] = ctx
+			c.Contexts[canon] = ctx
 			return nil
 		}
 		if len(parts) == 4 && parts[2] == "crypt" {
@@ -361,7 +394,7 @@ func (c *Config) Set(key, value string) error {
 			default:
 				return fmt.Errorf("unknown crypt field %q (expected password or salt)", parts[3])
 			}
-			c.Contexts[name] = ctx
+			c.Contexts[canon] = ctx
 			return nil
 		}
 		if len(parts) != 3 {
@@ -387,7 +420,7 @@ func (c *Config) Set(key, value string) error {
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
-		c.Contexts[name] = ctx
+		c.Contexts[canon] = ctx
 		return nil
 	}
 	return fmt.Errorf("unknown config key %q", key)
@@ -419,10 +452,11 @@ func (c *Config) Unset(key string) error {
 			return fmt.Errorf("use 'abc config unset contexts.<name>' to remove an entire context")
 		}
 		name := parts[1]
-		ctx, ok := c.Contexts[name]
-		if !ok {
+		canon := c.ResolveContextName(name)
+		if canon == "" {
 			return fmt.Errorf("context %q not found", name)
 		}
+		ctx := c.Contexts[canon]
 		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
 			if ctx.Admin.Services.Nomad == nil {
 				return nil
@@ -440,7 +474,7 @@ func (c *Config) Unset(key string) error {
 			if ctx.Admin.Services.Nomad.Addr == "" && ctx.Admin.Services.Nomad.Token == "" && ctx.Admin.Services.Nomad.Region == "" {
 				ctx.Admin.Services.Nomad = nil
 			}
-			c.Contexts[name] = ctx
+			c.Contexts[canon] = ctx
 			return nil
 		}
 		if len(parts) == 4 && parts[2] == "crypt" {
@@ -452,7 +486,7 @@ func (c *Config) Unset(key string) error {
 			default:
 				return fmt.Errorf("unknown crypt field %q (expected password or salt)", parts[3])
 			}
-			c.Contexts[name] = ctx
+			c.Contexts[canon] = ctx
 			return nil
 		}
 		if len(parts) != 3 {
@@ -478,7 +512,7 @@ func (c *Config) Unset(key string) error {
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
-		c.Contexts[name] = ctx
+		c.Contexts[canon] = ctx
 		return nil
 	}
 	return fmt.Errorf("unknown config key %q", key)
@@ -491,7 +525,12 @@ func (c *Config) AllKeys() [][2]string {
 	out = append(out, [2]string{"active_context", c.ActiveContext})
 	out = append(out, [2]string{"defaults.output", c.Defaults.Output})
 	out = append(out, [2]string{"defaults.region", c.Defaults.Region})
-	for name, ctx := range c.Contexts {
+	for _, name := range c.AllContextEntryNames() {
+		if target, ok := c.ContextAliases[name]; ok {
+			out = append(out, [2]string{"contexts." + name, "-> " + target})
+			continue
+		}
+		ctx := c.Contexts[name]
 		out = append(out, [2]string{"contexts." + name + ".endpoint", ctx.Endpoint})
 		if ctx.UploadEndpoint != "" {
 			out = append(out, [2]string{"contexts." + name + ".upload_endpoint", ctx.UploadEndpoint})

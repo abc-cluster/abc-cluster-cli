@@ -42,17 +42,17 @@ contexts:
 }
 
 func TestContextForSecrets_ActiveAndSole(t *testing.T) {
-	c := &Config{ActiveContext: "a", Contexts: map[string]Context{"a": {Endpoint: "x"}}}
+	c := &Config{ActiveContext: "a", Contexts: map[string]Context{"a": {Endpoint: "x"}}, ContextAliases: map[string]string{}}
 	name, _, err := c.ContextForSecrets()
 	if err != nil || name != "a" {
 		t.Fatalf("active: name=%q err=%v", name, err)
 	}
-	c2 := &Config{Contexts: map[string]Context{"only": {Endpoint: "x"}}}
+	c2 := &Config{Contexts: map[string]Context{"only": {Endpoint: "x"}}, ContextAliases: map[string]string{}}
 	name2, _, err2 := c2.ContextForSecrets()
 	if err2 != nil || name2 != "only" {
 		t.Fatalf("sole: name=%q err=%v", name2, err2)
 	}
-	c3 := &Config{Contexts: map[string]Context{"a": {}, "b": {}}}
+	c3 := &Config{Contexts: map[string]Context{"a": {}, "b": {}}, ContextAliases: map[string]string{}}
 	if _, _, err3 := c3.ContextForSecrets(); err3 == nil {
 		t.Fatal("expected error when multiple contexts and no active")
 	}
