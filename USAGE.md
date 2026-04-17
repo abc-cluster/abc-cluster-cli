@@ -1702,13 +1702,16 @@ Use this command for Nomad operations that abc does not yet implement natively.
 
 ## `admin services cli setup`
 
-Download all wrapped CLI binaries into `~/.abc/binaries` (or `ABC_BINARIES_DIR`).
+Download managed CLI binaries into `~/.abc/binaries` (or `ABC_BINARIES_DIR`).
 
 The setup command checks whether each binary is already available in `PATH` and skips downloads when possible.
 Managed binaries currently include:
 - `nomad`
 - `abc-node-probe`
 - `tailscale`
+- `rclone`
+
+Other `abc admin services … cli` wrappers (for example minio, nebula, rustfs, vault) are not installed by this command; use your OS package manager or upstream installers, or `--binary-location`.
 
 ```bash
 abc admin services cli setup
@@ -1755,7 +1758,7 @@ Use this command to integrate RustFS as a storage backend option behind the same
 
 ## `admin services vault cli`
 
-Run the local `vault` CLI as a passthrough alias, with OpenBao compatibility.
+Run the local `vault` CLI as a passthrough alias, with OpenBao compatibility (OpenBao's CLI binary is named `bao`).
 
 ### `admin services vault cli [vault-args...]`
 
@@ -1764,7 +1767,7 @@ abc admin services vault cli status
 abc admin services vault cli secrets list
 ```
 
-By default this command resolves `vault` first, then `openbao`, and also supports explicit binary overrides via `--binary-location`.
+By default this command resolves `vault`, then `bao`, then `openbao` on `PATH`. You can also set `ABC_VAULT_CLI_BINARY` / `ABC_BAO_CLI_BINARY` (or `--binary-location`) to force a specific binary.
 
 ---
 

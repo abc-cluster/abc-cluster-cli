@@ -13,7 +13,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [nomad-args...]",
 		Short:              "Run the local Nomad CLI with abc context defaults",
-		Long:               "Run the local nomad binary as a preconfigured alias. Nomad address, token, and region are resolved from the active abc config context when not provided via flags. Use `abc admin services nomad cli setup` to install wrapped binaries into ~/.abc/binaries. Use --binary-location to select a specific nomad binary.",
+		Long:               "Run the local nomad binary as a preconfigured alias. Nomad address, token, and region are resolved from the active abc config context when not provided via flags. Use `abc admin services nomad cli setup` to install nomad + abc-node-probe into ~/.abc/binaries (or `abc admin services cli setup` for tailscale and rclone as well). Use --binary-location to select a specific nomad binary.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runNomadCLI,
@@ -58,6 +58,7 @@ func runNomadCLISetup(cmd *cobra.Command) error {
 	}
 	fmt.Fprintln(out, "Setup complete.")
 	fmt.Fprintf(out, "Tip: prepend %s to PATH to prefer managed binaries.\n", dir)
+	fmt.Fprintln(out, "Tip: run `abc admin services cli setup` to also install tailscale and rclone.")
 	return nil
 }
 

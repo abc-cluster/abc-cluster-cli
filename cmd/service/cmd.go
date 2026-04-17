@@ -180,14 +180,16 @@ func newCLISetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Download all wrapped CLI binaries if missing",
-		Long: `Download wrapped service binaries into ~/.abc/binaries (or ABC_BINARIES_DIR).
+		Long: `Download managed service binaries into ~/.abc/binaries (or ABC_BINARIES_DIR).
 
 This checks PATH first and skips download when a binary is already available.
 Current managed binaries:
   - nomad
   - abc-node-probe
   - tailscale
-  - rclone`,
+  - rclone
+
+Passthrough-only CLIs (minio, nebula, rustfs, vault) are not downloaded here; install them separately or point --binary-location / env at your binary.`,
 		RunE: runCLISetup,
 	}
 }
