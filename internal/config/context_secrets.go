@@ -14,11 +14,15 @@ import (
 // one exists.
 func (c *Config) ContextForSecrets() (name string, ctx Context, err error) {
 	if c.ActiveContext != "" {
-		ctx, ok := c.Contexts[c.ActiveContext]
-		if !ok {
+		if !c.HasDefinedContext(c.ActiveContext) {
 			return "", Context{}, fmt.Errorf("active_context %q is not defined under contexts; fix config or run: abc context use <name>", c.ActiveContext)
 		}
-		return c.ActiveContext, ctx, nil
+		canonical := c.ResolveContextName(c.ActiveContext)
+		ctx, ok := c.Contexts[canonical]
+		if !ok {
+			return "", Context{}, fmt.Errorf("active_context %q resolved to missing context %q", c.ActiveContext, canonical)
+		}
+		return canonical, ctx, nil
 	}
 	if len(c.Contexts) == 1 {
 		for n, ctx := range c.Contexts {
@@ -49,10 +53,8 @@ func sortedContextNames(m map[string]Context) []string {
 
 // migrationTargetForLegacy picks where to merge legacy root secrets: and defaults.crypt_* on load.
 func migrationTargetForLegacy(c *Config) string {
-	if c.ActiveContext != "" {
-		if _, ok := c.Contexts[c.ActiveContext]; ok {
-			return c.ActiveContext
-		}
+	if c.ActiveContext != "" && c.HasDefinedContext(c.ActiveContext) {
+		return c.ResolveContextName(c.ActiveContext)
 	}
 	if len(c.Contexts) == 1 {
 		for n := range c.Contexts {

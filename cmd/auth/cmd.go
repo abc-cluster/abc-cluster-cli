@@ -229,7 +229,7 @@ Full user details (name, role, plan, etc.) require API contact.`,
 				return nil
 			}
 
-			ctx := cfg.Contexts[cfg.ActiveContext]
+			ctx, _ := cfg.ContextNamed(cfg.ActiveContext)
 			fmt.Printf("Context      %s\n", cfg.ActiveContext)
 			fmt.Printf("Endpoint     %s\n", ctx.Endpoint)
 			if ctx.Cluster != "" {
@@ -269,7 +269,7 @@ Safe for piping to echo or storing in environment variables.`,
 				return fmt.Errorf("no active context")
 			}
 
-			ctx := cfg.Contexts[cfg.ActiveContext]
+			ctx, _ := cfg.ContextNamed(cfg.ActiveContext)
 			fmt.Println(ctx.AccessToken)
 			return nil
 		},
