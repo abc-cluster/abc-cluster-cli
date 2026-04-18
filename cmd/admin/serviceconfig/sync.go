@@ -56,24 +56,14 @@ ports, and writes:
     (Traefik: http = dashboard port, endpoint = web entrypoint port)
   contexts.<name>.upload_endpoint              (from tusd, …/files/)
 
-When job abc-nodes-traefik is running and the traefik CLI is on PATH (or
-ABC_TRAEFIK_CLI_BINARY), sync also runs traefik version + healthcheck (using
-admin.services.traefik.http from ~/.abc when set, else Nomad) and queries the
-Traefik dashboard HTTP API to set Host()-style public bases in
-admin.services.<svc>.traefik_http and admin.services.<svc>.traefik_endpoint
-(mirroring http vs endpoint), plus contexts.<name>.upload_endpoint_traefik for
-tusd. Nomad-derived http / endpoint / upload_endpoint stay as direct host:port
-URLs.
-
-Host names follow admin.services.nomad.nomad_addr (same host as the Nomad API
-unless the allocation publishes a concrete HostIP on the port). Scheme is http
-when nomad_addr is http, otherwise https.
+The hostname is taken from admin.services.nomad.nomad_addr (same rule as when
+the allocation has no concrete HostIP on the port). Scheme follows nomad_addr
+(http vs https).
 
 Credentials are not read from task logs (would require exec). Existing
 admin.services.<svc>.access_key, secret_key, user, password (except vault lab
 token below) and admin.abc_nodes credentials are left unchanged unless noted.
-Nomad sync updates http / endpoint / upload_endpoint; Traefik sync updates
-traefik_http / traefik_endpoint / upload_endpoint_traefik. For job abc-nodes-vault
+Nomad sync updates http / endpoint / upload_endpoint only. For job abc-nodes-vault
 when running, sync also reads VAULT_DEV_ROOT_TOKEN_ID from the registered job
 spec and sets admin.services.vault.access_key (lab -dev Vault only).
 Requires nomad_addr and nomad_token on the context.
@@ -83,7 +73,6 @@ Requires nomad_addr and nomad_token on the context.
 	cmd.Flags().String("context", "", "Context name (default: active_context)")
 	cmd.Flags().Bool("dry-run", false, "Print keys that would be set without saving")
 	cmd.Flags().Bool("skip-cluster-type-check", false, "Run even if cluster_type is not abc-nodes")
-	cmd.Flags().Bool("skip-traefik-route-sync", false, "Do not set traefik_http / traefik_endpoint / upload_endpoint_traefik from Traefik API")
 	return cmd
 }
 
@@ -122,7 +111,6 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 	ns := ctx.AbcNodesNomadNamespaceOrDefault()
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	skipTraefikRoutes, _ := cmd.Flags().GetBool("skip-traefik-route-sync")
 	nc := utils.NewNomadClient(addr, tok, region)
 
 	ctxNomad := context.Background()
@@ -140,14 +128,6 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 	scheme := "http"
 	if u, err := url.Parse(addr); err == nil && strings.EqualFold(u.Scheme, "https") {
 		scheme = "https"
-	}
-
-	traefikOverrides, trNotes, err := traefikRouteOverrides(ctxNomad, out, scheme, addr, canon, ctx, nc, ctxNomad, ns, jobByID, skipTraefikRoutes)
-	if err != nil {
-		return err
-	}
-	for _, n := range trNotes {
-		fmt.Fprintln(out, n)
 	}
 
 	vaultTokUpdates, err := vaultSyncUpdatesFromNomad(ctxNomad, out, nc, ns, canon, jobByID)
@@ -207,9 +187,6 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 	merged := make(map[string]string)
 	for _, u := range updates {
 		merged[u.key] = u.val
-	}
-	for k, v := range traefikOverrides {
-		merged[k] = v
 	}
 	for _, u := range vaultTokUpdates {
 		merged[u.key] = u.val
