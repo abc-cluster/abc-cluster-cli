@@ -9,9 +9,31 @@ type NomadService struct {
 	Region string `yaml:"nomad_region,omitempty"` // Nomad multi-region ID (e.g. global), not contexts.region
 }
 
+// AdminFloorService holds URLs synced from running Nomad jobs (abc-nodes floor).
+// Use endpoint for S3 API bases (MinIO, RustFS) and http for HTTP services (tusd, Grafana, …).
+type AdminFloorService struct {
+	HTTP     string `yaml:"http,omitempty"`
+	Endpoint string `yaml:"endpoint,omitempty"`
+}
+
+// IsEmpty reports whether both URL fields are unset.
+func (a *AdminFloorService) IsEmpty() bool {
+	if a == nil {
+		return true
+	}
+	return strings.TrimSpace(a.HTTP) == "" && strings.TrimSpace(a.Endpoint) == ""
+}
+
 // AdminServices holds operator-facing integrations under contexts.<name>.admin.services.
 type AdminServices struct {
-	Nomad *NomadService `yaml:"nomad,omitempty"`
+	Nomad      *NomadService      `yaml:"nomad,omitempty"`
+	MinIO      *AdminFloorService `yaml:"minio,omitempty"`
+	Tusd       *AdminFloorService `yaml:"tusd,omitempty"`
+	Grafana    *AdminFloorService `yaml:"grafana,omitempty"`
+	Prometheus *AdminFloorService `yaml:"prometheus,omitempty"`
+	Loki       *AdminFloorService `yaml:"loki,omitempty"`
+	Ntfy       *AdminFloorService `yaml:"ntfy,omitempty"`
+	Rustfs     *AdminFloorService `yaml:"rustfs,omitempty"`
 }
 
 // AdminABCNodes holds optional static operator credentials for abc-nodes–style
@@ -22,7 +44,9 @@ type AdminABCNodes struct {
 	S3AccessKey    string `yaml:"s3_access_key,omitempty"`
 	S3SecretKey    string `yaml:"s3_secret_key,omitempty"`
 	S3Region       string `yaml:"s3_region,omitempty"`
-	S3Endpoint     string `yaml:"s3_endpoint,omitempty"`
+	// S3Endpoint is deprecated: on load it is migrated into admin.services.minio.endpoint
+	// and cleared so the next save drops the YAML key. Kept for unmarshaling old files.
+	S3Endpoint string `yaml:"s3_endpoint,omitempty"`
 	// MinioRootUser and MinioRootPassword mirror MinIO server root credentials;
 	// when s3_access_key / s3_secret_key are empty, these are mapped to AWS_* for CLIs.
 	MinioRootUser     string `yaml:"minio_root_user,omitempty"`
@@ -31,7 +55,7 @@ type AdminABCNodes struct {
 
 // Admin holds optional admin-plane settings for a context.
 type Admin struct {
-	Services AdminServices `yaml:"services,omitempty"`
+	Services AdminServices  `yaml:"services,omitempty"`
 	ABCNodes *AdminABCNodes `yaml:"abc_nodes,omitempty"`
 }
 

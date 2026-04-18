@@ -141,6 +141,29 @@ type NomadAllocStub struct {
 	TaskStates    map[string]NomadTaskState `json:"TaskStates"`
 }
 
+// NomadDynamicPort is a host port label from an allocation's shared network.
+type NomadDynamicPort struct {
+	Label  string `json:"Label"`
+	Value  int    `json:"Value"`
+	HostIP string `json:"HostIP"`
+}
+
+type nomadAllocNetwork struct {
+	DynamicPorts []NomadDynamicPort `json:"DynamicPorts"`
+}
+
+// NomadAllocation is a partial allocation payload for reading published ports.
+type NomadAllocation struct {
+	ID                 string `json:"ID"`
+	JobID              string `json:"JobID"`
+	ClientStatus       string `json:"ClientStatus"`
+	AllocatedResources *struct {
+		Shared *struct {
+			Networks []nomadAllocNetwork `json:"Networks"`
+		} `json:"Shared"`
+	} `json:"AllocatedResources"`
+}
+
 type NomadTaskState struct {
 	State      string `json:"State"`
 	StartedAt  string `json:"StartedAt"`
@@ -463,6 +486,16 @@ func (c *NomadClient) GetJobAllocs(ctx context.Context, jobID, namespace string,
 	}
 	var out []NomadAllocStub
 	return out, c.get(ctx, "/v1/job/"+url.PathEscape(jobID)+"/allocations", q, &out)
+}
+
+// GetAllocation returns allocation details including AllocatedResources for port discovery.
+func (c *NomadClient) GetAllocation(ctx context.Context, allocID, namespace string) (*NomadAllocation, error) {
+	q := url.Values{}
+	if namespace != "" {
+		q.Set("namespace", namespace)
+	}
+	var out NomadAllocation
+	return &out, c.get(ctx, "/v1/allocation/"+url.PathEscape(allocID), q, &out)
 }
 
 func (c *NomadClient) GetJobEvals(ctx context.Context, jobID, namespace string) ([]NomadEvaluation, error) {

@@ -355,7 +355,7 @@ func (c *Config) marshalContextsYAML() (map[string]interface{}, error) {
 		}
 		out[alias] = c.ContextAliases[alias]
 	}
-	return out, nil
+	return sortNestedMapsForYAML(out), nil
 }
 
 func yamlString(v interface{}) string {

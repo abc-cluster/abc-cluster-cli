@@ -12,7 +12,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [rustfs-args...]",
 		Short:              "Run the local RustFS CLI",
-		Long:               "Run the local rustfs binary as a passthrough alias. Optional leading `--binary-location <path>`; use `--` for verbatim argv to rustfs. Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged. When the active context has cluster_type abc-nodes and admin.abc_nodes S3 fields are set, AWS_* defaults are merged only for keys not already set in the process environment.",
+		Long:               "Run the local rustfs binary as a passthrough alias. Optional leading `--binary-location <path>`; use `--` for verbatim argv to rustfs. Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged. When the active context has cluster_type abc-nodes and admin.abc_nodes credentials plus admin.services.rustfs.endpoint are set, AWS_* defaults are merged only for keys not already set in the process environment.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runRustFSCLI,
@@ -31,7 +31,7 @@ func runRustFSCLI(cmd *cobra.Command, args []string) error {
 
 	base := os.Environ()
 	if cfg, err := config.Load(); err == nil && cfg != nil {
-		base = utils.UpsertEnvOnlyMissing(base, cfg.ActiveCtx().AbcNodesStorageCLIEnv())
+		base = utils.UpsertEnvOnlyMissing(base, cfg.ActiveCtx().AbcNodesRustfsStorageCLIEnv())
 	}
 	return utils.RunExternalCLIWithEnvAndBase(cmd.Context(), passthroughArgs, binaryLocation, []string{"rustfs"}, base, nil, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

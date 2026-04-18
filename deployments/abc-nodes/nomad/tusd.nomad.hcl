@@ -1,6 +1,10 @@
 # tusd (resumable uploads) backed by S3-compatible storage — abc-nodes floor
-# Set minio_s3_endpoint to the MinIO S3 API base URL reachable from the allocation
-# (e.g. http://<node-ip>:<dynamic-host-port> or via mesh / LB).
+#
+# Endpoint must be the MinIO *S3 API* base URL (task port "api" / in-container :9000),
+# reachable from this allocation's network namespace — not the console port (:9001).
+# Omit a trailing slash (e.g. use http://host:21400 not http://host:21400/) so the
+# AWS SDK does not build malformed URLs. If uploads fail with the node's Tailscale
+# IP, try the LAN IP or another route that avoids hairpin/NAT back to the same host.
 
 variable "datacenters" {
   type    = list(string)
@@ -14,8 +18,19 @@ variable "tusd_image" {
 
 variable "minio_s3_endpoint" {
   type        = string
-  description = "S3 endpoint for tusd, e.g. http://10.0.0.5:30241"
+  description = "MinIO S3 API base URL (no path, no trailing slash), e.g. http://192.168.1.10:21400"
   default     = "http://127.0.0.1:9000"
+}
+
+variable "s3_disable_content_hashes" {
+  type        = bool
+  description = "Pass -s3-disable-content-hashes (recommended for MinIO to avoid multipart/hash quirks)"
+  default     = true
+}
+
+locals {
+  # tusd forwards this to AWS SDK BaseEndpoint; a trailing slash can produce bad requests.
+  minio_s3_endpoint_clean = trimsuffix(trimspace(var.minio_s3_endpoint), "/")
 }
 
 variable "s3_bucket" {
@@ -63,13 +78,16 @@ job "abc-nodes-tusd" {
 
       config {
         image = var.tusd_image
-        args = [
-          "-s3-bucket", var.s3_bucket,
-          "-s3-endpoint", var.minio_s3_endpoint,
-          "-s3-disable-ssl",
-          "-port", "8080",
-          "-base-path", "/files/",
-        ]
+        args = concat(
+          [
+            "-s3-bucket", var.s3_bucket,
+            "-s3-endpoint", local.minio_s3_endpoint_clean,
+            "-s3-disable-ssl",
+            "-port", "8080",
+            "-base-path", "/files/",
+          ],
+          var.s3_disable_content_hashes ? ["-s3-disable-content-hashes"] : [],
+        )
       }
 
       env {

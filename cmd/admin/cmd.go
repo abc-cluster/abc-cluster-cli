@@ -12,6 +12,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/probe"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rclone"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rustfs"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/serviceconfig"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tailscale"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/vault"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
@@ -35,7 +36,8 @@ func NewCmd() *cobra.Command {
   abc admin services rustfs cli status    Run the local RustFS CLI
   abc admin services vault cli status     Run the local Vault or OpenBao (bao) CLI
   abc admin services rclone cli version   Run the managed rclone CLI
-  abc admin services probe cli --help     Run the abc-node-probe CLI`,
+  abc admin services probe cli --help     Run the abc-node-probe CLI
+  abc admin services config sync          Sync ~/.abc admin.services.* from Nomad (abc-nodes)`,
 	}
 
 	// services sub-group — reuses the existing service package.
@@ -52,6 +54,7 @@ func NewCmd() *cobra.Command {
 	svcCmd.AddCommand(rustfs.NewCmd())
 	svcCmd.AddCommand(vault.NewCmd())
 	svcCmd.AddCommand(rclone.NewCmd())
+	svcCmd.AddCommand(serviceconfig.NewCmd())
 	cmd.AddCommand(svcCmd)
 
 	// app sub-group — application-level entity management.

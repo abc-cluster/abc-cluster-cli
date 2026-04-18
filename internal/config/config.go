@@ -9,11 +9,11 @@
 //
 // Schema versioning:
 // The config file includes a version field for forward/backward compatibility.
-// Currently at version "1". Future versions will support schema migrations.
+// Currently at version "1.0". Future versions will support schema migrations.
 //
 // Schema (v1):
 //
-//	version: "1"
+//	version: "1.0"
 //	active_context: "org-a-za-cpt"
 //	contexts:
 //	  primary: aither              # optional top-level redirect (alias name -> target context name)
@@ -43,9 +43,11 @@
 //	        s3_access_key: "..."
 //	        s3_secret_key: "..."
 //	        s3_region: "us-east-1"
-//	        s3_endpoint: "http://100.70.185.46:9000"
 //	        minio_root_user: "minioadmin"
 //	        minio_root_password: "..."
+//	        # S3 API bases live under admin.services (minio vs rustfs are separate):
+//	        #   admin.services.minio.endpoint
+//	        #   admin.services.rustfs.endpoint
 //	defaults:
 //	  output: "table"
 //	  region: ""
@@ -58,12 +60,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
-// CurrentVersion is the current config file schema version.
-const CurrentVersion = "1"
+// CurrentVersion is the current config file schema version (written first in YAML).
+const CurrentVersion = "1.0"
 
 // DefaultConfigPath returns the path to the config file, honouring the
 // ABC_CONFIG_FILE environment variable.
@@ -89,7 +89,7 @@ type Context struct {
 	Region         string `yaml:"region,omitempty"`
 	// ClusterType is one of abc-nodes | abc-cluster | abc-cloud (platform tier).
 	ClusterType string `yaml:"cluster_type,omitempty"`
-	Admin         Admin  `yaml:"admin,omitempty"`
+	Admin       Admin  `yaml:"admin,omitempty"`
 
 	// Per-context encrypted secrets (abc secrets) and local crypt key material (rclone crypt / secrets).
 	Secrets map[string]string `yaml:"secrets,omitempty"`
@@ -138,9 +138,9 @@ func Create() (string, error) {
 		return path, nil // Already exists
 	}
 	cfg := &Config{
-		Version:          CurrentVersion,
-		Contexts:         map[string]Context{},
-		ContextAliases:   map[string]string{},
+		Version:        CurrentVersion,
+		Contexts:       map[string]Context{},
+		ContextAliases: map[string]string{},
 	}
 	if err := cfg.SaveTo(path); err != nil {
 		return "", err
@@ -149,15 +149,15 @@ func Create() (string, error) {
 }
 
 // LoadFrom reads the config file at path. If the file does not exist, an
-// empty Config is returned (no error). Missing version field defaults to "1".
+// empty Config is returned (no error). Missing version field defaults to CurrentVersion.
 func LoadFrom(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &Config{
-				Version:         CurrentVersion,
-				Contexts:        map[string]Context{},
-				ContextAliases:  map[string]string{},
+				Version:        CurrentVersion,
+				Contexts:       map[string]Context{},
+				ContextAliases: map[string]string{},
 			}, nil
 		}
 		return nil, fmt.Errorf("read config %q: %w", path, err)
@@ -172,7 +172,9 @@ func LoadFrom(path string) (*Config, error) {
 	}
 	for name, ctx := range cfg.Contexts {
 		normalizeContextNomad(&ctx)
+		migrateAbcNodesLegacyS3Endpoint(&ctx)
 		normalizeContextAbcNodes(&ctx)
+		NormalizeFloorServices(&ctx)
 		normalizeContextCrypt(&ctx)
 		cfg.Contexts[name] = ctx
 	}
@@ -213,22 +215,8 @@ func (c *Config) SaveTo(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	if c.Version == "" {
-		c.Version = CurrentVersion
-	}
-	contextsOut, err := c.marshalContextsYAML()
-	if err != nil {
-		return fmt.Errorf("marshal contexts: %w", err)
-	}
-	root := map[string]interface{}{
-		"version":         c.Version,
-		"active_context":  c.ActiveContext,
-		"contexts":        contextsOut,
-	}
-	if c.Defaults.Output != "" || c.Defaults.Region != "" {
-		root["defaults"] = c.Defaults
-	}
-	data, err := yaml.Marshal(root)
+	c.Version = normalizeConfigFileVersionForSave(c.Version)
+	data, err := c.marshalConfigDocumentYAML()
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -322,20 +310,24 @@ func (c *Config) Get(key string) (string, bool) {
 			}
 			return "", false
 		}
-		// contexts.<name>.admin.services.nomad.<field>
-		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
-			if ctx.Admin.Services.Nomad == nil {
+		// contexts.<name>.admin.services.<svc>.<field>
+		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" {
+			if parts[4] == "nomad" {
+				if ctx.Admin.Services.Nomad == nil {
+					return "", false
+				}
+				switch parts[5] {
+				case "nomad_addr":
+					return ctx.Admin.Services.Nomad.Addr, true
+				case "nomad_token":
+					return ctx.Admin.Services.Nomad.Token, true
+				case "nomad_region":
+					return ctx.Admin.Services.Nomad.Region, true
+				}
 				return "", false
 			}
-			switch parts[5] {
-			case "nomad_addr":
-				return ctx.Admin.Services.Nomad.Addr, true
-			case "nomad_token":
-				return ctx.Admin.Services.Nomad.Token, true
-			case "nomad_region":
-				return ctx.Admin.Services.Nomad.Region, true
-			}
-			return "", false
+			v, ok := GetAdminFloorField(&ctx.Admin.Services, parts[4], parts[5])
+			return v, ok
 		}
 		// contexts.<name>.admin.abc_nodes.<field>
 		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "abc_nodes" {
@@ -353,7 +345,14 @@ func (c *Config) Get(key string) (string, bool) {
 			case "s3_region":
 				return n.S3Region, true
 			case "s3_endpoint":
-				return n.S3Endpoint, true
+				// Deprecated alias for admin.services.minio.endpoint.
+				if v, ok := GetAdminFloorField(&ctx.Admin.Services, "minio", "endpoint"); ok {
+					return v, true
+				}
+				if ep := strings.TrimSpace(n.S3Endpoint); ep != "" {
+					return ep, true
+				}
+				return "", false
 			case "minio_root_user":
 				return n.MinioRootUser, true
 			case "minio_root_password":
@@ -424,20 +423,28 @@ func (c *Config) Set(key, value string) error {
 			return fmt.Errorf("unknown context %q", name)
 		}
 		ctx := c.Contexts[canon]
-		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
-			if ctx.Admin.Services.Nomad == nil {
-				ctx.Admin.Services.Nomad = &NomadService{}
+		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" {
+			if parts[4] == "nomad" {
+				if ctx.Admin.Services.Nomad == nil {
+					ctx.Admin.Services.Nomad = &NomadService{}
+				}
+				switch parts[5] {
+				case "nomad_addr":
+					ctx.Admin.Services.Nomad.Addr = value
+				case "nomad_token":
+					ctx.Admin.Services.Nomad.Token = value
+				case "nomad_region":
+					ctx.Admin.Services.Nomad.Region = value
+				default:
+					return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+				}
+				c.Contexts[canon] = ctx
+				return nil
 			}
-			switch parts[5] {
-			case "nomad_addr":
-				ctx.Admin.Services.Nomad.Addr = value
-			case "nomad_token":
-				ctx.Admin.Services.Nomad.Token = value
-			case "nomad_region":
-				ctx.Admin.Services.Nomad.Region = value
-			default:
-				return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+			if err := SetAdminFloorField(&ctx.Admin.Services, parts[4], parts[5], value); err != nil {
+				return err
 			}
+			NormalizeFloorServices(&ctx)
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -456,7 +463,12 @@ func (c *Config) Set(key, value string) error {
 			case "s3_region":
 				n.S3Region = value
 			case "s3_endpoint":
-				n.S3Endpoint = value
+				// Deprecated: sets admin.services.minio.endpoint (same as floor key).
+				if err := SetAdminFloorField(&ctx.Admin.Services, "minio", "endpoint", value); err != nil {
+					return err
+				}
+				n.S3Endpoint = ""
+				NormalizeFloorServices(&ctx)
 			case "minio_root_user":
 				n.MinioRootUser = value
 			case "minio_root_password":
@@ -566,23 +578,31 @@ func (c *Config) Unset(key string) error {
 			return fmt.Errorf("context %q not found", name)
 		}
 		ctx := c.Contexts[canon]
-		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" && parts[4] == "nomad" {
-			if ctx.Admin.Services.Nomad == nil {
+		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" {
+			if parts[4] == "nomad" {
+				if ctx.Admin.Services.Nomad == nil {
+					return nil
+				}
+				switch parts[5] {
+				case "nomad_addr":
+					ctx.Admin.Services.Nomad.Addr = ""
+				case "nomad_token":
+					ctx.Admin.Services.Nomad.Token = ""
+				case "nomad_region":
+					ctx.Admin.Services.Nomad.Region = ""
+				default:
+					return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+				}
+				if ctx.Admin.Services.Nomad.Addr == "" && ctx.Admin.Services.Nomad.Token == "" && ctx.Admin.Services.Nomad.Region == "" {
+					ctx.Admin.Services.Nomad = nil
+				}
+				c.Contexts[canon] = ctx
 				return nil
 			}
-			switch parts[5] {
-			case "nomad_addr":
-				ctx.Admin.Services.Nomad.Addr = ""
-			case "nomad_token":
-				ctx.Admin.Services.Nomad.Token = ""
-			case "nomad_region":
-				ctx.Admin.Services.Nomad.Region = ""
-			default:
-				return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+			if err := UnsetAdminFloorField(&ctx.Admin.Services, parts[4], parts[5]); err != nil {
+				return err
 			}
-			if ctx.Admin.Services.Nomad.Addr == "" && ctx.Admin.Services.Nomad.Token == "" && ctx.Admin.Services.Nomad.Region == "" {
-				ctx.Admin.Services.Nomad = nil
-			}
+			NormalizeFloorServices(&ctx)
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -601,7 +621,11 @@ func (c *Config) Unset(key string) error {
 			case "s3_region":
 				n.S3Region = ""
 			case "s3_endpoint":
+				if err := UnsetAdminFloorField(&ctx.Admin.Services, "minio", "endpoint"); err != nil {
+					return err
+				}
 				n.S3Endpoint = ""
+				NormalizeFloorServices(&ctx)
 			case "minio_root_user":
 				n.MinioRootUser = ""
 			case "minio_root_password":
@@ -705,6 +729,7 @@ func (c *Config) AllKeys() [][2]string {
 				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_region", ctx.Admin.Services.Nomad.Region})
 			}
 		}
+		out = AppendAdminFloorAllKeys("contexts."+name, ctx.Admin.Services, out)
 		if n := ctx.Admin.ABCNodes; n != nil {
 			pfx := "contexts." + name + ".admin.abc_nodes."
 			if n.NomadNamespace != "" {
@@ -718,9 +743,6 @@ func (c *Config) AllKeys() [][2]string {
 			}
 			if n.S3Region != "" {
 				out = append(out, [2]string{pfx + "s3_region", n.S3Region})
-			}
-			if n.S3Endpoint != "" {
-				out = append(out, [2]string{pfx + "s3_endpoint", n.S3Endpoint})
 			}
 			if n.MinioRootUser != "" {
 				out = append(out, [2]string{pfx + "minio_root_user", maskToken(n.MinioRootUser)})
