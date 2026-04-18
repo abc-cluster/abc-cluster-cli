@@ -96,6 +96,10 @@ http:
       entryPoints: ["web"]
       rule: "Host(`grafana.aither`)"
       service: grafana
+    grafana-alloy:
+      entryPoints: ["web"]
+      rule: "Host(`grafana-alloy.aither`)"
+      service: grafana-alloy
     loki:
       entryPoints: ["web"]
       rule: "Host(`loki.aither`)"
@@ -129,6 +133,10 @@ http:
     grafana:
       loadBalancer:
         servers:{{ range nomadService "abc-nodes-grafana" }}
+          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+    grafana-alloy:
+      loadBalancer:
+        servers:{{ range nomadService "abc-nodes-alloy" }}
           - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
     loki:
       loadBalancer:

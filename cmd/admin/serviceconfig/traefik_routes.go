@@ -32,6 +32,7 @@ var traefikHostBindings = []traefikHostBinding{
 	{host: "minio-console.aither", svc: "minio", field: "traefik_http"},
 	{host: "minio.aither", svc: "minio", field: "traefik_endpoint"},
 	{host: "grafana.aither", svc: "grafana", field: "traefik_http"},
+	{host: "grafana-alloy.aither", svc: "grafana_alloy", field: "traefik_http"},
 	{host: "loki.aither", svc: "loki", field: "traefik_http"},
 	{host: "prometheus.aither", svc: "prometheus", field: "traefik_http"},
 	{host: "ntfy.aither", svc: "ntfy", field: "traefik_http"},
