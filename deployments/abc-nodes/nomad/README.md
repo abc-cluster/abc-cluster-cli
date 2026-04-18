@@ -54,26 +54,26 @@ Process environment always wins over config for the same variable name. Set valu
 
 ## Submit with `abc admin services nomad cli`
 
-The Nomad CLI is invoked as a passthrough; address and token default from the active abc context (override with `NOMAD_ADDR` / `NOMAD_TOKEN` or admin flags if you wire them on the parent command).
+The Nomad CLI is invoked as a passthrough; use **`abc admin services nomad cli -- …`** so everything after `--` is forwarded verbatim to `nomad` (same argv as upstream). Address and token default from the active abc context (override with `NOMAD_ADDR` / `NOMAD_TOKEN` or admin flags on the parent command).
 
 From the **repository root** (`analysis/packages/abc-cluster-cli`):
 
 ```bash
 # Validate
-abc admin services nomad cli job validate deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services nomad cli -- job validate deployments/abc-nodes/nomad/minio.nomad.hcl
 
 # Run (detached)
-abc admin services nomad cli job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
 
 # Plan then apply (when supported by your nomad binary)
-abc admin services nomad cli job plan  deployments/abc-nodes/nomad/grafana.nomad.hcl
-abc admin services nomad cli job run   deployments/abc-nodes/nomad/grafana.nomad.hcl
+abc admin services nomad cli -- job plan  deployments/abc-nodes/nomad/grafana.nomad.hcl
+abc admin services nomad cli -- job run   deployments/abc-nodes/nomad/grafana.nomad.hcl
 ```
 
 Override defaults (datacenter, image tags, secrets) with `-var` / `-var-file` per Nomad’s job spec variables, for example:
 
 ```bash
-abc admin services nomad cli job run -detach \
+abc admin services nomad cli -- job run -detach \
   -var='datacenters=["default"]' \
   -var="minio_root_password=change-me" \
   deployments/abc-nodes/nomad/minio.nomad.hcl
