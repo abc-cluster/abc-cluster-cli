@@ -94,13 +94,14 @@ abc admin services nomad cli -- job run -detach \
 | 5    | `loki.nomad.hcl`     | Single-store dev-style config; tune for production. |
 | 6    | `grafana.nomad.hcl`  | Set `grafana_admin_password`; add Prometheus datasource in UI or provisioning later. |
 | 7    | `ntfy.nomad.hcl`     | `ntfy serve` behind HTTP port. |
-| 8    | `traefik.nomad.hcl`  | Host-network reverse proxy; register after backends so `nomadService` templates resolve. Dashboard **8888**, HTTP entry **80**; `abc admin services config sync` writes `admin.services.traefik.http` / `endpoint`. |
+| 8    | `vault.nomad.hcl`    | **Lab `-dev` in-memory** Vault on **:8200**; data lost on restart. Set `vault_dev_root_token_id` with `-var`, then `abc config set …admin.services.vault.access_key` to match so `abc admin services vault cli` picks up `VAULT_TOKEN`. Not for production. |
+| 9    | `traefik.nomad.hcl`  | Host-network reverse proxy; register after backends so `nomadService` templates resolve. Dashboard **8888**, HTTP entry **80**; `abc admin services config sync` writes `admin.services.traefik.http` / `endpoint`. |
 
 ## “All other tools”
 
-These specs cover the **floor stack** called out for `abc-nodes` (storage, tus, metrics, logs, push, Traefik). **CLI-style tools** under `abc admin services` (Nomad / MinIO **mc** / RustFS / Vault / Nebula / Tailscale / Rclone / **Traefik** passthroughs) are **not** modeled here: they are thin wrappers around upstream binaries for operator use, not long-running cluster services.
+These specs cover the **floor stack** called out for `abc-nodes` (storage, tus, metrics, logs, push, Vault lab, Traefik). **CLI-style tools** under `abc admin services` (Nomad / MinIO **mc** / RustFS / Vault / Nebula / Tailscale / Rclone / **Traefik** passthroughs) are thin wrappers around upstream binaries; floor **URLs and tokens** for Vault merge from `~/.abc` when `cluster_type` is `abc-nodes` (see table above for the shipped `vault.nomad.hcl` job).
 
-For **Vault**, **Tailscale**, **Nebula**, and similar, use upstream Nomad examples or vendor packs if you need them as jobs; production Vault especially should follow HashiCorp’s reference architecture, not a minimal single-task template.
+For **Tailscale**, **Nebula**, and similar, use upstream Nomad examples or vendor packs if you need them as jobs. Production Vault should follow HashiCorp’s reference architecture instead of the bundled **`-dev`** job.
 
 ## Operational notes
 

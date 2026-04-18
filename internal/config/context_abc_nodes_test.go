@@ -106,6 +106,41 @@ func TestAbcNodesRustfsStorageCLIEnv_UsesRustfsEndpoint(t *testing.T) {
 	}
 }
 
+func TestAbcNodesVaultCLIEnv_AddrAndToken(t *testing.T) {
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Admin: Admin{
+			Services: AdminServices{
+				Vault: &AdminFloorService{
+					HTTP:      "http://127.0.0.1:8200/",
+					AccessKey: "my-dev-token",
+				},
+			},
+		},
+	}
+	m := ctx.AbcNodesVaultCLIEnv()
+	if m["VAULT_ADDR"] != "http://127.0.0.1:8200" {
+		t.Fatalf("VAULT_ADDR: %q", m["VAULT_ADDR"])
+	}
+	if m["VAULT_TOKEN"] != "my-dev-token" {
+		t.Fatalf("VAULT_TOKEN: %q", m["VAULT_TOKEN"])
+	}
+}
+
+func TestAbcNodesVaultCLIEnv_NotABCNodes(t *testing.T) {
+	ctx := Context{
+		ClusterType: ClusterTypeABCCluster,
+		Admin: Admin{
+			Services: AdminServices{
+				Vault: &AdminFloorService{HTTP: "http://127.0.0.1:8200"},
+			},
+		},
+	}
+	if ctx.AbcNodesVaultCLIEnv() != nil {
+		t.Fatal("expected nil when cluster is not abc-nodes")
+	}
+}
+
 func TestAbcNodesMinioStorageCLIEnv_NotABCNodes(t *testing.T) {
 	ctx := Context{
 		ClusterType: ClusterTypeABCCluster,

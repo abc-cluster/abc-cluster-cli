@@ -151,6 +151,32 @@ func (c Context) AbcNodesRustfsStorageCLIEnv() map[string]string {
 	return c.abcNodesSharedStorageEnv(c.rustfsS3APIEndpoint(), "rustfs")
 }
 
+// AbcNodesVaultCLIEnv returns environment variables for vault / bao / openbao CLIs when cluster_type
+// is abc-nodes: VAULT_ADDR from admin.services.vault.http (no trailing slash), optional
+// VAULT_TOKEN from admin.services.vault.access_key (lab dev root token), only for keys not
+// already set in the process environment.
+func (c Context) AbcNodesVaultCLIEnv() map[string]string {
+	if !c.IsABCNodesCluster() {
+		return nil
+	}
+	addr, ok := GetAdminFloorField(&c.Admin.Services, "vault", "http")
+	if !ok {
+		return nil
+	}
+	addr = strings.TrimSpace(addr)
+	addr = strings.TrimSuffix(addr, "/")
+	if addr == "" {
+		return nil
+	}
+	out := map[string]string{"VAULT_ADDR": addr}
+	if tok, ok := GetAdminFloorField(&c.Admin.Services, "vault", "access_key"); ok {
+		if t := strings.TrimSpace(tok); t != "" {
+			out["VAULT_TOKEN"] = t
+		}
+	}
+	return out
+}
+
 // migrateAbcNodesLegacyS3Endpoint copies deprecated admin.abc_nodes.s3_endpoint into
 // admin.services.minio.endpoint when the latter is empty, then clears the legacy field.
 func migrateAbcNodesLegacyS3Endpoint(ctx *Context) {

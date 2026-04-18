@@ -23,6 +23,8 @@ func floorPtr(s *AdminServices, svc string) **AdminFloorService {
 		return &s.Ntfy
 	case "rustfs":
 		return &s.Rustfs
+	case "vault":
+		return &s.Vault
 	case "traefik":
 		return &s.Traefik
 	default:
@@ -161,6 +163,7 @@ func NormalizeFloorServices(ctx *Context) {
 	s.Loki = nilIfFloorEmpty(s.Loki)
 	s.Ntfy = nilIfFloorEmpty(s.Ntfy)
 	s.Rustfs = nilIfFloorEmpty(s.Rustfs)
+	s.Vault = nilIfFloorEmpty(s.Vault)
 	s.Traefik = nilIfFloorEmpty(s.Traefik)
 }
 
@@ -215,6 +218,7 @@ func AppendAdminFloorAllKeys(prefix string, s AdminServices, out [][2]string) []
 	add("loki", s.Loki)
 	add("ntfy", s.Ntfy)
 	add("rustfs", s.Rustfs)
+	add("vault", s.Vault)
 	add("traefik", s.Traefik)
 	for _, p := range pairs {
 		v := p.val

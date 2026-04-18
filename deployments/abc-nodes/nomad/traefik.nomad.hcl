@@ -128,6 +128,14 @@ http:
       entryPoints: ["web"]
       rule: "Host(`tusd.aither`)"
       service: tusd
+    vault:
+      entryPoints: ["web"]
+      rule: "Host(`vault.aither`)"
+      service: vault
+    uppy:
+      entryPoints: ["web"]
+      rule: "Host(`uppy.aither`)"
+      service: uppy
 
   services:
     grafana:
@@ -165,6 +173,14 @@ http:
     tusd:
       loadBalancer:
         servers:{{ range nomadService "abc-nodes-tusd" }}
+          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+    vault:
+      loadBalancer:
+        servers:{{ range nomadService "abc-nodes-vault" }}
+          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+    uppy:
+      loadBalancer:
+        servers:{{ range nomadService "abc-nodes-uppy" }}
           - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
 EOF
         destination = "local/routes.yml"
