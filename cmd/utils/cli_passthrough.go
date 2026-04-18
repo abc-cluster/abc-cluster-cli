@@ -9,32 +9,66 @@ import (
 	"strings"
 )
 
-// ExtractBinaryLocationFlag parses passthrough CLI args and extracts
-// --binary-location while preserving all other args for the delegated CLI.
+// GetenvFromEnviron returns the value for name in an environ slice ("KEY=value").
+// If the value contains '=', everything after the first '=' is returned.
+func GetenvFromEnviron(environ []string, name string) string {
+	prefix := name + "="
+	for _, kv := range environ {
+		if strings.HasPrefix(kv, prefix) {
+			return kv[len(prefix):]
+		}
+	}
+	return ""
+}
+
+// UpsertEnvOnlyMissing merges key=value from extra into base only when base
+// does not already define that key with a non-empty value (after trim).
+func UpsertEnvOnlyMissing(base []string, extra map[string]string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	out := base
+	for k, v := range extra {
+		if strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		if strings.TrimSpace(GetenvFromEnviron(out, k)) != "" {
+			continue
+		}
+		out = upsertEnv(out, map[string]string{k: v})
+	}
+	return out
+}
+
+// ExtractBinaryLocationFlag parses service-cli passthrough argv for delegated CLIs.
 //
-// Use `--` to stop parsing and pass all remaining args through verbatim.
+// Optional leading "--binary-location <path>" / "--binary-location=<path>" entries
+// are consumed from the left. If the next token is "--", everything after it is the
+// child argv verbatim (including further "--"). Otherwise the remainder of args
+// (after any leading --binary-location entries) is the child argv as-is.
 func ExtractBinaryLocationFlag(args []string) (binaryLocation string, passthrough []string, err error) {
-	passthrough = make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
+	i := 0
+	for i < len(args) {
 		a := args[i]
 		switch {
-		case a == "--":
-			passthrough = append(passthrough, args[i+1:]...)
-			return binaryLocation, passthrough, nil
 		case a == "--binary-location":
 			if i+1 >= len(args) {
 				return "", nil, fmt.Errorf("--binary-location requires a value")
 			}
 			binaryLocation = args[i+1]
-			i++
+			i += 2
 		case len(a) > len("--binary-location=") && a[:len("--binary-location=")] == "--binary-location=":
 			binaryLocation = a[len("--binary-location="):]
+			i++
 		default:
-			passthrough = append(passthrough, a)
+			goto afterLeadingBinary
 		}
 	}
-
-	return binaryLocation, passthrough, nil
+afterLeadingBinary:
+	if i < len(args) && args[i] == "--" {
+		return binaryLocation, append([]string(nil), args[i+1:]...), nil
+	}
+	return binaryLocation, append([]string(nil), args[i:]...), nil
 }
 
 // RunExternalCLI runs a local CLI binary with passthrough args.
@@ -46,8 +80,15 @@ func RunExternalCLI(ctx context.Context, args []string, binaryLocation string, b
 }
 
 // RunExternalCLIWithEnv runs a local CLI binary with passthrough args and
-// optional environment overrides.
+// optional environment overrides (merged with os.Environ via upsertEnv).
 func RunExternalCLIWithEnv(ctx context.Context, args []string, binaryLocation string, binaryCandidates []string, envOverrides map[string]string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return RunExternalCLIWithEnvAndBase(ctx, args, binaryLocation, binaryCandidates, os.Environ(), envOverrides, stdin, stdout, stderr)
+}
+
+// RunExternalCLIWithEnvAndBase runs a local CLI binary with cmd.Env =
+// upsertEnv(baseEnviron, envOverrides). Pass base from UpsertEnvOnlyMissing
+// when config-derived credentials must not override non-empty process env.
+func RunExternalCLIWithEnvAndBase(ctx context.Context, args []string, binaryLocation string, binaryCandidates []string, baseEnviron []string, envOverrides map[string]string, stdin io.Reader, stdout, stderr io.Writer) error {
 	binary, err := resolveCLIBinary(binaryLocation, binaryCandidates)
 	if err != nil {
 		return err
@@ -57,7 +98,7 @@ func RunExternalCLIWithEnv(ctx context.Context, args []string, binaryLocation st
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = upsertEnv(os.Environ(), envOverrides)
+	cmd.Env = upsertEnv(baseEnviron, envOverrides)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run %s %v: %w", binary, args, err)

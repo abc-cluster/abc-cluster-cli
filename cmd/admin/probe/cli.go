@@ -17,7 +17,9 @@ to install the managed binary into ~/.abc/binaries (or ABC_BINARIES_DIR). Use
 --binary-location to select a specific binary (same convention as nomad/tailscale).
 
 Environment overrides when --binary-location is unset:
-  ABC_NODE_PROBE_CLI_BINARY, ABC_NODE_PROBE_BINARY, NODE_PROBE_BINARY`,
+  ABC_NODE_PROBE_CLI_BINARY, ABC_NODE_PROBE_BINARY, NODE_PROBE_BINARY
+
+Use optional leading "--binary-location <path>" then "--" to pass all following arguments verbatim to abc-node-probe.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runProbeCLI,

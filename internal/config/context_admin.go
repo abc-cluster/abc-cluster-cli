@@ -14,9 +14,25 @@ type AdminServices struct {
 	Nomad *NomadService `yaml:"nomad,omitempty"`
 }
 
+// AdminABCNodes holds optional static operator credentials for abc-nodes–style
+// contexts (cluster_type: abc-nodes). Used to inject CLI environment when
+// talking to Nomad, MinIO mc, RustFS, and S3-compatible tools.
+type AdminABCNodes struct {
+	NomadNamespace string `yaml:"nomad_namespace,omitempty"`
+	S3AccessKey    string `yaml:"s3_access_key,omitempty"`
+	S3SecretKey    string `yaml:"s3_secret_key,omitempty"`
+	S3Region       string `yaml:"s3_region,omitempty"`
+	S3Endpoint     string `yaml:"s3_endpoint,omitempty"`
+	// MinioRootUser and MinioRootPassword mirror MinIO server root credentials;
+	// when s3_access_key / s3_secret_key are empty, these are mapped to AWS_* for CLIs.
+	MinioRootUser     string `yaml:"minio_root_user,omitempty"`
+	MinioRootPassword string `yaml:"minio_root_password,omitempty"`
+}
+
 // Admin holds optional admin-plane settings for a context.
 type Admin struct {
 	Services AdminServices `yaml:"services,omitempty"`
+	ABCNodes *AdminABCNodes `yaml:"abc_nodes,omitempty"`
 }
 
 // Services is the deprecated YAML shape under contexts.<name>.services (migrated on load).

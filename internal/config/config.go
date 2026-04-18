@@ -38,6 +38,14 @@
 //	          nomad_addr:  "http://100.70.185.46:4646"
 //	          nomad_token: "s.123..."
 //	          nomad_region: "global"   # optional; Nomad RPC region (not the same as contexts.region)
+//	      abc_nodes:              # optional; static operator creds when cluster_type is abc-nodes
+//	        nomad_namespace: "default"
+//	        s3_access_key: "..."
+//	        s3_secret_key: "..."
+//	        s3_region: "us-east-1"
+//	        s3_endpoint: "http://100.70.185.46:9000"
+//	        minio_root_user: "minioadmin"
+//	        minio_root_password: "..."
 //	defaults:
 //	  output: "table"
 //	  region: ""
@@ -159,6 +167,7 @@ func LoadFrom(path string) (*Config, error) {
 	}
 	for name, ctx := range cfg.Contexts {
 		normalizeContextNomad(&ctx)
+		normalizeContextAbcNodes(&ctx)
 		normalizeContextCrypt(&ctx)
 		cfg.Contexts[name] = ctx
 	}
@@ -265,6 +274,7 @@ func (c *Config) ClearContext(name string) {
 // contexts.<name>.endpoint, contexts.<name>.access_token, etc.
 //
 // Nomad: contexts.<name>.admin.services.nomad.nomad_addr / nomad_token / nomad_region.
+// abc-nodes floor: contexts.<name>.admin.abc_nodes.<field> (see AdminABCNodes).
 func (c *Config) Get(key string) (string, bool) {
 	parts := strings.Split(key, ".")
 	switch parts[0] {
@@ -311,6 +321,30 @@ func (c *Config) Get(key string) (string, bool) {
 				return ctx.Admin.Services.Nomad.Token, true
 			case "nomad_region":
 				return ctx.Admin.Services.Nomad.Region, true
+			}
+			return "", false
+		}
+		// contexts.<name>.admin.abc_nodes.<field>
+		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "abc_nodes" {
+			n := ctx.abcNodes()
+			if n == nil {
+				return "", false
+			}
+			switch parts[4] {
+			case "nomad_namespace":
+				return n.NomadNamespace, true
+			case "s3_access_key":
+				return n.S3AccessKey, true
+			case "s3_secret_key":
+				return n.S3SecretKey, true
+			case "s3_region":
+				return n.S3Region, true
+			case "s3_endpoint":
+				return n.S3Endpoint, true
+			case "minio_root_user":
+				return n.MinioRootUser, true
+			case "minio_root_password":
+				return n.MinioRootPassword, true
 			}
 			return "", false
 		}
@@ -387,6 +421,33 @@ func (c *Config) Set(key, value string) error {
 			default:
 				return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
 			}
+			c.Contexts[canon] = ctx
+			return nil
+		}
+		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "abc_nodes" {
+			if ctx.Admin.ABCNodes == nil {
+				ctx.Admin.ABCNodes = &AdminABCNodes{}
+			}
+			n := ctx.Admin.ABCNodes
+			switch parts[4] {
+			case "nomad_namespace":
+				n.NomadNamespace = value
+			case "s3_access_key":
+				n.S3AccessKey = value
+			case "s3_secret_key":
+				n.S3SecretKey = value
+			case "s3_region":
+				n.S3Region = value
+			case "s3_endpoint":
+				n.S3Endpoint = value
+			case "minio_root_user":
+				n.MinioRootUser = value
+			case "minio_root_password":
+				n.MinioRootPassword = value
+			default:
+				return fmt.Errorf("unknown admin.abc_nodes field %q", parts[4])
+			}
+			normalizeContextAbcNodes(&ctx)
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -488,6 +549,33 @@ func (c *Config) Unset(key string) error {
 			c.Contexts[canon] = ctx
 			return nil
 		}
+		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "abc_nodes" {
+			if ctx.Admin.ABCNodes == nil {
+				return nil
+			}
+			n := ctx.Admin.ABCNodes
+			switch parts[4] {
+			case "nomad_namespace":
+				n.NomadNamespace = ""
+			case "s3_access_key":
+				n.S3AccessKey = ""
+			case "s3_secret_key":
+				n.S3SecretKey = ""
+			case "s3_region":
+				n.S3Region = ""
+			case "s3_endpoint":
+				n.S3Endpoint = ""
+			case "minio_root_user":
+				n.MinioRootUser = ""
+			case "minio_root_password":
+				n.MinioRootPassword = ""
+			default:
+				return fmt.Errorf("unknown admin.abc_nodes field %q", parts[4])
+			}
+			normalizeContextAbcNodes(&ctx)
+			c.Contexts[canon] = ctx
+			return nil
+		}
 		if len(parts) == 4 && parts[2] == "crypt" {
 			switch parts[3] {
 			case "password":
@@ -576,6 +664,30 @@ func (c *Config) AllKeys() [][2]string {
 			}
 			if ctx.Admin.Services.Nomad.Region != "" {
 				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_region", ctx.Admin.Services.Nomad.Region})
+			}
+		}
+		if n := ctx.Admin.ABCNodes; n != nil {
+			pfx := "contexts." + name + ".admin.abc_nodes."
+			if n.NomadNamespace != "" {
+				out = append(out, [2]string{pfx + "nomad_namespace", n.NomadNamespace})
+			}
+			if n.S3AccessKey != "" {
+				out = append(out, [2]string{pfx + "s3_access_key", maskToken(n.S3AccessKey)})
+			}
+			if n.S3SecretKey != "" {
+				out = append(out, [2]string{pfx + "s3_secret_key", maskToken(n.S3SecretKey)})
+			}
+			if n.S3Region != "" {
+				out = append(out, [2]string{pfx + "s3_region", n.S3Region})
+			}
+			if n.S3Endpoint != "" {
+				out = append(out, [2]string{pfx + "s3_endpoint", n.S3Endpoint})
+			}
+			if n.MinioRootUser != "" {
+				out = append(out, [2]string{pfx + "minio_root_user", maskToken(n.MinioRootUser)})
+			}
+			if n.MinioRootPassword != "" {
+				out = append(out, [2]string{pfx + "minio_root_password", maskToken(n.MinioRootPassword)})
 			}
 		}
 		if ctx.Crypt.Password != "" {

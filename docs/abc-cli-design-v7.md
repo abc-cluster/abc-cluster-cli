@@ -1055,7 +1055,7 @@ for local/remote evaluation without joining an ABC cluster.
 ### `abc infra compute probe <node-id>`
 
 ```
-abc infra compute probe <node-id> [flags]
+abc infra compute probe <node-id> [abc-flags] [-- [<probe-arg>...]]
 ```
 
 Implements a parameterized **system** Nomad job (`abc-node-probe-system`) that:
@@ -1065,13 +1065,30 @@ Implements a parameterized **system** Nomad job (`abc-node-probe-system`) that:
 
 | Flag | Description |
 |------|-------------|
-| `--binary` | Path to `abc-node-probe` Linux binary |
+| `--platform` | Override OS/arch for the downloaded probe binary (e.g. `linux/arm64`) |
+| `--installed-binary-only` | Skip GitHub; require `/opt/nomad/abc-node-probe` on the node |
 | `--jurisdiction` | Optional jurisdiction forwarded to probe |
 | `--skip-categories` | Optional comma-separated probe categories to skip |
 | `--json` | Pass `--json` to probe |
 | `--fail-fast` | Pass `--fail-fast` to probe |
 | `--detach` | Submit without log streaming |
 | `--wait-timeout` | Maximum wait while streaming logs |
+
+#### Passthrough: `abc infra compute probe` and `--`
+
+The probe command accepts **at most one** positional token before a bare `--`: the Nomad **node ID** (full UUID or unambiguous prefix). Any tokens **after** `--` are forwarded **verbatim** to `abc-node-probe` on the node (after the CLI’s fixed Nomad-safe prefix: `--nomad-mode`, `--mode=stdout`, `--evaluate`, plus any mirrored flags set above).
+
+- **Why:** `abc` does not mirror every probe flag; passthrough avoids a round-trip through CLI releases when users need uncommon or future `abc-node-probe` options.
+- **Syntax:** Put all `abc` flags (including global `--sudo`) **before** `--`. Everything after `--` is probe argv only (so probe flags that look like flags, e.g. `--timeout=5m`, are not parsed by Cobra).
+- **Precedence:** Mirrored `abc` flags are applied first, then passthrough tokens are appended. If the same flag appears twice, behavior follows `abc-node-probe` (typically last wins); users should avoid redundant duplicates.
+- **Discovery:** Full probe surface area remains `abc-node-probe --help` on a machine that has the binary, or upstream docs for the release pinned by the job.
+
+**Examples:**
+
+```bash
+abc --sudo infra compute probe nomad-client-02 --wait-timeout=10m -- --timeout=5m --verbose
+abc infra compute probe abc123de --installed-binary-only -- --skip-categories=net
+```
 
 **Expected output:**
 ```
@@ -1209,6 +1226,29 @@ The `abc admin services` command group provides tools for:
 existing service APIs. Instead, it builds just enough functionality to test our use-cases and
 verify the ABC-cluster platform's operational integrity. As the platform evolves, commands here
 may be promoted to top-level groups or removed if their use-cases are superseded.
+
+### `abc-nodes` floor: Nomad job definitions
+
+For **`cluster_type: abc-nodes`** environments, long-running **floor** services (object storage, tus, metrics, logs, notifications) can run as **Nomad service jobs** instead of systemd on the host. The repository ships **example job specs** under `deployments/abc-nodes/nomad/`:
+
+| File | Role |
+|------|------|
+| `minio.nomad.hcl` | MinIO (S3 + console) |
+| `rustfs.nomad.hcl` | RustFS (S3-compatible) |
+| `tusd.nomad.hcl` | tusd → S3 (vars for endpoint / bucket / keys) |
+| `prometheus.nomad.hcl` | Prometheus |
+| `grafana.nomad.hcl` | Grafana |
+| `loki.nomad.hcl` | Loki |
+| `ntfy.nomad.hcl` | ntfy |
+
+**Submit / validate** using the pre-wired Nomad CLI passthrough (active context supplies address and token unless overridden):
+
+```bash
+abc admin services nomad cli job validate deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services nomad cli job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
+```
+
+Host-volume names, image pins, secrets, and deployment order are documented in `deployments/abc-nodes/nomad/README.md`. **Admin-service CLIs** (`nomad`, `mc`, `rustfs` binary, `vault`, `nebula`, `tailscale`, `rclone`) remain **operator passthroughs**; they are not replaced by these job files.
 
 ### `abc admin services ping <service>`
 

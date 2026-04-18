@@ -12,7 +12,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [tailscale-args...]",
 		Short:              "Run the local Tailscale CLI",
-		Long:               "Run the local tailscale binary as a passthrough alias. Use `abc admin services tailscale cli setup` to install tailscale into ~/.abc/binaries (or `abc admin services cli setup` for nomad, probe, tailscale, and rclone). Use --binary-location to select a specific binary.",
+		Long:               "Run the local tailscale binary as a passthrough alias. Use `abc admin services tailscale cli setup` to install tailscale into ~/.abc/binaries (or `abc admin services cli setup` for nomad, probe, tailscale, and rclone). Use optional leading `--binary-location <path>` then `--` to pass all following arguments verbatim to tailscale.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runTailscaleCLI,

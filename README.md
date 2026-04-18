@@ -116,6 +116,17 @@ abc data upload ./data.csv.encrypted
 abc data download --tool wget --driver containerd --source https://example.com/file.zip --destination /tmp/dl --node my-nomad-node
 ```
 
+### Nomad floor jobs (`abc-nodes`)
+
+Example **Nomad** service specs for MinIO, RustFS, tusd, Prometheus, Grafana, Loki, and ntfy live under **`deployments/abc-nodes/nomad/`**. Validate or run them with the Nomad CLI passthrough (uses your active abc context for `NOMAD_ADDR` / token):
+
+```bash
+abc admin services nomad cli job validate deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services nomad cli job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
+```
+
+See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering.
+
 ## Development
 
 ```bash

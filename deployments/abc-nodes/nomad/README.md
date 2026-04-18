@@ -1,0 +1,104 @@
+# Nomad jobs for `abc-nodes` floor services
+
+These job definitions run **object storage**, **tus**, and **observability / notifications** as Nomad **service** jobs using the community [**containerd** task driver](https://github.com/Roblox/nomad-driver-containerd) (`driver = "containerd-driver"`), not the built-in Docker driver. They are intended for **`cluster_type: abc-nodes`** contexts: a small Nomad footprint where you still want durable-ish services without the full `abc-cluster` control plane.
+
+## Prerequisites
+
+1. **Nomad clients** with the **containerd-driver** plugin installed and enabled, **containerd** running, and outbound registry access (or pre-pulled images). Client plugin config must set **`containerd_runtime`** (commonly `io.containerd.runc.v2`). For **`network { mode = "bridge" }`**, install CNI plugins on clients (for example under `/opt/cni/bin`) per the driver README; **`host_network = true`** is an alternative if you accept host networking for a task.
+2. **Host volumes** (or replace with CSI / bind mounts you already operate). Example client fragment:
+
+   ```hcl
+   host_volume "abc-nodes-minio" {
+     path      = "/var/lib/abc-nodes/minio"
+     read_only = false
+   }
+   host_volume "abc-nodes-rustfs" {
+     path      = "/var/lib/abc-nodes/rustfs"
+     read_only = false
+   }
+   host_volume "abc-nodes-prometheus" {
+     path      = "/var/lib/abc-nodes/prometheus"
+     read_only = false
+   }
+   host_volume "abc-nodes-grafana" {
+     path      = "/var/lib/abc-nodes/grafana"
+     read_only = false
+   }
+   host_volume "abc-nodes-loki" {
+     path      = "/var/lib/abc-nodes/loki"
+     read_only = false
+   }
+   host_volume "abc-nodes-ntfy" {
+     path      = "/var/lib/abc-nodes/ntfy"
+     read_only = false
+   }
+   ```
+
+   Match **volume `source`** names in each job file (`abc-nodes-minio`, etc.). Tusd uses ephemeral disk only in the shipped spec (no host volume); add one if you need cached uploads on disk.
+
+3. **abc config** with `cluster_type: abc-nodes` (optional for placement; required for your operational convention) and a Nomad-capable context (`nomad_addr`, `nomad_token`, …).
+
+## Static credentials in `~/.abc/config.yaml` (abc-nodes)
+
+For **`cluster_type: abc-nodes`** contexts you can persist operator credentials under **`contexts.<name>.admin.abc_nodes`** so they survive shell restarts and match what you pass into Nomad jobs (`-var minio_root_user=…`, tusd env, etc.):
+
+| YAML field | Effect |
+|------------|--------|
+| `nomad_namespace` | Exported as **`NOMAD_NAMESPACE`** for `abc admin services nomad cli` when that env var is not already set (e.g. `default` or a dedicated namespace). |
+| `s3_access_key` / `s3_secret_key` | Merged into **`AWS_ACCESS_KEY_ID`** / **`AWS_SECRET_ACCESS_KEY`** for `abc admin services minio cli` and **`rustfs cli`** when those env vars are unset. |
+| `s3_region` | Sets **`AWS_DEFAULT_REGION`** when unset. |
+| `s3_endpoint` | Sets **`AWS_ENDPOINT_URL`** and **`AWS_ENDPOINT_URL_S3`** when unset (point at MinIO or RustFS HTTP API). |
+| `minio_root_user` / `minio_root_password` | Used as **`MINIO_ROOT_*`** when set; if `s3_*` keys are omitted, they also supply the AWS-style keys above. |
+
+Process environment always wins over config for the same variable name. Set values with `abc config set contexts.<name>.admin.abc_nodes.s3_access_key '…'` (see `abc config set --help` text for the full key list). **Lab warning:** these values are plaintext on disk; restrict file permissions (`0600`) and do not commit real secrets.
+
+## Submit with `abc admin services nomad cli`
+
+The Nomad CLI is invoked as a passthrough; address and token default from the active abc context (override with `NOMAD_ADDR` / `NOMAD_TOKEN` or admin flags if you wire them on the parent command).
+
+From the **repository root** (`analysis/packages/abc-cluster-cli`):
+
+```bash
+# Validate
+abc admin services nomad cli job validate deployments/abc-nodes/nomad/minio.nomad.hcl
+
+# Run (detached)
+abc admin services nomad cli job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
+
+# Plan then apply (when supported by your nomad binary)
+abc admin services nomad cli job plan  deployments/abc-nodes/nomad/grafana.nomad.hcl
+abc admin services nomad cli job run   deployments/abc-nodes/nomad/grafana.nomad.hcl
+```
+
+Override defaults (datacenter, image tags, secrets) with `-var` / `-var-file` per Nomad’s job spec variables, for example:
+
+```bash
+abc admin services nomad cli job run -detach \
+  -var='datacenters=["default"]' \
+  -var="minio_root_password=change-me" \
+  deployments/abc-nodes/nomad/minio.nomad.hcl
+```
+
+## Order and wiring
+
+| Order | Job file              | Notes |
+|------|------------------------|--------|
+| 1    | `minio.nomad.hcl`      | S3 API + console; create buckets (e.g. `tusd`) with `mc` or a follow-up batch job. |
+| 2    | `rustfs.nomad.hcl`   | Optional S3-compatible store; uses distinct ports from MinIO. |
+| 3    | `tusd.nomad.hcl`     | Set `-var minio_s3_endpoint=...` to your MinIO **S3** URL (see job comments). |
+| 4    | `prometheus.nomad.hcl` | Scrapes itself; extend `prometheus.yml` template for node_exporter / Nomad metrics. |
+| 5    | `loki.nomad.hcl`     | Single-store dev-style config; tune for production. |
+| 6    | `grafana.nomad.hcl`  | Set `grafana_admin_password`; add Prometheus datasource in UI or provisioning later. |
+| 7    | `ntfy.nomad.hcl`     | `ntfy serve` behind HTTP port. |
+
+## “All other tools”
+
+These specs cover the **floor stack** called out for `abc-nodes` (storage, tus, metrics, logs, push). **CLI-style tools** under `abc admin services` (Nomad / MinIO **mc** / RustFS / Vault / Nebula / Tailscale / Rclone passthroughs) are **not** modeled here: they are thin wrappers around upstream binaries for operator use, not long-running cluster services.
+
+For **Vault**, **Tailscale**, **Nebula**, and similar, use upstream Nomad examples or vendor packs if you need them as jobs; production Vault especially should follow HashiCorp’s reference architecture, not a minimal single-task template.
+
+## Operational notes
+
+- **Secrets:** defaults in these files are for **lab** use only. Replace with Vault / Nomad Variables / `-var` for real clusters.
+- **Networking:** jobs publish **dynamic** ports by default. Put a load balancer or static `reserved` ports in `network` if you need stable addresses for tusd → MinIO.
+- **RustFS UID:** bind-mounted data dirs may need ownership compatible with the container user (see RustFS Docker docs).
