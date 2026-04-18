@@ -8,9 +8,9 @@ import (
 
 func TestLoadContextAliasScalar(t *testing.T) {
 	raw := []byte(`version: "1"
-active_context: default
+active_context: primary
 contexts:
-  default: aither
+  primary: aither
   aither:
     endpoint: https://a.example
     access_token: tok-a
@@ -24,12 +24,12 @@ contexts:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ContextAliases["default"] != "aither" {
+	if cfg.ContextAliases["primary"] != "aither" {
 		t.Fatalf("alias: %+v", cfg.ContextAliases)
 	}
-	ctx, ok := cfg.ContextNamed("default")
+	ctx, ok := cfg.ContextNamed("primary")
 	if !ok || ctx.Endpoint != "https://a.example" {
-		t.Fatalf("ContextNamed(default): ok=%v endpoint=%q", ok, ctx.Endpoint)
+		t.Fatalf("ContextNamed(primary): ok=%v endpoint=%q", ok, ctx.Endpoint)
 	}
 	if cfg.ActiveCtx().AccessToken != "tok-a" {
 		t.Fatalf("ActiveCtx token: %q", cfg.ActiveCtx().AccessToken)
@@ -38,8 +38,8 @@ contexts:
 
 func TestContextForSecrets_WithAliasActive(t *testing.T) {
 	c := &Config{
-		ActiveContext:  "default",
-		ContextAliases: map[string]string{"default": "aither"},
+		ActiveContext:  "primary",
+		ContextAliases: map[string]string{"primary": "aither"},
 		Contexts:       map[string]Context{"aither": {Endpoint: "x", Secrets: map[string]string{"k": "v"}}},
 	}
 	name, ctx, err := c.ContextForSecrets()

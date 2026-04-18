@@ -97,11 +97,6 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	organizationID, _ := r.ReadString('\n')
 	organizationID = strings.TrimSpace(organizationID)
 
-	// Prompt for cluster (optional)
-	fmt.Fprintf(os.Stderr, "Cluster ID/name (optional): ")
-	cluster, _ := r.ReadString('\n')
-	cluster = strings.TrimSpace(cluster)
-
 	// Prompt for region (optional)
 	fmt.Fprintf(os.Stderr, "Region (optional): ")
 	region, _ := r.ReadString('\n')
@@ -128,7 +123,6 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		Endpoint:       endpoint,
 		UploadEndpoint: uploadEp,
 		AccessToken:    token,
-		Cluster:        cluster,
 		OrgID:          organizationID,
 		WorkspaceID:    workspace,
 		Region:         region,
@@ -149,9 +143,6 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		}
 		if organizationID != "" {
 			fmt.Fprintf(os.Stderr, "✓ Organization: %s\n", organizationID)
-		}
-		if cluster != "" {
-			fmt.Fprintf(os.Stderr, "✓ Cluster: %s\n", cluster)
 		}
 		if region != "" {
 			fmt.Fprintf(os.Stderr, "✓ Region: %s\n", region)
@@ -243,9 +234,6 @@ Full user details (name, role, plan, etc.) require API contact.`,
 				}
 			}
 			fmt.Printf("Endpoint     %s\n", ctx.Endpoint)
-			if ctx.Cluster != "" {
-				fmt.Printf("Cluster      %s\n", ctx.Cluster)
-			}
 			if ctx.OrgID != "" {
 				fmt.Printf("Organization %s\n", ctx.OrgID)
 			}
@@ -304,7 +292,8 @@ This is a stub. Full OAuth flow not yet implemented.`,
 }
 
 // deriveContextName creates a context name from endpoint and region.
-// E.g. "https://api.org-a.example" + "za-cpt" -> "org-a-za-cpt"
+// E.g. "https://api.org-a.example" + "za-cpt" -> "org-a-za-cpt".
+// active_context selects which saved context is used; there is no reserved "default" name.
 func deriveContextName(endpoint, region string) string {
 	// Extract org name from endpoint domain
 	parts := strings.SplitAfter(endpoint, "://")
@@ -317,7 +306,7 @@ func deriveContextName(endpoint, region string) string {
 		}
 		return domain
 	}
-	return "default"
+	return "main"
 }
 
 func maskToken(tok string) string {

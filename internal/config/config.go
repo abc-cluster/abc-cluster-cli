@@ -16,13 +16,12 @@
 //	version: "1"
 //	active_context: "org-a-za-cpt"
 //	contexts:
-//	  default: aither              # optional top-level redirect (alias name -> target context name)
+//	  primary: aither              # optional top-level redirect (alias name -> target context name)
 //	  org-a-za-cpt:
 //	    endpoint:        "https://api.abc-cluster.io"
 //	    upload_endpoint: "https://api.abc-cluster.io/files/"  // defaults from endpoint + /files/
 //	    upload_token:    "s.abc123..."
 //	    access_token:    "eyJ..."
-//	    cluster:         "dev-cluster"
 //	    organization_id: "org-dev"
 //	    workspace_id:    ""
 //	    region:          ""
@@ -85,7 +84,6 @@ type Context struct {
 	UploadEndpoint string `yaml:"upload_endpoint,omitempty"`
 	UploadToken    string `yaml:"upload_token,omitempty"`
 	AccessToken    string `yaml:"access_token"`
-	Cluster        string `yaml:"cluster,omitempty"`
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
@@ -375,8 +373,6 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.UploadToken, true
 		case "access_token":
 			return ctx.AccessToken, true
-		case "cluster":
-			return ctx.Cluster, true
 		case "organization_id":
 			return ctx.OrgID, true
 		case "workspace_id":
@@ -496,8 +492,6 @@ func (c *Config) Set(key, value string) error {
 			ctx.UploadToken = value
 		case "access_token":
 			ctx.AccessToken = value
-		case "cluster":
-			ctx.Cluster = value
 		case "organization_id":
 			ctx.OrgID = value
 		case "workspace_id":
@@ -643,8 +637,6 @@ func (c *Config) Unset(key string) error {
 			ctx.UploadToken = ""
 		case "access_token":
 			ctx.AccessToken = ""
-		case "cluster":
-			ctx.Cluster = ""
 		case "organization_id":
 			ctx.OrgID = ""
 		case "workspace_id":
@@ -687,9 +679,6 @@ func (c *Config) AllKeys() [][2]string {
 			out = append(out, [2]string{"contexts." + name + ".upload_token", maskToken(ctx.UploadToken)})
 		}
 		out = append(out, [2]string{"contexts." + name + ".access_token", maskToken(ctx.AccessToken)})
-		if ctx.Cluster != "" {
-			out = append(out, [2]string{"contexts." + name + ".cluster", ctx.Cluster})
-		}
 		if ctx.OrgID != "" {
 			out = append(out, [2]string{"contexts." + name + ".organization_id", ctx.OrgID})
 		}
