@@ -1020,7 +1020,7 @@ for local/remote evaluation without joining an ABC cluster.
 | `--node-class` | | Nomad node class |
 | `--server-join` | | Server address(es) to join (repeatable) |
 | `--dev-mode` | `false` | Run Nomad in dev mode (cannot be combined with `--server-join`) |
-| `--network-interface` | `tailscale0` (if Tailscale) | Network interface |
+| `--network-interface` | (unset) | Nomad client `network_interface`; omit for automatic; do not use `tailscale0` for bridge/CNI workloads |
 | `--host-volume` | | `name=path[:read_only]` (repeatable) |
 | `--scratch-host-volume` | `true` | Configure default scratch volume |
 | `--scratch-host-volume-path` | `/opt/nomad/scratch` | Scratch volume path |

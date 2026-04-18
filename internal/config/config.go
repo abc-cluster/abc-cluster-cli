@@ -16,7 +16,7 @@
 //	version: "1"
 //	active_context: "org-a-za-cpt"
 //	contexts:
-//	  default: aither              # optional alias: contexts.<alias> is a string target name
+//	  default: aither              # optional top-level redirect (alias name -> target context name)
 //	  org-a-za-cpt:
 //	    endpoint:        "https://api.abc-cluster.io"
 //	    upload_endpoint: "https://api.abc-cluster.io/files/"  // defaults from endpoint + /files/
@@ -27,6 +27,7 @@
 //	    workspace_id:    ""
 //	    region:          ""
 //	    cluster_type:    "abc-nodes"  # optional: abc-nodes | abc-cluster | abc-cloud
+//	    aliases:         ["lab"]      # optional: alternate names for abc context use (alias: "x" is also accepted)
 //	    crypt:           # optional; local rclone crypt + abc secrets key material
 //	      password: "..."
 //	      salt:     "..."
@@ -56,6 +57,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -102,6 +104,11 @@ type Context struct {
 	ServicesLegacy   Services `yaml:"services,omitempty"`
 	LegacyNomadAddr  string   `yaml:"nomad_addr,omitempty"`
 	LegacyNomadToken string   `yaml:"nomad_token,omitempty"`
+
+	// Aliases are alternate names for this context (abc context use <name>).
+	// Singular "alias" in YAML is merged into Aliases on load.
+	Aliases []string `yaml:"aliases,omitempty"`
+	Alias   string   `yaml:"alias,omitempty"`
 }
 
 // Defaults holds user-level default values.
@@ -199,6 +206,12 @@ func (c *Config) Save() error {
 // SaveTo writes the config to path, creating parent directories as needed.
 // Ensures version is set to current version before writing.
 func (c *Config) SaveTo(path string) error {
+	if err := validateNoAliasKeyCollidesWithPrimaryName(c); err != nil {
+		return err
+	}
+	if err := validateContextAliases(c); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
@@ -238,7 +251,7 @@ func (c *Config) ActiveCtx() Context {
 }
 
 // SetContext upserts a named context and marks it active.
-func (c *Config) SetContext(name string, ctx Context) {
+func (c *Config) SetContext(name string, ctx Context) error {
 	if c.Contexts == nil {
 		c.Contexts = map[string]Context{}
 	}
@@ -246,8 +259,14 @@ func (c *Config) SetContext(name string, ctx Context) {
 		c.ContextAliases = map[string]string{}
 	}
 	delete(c.ContextAliases, name)
+	removeAliasKeysForCanonical(c, name)
+	normalizeContextAliasList(&ctx)
 	c.Contexts[name] = ctx
+	if err := integratePerContextAliasesIntoMap(c); err != nil {
+		return err
+	}
 	c.ActiveContext = name
+	return nil
 }
 
 // ClearContext removes the named context. If it was the active context,
@@ -256,15 +275,11 @@ func (c *Config) ClearContext(name string) {
 	if c.ContextAliases != nil {
 		delete(c.ContextAliases, name)
 	}
-	delete(c.Contexts, name)
-	if c.ContextAliases != nil {
-		for k, v := range c.ContextAliases {
-			if v == name {
-				delete(c.ContextAliases, k)
-			}
-		}
+	if _, ok := c.Contexts[name]; ok {
+		removeAliasKeysForCanonical(c, name)
+		delete(c.Contexts, name)
 	}
-	if c.ActiveContext == name {
+	if c.ActiveContext == name || (c.ActiveContext != "" && !c.HasDefinedContext(c.ActiveContext)) {
 		c.ActiveContext = ""
 	}
 }
@@ -370,6 +385,12 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.Region, true
 		case "cluster_type":
 			return ctx.ClusterType, true
+		case "aliases":
+			a := AliasesResolvingToCanon(c, canon)
+			if len(a) == 0 {
+				return "", false
+			}
+			return strings.Join(a, ","), true
 		}
 	}
 	return "", false
@@ -489,6 +510,28 @@ func (c *Config) Set(key, value string) error {
 				return fmt.Errorf("invalid cluster_type %q (want %s, %s, or %s)", value, ClusterTypeABCNodes, ClusterTypeABCCluster, ClusterTypeABCCloud)
 			}
 			ctx.ClusterType = norm
+		case "aliases":
+			removeAliasKeysForCanonical(c, canon)
+			ctx.Aliases = nil
+			ctx.Alias = ""
+			for _, p := range strings.Split(value, ",") {
+				a := strings.TrimSpace(p)
+				if a == "" || a == canon {
+					continue
+				}
+				if _, exists := c.Contexts[a]; exists {
+					return fmt.Errorf("alias %q conflicts with an existing context name", a)
+				}
+				if prev, ok := c.ContextAliases[a]; ok && prev != canon {
+					return fmt.Errorf("alias %q already maps to context %q", a, prev)
+				}
+				if c.ContextAliases == nil {
+					c.ContextAliases = map[string]string{}
+				}
+				c.ContextAliases[a] = canon
+				ctx.Aliases = append(ctx.Aliases, a)
+			}
+			sort.Strings(ctx.Aliases)
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
@@ -610,6 +653,10 @@ func (c *Config) Unset(key string) error {
 			ctx.Region = ""
 		case "cluster_type":
 			ctx.ClusterType = ""
+		case "aliases":
+			removeAliasKeysForCanonical(c, canon)
+			ctx.Aliases = nil
+			ctx.Alias = ""
 		default:
 			return fmt.Errorf("unknown context field %q", parts[2])
 		}
@@ -654,6 +701,9 @@ func (c *Config) AllKeys() [][2]string {
 		}
 		if ctx.ClusterType != "" {
 			out = append(out, [2]string{"contexts." + name + ".cluster_type", ctx.ClusterType})
+		}
+		if als := AliasesResolvingToCanon(c, name); len(als) > 0 {
+			out = append(out, [2]string{"contexts." + name + ".aliases", strings.Join(als, ",")})
 		}
 		if ctx.Admin.Services.Nomad != nil {
 			if ctx.Admin.Services.Nomad.Addr != "" {

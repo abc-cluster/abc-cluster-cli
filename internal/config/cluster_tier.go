@@ -39,9 +39,9 @@ func PersistActiveContextClusterType(tier string) error {
 	if err != nil {
 		return err
 	}
-	name := cfg.ActiveContext
+	name := strings.TrimSpace(cfg.ActiveContext)
 	if name == "" {
-		name = "default"
+		return fmt.Errorf("no active_context set; run: abc context use <name>")
 	}
 	if !cfg.HasDefinedContext(name) {
 		return fmt.Errorf("no saved context %q", name)

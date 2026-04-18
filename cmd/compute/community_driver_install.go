@@ -75,6 +75,7 @@ type communityDriverInstallConfig struct {
 	ContainerdNerdctlVersion string
 	ContainerdDriverVersion  string
 	Exec2DriverVersion       string
+	CNIPluginsVersion        string
 }
 
 func (c communityDriverInstallConfig) Requested() bool {
@@ -111,11 +112,13 @@ func communityDriverInstallConfigFromFlags(cmd *cobra.Command) (communityDriverI
 	if exec2DriverVersion == "" {
 		exec2DriverVersion = defaultExec2DriverVersion
 	}
+	cniPluginsVersion, _ := cmd.Flags().GetString("cni-plugins-version")
 	return communityDriverInstallConfig{
 		Drivers:                  drivers,
 		ContainerdNerdctlVersion: nerdctlVersion,
 		ContainerdDriverVersion:  containerdDriverVersion,
 		Exec2DriverVersion:       exec2DriverVersion,
+		CNIPluginsVersion:        strings.TrimSpace(cniPluginsVersion),
 	}, nil
 }
 
@@ -231,6 +234,9 @@ func InstallCommunityDrivers(ctx context.Context, ex Executor, cfg communityDriv
 	for _, driver := range cfg.Drivers {
 		switch driver {
 		case communityDriverContainerd:
+			if err := InstallCNIPlugins(ctx, ex, cfg.CNIPluginsVersion, w); err != nil {
+				return err
+			}
 			if err := installCommunityContainerd(ctx, ex, cfg.ContainerdNerdctlVersion, cfg.ContainerdDriverVersion, w); err != nil {
 				return err
 			}
@@ -656,6 +662,22 @@ func printCommunityDriverPostSetupScriptSection(w io.Writer, goos, goarch string
 		fmt.Fprintln(w, "sudo systemctl daemon-reload")
 		fmt.Fprintln(w, "sudo systemctl enable --now containerd")
 		fmt.Fprintln(w, "sudo systemctl is-active --quiet containerd && echo '✓ containerd active'")
+		// CNI reference plugins: required for Nomad bridge networking with containerd-driver.
+		// Emitted here as well for completeness when the community driver section is the
+		// first place CNI steps appear (e.g. --print-commands with containerd but without
+		// standalone --cni-plugins). The install is idempotent if already present.
+		cniVer := strings.TrimSpace(cfg.CNIPluginsVersion)
+		if cniVer == "" {
+			cniVer = defaultCNIPluginsVersion
+		}
+		cniSteps, err := cniPluginInstallSteps(goarch, cniVer)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "# Install CNI reference plugins v%s (idempotent if already done in step 3b)\n", normalizeReleaseVersion(cniVer))
+		for _, step := range cniSteps {
+			fmt.Fprintln(w, step)
+		}
 		driverSteps, err := containerdDriverInstallSteps(goarch, cfg.ContainerdDriverVersion, "")
 		if err != nil {
 			return err

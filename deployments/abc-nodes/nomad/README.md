@@ -4,7 +4,9 @@ These job definitions run **object storage**, **tus**, and **observability / not
 
 ## Prerequisites
 
-1. **Nomad clients** with the **containerd-driver** plugin installed and enabled, **containerd** running, and outbound registry access (or pre-pulled images). Client plugin config must set **`containerd_runtime`** (commonly `io.containerd.runc.v2`). For **`network { mode = "bridge" }`**, install CNI plugins on clients (for example under `/opt/cni/bin`) per the driver README; **`host_network = true`** is an alternative if you accept host networking for a task.
+1. **Nomad clients** with the **containerd-driver** plugin installed and enabled, **containerd** running, and outbound registry access (or pre-pulled images). Client plugin config must set **`containerd_runtime`** (commonly `io.containerd.runc.v2`). For **`network { mode = "bridge" }`** you need **both**:
+   - **Linux `bridge` kernel module** loaded (or loadable) so Nomad’s **bridge** fingerprinter adds `mode=bridge` to the node; otherwise the scheduler reports **Constraint `"missing network"`** even with CNI installed. Check `journalctl -u nomad` for `failed to detect bridge kernel module`. Fix: `sudo modprobe bridge`, persist e.g. `echo bridge | sudo tee /etc/modules-load.d/nomad-bridge.conf`, then **`sudo systemctl restart nomad`**. `abc infra compute add` with CNI install configures this automatically on supported paths.
+   - **CNI reference plugins** on the client at **`cni_path`** (e.g. `/opt/cni/bin`). **`host_network = true`** in the task `config` block is an alternative if you accept host networking (then use **`network { mode = "host" }`** or drop the group `network` stanza per your needs).
 2. **Host volumes** (or replace with CSI / bind mounts you already operate). Example client fragment:
 
    ```hcl
@@ -99,6 +101,7 @@ For **Vault**, **Tailscale**, **Nebula**, and similar, use upstream Nomad exampl
 
 ## Operational notes
 
+- **Placement: `Constraint "missing network"`:** almost always means the Nomad client never fingerprinted **bridge** mode — commonly the **`bridge` kernel module** was not loaded on Linux. CNI binaries alone are not sufficient for the scheduler check. See prerequisite (1) above.
 - **Secrets:** defaults in these files are for **lab** use only. Replace with Vault / Nomad Variables / `-var` for real clusters.
 - **Networking:** jobs publish **dynamic** ports by default. Put a load balancer or static `reserved` ports in `network` if you need stable addresses for tusd → MinIO.
 - **RustFS UID:** bind-mounted data dirs may need ownership compatible with the container user (see RustFS Docker docs).

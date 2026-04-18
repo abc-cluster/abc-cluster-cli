@@ -17,8 +17,9 @@ func NewCmd() *cobra.Command {
 		Long: `Manage named authentication contexts for switching between clusters,
 orgs, workspaces, and regions.
 
-Contexts are stored in ~/.abc/config.yaml under contexts.<name>. A context may be
-a full mapping, or a string alias (e.g. default: aither) that reuses another context.
+Contexts are stored in ~/.abc/config.yaml under contexts.<name>. A full context
+may list aliases: or singular alias: for extra names you can pass to abc context use.
+A top-level string entry (e.g. default: aither) is still supported as a redirect.
 The active context controls which endpoint, token, cluster, org, workspace, and region the CLI uses.
 `,
 	}
@@ -51,21 +52,26 @@ func newListCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ACTIVE\tNAME\tALIAS OF\tCLUSTER\tORG\tWORKSPACE\tREGION\tENDPOINT\n")
+			fmt.Fprintf(w, "ACTIVE\tNAME\tALIAS OF\tALIASES\tCLUSTER\tORG\tWORKSPACE\tREGION\tENDPOINT\n")
 			for _, name := range names {
 				ctx, _ := c.ContextNamed(name)
 				aliasOf := ""
 				if t, ok := c.ContextAliases[name]; ok {
 					aliasOf = t
 				}
+				aliasesCol := ""
+				if _, isPrimary := c.Contexts[name]; isPrimary {
+					aliasesCol = strings.Join(cfg.AliasesResolvingToCanon(c, name), ",")
+				}
 				active := ""
 				if c.ActiveContext == name {
 					active = "*"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 					active,
 					name,
 					aliasOf,
+					aliasesCol,
 					ctx.Cluster,
 					ctx.OrgID,
 					ctx.WorkspaceID,
@@ -106,6 +112,15 @@ func newShowCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Name: %s\n", name)
 			if t, ok := c.ContextAliases[name]; ok {
 				fmt.Fprintf(cmd.OutOrStdout(), "Alias of: %s\n", t)
+			}
+			canon := c.ResolveContextName(name)
+			if canon != "" && canon != name {
+				fmt.Fprintf(cmd.OutOrStdout(), "Canonical: %s\n", canon)
+			}
+			if canon != "" {
+				if als := cfg.AliasesResolvingToCanon(c, canon); len(als) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Aliases: %s\n", strings.Join(als, ", "))
+				}
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Endpoint: %s\n", ctx.Endpoint)
 			if ctx.UploadEndpoint != "" {
@@ -216,7 +231,7 @@ If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate 
 				uploadEp = derived
 			}
 
-			c.SetContext(name, cfg.Context{
+			if err := c.SetContext(name, cfg.Context{
 				Endpoint:       endpoint,
 				UploadEndpoint: uploadEp,
 				UploadToken:    uploadToken,
@@ -225,7 +240,9 @@ If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate 
 				OrgID:          organizationID,
 				WorkspaceID:    workspaceID,
 				Region:         region,
-			})
+			}); err != nil {
+				return fmt.Errorf("set context: %w", err)
+			}
 
 			if err := c.Save(); err != nil {
 				return fmt.Errorf("save config: %w", err)

@@ -133,7 +133,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		WorkspaceID:    workspace,
 		Region:         region,
 	}
-	cfg.SetContext(contextName, ctx2)
+	if err := cfg.SetContext(contextName, ctx2); err != nil {
+		return fmt.Errorf("save context: %w", err)
+	}
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
@@ -179,6 +181,7 @@ Use --all to remove all saved contexts.`,
 
 			if all {
 				cfg.Contexts = map[string]config.Context{}
+				cfg.ContextAliases = map[string]string{}
 				cfg.ActiveContext = ""
 				if err := cfg.Save(); err != nil {
 					return fmt.Errorf("save config: %w", err)
@@ -231,6 +234,14 @@ Full user details (name, role, plan, etc.) require API contact.`,
 
 			ctx, _ := cfg.ContextNamed(cfg.ActiveContext)
 			fmt.Printf("Context      %s\n", cfg.ActiveContext)
+			if canon := cfg.ResolveContextName(cfg.ActiveContext); canon != "" && canon != cfg.ActiveContext {
+				fmt.Printf("Canonical    %s\n", canon)
+			}
+			if canon := cfg.ResolveContextName(cfg.ActiveContext); canon != "" {
+				if als := config.AliasesResolvingToCanon(cfg, canon); len(als) > 0 {
+					fmt.Printf("Aliases      %s\n", strings.Join(als, ", "))
+				}
+			}
 			fmt.Printf("Endpoint     %s\n", ctx.Endpoint)
 			if ctx.Cluster != "" {
 				fmt.Printf("Cluster      %s\n", ctx.Cluster)

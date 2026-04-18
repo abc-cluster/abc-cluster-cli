@@ -21,6 +21,7 @@ func NewCmd() *cobra.Command {
   abc infra compute add --remote <ip>        Add a compute resource
   abc infra compute list                     List registered compute resources
   abc infra compute show <id>                Show compute resource details
+  abc infra compute node debug --remote <h>  Linux Nomad bridge/CNI diagnostics over SSH
   abc infra storage size                     Show storage usage
 
 Compute resource drain/undrain operations are available under:
