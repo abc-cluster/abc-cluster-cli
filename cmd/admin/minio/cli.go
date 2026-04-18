@@ -12,7 +12,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [minio-args...]",
 		Short:              "Run the local MinIO client CLI",
-		Long:               "Run the local MinIO client binary as a passthrough alias. Defaults to mcli, then mc. Optional leading `--binary-location <path>`; use `--` to pass the following argv verbatim to mc/mcli (e.g. `... minio cli -- --help`). Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged. When the active context has cluster_type abc-nodes and admin.abc_nodes credentials plus admin.services.minio.endpoint are set, AWS_* / MINIO_ROOT_* defaults are merged into the environment only for keys not already set in the process (so explicit exports still win).",
+		Long:               "Run the local MinIO client binary as a passthrough alias. Defaults to mcli, then mc. Optional leading `--binary-location <path>`; use `--` to pass the following argv verbatim to mc/mcli (e.g. `... minio cli -- --help`). Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged. When the active context has cluster_type abc-nodes, AWS_* / MINIO_ROOT_* defaults merge from admin.services.minio.access_key / secret_key (if set), else admin.abc_nodes, plus admin.services.minio.endpoint — only for keys not already set in the process environment.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runMinioCLI,

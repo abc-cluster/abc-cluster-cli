@@ -1743,7 +1743,7 @@ Managed binaries currently include:
 - `tailscale`
 - `rclone`
 
-Other `abc admin services … cli` wrappers (for example minio, nebula, rustfs, vault) are not installed by this command; use your OS package manager or upstream installers, or `--binary-location`.
+Other `abc admin services … cli` wrappers (for example minio, nebula, rustfs, vault, traefik) are not installed by this command; use your OS package manager or upstream installers, or `--binary-location`.
 
 ```bash
 abc admin services cli setup

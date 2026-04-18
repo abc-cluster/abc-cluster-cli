@@ -202,7 +202,7 @@ Current managed binaries:
   - tailscale
   - rclone
 
-Passthrough-only CLIs (minio, nebula, rustfs, vault) are not downloaded here; install them separately or point --binary-location / env at your binary.`,
+Passthrough-only CLIs (minio, nebula, rustfs, vault, traefik) are not downloaded here; install them separately or point --binary-location / env at your binary.`,
 		RunE: runCLISetup,
 	}
 }

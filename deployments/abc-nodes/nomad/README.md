@@ -51,6 +51,7 @@ For **`cluster_type: abc-nodes`** contexts you can persist operator credentials 
 | `s3_region` | Sets **`AWS_DEFAULT_REGION`** when unset. |
 | `admin.services.minio.endpoint` | MinIO **S3 API** base URL (no trailing slash). Merged into **`AWS_ENDPOINT_URL`** / **`AWS_ENDPOINT_URL_S3`** for **`minio cli`** only. |
 | `admin.services.rustfs.endpoint` | RustFS **S3 API** base URL for **`rustfs cli`** only (so MinIO and RustFS can coexist on one context). |
+| `admin.services.rustfs.http` | RustFS **web console** URL (browser login; enable with `RUSTFS_CONSOLE_ENABLE`; job maps host `console` → container **9001**). |
 | `minio_root_user` / `minio_root_password` | Used as **`MINIO_ROOT_*`** when set; if `s3_*` keys are omitted, they also supply the AWS-style keys above. |
 
 Process environment always wins over config for the same variable name. Set credentials with e.g. `abc config set contexts.<name>.admin.abc_nodes.s3_access_key '…'` and S3 bases with `abc config set contexts.<name>.admin.services.minio.endpoint 'http://…'` (see `abc config set --help`). Populate service URLs from Nomad with **`abc admin services config sync`**. **Lab warning:** these values are plaintext on disk; restrict file permissions (`0600`) and do not commit real secrets.
@@ -93,10 +94,11 @@ abc admin services nomad cli -- job run -detach \
 | 5    | `loki.nomad.hcl`     | Single-store dev-style config; tune for production. |
 | 6    | `grafana.nomad.hcl`  | Set `grafana_admin_password`; add Prometheus datasource in UI or provisioning later. |
 | 7    | `ntfy.nomad.hcl`     | `ntfy serve` behind HTTP port. |
+| 8    | `traefik.nomad.hcl`  | Host-network reverse proxy; register after backends so `nomadService` templates resolve. Dashboard **8888**, HTTP entry **80**; `abc admin services config sync` writes `admin.services.traefik.http` / `endpoint`. |
 
 ## “All other tools”
 
-These specs cover the **floor stack** called out for `abc-nodes` (storage, tus, metrics, logs, push). **CLI-style tools** under `abc admin services` (Nomad / MinIO **mc** / RustFS / Vault / Nebula / Tailscale / Rclone passthroughs) are **not** modeled here: they are thin wrappers around upstream binaries for operator use, not long-running cluster services.
+These specs cover the **floor stack** called out for `abc-nodes` (storage, tus, metrics, logs, push, Traefik). **CLI-style tools** under `abc admin services` (Nomad / MinIO **mc** / RustFS / Vault / Nebula / Tailscale / Rclone / **Traefik** passthroughs) are **not** modeled here: they are thin wrappers around upstream binaries for operator use, not long-running cluster services.
 
 For **Vault**, **Tailscale**, **Nebula**, and similar, use upstream Nomad examples or vendor packs if you need them as jobs; production Vault especially should follow HashiCorp’s reference architecture, not a minimal single-task template.
 

@@ -11,6 +11,16 @@ variable "rustfs_image" {
   default = "rustfs/rustfs:latest"
 }
 
+variable "rustfs_access_key" {
+  type    = string
+  default = "rustfsadmin"
+}
+
+variable "rustfs_secret_key" {
+  type    = string
+  default = "rustfsadmin"
+}
+
 job "abc-nodes-rustfs" {
   region      = "global"
   datacenters = var.datacenters
@@ -27,7 +37,12 @@ job "abc-nodes-rustfs" {
     network {
       mode = "bridge"
       port "s3" {
-        to = 9000
+        static = 9900
+        to     = 9000
+      }
+      port "console" {
+        static = 9901
+        to     = 9001
       }
     }
 
@@ -36,8 +51,13 @@ job "abc-nodes-rustfs" {
 
       config {
         image = var.rustfs_image
-        # Data path inside container; align with RustFS Docker docs for your tag.
-        args = ["/data"]
+        args  = ["/data"]
+      }
+
+      env {
+        RUSTFS_ACCESS_KEY     = var.rustfs_access_key
+        RUSTFS_SECRET_KEY     = var.rustfs_secret_key
+        RUSTFS_CONSOLE_ENABLE = "true"
       }
 
       resources {
@@ -49,7 +69,19 @@ job "abc-nodes-rustfs" {
         name     = "abc-nodes-rustfs-s3"
         port     = "s3"
         provider = "nomad"
-        tags     = ["abc-nodes", "rustfs", "s3"]
+        tags = [
+          "abc-nodes", "rustfs", "s3",
+          "traefik.enable=true",
+          "traefik.http.routers.rustfs.rule=Host(`rustfs.aither`)",
+          "traefik.http.services.rustfs.loadbalancer.server.port=9900",
+        ]
+      }
+
+      service {
+        name     = "abc-nodes-rustfs-console"
+        port     = "console"
+        provider = "nomad"
+        tags     = ["abc-nodes", "rustfs", "console"]
       }
     }
   }

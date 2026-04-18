@@ -63,6 +63,29 @@ func TestAbcNodesMinioStorageCLIEnv_FallsBackToMinioRoot(t *testing.T) {
 	}
 }
 
+func TestAbcNodesMinioStorageCLIEnv_PrefersFloorAccessKeys(t *testing.T) {
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Admin: Admin{
+			Services: AdminServices{
+				MinIO: &AdminFloorService{
+					Endpoint:  "http://minio:9000",
+					AccessKey: "floor-ak",
+					SecretKey: "floor-sk",
+				},
+			},
+			ABCNodes: &AdminABCNodes{
+				S3AccessKey: "node-ak",
+				S3SecretKey: "node-sk",
+			},
+		},
+	}
+	m := ctx.AbcNodesMinioStorageCLIEnv()
+	if m["AWS_ACCESS_KEY_ID"] != "floor-ak" || m["AWS_SECRET_ACCESS_KEY"] != "floor-sk" {
+		t.Fatalf("expected floor keys, got %#v", m)
+	}
+}
+
 func TestAbcNodesRustfsStorageCLIEnv_UsesRustfsEndpoint(t *testing.T) {
 	ctx := Context{
 		ClusterType: ClusterTypeABCNodes,

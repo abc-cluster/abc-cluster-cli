@@ -83,7 +83,8 @@ Supported keys follow a dot-separated path:
   defaults.output               table, json, or yaml
   defaults.region               Nomad region (e.g., za-cpt)
 	contexts.<name>.endpoint          API endpoint URL
-		contexts.<name>.upload_endpoint   Tus upload endpoint URL
+		contexts.<name>.upload_endpoint          Tus upload endpoint URL (direct Nomad tusd when synced)
+		contexts.<name>.upload_endpoint_traefik  Optional; tus upload URL via Traefik Host() (from admin services config sync)
 			contexts.<name>.upload_token      Tus upload token
 	contexts.<name>.access_token      Access token
 	contexts.<name>.cluster_type      Platform tier (abc-nodes | abc-cluster | abc-cloud)
@@ -94,15 +95,26 @@ Supported keys follow a dot-separated path:
 	contexts.<name>.crypt.password    Local crypt / secrets key material (per context)
 	contexts.<name>.crypt.salt        Optional salt for contexts.<name>.crypt.password
 	contexts.<name>.secrets.*         Encrypted values managed via abc secrets (per context)
-		contexts.<name>.admin.services.nomad.nomad_addr   Node-specific Nomad API address
+		contexts.<name>.admin.services.nomad.nomad_addr   Nomad HTTP API base URL; for http:// include an explicit :PORT (same as other admin.services URLs)
 		contexts.<name>.admin.services.nomad.nomad_token   Node-specific Nomad ACL token
 		contexts.<name>.admin.services.nomad.nomad_region Nomad RPC region (e.g. global); not contexts.region
 		contexts.<name>.admin.abc_nodes.nomad_namespace    Nomad namespace for abc-nodes contexts (NOMAD_NAMESPACE when unset in env)
 		contexts.<name>.admin.abc_nodes.s3_access_key     S3 access key (abc-nodes floor; merged into mc/rustfs env if unset)
 		contexts.<name>.admin.abc_nodes.s3_secret_key     S3 secret key
 		contexts.<name>.admin.abc_nodes.s3_region           AWS_DEFAULT_REGION
-		contexts.<name>.admin.services.minio.endpoint       MinIO S3 API base URL (mc; AWS_ENDPOINT_URL / AWS_ENDPOINT_URL_S3)
+		contexts.<name>.admin.services.minio.endpoint       MinIO S3 API base URL — Nomad dynamic port when synced (mc; AWS_ENDPOINT_URL / AWS_ENDPOINT_URL_S3)
+		contexts.<name>.admin.services.<svc>.traefik_http       Optional; public HTTP UI base via Traefik (sync when traefik job runs)
+		contexts.<name>.admin.services.<svc>.traefik_endpoint   Optional; public API / S3-style base via Traefik (sync when traefik job runs)
+		contexts.<name>.admin.services.minio.access_key     Optional; overrides abc_nodes S3 keys for mc when set
+		contexts.<name>.admin.services.minio.secret_key     Optional; paired with access_key
+		contexts.<name>.admin.services.<svc>.user|password  Optional web UI creds per floor service (e.g. grafana); preserved by config sync
 		contexts.<name>.admin.services.rustfs.endpoint      RustFS S3 API base URL (rustfs CLI; AWS_*)
+		contexts.<name>.admin.services.rustfs.access_key    Optional; overrides abc_nodes for rustfs CLI when set
+		contexts.<name>.admin.services.rustfs.secret_key    Optional; paired with rustfs access_key
+		contexts.<name>.admin.services.rustfs.http          RustFS web console URL (browser login; config sync from Nomad console port)
+		contexts.<name>.admin.services.traefik.http             Traefik dashboard base URL (Nomad sync; also used by config sync + Traefik CLI for API/healthcheck when Traefik job is running)
+		contexts.<name>.admin.services.traefik.endpoint         Traefik web entrypoint base URL (Nomad port http, usually :80)
+		contexts.<name>.admin.services.traefik.ping_entrypoint  Optional; entry point name for traefik healthcheck snippets (default traefik)
 		contexts.<name>.admin.abc_nodes.s3_endpoint         Deprecated alias for admin.services.minio.endpoint
 		contexts.<name>.admin.abc_nodes.minio_root_user     MinIO root user (fallback for s3_access_key; MINIO_ROOT_USER)
 		contexts.<name>.admin.abc_nodes.minio_root_password MinIO root password (fallback for s3_secret_key; MINIO_ROOT_PASSWORD)

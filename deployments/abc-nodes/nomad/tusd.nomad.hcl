@@ -69,7 +69,8 @@ job "abc-nodes-tusd" {
     network {
       mode = "bridge"
       port "http" {
-        to = 8080
+        static = 8080
+        to     = 8080
       }
     }
 
@@ -105,7 +106,12 @@ job "abc-nodes-tusd" {
         name     = "abc-nodes-tusd"
         port     = "http"
         provider = "nomad"
-        tags     = ["abc-nodes", "tusd", "http"]
+        tags = [
+          "abc-nodes", "tusd", "http",
+          "traefik.enable=true",
+          "traefik.http.routers.tusd.rule=Host(`tusd.aither`)",
+          "traefik.http.services.tusd.loadbalancer.server.port=8080",
+        ]
       }
     }
   }

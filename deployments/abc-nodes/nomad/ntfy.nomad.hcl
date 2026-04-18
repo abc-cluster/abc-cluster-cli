@@ -1,5 +1,5 @@
 # ntfy (push notifications) — abc-nodes floor
-# Default: cache under /var/cache/ntfy in the container (ephemeral).
+# Attachments stored in MinIO S3 bucket "ntfy".
 
 variable "datacenters" {
   type    = list(string)
@@ -13,8 +13,29 @@ variable "ntfy_image" {
 
 variable "ntfy_base_url" {
   type        = string
-  description = "Public URL users reach for the ntfy web UI / subscribe (used in server config)."
-  default     = "http://127.0.0.1:8088"
+  description = "Public URL users reach for the ntfy web UI / subscribe."
+  default     = "http://100.70.185.46:8088"
+}
+
+variable "minio_endpoint" {
+  type        = string
+  description = "MinIO host:port without scheme, e.g. 100.70.185.46:9000"
+  default     = "100.70.185.46:9000"
+}
+
+variable "minio_access_key" {
+  type    = string
+  default = "minioadmin"
+}
+
+variable "minio_secret_key" {
+  type    = string
+  default = "minioadmin"
+}
+
+variable "ntfy_attachment_bucket" {
+  type    = string
+  default = "ntfy"
 }
 
 job "abc-nodes-ntfy" {
@@ -33,7 +54,8 @@ job "abc-nodes-ntfy" {
     network {
       mode = "bridge"
       port "http" {
-        to = 80
+        static = 8088
+        to     = 80
       }
     }
 
@@ -41,15 +63,30 @@ job "abc-nodes-ntfy" {
       driver = "containerd-driver"
 
       config {
-        image   = var.ntfy_image
-        command = "ntfy"
-        args    = ["serve", "--cache-file", "/var/cache/ntfy/cache.db"]
+        image = var.ntfy_image
+        args  = ["serve", "--config", "/local/ntfy.yml"]
       }
 
-      env {
-        NTFY_BASE_URL         = var.ntfy_base_url
-        NTFY_BEHIND_PROXY     = "true"
-        NTFY_ATTACHMENT_CACHE_DIR = "/var/cache/ntfy/attachments"
+      template {
+        data        = <<EOF
+base-url: "${var.ntfy_base_url}"
+behind-proxy: true
+listen-http: ":80"
+
+attachment-cache-dir: ""
+attachment-expiry-duration: "3h"
+attachment-total-size-limit: "5G"
+attachment-file-size-limit: "15M"
+
+attachment-s3:
+  endpoint: "http://${var.minio_endpoint}"
+  bucket: "${var.ntfy_attachment_bucket}"
+  access-key: "${var.minio_access_key}"
+  secret-key: "${var.minio_secret_key}"
+  region: "us-east-1"
+  path-style: true
+EOF
+        destination = "local/ntfy.yml"
       }
 
       resources {
@@ -61,7 +98,12 @@ job "abc-nodes-ntfy" {
         name     = "abc-nodes-ntfy"
         port     = "http"
         provider = "nomad"
-        tags     = ["abc-nodes", "ntfy", "notifications"]
+        tags = [
+          "abc-nodes", "ntfy", "notifications",
+          "traefik.enable=true",
+          "traefik.http.routers.ntfy.rule=Host(`ntfy.aither`)",
+          "traefik.http.services.ntfy.loadbalancer.server.port=8088",
+        ]
       }
     }
   }

@@ -35,7 +35,7 @@
 //	    admin:
 //	      services:
 //	        nomad:
-//	          nomad_addr:  "http://100.70.185.46:4646"
+//	          nomad_addr:  "http://100.70.185.46:4646"  # must include :PORT for http (not assumed)
 //	          nomad_token: "s.123..."
 //	          nomad_region: "global"   # optional; Nomad RPC region (not the same as contexts.region)
 //	      abc_nodes:              # optional; static operator creds when cluster_type is abc-nodes
@@ -48,6 +48,8 @@
 //	        # S3 API bases live under admin.services (minio vs rustfs are separate):
 //	        #   admin.services.minio.endpoint
 //	        #   admin.services.rustfs.endpoint
+//	        #   admin.services.traefik.http / endpoint  (Nomad dashboard vs web entry; from config sync)
+//	        #   admin.services.*.traefik_http / traefik_endpoint  (optional; Traefik Host() bases from sync)
 //	defaults:
 //	  output: "table"
 //	  region: ""
@@ -80,13 +82,14 @@ func DefaultConfigPath() string {
 
 // Context holds connection details for one named context.
 type Context struct {
-	Endpoint       string `yaml:"endpoint"`
-	UploadEndpoint string `yaml:"upload_endpoint,omitempty"`
-	UploadToken    string `yaml:"upload_token,omitempty"`
-	AccessToken    string `yaml:"access_token"`
-	OrgID          string `yaml:"organization_id,omitempty"`
-	WorkspaceID    string `yaml:"workspace_id,omitempty"`
-	Region         string `yaml:"region,omitempty"`
+	Endpoint              string `yaml:"endpoint"`
+	UploadEndpoint        string `yaml:"upload_endpoint,omitempty"`
+	UploadEndpointTraefik string `yaml:"upload_endpoint_traefik,omitempty"`
+	UploadToken           string `yaml:"upload_token,omitempty"`
+	AccessToken           string `yaml:"access_token"`
+	OrgID                 string `yaml:"organization_id,omitempty"`
+	WorkspaceID           string `yaml:"workspace_id,omitempty"`
+	Region                string `yaml:"region,omitempty"`
 	// ClusterType is one of abc-nodes | abc-cluster | abc-cloud (platform tier).
 	ClusterType string `yaml:"cluster_type,omitempty"`
 	Admin       Admin  `yaml:"admin,omitempty"`
@@ -274,7 +277,8 @@ func (c *Config) ClearContext(name string) {
 // Supported paths: active_context, defaults.output, defaults.region,
 // contexts.<name>.endpoint, contexts.<name>.access_token, etc.
 //
-// Nomad: contexts.<name>.admin.services.nomad.nomad_addr / nomad_token / nomad_region.
+// Nomad: contexts.<name>.admin.services.nomad.nomad_addr / nomad_token / nomad_region
+// (nomad_addr for http:// must include an explicit :PORT when set via config.Set).
 // abc-nodes floor: contexts.<name>.admin.abc_nodes.<field> (see AdminABCNodes).
 func (c *Config) Get(key string) (string, bool) {
 	parts := strings.Split(key, ".")
@@ -368,6 +372,8 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.Endpoint, true
 		case "upload_endpoint":
 			return ctx.UploadEndpoint, true
+		case "upload_endpoint_traefik":
+			return ctx.UploadEndpointTraefik, true
 		case "upload_token":
 			return ctx.UploadToken, true
 		case "access_token":
@@ -430,7 +436,11 @@ func (c *Config) Set(key, value string) error {
 				}
 				switch parts[5] {
 				case "nomad_addr":
-					ctx.Admin.Services.Nomad.Addr = value
+					v := strings.TrimSpace(value)
+					if err := ValidateNomadAddrForContext(v); err != nil {
+						return err
+					}
+					ctx.Admin.Services.Nomad.Addr = v
 				case "nomad_token":
 					ctx.Admin.Services.Nomad.Token = value
 				case "nomad_region":
@@ -500,6 +510,8 @@ func (c *Config) Set(key, value string) error {
 			ctx.Endpoint = value
 		case "upload_endpoint":
 			ctx.UploadEndpoint = value
+		case "upload_endpoint_traefik":
+			ctx.UploadEndpointTraefik = value
 		case "upload_token":
 			ctx.UploadToken = value
 		case "access_token":
@@ -657,6 +669,8 @@ func (c *Config) Unset(key string) error {
 			ctx.Endpoint = ""
 		case "upload_endpoint":
 			ctx.UploadEndpoint = ""
+		case "upload_endpoint_traefik":
+			ctx.UploadEndpointTraefik = ""
 		case "upload_token":
 			ctx.UploadToken = ""
 		case "access_token":
@@ -698,6 +712,9 @@ func (c *Config) AllKeys() [][2]string {
 		out = append(out, [2]string{"contexts." + name + ".endpoint", ctx.Endpoint})
 		if ctx.UploadEndpoint != "" {
 			out = append(out, [2]string{"contexts." + name + ".upload_endpoint", ctx.UploadEndpoint})
+		}
+		if ctx.UploadEndpointTraefik != "" {
+			out = append(out, [2]string{"contexts." + name + ".upload_endpoint_traefik", ctx.UploadEndpointTraefik})
 		}
 		if ctx.UploadToken != "" {
 			out = append(out, [2]string{"contexts." + name + ".upload_token", maskToken(ctx.UploadToken)})
