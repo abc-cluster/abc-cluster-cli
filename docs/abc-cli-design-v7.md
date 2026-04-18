@@ -44,7 +44,7 @@
 - **`abc admin services`** holds service health checks (ping, version) and Nomad operations that are
   directly relevant to the ABC-cluster platform. Organized as: `abc admin services ping`,
   `abc admin services version`, `abc admin services cli setup`,
-  `abc admin services nomad node <subcommand>`, and `abc admin services nomad cli <args...>`.
+  `abc admin services nomad node <subcommand>`, and `abc admin services nomad cli -- <nomad-args...>` (verbatim passthrough after `--`; `cli setup` is handled by abc).
   The `cli` subcommand is a preconfigured passthrough alias to the local Nomad CLI for operations
   that abc does not yet implement natively.
   The porcelain wrapper `abc admin services cli setup` bootstraps all wrapped binaries (`nomad`,
@@ -1244,8 +1244,8 @@ For **`cluster_type: abc-nodes`** environments, long-running **floor** services 
 **Submit / validate** using the pre-wired Nomad CLI passthrough (active context supplies address and token unless overridden):
 
 ```bash
-abc admin services nomad cli job validate deployments/abc-nodes/nomad/minio.nomad.hcl
-abc admin services nomad cli job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services nomad cli -- job validate deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
 ```
 
 Host-volume names, image pins, secrets, and deployment order are documented in `deployments/abc-nodes/nomad/README.md`. **Admin-service CLIs** (`nomad`, `mc`, `rustfs` binary, `vault`, `nebula`, `tailscale`, `rclone`) remain **operator passthroughs**; they are not replaced by these job files.

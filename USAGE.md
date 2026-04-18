@@ -95,7 +95,7 @@ These flags are available on every `abc` command.
 | Flag      | Scope               | Required for                                   |
 |-----------|---------------------|------------------------------------------------|
 | *(none)*  | User operations     | pipeline, job, data, module, submit, emissions, compliance      |
-| `--sudo`  | Cluster-admin       | `admin services nomad cli namespace apply/delete`, `infra compute add/drain`   |
+| `--sudo`  | Cluster-admin       | `admin services nomad cli -- namespace apply/delete`, `infra compute add/drain`   |
 | `--cloud` | Infrastructure      | `cluster provision/decommission`, `accounting set`            |
 | `--user`  | Impersonation       | Act as another user (admin-only; forwarded as `X-ABC-As-User`)|
 | `--exp`   | Experimental        | Community task drivers, unreleased features                   |
@@ -1701,11 +1701,13 @@ Run the local `nomad` CLI as a preconfigured passthrough alias. Nomad address, t
 resolved from the active abc config context when not explicitly provided via flags.
 Run `setup` to optionally download managed binaries into `~/.abc/binaries` (or `ABC_BINARIES_DIR`).
 
-### `admin services nomad cli [nomad-args...]`
+### `admin services nomad cli [--] [nomad-args...]`
+
+Put **`--`** after `cli` so the remainder matches the upstream **`nomad`** argv (recommended). The exception is **`abc admin services nomad cli setup`**, which abc handles itself (binary install), not the HashiCorp CLI.
 
 ```bash
-abc admin services nomad cli status
-abc admin services nomad cli node status
+abc admin services nomad cli -- job status -short
+abc admin services nomad cli -- node status
 abc admin services nomad cli setup
 ```
 
