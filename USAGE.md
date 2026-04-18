@@ -1648,7 +1648,7 @@ matching `abc-node-probe` GitHub release asset for the **target node's** OS/arch
 (unless `--installed-binary-only`).
 
 ```
-abc infra compute probe <node-id> [flags]
+abc infra compute probe <node-id> [flags] [-- [<probe-arg>...]]
 ```
 
 | Flag | Description |
@@ -1662,10 +1662,13 @@ abc infra compute probe <node-id> [flags]
 | `--detach` | Submit probe and return without waiting for streamed logs |
 | `--wait-timeout` | Maximum wait time while streaming probe output |
 
+**Passthrough:** after a bare `--`, remaining tokens are passed verbatim to `abc-node-probe` (only one node ID may appear before `--`). Put all `abc` flags before `--`. See `docs/abc-cli-design-v7.md` (probe subsection) for precedence and examples.
+
 ```bash
 abc --sudo infra compute probe nomad-client-02 --jurisdiction ZA
 abc --sudo infra compute probe nomad-client-02 --json --wait-timeout 2m
 abc --sudo infra compute probe nomad-arm-01 --platform=linux/arm64
+abc --sudo infra compute probe nomad-client-02 --wait-timeout=10m -- --timeout=5m --verbose
 ```
 
 ---

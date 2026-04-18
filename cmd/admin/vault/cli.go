@@ -11,7 +11,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [vault-args...]",
 		Short:              "Run the local Vault or OpenBao (bao) CLI",
-		Long:               "Run the local vault or OpenBao (`bao`) binary as a passthrough alias. Use --binary-location to select a specific binary.",
+		Long:               "Run the local vault or OpenBao (`bao`) binary as a passthrough alias. Use optional leading `--binary-location <path>` then `--` to pass all following arguments verbatim to the underlying binary.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runVaultCLI,

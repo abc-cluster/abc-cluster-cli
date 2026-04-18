@@ -114,7 +114,7 @@ SCRIPT
 
 func newProbeCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "probe <node-id>",
+		Use:   "probe <node-id> [-- [<probe-arg>...]]",
 		Short: "Run abc-node-probe on a specific node via a system batch job",
 		Long: `Deploy and execute the abc-node-probe binary on a specific Nomad node.
 
@@ -128,10 +128,15 @@ release asset for the node's OS/architecture from GitHub. If GitHub cannot be
 resolved, the command fails unless you pass --installed-binary-only (expects
 the binary at /opt/nomad/abc-node-probe on the node).
 
+Put abc CLI flags before a bare "--", then any tokens after "--" are forwarded
+verbatim to abc-node-probe (after the fixed Nomad-safe prefix flags). Use this
+for probe flags that are not mirrored on "abc" (see abc-node-probe --help).
+
   abc infra compute probe nomad-client-02 --jurisdiction=ZA
   abc infra compute probe nomad-client-02 --platform=linux/arm64
-  abc infra compute probe nomad-client-02 --installed-binary-only`,
-		Args: cobra.ExactArgs(1),
+  abc infra compute probe nomad-client-02 --installed-binary-only
+  abc infra compute probe nomad-client-02 -- --timeout=5m --verbose`,
+		Args: probeCommandArgs,
 		RunE: runProbe,
 	}
 	cmd.Flags().String("jurisdiction", utils.EnvOrDefault("ABC_PROBE_JURISDICTION"),
@@ -150,13 +155,50 @@ the binary at /opt/nomad/abc-node-probe on the node).
 	return cmd
 }
 
+// probeCommandArgs enforces exactly one Nomad node ID before an optional "--"
+// passthrough separator (Cobra's ArgsLenAtDash).
+func probeCommandArgs(cmd *cobra.Command, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("requires a Nomad node ID (prefix or full UUID)")
+	}
+	d := cmd.ArgsLenAtDash()
+	if d < 0 {
+		if len(args) != 1 {
+			return fmt.Errorf("unexpected argument %q after node ID %q: put abc-node-probe flags after %q (e.g. %s <node-id> -- --timeout=5m)",
+				args[1], args[0], "--", cmd.CommandPath())
+		}
+		return nil
+	}
+	if d == 0 {
+		return fmt.Errorf("missing node ID before %q", "--")
+	}
+	if d != 1 {
+		return fmt.Errorf("only one node ID may appear before %q (found %d positional tokens before the separator); put abc CLI flags before %q and probe flags after it",
+			"--", d, "--")
+	}
+	return nil
+}
+
+// probeSplitNodeAndPassthrough returns the node reference and optional probe
+// argv tail from Cobra args and ArgsLenAtDash. probeCommandArgs must have succeeded.
+func probeSplitNodeAndPassthrough(cmd *cobra.Command, args []string) (nodeRef string, passthrough []string) {
+	nodeRef = args[0]
+	if cmd.ArgsLenAtDash() < 0 {
+		return nodeRef, nil
+	}
+	if len(args) > 1 {
+		passthrough = append([]string(nil), args[1:]...)
+	}
+	return nodeRef, passthrough
+}
+
 func runProbe(cmd *cobra.Command, args []string) error {
 	if err := requireSudo(cmd); err != nil {
 		return err
 	}
 
 	nc := nomadClientFromCmd(cmd)
-	nodeRef := args[0]
+	nodeRef, probePassthrough := probeSplitNodeAndPassthrough(cmd, args)
 	node, err := resolveNodeRef(cmd, nc, nodeRef)
 	if err != nil {
 		return err
@@ -192,6 +234,8 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	// Always use nomad-mode since we're running in a Nomad job context
 	probeArgs = append(probeArgs, "--nomad-mode")
 	probeArgs = append(probeArgs, "--mode=stdout")
+	// Admission-style severities and summary (abc-node-probe defaults to observations-only).
+	probeArgs = append(probeArgs, "--evaluate")
 
 	if v, _ := cmd.Flags().GetString("jurisdiction"); strings.TrimSpace(v) != "" {
 		probeArgs = append(probeArgs, fmt.Sprintf("--jurisdiction=%s", strings.TrimSpace(v)))
@@ -205,6 +249,7 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetBool("fail-fast"); v {
 		probeArgs = append(probeArgs, "--fail-fast")
 	}
+	probeArgs = append(probeArgs, probePassthrough...)
 
 	probeHCL := buildNodeProbeJobHCL(node.Datacenter, node.ID, nodeProbeInstalledPath, downloadURL, probeArgs)
 	jobJSON, err := nc.ParseHCL(cmd.Context(), probeHCL)
@@ -244,7 +289,7 @@ func runProbe(cmd *cobra.Command, args []string) error {
 
 	waitTimeout, _ := cmd.Flags().GetDuration("wait-timeout")
 	fmt.Fprintf(out, "\n  Streaming probe output...\n\n")
-	if err := utils.WatchJobLogsForTask(cmd.Context(), nc, resp.DispatchedJobID, "", "probe", out, defaultProbeWatchDelay, waitTimeout); err != nil {
+	if err := utils.WatchJobLogsForTaskBoth(cmd.Context(), nc, resp.DispatchedJobID, "", "probe", out, defaultProbeWatchDelay, waitTimeout); err != nil {
 		return fmt.Errorf("streaming probe output: %w", err)
 	}
 	if err := reportProbeTaskOutcome(cmd.Context(), nc, cmd.ErrOrStderr(), resp.DispatchedJobID, "probe"); err != nil {
@@ -287,9 +332,6 @@ func reportProbeTaskOutcome(ctx context.Context, nc *utils.NomadClient, errOut i
 	if !taskFailed && !allocFailed {
 		return nil
 	}
-
-	_, _ = fmt.Fprintf(errOut, "\n--- probe stderr ---\n")
-	_ = nc.StreamLogs(ctx, latest.ID, task, "stderr", "start", 0, false, errOut)
 
 	if allocFailed && ok {
 		return fmt.Errorf("probe failed (allocation client_status=%s, task %q state=%s failed=%v)",

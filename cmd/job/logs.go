@@ -112,7 +112,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			defer f.Close()
-			if err := nc.StreamLogs(cmd.Context(), target.ID, task, "stdout", origin, 0, follow, f); err != nil {
+			if _, err := nc.StreamLogs(cmd.Context(), target.ID, task, "stdout", origin, 0, follow, f); err != nil {
 				return err
 			}
 		}
@@ -125,12 +125,13 @@ func runLogs(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			defer f.Close()
-			if err := nc.StreamLogs(cmd.Context(), target.ID, task, "stderr", origin, 0, follow, f); err != nil {
+			if _, err := nc.StreamLogs(cmd.Context(), target.ID, task, "stderr", origin, 0, follow, f); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	return nc.StreamLogs(cmd.Context(), target.ID, task, logType, origin, 0, follow, out)
+	_, err = nc.StreamLogs(cmd.Context(), target.ID, task, logType, origin, 0, follow, out)
+	return err
 }

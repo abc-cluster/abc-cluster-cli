@@ -96,6 +96,13 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.admin.services.nomad.nomad_addr   Node-specific Nomad API address
 		contexts.<name>.admin.services.nomad.nomad_token   Node-specific Nomad ACL token
 		contexts.<name>.admin.services.nomad.nomad_region Nomad RPC region (e.g. global); not contexts.region
+		contexts.<name>.admin.abc_nodes.nomad_namespace    Nomad namespace for abc-nodes contexts (NOMAD_NAMESPACE when unset in env)
+		contexts.<name>.admin.abc_nodes.s3_access_key     S3 access key (abc-nodes floor; merged into mc/rustfs env if unset)
+		contexts.<name>.admin.abc_nodes.s3_secret_key     S3 secret key
+		contexts.<name>.admin.abc_nodes.s3_region           AWS_DEFAULT_REGION
+		contexts.<name>.admin.abc_nodes.s3_endpoint         S3 API base URL (AWS_ENDPOINT_URL / AWS_ENDPOINT_URL_S3)
+		contexts.<name>.admin.abc_nodes.minio_root_user     MinIO root user (fallback for s3_access_key; MINIO_ROOT_USER)
+		contexts.<name>.admin.abc_nodes.minio_root_password MinIO root password (fallback for s3_secret_key; MINIO_ROOT_PASSWORD)
 
 Example:
   abc config set defaults.output json

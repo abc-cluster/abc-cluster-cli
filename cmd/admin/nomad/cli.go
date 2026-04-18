@@ -13,7 +13,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [nomad-args...]",
 		Short:              "Run the local Nomad CLI with abc context defaults",
-		Long:               "Run the local nomad binary as a preconfigured alias. Nomad address, token, and region are resolved from the active abc config context when not provided via flags. Use `abc admin services nomad cli setup` to install nomad + abc-node-probe into ~/.abc/binaries (or `abc admin services cli setup` for tailscale and rclone as well). Use --binary-location to select a specific nomad binary.",
+		Long:               "Run the local nomad binary as a preconfigured alias. Nomad address, token, and region are resolved from the active abc config context when not provided via flags. For contexts with cluster_type abc-nodes, admin.abc_nodes.nomad_namespace (e.g. default) is exported as NOMAD_NAMESPACE only when that variable is not already set in the environment. Use `abc admin services nomad cli setup` to install nomad + abc-node-probe into ~/.abc/binaries (or `abc admin services cli setup` for tailscale and rclone as well). Optional leading `--binary-location <path>`; use `--` to pass the following argv verbatim to nomad (e.g. `... nomad cli --binary-location /opt/nomad -- job status -short`). Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runNomadCLI,

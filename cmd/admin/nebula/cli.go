@@ -11,7 +11,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [nebula-args...]",
 		Short:              "Run the local Nebula CLI",
-		Long:               "Run the local nebula binary as a passthrough alias. Use --binary-location to select a specific binary.",
+		Long:               "Run the local nebula binary as a passthrough alias. Use optional leading `--binary-location <path>` then `--` to pass all following arguments verbatim to nebula.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runNebulaCLI,

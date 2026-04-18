@@ -77,3 +77,47 @@ contexts:
 		t.Fatalf("unexpected NOMAD_* env: got %q want %q", got, want)
 	}
 }
+
+func TestRunNomadCLI_InjectsNomadNamespaceFromAbcNodes(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("NOMAD_NAMESPACE", "")
+	raw := `version: "1"
+active_context: lab
+contexts:
+  lab:
+    endpoint: https://api.example.com
+    access_token: api-token
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://ctx-nomad:4646
+          nomad_token: ctx-token
+          nomad_region: global
+      abc_nodes:
+        nomad_namespace: apps
+`
+	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := RunNomadCLI(
+		context.Background(),
+		[]string{"-c", `printf "%s" "$NOMAD_NAMESPACE"`},
+		"sh",
+		"",
+		"",
+		"",
+		nil,
+		&out,
+		&out,
+	)
+	if err != nil {
+		t.Fatalf("RunNomadCLI: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "apps" {
+		t.Fatalf("NOMAD_NAMESPACE: got %q want apps", strings.TrimSpace(out.String()))
+	}
+}

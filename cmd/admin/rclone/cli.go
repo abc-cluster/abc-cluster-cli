@@ -22,7 +22,15 @@ to install the managed binary into ~/.abc/binaries (or ABC_BINARIES_DIR). Use
 Optional leading arguments (stripped before invoking rclone):
   --abc-server-config          Fetch rclone.ini from GET {--url}/khan/v1/rclone.conf and set RCLONE_CONFIG to a temp file
   --abc-local-config=<path>    Set RCLONE_CONFIG to this path (no network fetch)
-  --                           Stop parsing abc-specific flags; everything after is passed to rclone verbatim`,
+
+Use "--" so arbitrary rclone flags (including "-h" / "--config") are forwarded verbatim:
+  abc admin services rclone cli --abc-server-config -- lsd remote:
+  abc admin services rclone cli --binary-location /path/rclone -- --version
+
+Optional wrappers (--binary-location, --abc-server-config, --abc-local-config) are only
+recognized at the start of argv. After them, either a lone "--" introduces verbatim
+rclone args, or the remaining argv is passed to rclone after stripping any leading
+--abc-* flags.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runRcloneCLI,
@@ -35,7 +43,7 @@ func runRcloneCLI(cmd *cobra.Command, args []string) error {
 		return runRcloneCLISetup(cmd)
 	}
 
-	binaryLocation, passthrough, err := utils.ExtractBinaryLocationFlag(args)
+	binaryLocation, serverConfig, localConfig, passthrough, err := extractRcloneCLIPassthrough(args)
 	if err != nil {
 		return err
 	}
@@ -51,10 +59,6 @@ func runRcloneCLI(cmd *cobra.Command, args []string) error {
 	}
 
 	serverURL, accessToken, workspace := apiConnectionFromRoot(cmd)
-	binaryLocation, serverConfig, localConfig, passthrough, err := parseABCRclonePreamble(binaryLocation, passthrough)
-	if err != nil {
-		return err
-	}
 
 	env := map[string]string{}
 	var cleanup func()
@@ -121,6 +125,61 @@ func apiConnectionFromRoot(cmd *cobra.Command) (serverURL, accessToken, workspac
 	return serverURL, accessToken, workspace
 }
 
+// extractRcloneCLIPassthrough consumes optional leading --binary-location and --abc-*
+// wrappers, then either a "--" verbatim split or parseABCRclonePreamble on the tail.
+func extractRcloneCLIPassthrough(args []string) (binaryLocation string, serverConfig bool, localConfig string, passthrough []string, err error) {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "--binary-location":
+			if i+1 >= len(args) {
+				return "", false, "", nil, fmt.Errorf("--binary-location requires a value")
+			}
+			binaryLocation = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--binary-location="):
+			binaryLocation = strings.TrimPrefix(a, "--binary-location=")
+			i++
+		case a == "--abc-server-config":
+			if serverConfig {
+				return "", false, "", nil, fmt.Errorf("duplicate --abc-server-config")
+			}
+			if localConfig != "" {
+				return "", false, "", nil, fmt.Errorf("cannot combine --abc-server-config with --abc-local-config")
+			}
+			serverConfig = true
+			i++
+		case strings.HasPrefix(a, "--abc-local-config="):
+			if localConfig != "" {
+				return "", false, "", nil, fmt.Errorf("duplicate --abc-local-config")
+			}
+			if serverConfig {
+				return "", false, "", nil, fmt.Errorf("cannot combine --abc-server-config with --abc-local-config")
+			}
+			localConfig = strings.TrimPrefix(a, "--abc-local-config=")
+			i++
+		case a == "--abc-local-config":
+			if i+1 >= len(args) {
+				return "", false, "", nil, fmt.Errorf("--abc-local-config requires a path")
+			}
+			if localConfig != "" {
+				return "", false, "", nil, fmt.Errorf("duplicate --abc-local-config")
+			}
+			if serverConfig {
+				return "", false, "", nil, fmt.Errorf("cannot combine --abc-server-config with --abc-local-config")
+			}
+			localConfig = args[i+1]
+			i += 2
+		case a == "--":
+			return binaryLocation, serverConfig, localConfig, append([]string(nil), args[i+1:]...), nil
+		default:
+			return parseABCRclonePreamble(binaryLocation, args[i:])
+		}
+	}
+	return parseABCRclonePreamble(binaryLocation, nil)
+}
+
 // parseABCRclonePreamble strips abc-only flags. binaryLocation is passed through unchanged.
 func parseABCRclonePreamble(binaryLocation string, args []string) (binOut string, serverConfig bool, localConfig string, rest []string, err error) {
 	binOut = binaryLocation
@@ -128,8 +187,6 @@ func parseABCRclonePreamble(binaryLocation string, args []string) (binOut string
 	for len(rest) > 0 {
 		a := rest[0]
 		switch {
-		case a == "--":
-			return binOut, serverConfig, localConfig, rest[1:], nil
 		case a == "--abc-server-config":
 			if serverConfig {
 				return "", false, "", nil, fmt.Errorf("duplicate --abc-server-config")

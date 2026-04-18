@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -22,28 +23,34 @@ func RunNomadCLI(ctx context.Context, args []string, binaryLocation, addr, token
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
-	if addr == "" || token == "" || region == "" {
-		if cfg, err := config.Load(); err == nil && cfg != nil {
-			active := cfg.ActiveCtx()
-			if addr == "" {
-				addr = active.NomadAddr()
-			}
-			if token == "" {
-				token = active.NomadToken()
-			}
-			if region == "" {
-				region = active.NomadRegion()
-			}
+	cfg, _ := config.Load()
+	if cfg != nil {
+		active := cfg.ActiveCtx()
+		if addr == "" {
+			addr = active.NomadAddr()
+		}
+		if token == "" {
+			token = active.NomadToken()
+		}
+		if region == "" {
+			region = active.NomadRegion()
 		}
 	}
 	if addr != "" {
 		addr = NormalizeNomadAPIAddr(addr)
 	}
-	cmd.Env = upsertEnv(cmd.Environ(), map[string]string{
+	base := os.Environ()
+	base = upsertEnv(base, map[string]string{
 		"NOMAD_ADDR":   addr,
 		"NOMAD_TOKEN":  token,
 		"NOMAD_REGION": region,
 	})
+	if cfg != nil {
+		if ns := cfg.ActiveCtx().AbcNodesNomadNamespaceForCLI(); ns != "" {
+			base = UpsertEnvOnlyMissing(base, map[string]string{"NOMAD_NAMESPACE": ns})
+		}
+	}
+	cmd.Env = base
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run %s %v: %w", binary, args, err)

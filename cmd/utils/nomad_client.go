@@ -516,7 +516,11 @@ func (c *NomadClient) DispatchJob(ctx context.Context, jobID string, meta map[st
 	return &out, c.post(ctx, "/v1/job/"+url.PathEscape(jobID)+"/dispatch", body, &out)
 }
 
-func (c *NomadClient) StreamLogs(ctx context.Context, allocID, task, logType, origin string, offset int64, follow bool, w io.Writer) error {
+// StreamLogs streams one log type (stdout/stderr) from an allocation. It returns
+// the next byte offset to pass for a follow-up read (largest end offset seen)
+// and a stream/HTTP error if any.
+func (c *NomadClient) StreamLogs(ctx context.Context, allocID, task, logType, origin string, offset int64, follow bool, w io.Writer) (int64, error) {
+	var lastEndOffset int64
 	q := url.Values{
 		"task":   {task},
 		"type":   {logType},
@@ -528,25 +532,34 @@ func (c *NomadClient) StreamLogs(ctx context.Context, allocID, task, logType, or
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.url("/v1/client/fs/logs/"+url.PathEscape(allocID), q), nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if c.token != "" {
 		req.Header.Set("X-Nomad-Token", c.token)
 	}
+	if c.sudo {
+		req.Header.Set("X-ABC-Sudo", "1")
+	}
+	if c.cloud {
+		req.Header.Set("X-ABC-Cloud", "1")
+	}
+	if c.asUser != "" {
+		req.Header.Set("X-ABC-As-User", c.asUser)
+	}
 	resp, err := streamClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("log stream: %w", err)
+		return 0, fmt.Errorf("log stream: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("log stream %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return 0, fmt.Errorf("log stream %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 256*1024), 256*1024)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
-			return nil
+			return lastEndOffset, nil
 		}
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -559,8 +572,15 @@ func (c *NomadClient) StreamLogs(ctx context.Context, allocID, task, logType, or
 		if len(frame.Data) > 0 {
 			w.Write(frame.Data) //nolint:errcheck
 		}
+		end := frame.Offset + int64(len(frame.Data))
+		if frame.Offset > end {
+			end = frame.Offset
+		}
+		if end > lastEndOffset {
+			lastEndOffset = end
+		}
 	}
-	return scanner.Err()
+	return lastEndOffset, scanner.Err()
 }
 
 // ── Variables API methods ─────────────────────────────────────────────────────
@@ -787,6 +807,23 @@ func WatchJobLogsForTask(ctx context.Context, nc *NomadClient, jobID, namespace,
 	return watchJobLogsInternal(ctx, nc, jobID, namespace, task, w, delay, timeout)
 }
 
+// WatchJobLogsForTaskBoth streams stdout and stderr concurrently until the
+// allocation reaches a terminal client status. Prefer this for raw_exec / shell
+// tasks where Nomad may attach the process to stderr more reliably than stdout.
+func WatchJobLogsForTaskBoth(ctx context.Context, nc *NomadClient, jobID, namespace, task string,
+	w io.Writer, delay, timeout time.Duration) error {
+	return watchJobLogsInternalBoth(ctx, nc, jobID, namespace, task, w, delay, timeout)
+}
+
+func findJobAllocByID(allocs []NomadAllocStub, id string) *NomadAllocStub {
+	for i := range allocs {
+		if allocs[i].ID == id {
+			return &allocs[i]
+		}
+	}
+	return nil
+}
+
 func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace, taskOverride string,
 	w io.Writer, delay, timeout time.Duration) error {
 	start := time.Now()
@@ -811,20 +848,45 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 				chosen = &a
 			}
 		}
-		if chosen != nil {
-			task := strings.TrimSpace(taskOverride)
-			if task == "" {
-				task = "main"
-				for t := range chosen.TaskStates {
-					task = t
-					break
-				}
+		if chosen == nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-SleepCh(int(delay.Seconds())):
 			}
-			// Pending / starting allocs must use follow=true or Nomad closes the
-			// log stream immediately (snapshot EOF) and we would return below and
-			// exit the whole watch before the task runs. Terminal allocs only need
-			// a one-shot read.
-			terminal := AllocClientTerminalStatus(chosen.ClientStatus)
+			continue
+		}
+
+		task := strings.TrimSpace(taskOverride)
+		if task == "" {
+			task = "main"
+			for t := range chosen.TaskStates {
+				task = t
+				break
+			}
+		}
+		allocID := chosen.ID
+		logOrigin := "start"
+		var logOff int64
+
+		for {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if timeout > 0 && time.Since(start) > timeout {
+				return fmt.Errorf("watch timeout after %s", timeout)
+			}
+
+			allocs, err := nc.GetJobAllocs(ctx, jobID, namespace, false)
+			if err != nil {
+				return err
+			}
+			cur := findJobAllocByID(allocs, allocID)
+			if cur == nil {
+				break
+			}
+
+			terminal := AllocClientTerminalStatus(cur.ClientStatus)
 			follow := !terminal
 
 			streamCtx := ctx
@@ -836,7 +898,6 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 			var wg sync.WaitGroup
 			if follow && streamCancel != nil {
 				wg.Add(1)
-				allocID := chosen.ID
 				go func() {
 					defer wg.Done()
 					ticker := time.NewTicker(delay)
@@ -850,22 +911,17 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 							if err != nil {
 								continue
 							}
-							for _, a := range allocs2 {
-								if a.ID != allocID {
-									continue
-								}
-								if AllocClientTerminalStatus(a.ClientStatus) {
-									streamCancel()
-									return
-								}
-								break
+							a := findJobAllocByID(allocs2, allocID)
+							if a != nil && AllocClientTerminalStatus(a.ClientStatus) {
+								streamCancel()
+								return
 							}
 						}
 					}
 				}()
 			}
 
-			streamErr := nc.StreamLogs(streamCtx, chosen.ID, task, "stdout", "start", 0, follow, w)
+			lastOff, streamErr := nc.StreamLogs(streamCtx, allocID, task, "stdout", logOrigin, logOff, follow, w)
 			if streamCancel != nil {
 				streamCancel()
 				wg.Wait()
@@ -880,6 +936,7 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 				if strings.Contains(emsg, "404 Not Found") ||
 					strings.Contains(emsg, "not started yet") ||
 					strings.Contains(emsg, "No logs available") {
+					logOrigin, logOff = "start", 0
 					select {
 					case <-ctx.Done():
 						return nil
@@ -889,13 +946,240 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 				}
 				return streamErr
 			}
+
+			allocs, err = nc.GetJobAllocs(ctx, jobID, namespace, false)
+			if err != nil {
+				return err
+			}
+			cur = findJobAllocByID(allocs, allocID)
+			if cur == nil {
+				break
+			}
+			if !AllocClientTerminalStatus(cur.ClientStatus) {
+				if lastOff > 0 {
+					logOrigin, logOff = "start", lastOff
+				} else {
+					logOrigin, logOff = "end", 0
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-SleepCh(int(delay.Seconds())):
+				}
+				continue
+			}
+
+			_, _ = nc.StreamLogs(ctx, allocID, task, "stderr", "start", 0, false, w)
 			return nil
 		}
+
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-SleepCh(int(delay.Seconds())):
 		}
+	}
+}
+
+type muxWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (m *muxWriter) Write(p []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return m.w.Write(p)
+}
+
+// tailAllocLogType follows one log stream (stdout or stderr) until streamCtx is
+// canceled (e.g. allocation finished) or a non-retryable error occurs.
+func tailAllocLogType(streamCtx context.Context, stopAll func(), parentCtx context.Context, nc *NomadClient, jobID, namespace, allocID, task, logType string, w io.Writer, delay time.Duration, start time.Time, timeout time.Duration) {
+	logOrigin := "start"
+	var logOff int64
+	for {
+		if streamCtx.Err() != nil {
+			return
+		}
+		if timeout > 0 && time.Since(start) > timeout {
+			return
+		}
+		allocs, err := nc.GetJobAllocs(parentCtx, jobID, namespace, false)
+		if err != nil {
+			return
+		}
+		cur := findJobAllocByID(allocs, allocID)
+		if cur == nil {
+			select {
+			case <-streamCtx.Done():
+				return
+			case <-SleepCh(int(delay.Seconds())):
+			}
+			continue
+		}
+		if AllocClientTerminalStatus(cur.ClientStatus) {
+			_, _ = nc.StreamLogs(parentCtx, allocID, task, logType, "start", 0, false, w)
+			return
+		}
+
+		lastOff, streamErr := nc.StreamLogs(streamCtx, allocID, task, logType, logOrigin, logOff, true, w)
+		if streamErr != nil {
+			if errors.Is(streamErr, context.Canceled) || errors.Is(streamErr, streamCtx.Err()) {
+				allocs2, e2 := nc.GetJobAllocs(parentCtx, jobID, namespace, false)
+				if e2 == nil {
+					c2 := findJobAllocByID(allocs2, allocID)
+					if c2 != nil && AllocClientTerminalStatus(c2.ClientStatus) {
+						_, _ = nc.StreamLogs(parentCtx, allocID, task, logType, "start", 0, false, w)
+					}
+				}
+				return
+			}
+			emsg := streamErr.Error()
+			if strings.Contains(emsg, "404 Not Found") ||
+				strings.Contains(emsg, "not started yet") ||
+				strings.Contains(emsg, "No logs available") {
+				logOrigin, logOff = "start", 0
+				select {
+				case <-streamCtx.Done():
+					return
+				case <-SleepCh(int(delay.Seconds())):
+				}
+				continue
+			}
+			stopAll()
+			return
+		}
+
+		allocs, err = nc.GetJobAllocs(parentCtx, jobID, namespace, false)
+		if err != nil {
+			return
+		}
+		cur = findJobAllocByID(allocs, allocID)
+		if cur == nil {
+			return
+		}
+		if AllocClientTerminalStatus(cur.ClientStatus) {
+			return
+		}
+		if lastOff > 0 {
+			logOrigin, logOff = "start", lastOff
+		} else {
+			logOrigin, logOff = "end", 0
+		}
+		select {
+		case <-streamCtx.Done():
+			return
+		case <-SleepCh(int(delay.Seconds())):
+		}
+	}
+}
+
+func watchJobLogsInternalBoth(ctx context.Context, nc *NomadClient, jobID, namespace, taskOverride string,
+	w io.Writer, delay, timeout time.Duration) error {
+	start := time.Now()
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if timeout > 0 && time.Since(start) > timeout {
+			return fmt.Errorf("watch timeout after %s", timeout)
+		}
+		allocs, err := nc.GetJobAllocs(ctx, jobID, namespace, false)
+		if err != nil {
+			return err
+		}
+		var chosen *NomadAllocStub
+		for _, a := range allocs {
+			if a.ClientStatus == "running" {
+				chosen = &a
+				break
+			}
+			if chosen == nil || a.CreateTime > chosen.CreateTime {
+				chosen = &a
+			}
+		}
+		if chosen == nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-SleepCh(int(delay.Seconds())):
+			}
+			continue
+		}
+
+		task := strings.TrimSpace(taskOverride)
+		if task == "" {
+			task = "main"
+			for t := range chosen.TaskStates {
+				task = t
+				break
+			}
+		}
+		allocID := chosen.ID
+
+		streamCtx, streamCancel := context.WithCancel(ctx)
+		var wgPoll sync.WaitGroup
+		wgPoll.Add(1)
+		go func() {
+			defer wgPoll.Done()
+			ticker := time.NewTicker(delay)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-streamCtx.Done():
+					return
+				case <-ticker.C:
+					if timeout > 0 && time.Since(start) > timeout {
+						streamCancel()
+						return
+					}
+					allocs2, err := nc.GetJobAllocs(ctx, jobID, namespace, false)
+					if err != nil {
+						continue
+					}
+					a := findJobAllocByID(allocs2, allocID)
+					if a != nil && AllocClientTerminalStatus(a.ClientStatus) {
+						streamCancel()
+						return
+					}
+				}
+			}
+		}()
+
+		mw := &muxWriter{w: w}
+		var wgStreams sync.WaitGroup
+		for _, typ := range []string{"stdout", "stderr"} {
+			typ := typ
+			wgStreams.Add(1)
+			go func() {
+				defer wgStreams.Done()
+				tailAllocLogType(streamCtx, streamCancel, ctx, nc, jobID, namespace, allocID, task, typ, mw, delay, start, timeout)
+			}()
+		}
+		wgStreams.Wait()
+		streamCancel()
+		wgPoll.Wait()
+
+		if timeout > 0 && time.Since(start) > timeout {
+			return fmt.Errorf("watch timeout after %s", timeout)
+		}
+		allocs, err = nc.GetJobAllocs(ctx, jobID, namespace, false)
+		if err != nil {
+			return err
+		}
+		cur := findJobAllocByID(allocs, allocID)
+		if cur != nil && !AllocClientTerminalStatus(cur.ClientStatus) {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-SleepCh(int(delay.Seconds())):
+			}
+			continue
+		}
+		return nil
 	}
 }
 
