@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -11,7 +12,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [vault-args...]",
 		Short:              "Run the local Vault or OpenBao (bao) CLI",
-		Long:               "Run the local vault or OpenBao (`bao`) binary as a passthrough alias. Use optional leading `--binary-location <path>` then `--` to pass all following arguments verbatim to the underlying binary.",
+		Long:               "Run the local vault or OpenBao (`bao`) binary as a passthrough alias. Use optional leading `--binary-location <path>` then `--` to pass all following arguments verbatim to the underlying binary. When the active context has cluster_type abc-nodes, VAULT_ADDR / VAULT_TOKEN merge from admin.services.vault.http and admin.services.vault.access_key (optional dev token) — only for keys not already set in the process environment.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runVaultCLI,
@@ -38,13 +39,9 @@ func runVaultCLI(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	return utils.RunExternalCLI(
-		cmd.Context(),
-		passthroughArgs,
-		binaryLocation,
-		[]string{"vault", "bao", "openbao"},
-		os.Stdin,
-		cmd.OutOrStdout(),
-		cmd.ErrOrStderr(),
-	)
+	base := os.Environ()
+	if cfg, err := config.Load(); err == nil && cfg != nil {
+		base = utils.UpsertEnvOnlyMissing(base, cfg.ActiveCtx().AbcNodesVaultCLIEnv())
+	}
+	return utils.RunExternalCLIWithEnvAndBase(cmd.Context(), passthroughArgs, binaryLocation, []string{"vault", "bao", "openbao"}, base, nil, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

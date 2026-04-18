@@ -36,6 +36,7 @@ var traefikHostBindings = []traefikHostBinding{
 	{host: "loki.aither", svc: "loki", field: "traefik_http"},
 	{host: "prometheus.aither", svc: "prometheus", field: "traefik_http"},
 	{host: "ntfy.aither", svc: "ntfy", field: "traefik_http"},
+	{host: "vault.aither", svc: "vault", field: "traefik_http"},
 	{host: "rustfs.aither", svc: "rustfs", field: "traefik_endpoint"},
 	{host: "tusd.aither", svc: "tusd", field: "traefik_http", upload: true},
 }

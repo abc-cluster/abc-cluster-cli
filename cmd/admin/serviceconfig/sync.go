@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type syncKV struct{ key, val string }
+
 type floorSyncRule struct {
 	JobName     string // Nomad job ID, e.g. abc-nodes-minio
 	ServiceYAML string // admin.services.<name>
@@ -34,6 +36,7 @@ var floorSyncRules = []floorSyncRule{
 	{"abc-nodes-prometheus", "prometheus", "http", "http", ""},
 	{"abc-nodes-loki", "loki", "http", "http", ""},
 	{"abc-nodes-ntfy", "ntfy", "http", "http", ""},
+	{"abc-nodes-vault", "vault", "http", "http", ""},
 	// Traefik: dashboard (:8888) → http; entry web (:80) → endpoint (see traefik.nomad.hcl).
 	{"abc-nodes-traefik", "traefik", "dashboard", "http", ""},
 	{"abc-nodes-traefik", "traefik", "http", "endpoint", ""},
@@ -66,10 +69,13 @@ Host names follow admin.services.nomad.nomad_addr (same host as the Nomad API
 unless the allocation publishes a concrete HostIP on the port). Scheme is http
 when nomad_addr is http, otherwise https.
 
-Credentials are not read from tasks (would require exec). Existing
-admin.services.<svc>.access_key, secret_key, user, password (and admin.abc_nodes
-credentials) are left unchanged; Nomad sync updates http / endpoint / upload_endpoint;
-Traefik sync updates traefik_http / traefik_endpoint / upload_endpoint_traefik.
+Credentials are not read from task logs (would require exec). Existing
+admin.services.<svc>.access_key, secret_key, user, password (except vault lab
+token below) and admin.abc_nodes credentials are left unchanged unless noted.
+Nomad sync updates http / endpoint / upload_endpoint; Traefik sync updates
+traefik_http / traefik_endpoint / upload_endpoint_traefik. For job abc-nodes-vault
+when running, sync also reads VAULT_DEV_ROOT_TOKEN_ID from the registered job
+spec and sets admin.services.vault.access_key (lab -dev Vault only).
 Requires nomad_addr and nomad_token on the context.
 `),
 		RunE: runConfigSync,
@@ -129,8 +135,7 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 		jobByID[j.ID] = j
 	}
 
-	type update struct{ key, val string }
-	var updates []update
+	var updates []syncKV
 
 	scheme := "http"
 	if u, err := url.Parse(addr); err == nil && strings.EqualFold(u.Scheme, "https") {
@@ -143,6 +148,11 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 	}
 	for _, n := range trNotes {
 		fmt.Fprintln(out, n)
+	}
+
+	vaultTokUpdates, err := vaultSyncUpdatesFromNomad(ctxNomad, out, nc, ns, canon, jobByID)
+	if err != nil {
+		return err
 	}
 
 	for _, rule := range floorSyncRules {
@@ -182,12 +192,12 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 		pfx := "contexts." + canon + ".admin.services." + rule.ServiceYAML + "."
 		switch rule.Kind {
 		case "endpoint":
-			updates = append(updates, update{pfx + "endpoint", base})
+			updates = append(updates, syncKV{pfx + "endpoint", base})
 		case "http":
-			updates = append(updates, update{pfx + "http", base})
+			updates = append(updates, syncKV{pfx + "http", base})
 			if rule.UploadRel != "" {
 				upload := strings.TrimSuffix(base, "/") + rule.UploadRel
-				updates = append(updates, update{"contexts." + canon + ".upload_endpoint", upload})
+				updates = append(updates, syncKV{"contexts." + canon + ".upload_endpoint", upload})
 			}
 		default:
 			return fmt.Errorf("internal: unknown kind %q", rule.Kind)
@@ -201,9 +211,12 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 	for k, v := range traefikOverrides {
 		merged[k] = v
 	}
+	for _, u := range vaultTokUpdates {
+		merged[u.key] = u.val
+	}
 	updates = updates[:0]
 	for k, v := range merged {
-		updates = append(updates, update{k, v})
+		updates = append(updates, syncKV{k, v})
 	}
 
 	sort.Slice(updates, func(i, j int) bool { return updates[i].key < updates[j].key })

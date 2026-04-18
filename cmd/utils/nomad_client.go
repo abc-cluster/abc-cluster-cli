@@ -123,8 +123,9 @@ type NomadTaskGroup struct {
 }
 
 type NomadTask struct {
-	Name   string `json:"Name"`
-	Driver string `json:"Driver"`
+	Name   string            `json:"Name"`
+	Driver string            `json:"Driver"`
+	Env    map[string]string `json:"Env,omitempty"`
 }
 
 type NomadAllocStub struct {
