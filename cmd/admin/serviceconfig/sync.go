@@ -30,6 +30,7 @@ var floorSyncRules = []floorSyncRule{
 	{"abc-nodes-rustfs", "rustfs", "console", "http", ""},
 	{"abc-nodes-tusd", "tusd", "http", "http", "/files/"},
 	{"abc-nodes-grafana", "grafana", "http", "http", ""},
+	{"abc-nodes-alloy", "grafana_alloy", "ui", "http", ""},
 	{"abc-nodes-prometheus", "prometheus", "http", "http", ""},
 	{"abc-nodes-loki", "loki", "http", "http", ""},
 	{"abc-nodes-ntfy", "ntfy", "http", "http", ""},
@@ -44,7 +45,7 @@ func newSyncCmd() *cobra.Command {
 		Short: "Sync admin.services URLs from running abc-nodes Nomad jobs into ~/.abc",
 		Long: strings.TrimSpace(`
 For a context with cluster_type abc-nodes, queries Nomad for floor jobs named
-abc-nodes-* (MinIO, tusd, Grafana, …), reads each running allocation's published
+abc-nodes-* (MinIO, tusd, Grafana, Grafana Alloy, …), reads each running allocation's published
 ports, and writes:
 
   contexts.<name>.admin.services.<service>.http|endpoint

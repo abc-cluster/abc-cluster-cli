@@ -112,6 +112,7 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.admin.services.rustfs.access_key    Optional; overrides abc_nodes for rustfs CLI when set
 		contexts.<name>.admin.services.rustfs.secret_key    Optional; paired with rustfs access_key
 		contexts.<name>.admin.services.rustfs.http          RustFS web console URL (browser login; config sync from Nomad console port)
+		contexts.<name>.admin.services.grafana_alloy.http   Grafana Alloy UI (Nomad job abc-nodes-alloy, port ui; config sync)
 		contexts.<name>.admin.services.traefik.http             Traefik dashboard base URL (Nomad sync; also used by config sync + Traefik CLI for API/healthcheck when Traefik job is running)
 		contexts.<name>.admin.services.traefik.endpoint         Traefik web entrypoint base URL (Nomad port http, usually :80)
 		contexts.<name>.admin.services.traefik.ping_entrypoint  Optional; entry point name for traefik healthcheck snippets (default traefik)

@@ -15,6 +15,12 @@ func TestFirstHostFromTraefikRule(t *testing.T) {
 			t.Fatalf("got %q ok=%v", got, ok)
 		}
 	})
+	t.Run("hyphenatedHost", func(t *testing.T) {
+		got, ok := firstHostFromTraefikRule("Host(`grafana-alloy.aither`)")
+		if !ok || got != "grafana-alloy.aither" {
+			t.Fatalf("got %q ok=%v", got, ok)
+		}
+	})
 	t.Run("none", func(t *testing.T) {
 		_, ok := firstHostFromTraefikRule("PathPrefix(`/only`)")
 		if ok {

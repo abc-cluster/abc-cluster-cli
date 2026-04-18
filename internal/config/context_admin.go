@@ -11,7 +11,7 @@ type NomadService struct {
 
 // AdminFloorService holds URLs synced from running Nomad jobs (abc-nodes floor)
 // plus operator-supplied credentials (never written by config sync).
-// Use endpoint for S3 API bases (MinIO, RustFS) and http for HTTP services (tusd, Grafana, …).
+// Use endpoint for S3 API bases (MinIO, RustFS) and http for HTTP services (tusd, Grafana, Grafana Alloy, …).
 // traefik_http / traefik_endpoint mirror http / endpoint but hold Host()-style public
 // bases from Traefik (config sync when abc-nodes-traefik is running); Nomad dynamic
 // ports stay in http / endpoint.
@@ -49,15 +49,16 @@ func (a *AdminFloorService) IsEmpty() bool {
 
 // AdminServices holds operator-facing integrations under contexts.<name>.admin.services.
 type AdminServices struct {
-	Nomad      *NomadService      `yaml:"nomad,omitempty"`
-	MinIO      *AdminFloorService `yaml:"minio,omitempty"`
-	Tusd       *AdminFloorService `yaml:"tusd,omitempty"`
-	Grafana    *AdminFloorService `yaml:"grafana,omitempty"`
-	Prometheus *AdminFloorService `yaml:"prometheus,omitempty"`
-	Loki       *AdminFloorService `yaml:"loki,omitempty"`
-	Ntfy       *AdminFloorService `yaml:"ntfy,omitempty"`
-	Rustfs     *AdminFloorService `yaml:"rustfs,omitempty"`
-	Traefik    *AdminFloorService `yaml:"traefik,omitempty"`
+	Nomad        *NomadService      `yaml:"nomad,omitempty"`
+	MinIO        *AdminFloorService `yaml:"minio,omitempty"`
+	Tusd         *AdminFloorService `yaml:"tusd,omitempty"`
+	Grafana      *AdminFloorService `yaml:"grafana,omitempty"`
+	GrafanaAlloy *AdminFloorService `yaml:"grafana_alloy,omitempty"`
+	Prometheus   *AdminFloorService `yaml:"prometheus,omitempty"`
+	Loki         *AdminFloorService `yaml:"loki,omitempty"`
+	Ntfy         *AdminFloorService `yaml:"ntfy,omitempty"`
+	Rustfs       *AdminFloorService `yaml:"rustfs,omitempty"`
+	Traefik      *AdminFloorService `yaml:"traefik,omitempty"`
 }
 
 // AdminABCNodes holds optional static operator credentials for abc-nodes–style
