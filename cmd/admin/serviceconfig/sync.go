@@ -27,11 +27,15 @@ type floorSyncRule struct {
 var floorSyncRules = []floorSyncRule{
 	{"abc-nodes-minio", "minio", "api", "endpoint", ""},
 	{"abc-nodes-rustfs", "rustfs", "s3", "endpoint", ""},
+	{"abc-nodes-rustfs", "rustfs", "console", "http", ""},
 	{"abc-nodes-tusd", "tusd", "http", "http", "/files/"},
 	{"abc-nodes-grafana", "grafana", "http", "http", ""},
 	{"abc-nodes-prometheus", "prometheus", "http", "http", ""},
 	{"abc-nodes-loki", "loki", "http", "http", ""},
 	{"abc-nodes-ntfy", "ntfy", "http", "http", ""},
+	// Traefik: dashboard (:8888) → http; entry web (:80) → endpoint (see traefik.nomad.hcl).
+	{"abc-nodes-traefik", "traefik", "dashboard", "http", ""},
+	{"abc-nodes-traefik", "traefik", "http", "endpoint", ""},
 }
 
 func newSyncCmd() *cobra.Command {
@@ -40,24 +44,39 @@ func newSyncCmd() *cobra.Command {
 		Short: "Sync admin.services URLs from running abc-nodes Nomad jobs into ~/.abc",
 		Long: strings.TrimSpace(`
 For a context with cluster_type abc-nodes, queries Nomad for floor jobs named
-abc-nodes-* (MinIO, tusd, Grafana, …), reads each running allocation's dynamic
-host ports, and writes:
+abc-nodes-* (MinIO, tusd, Grafana, …), reads each running allocation's published
+ports, and writes:
 
   contexts.<name>.admin.services.<service>.http|endpoint
+    (RustFS: endpoint = S3 API, http = web console when the job exposes a console port)
+    (Traefik: http = dashboard port, endpoint = web entrypoint port)
   contexts.<name>.upload_endpoint              (from tusd, …/files/)
+
+When job abc-nodes-traefik is running and the traefik CLI is on PATH (or
+ABC_TRAEFIK_CLI_BINARY), sync also runs traefik version + healthcheck (using
+admin.services.traefik.http from ~/.abc when set, else Nomad) and queries the
+Traefik dashboard HTTP API to set Host()-style public bases in
+admin.services.<svc>.traefik_http and admin.services.<svc>.traefik_endpoint
+(mirroring http vs endpoint), plus contexts.<name>.upload_endpoint_traefik for
+tusd. Nomad-derived http / endpoint / upload_endpoint stay as direct host:port
+URLs.
 
 Host names follow admin.services.nomad.nomad_addr (same host as the Nomad API
 unless the allocation publishes a concrete HostIP on the port). Scheme is http
 when nomad_addr is http, otherwise https.
 
-Credentials are not read from tasks (would require exec); existing admin.abc_nodes
-keys are left unchanged. Requires nomad_addr and nomad_token on the context.
+Credentials are not read from tasks (would require exec). Existing
+admin.services.<svc>.access_key, secret_key, user, password (and admin.abc_nodes
+credentials) are left unchanged; Nomad sync updates http / endpoint / upload_endpoint;
+Traefik sync updates traefik_http / traefik_endpoint / upload_endpoint_traefik.
+Requires nomad_addr and nomad_token on the context.
 `),
 		RunE: runConfigSync,
 	}
 	cmd.Flags().String("context", "", "Context name (default: active_context)")
 	cmd.Flags().Bool("dry-run", false, "Print keys that would be set without saving")
 	cmd.Flags().Bool("skip-cluster-type-check", false, "Run even if cluster_type is not abc-nodes")
+	cmd.Flags().Bool("skip-traefik-route-sync", false, "Do not set traefik_http / traefik_endpoint / upload_endpoint_traefik from Traefik API")
 	return cmd
 }
 
@@ -96,6 +115,7 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 	ns := ctx.AbcNodesNomadNamespaceOrDefault()
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	skipTraefikRoutes, _ := cmd.Flags().GetBool("skip-traefik-route-sync")
 	nc := utils.NewNomadClient(addr, tok, region)
 
 	ctxNomad := context.Background()
@@ -114,6 +134,14 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 	scheme := "http"
 	if u, err := url.Parse(addr); err == nil && strings.EqualFold(u.Scheme, "https") {
 		scheme = "https"
+	}
+
+	traefikOverrides, trNotes, err := traefikRouteOverrides(ctxNomad, out, scheme, addr, canon, ctx, nc, ctxNomad, ns, jobByID, skipTraefikRoutes)
+	if err != nil {
+		return err
+	}
+	for _, n := range trNotes {
+		fmt.Fprintln(out, n)
 	}
 
 	for _, rule := range floorSyncRules {
@@ -165,6 +193,18 @@ func runConfigSync(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	merged := make(map[string]string)
+	for _, u := range updates {
+		merged[u.key] = u.val
+	}
+	for k, v := range traefikOverrides {
+		merged[k] = v
+	}
+	updates = updates[:0]
+	for k, v := range merged {
+		updates = append(updates, update{k, v})
+	}
+
 	sort.Slice(updates, func(i, j int) bool { return updates[i].key < updates[j].key })
 
 	if dryRun {
@@ -208,6 +248,11 @@ func lookupDynamicHostPort(alloc *utils.NomadAllocation, label string) (port int
 	}
 	for _, nw := range alloc.AllocatedResources.Shared.Networks {
 		for _, dp := range nw.DynamicPorts {
+			if dp.Label == label && dp.Value > 0 {
+				return dp.Value, strings.TrimSpace(dp.HostIP), true
+			}
+		}
+		for _, dp := range nw.ReservedPorts {
 			if dp.Label == label && dp.Value > 0 {
 				return dp.Value, strings.TrimSpace(dp.HostIP), true
 			}

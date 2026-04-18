@@ -59,7 +59,7 @@ Important distinctions:
 
 - **`contexts.<name>.endpoint`** — ABC control-plane API base URL (often ends with `/v1`).
 - **`contexts.<name>.region`** — ABC / workspace **label** (e.g. `za-cpt`), not Nomad’s RPC region.
-- **`contexts.<name>.admin.services.nomad`** — Defaults for Nomad: **`nomad_addr`** (use `http://host:4646`; bare `http://host` is normalized to port **4646**), **`nomad_token`**, optional **`nomad_region`** (Nomad multi-region id, e.g. `global`; omit for typical single-region clusters).
+- **`contexts.<name>.admin.services.nomad`** — Defaults for Nomad: **`nomad_addr`** (persist `http://HOST:PORT` with an explicit port, like other `admin.services.*` URLs; **`nomad_token`**; optional **`nomad_region`** (Nomad multi-region id, e.g. `global`). CLI flags and `NOMAD_ADDR` may still use bare `http://host` and get `:4646` by default at runtime.)
 
 Additional optional environment variables:
 
@@ -107,6 +107,7 @@ abc secrets init --unsafe-local
 abc admin services nebula cli -version
 abc admin services rustfs cli status
 abc admin services vault cli status
+abc admin services traefik cli version
 
 # Encrypt a file before uploading
 abc data encrypt ./data.csv --crypt-password "secret"
@@ -118,7 +119,7 @@ abc data download --tool wget --driver containerd --source https://example.com/f
 
 ### Nomad floor jobs (`abc-nodes`)
 
-Example **Nomad** service specs for MinIO, RustFS, tusd, Prometheus, Grafana, Loki, and ntfy live under **`deployments/abc-nodes/nomad/`**. Validate or run them with the Nomad CLI passthrough (uses your active abc context for `NOMAD_ADDR` / token):
+Example **Nomad** service specs for MinIO, RustFS, tusd, Prometheus, Grafana, Loki, ntfy, and Traefik live under **`deployments/abc-nodes/nomad/`**. Validate or run them with the Nomad CLI passthrough (uses your active abc context for `NOMAD_ADDR` / token):
 
 ```bash
 abc admin services nomad cli -- job validate deployments/abc-nodes/nomad/minio.nomad.hcl

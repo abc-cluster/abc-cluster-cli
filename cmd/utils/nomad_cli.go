@@ -37,7 +37,7 @@ func RunNomadCLI(ctx context.Context, args []string, binaryLocation, addr, token
 		}
 	}
 	if addr != "" {
-		addr = NormalizeNomadAPIAddr(addr)
+		addr = NormalizeNomadAPIAddr(WithDefaultNomadHTTPPort(addr))
 	}
 	base := os.Environ()
 	base = upsertEnv(base, map[string]string{

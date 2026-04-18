@@ -21,12 +21,15 @@ func floorPtr(s *AdminServices, svc string) **AdminFloorService {
 		return &s.Ntfy
 	case "rustfs":
 		return &s.Rustfs
+	case "traefik":
+		return &s.Traefik
 	default:
 		return nil
 	}
 }
 
-// GetAdminFloorField returns admin.services.<svc>.<field> (http or endpoint).
+// GetAdminFloorField returns admin.services.<svc>.<field>.
+// Known fields: http, endpoint, traefik_http, traefik_endpoint, access_key, secret_key, user, password, ping_entrypoint.
 func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
 	pp := floorPtr(s, svc)
 	if pp == nil {
@@ -43,6 +46,27 @@ func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
 	case "endpoint":
 		v := strings.TrimSpace(fs.Endpoint)
 		return v, v != ""
+	case "traefik_http":
+		v := strings.TrimSpace(fs.TraefikHTTP)
+		return v, v != ""
+	case "traefik_endpoint":
+		v := strings.TrimSpace(fs.TraefikEndpoint)
+		return v, v != ""
+	case "access_key":
+		v := strings.TrimSpace(fs.AccessKey)
+		return v, v != ""
+	case "secret_key":
+		v := strings.TrimSpace(fs.SecretKey)
+		return v, v != ""
+	case "user":
+		v := strings.TrimSpace(fs.User)
+		return v, v != ""
+	case "password":
+		v := strings.TrimSpace(fs.Password)
+		return v, v != ""
+	case "ping_entrypoint":
+		v := strings.TrimSpace(fs.PingEntryPoint)
+		return v, v != ""
 	default:
 		return "", false
 	}
@@ -55,9 +79,9 @@ func SetAdminFloorField(s *AdminServices, svc, field, value string) error {
 		return fmt.Errorf("unknown admin.services floor service %q", svc)
 	}
 	switch field {
-	case "http", "endpoint":
+	case "http", "endpoint", "traefik_http", "traefik_endpoint", "access_key", "secret_key", "user", "password", "ping_entrypoint":
 	default:
-		return fmt.Errorf("unknown field %q for admin.services.%s (want http or endpoint)", field, svc)
+		return fmt.Errorf("unknown field %q for admin.services.%s", field, svc)
 	}
 	if *pp == nil {
 		*pp = &AdminFloorService{}
@@ -68,6 +92,20 @@ func SetAdminFloorField(s *AdminServices, svc, field, value string) error {
 		fs.HTTP = value
 	case "endpoint":
 		fs.Endpoint = value
+	case "traefik_http":
+		fs.TraefikHTTP = value
+	case "traefik_endpoint":
+		fs.TraefikEndpoint = value
+	case "access_key":
+		fs.AccessKey = value
+	case "secret_key":
+		fs.SecretKey = value
+	case "user":
+		fs.User = value
+	case "password":
+		fs.Password = value
+	case "ping_entrypoint":
+		fs.PingEntryPoint = value
 	}
 	if fs.IsEmpty() {
 		*pp = nil
@@ -87,6 +125,20 @@ func UnsetAdminFloorField(s *AdminServices, svc, field string) error {
 		fs.HTTP = ""
 	case "endpoint":
 		fs.Endpoint = ""
+	case "traefik_http":
+		fs.TraefikHTTP = ""
+	case "traefik_endpoint":
+		fs.TraefikEndpoint = ""
+	case "access_key":
+		fs.AccessKey = ""
+	case "secret_key":
+		fs.SecretKey = ""
+	case "user":
+		fs.User = ""
+	case "password":
+		fs.Password = ""
+	case "ping_entrypoint":
+		fs.PingEntryPoint = ""
 	default:
 		return fmt.Errorf("unknown field %q for admin.services.%s", field, svc)
 	}
@@ -106,6 +158,7 @@ func NormalizeFloorServices(ctx *Context) {
 	s.Loki = nilIfFloorEmpty(s.Loki)
 	s.Ntfy = nilIfFloorEmpty(s.Ntfy)
 	s.Rustfs = nilIfFloorEmpty(s.Rustfs)
+	s.Traefik = nilIfFloorEmpty(s.Traefik)
 }
 
 func nilIfFloorEmpty(a *AdminFloorService) *AdminFloorService {
@@ -129,6 +182,27 @@ func AppendAdminFloorAllKeys(prefix string, s AdminServices, out [][2]string) []
 		if v := strings.TrimSpace(fs.Endpoint); v != "" {
 			pairs = append(pairs, pair{svc, "endpoint", v})
 		}
+		if v := strings.TrimSpace(fs.TraefikHTTP); v != "" {
+			pairs = append(pairs, pair{svc, "traefik_http", v})
+		}
+		if v := strings.TrimSpace(fs.TraefikEndpoint); v != "" {
+			pairs = append(pairs, pair{svc, "traefik_endpoint", v})
+		}
+		if v := strings.TrimSpace(fs.AccessKey); v != "" {
+			pairs = append(pairs, pair{svc, "access_key", v})
+		}
+		if v := strings.TrimSpace(fs.SecretKey); v != "" {
+			pairs = append(pairs, pair{svc, "secret_key", v})
+		}
+		if v := strings.TrimSpace(fs.User); v != "" {
+			pairs = append(pairs, pair{svc, "user", v})
+		}
+		if v := strings.TrimSpace(fs.Password); v != "" {
+			pairs = append(pairs, pair{svc, "password", v})
+		}
+		if v := strings.TrimSpace(fs.PingEntryPoint); v != "" {
+			pairs = append(pairs, pair{svc, "ping_entrypoint", v})
+		}
 	}
 	add("minio", s.MinIO)
 	add("tusd", s.Tusd)
@@ -137,8 +211,14 @@ func AppendAdminFloorAllKeys(prefix string, s AdminServices, out [][2]string) []
 	add("loki", s.Loki)
 	add("ntfy", s.Ntfy)
 	add("rustfs", s.Rustfs)
+	add("traefik", s.Traefik)
 	for _, p := range pairs {
-		out = append(out, [2]string{prefix + ".admin.services." + p.svc + "." + p.field, p.val})
+		v := p.val
+		switch p.field {
+		case "access_key", "secret_key", "password":
+			v = maskToken(v)
+		}
+		out = append(out, [2]string{prefix + ".admin.services." + p.svc + "." + p.field, v})
 	}
 	return out
 }

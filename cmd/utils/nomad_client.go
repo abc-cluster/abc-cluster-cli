@@ -66,7 +66,7 @@ func NewNomadClient(addr, token, region string) *NomadClient {
 	if addr == "" {
 		addr = "http://127.0.0.1:4646"
 	} else {
-		addr = NormalizeNomadAPIAddr(addr)
+		addr = NormalizeNomadAPIAddr(WithDefaultNomadHTTPPort(addr))
 	}
 	return &NomadClient{
 		addr:   strings.TrimRight(addr, "/"),
@@ -149,7 +149,8 @@ type NomadDynamicPort struct {
 }
 
 type nomadAllocNetwork struct {
-	DynamicPorts []NomadDynamicPort `json:"DynamicPorts"`
+	DynamicPorts  []NomadDynamicPort `json:"DynamicPorts"`
+	ReservedPorts []NomadDynamicPort `json:"ReservedPorts"`
 }
 
 // NomadAllocation is a partial allocation payload for reading published ports.

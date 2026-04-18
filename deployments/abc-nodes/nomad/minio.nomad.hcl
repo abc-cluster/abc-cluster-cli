@@ -39,10 +39,12 @@ job "abc-nodes-minio" {
     network {
       mode = "bridge"
       port "api" {
-        to = 9000
+        static = 9000
+        to     = 9000
       }
       port "console" {
-        to = 9001
+        static = 9001
+        to     = 9001
       }
     }
 
@@ -71,14 +73,26 @@ job "abc-nodes-minio" {
         name     = "abc-nodes-minio-s3"
         port     = "api"
         provider = "nomad"
-        tags     = ["abc-nodes", "minio", "s3"]
+        tags = [
+          "abc-nodes", "minio", "s3",
+          "traefik.enable=true",
+          "traefik.http.routers.minio-s3.rule=Host(`minio.aither`)",
+          "traefik.http.routers.minio-s3.service=minio-s3",
+          "traefik.http.services.minio-s3.loadbalancer.server.port=9000",
+        ]
       }
 
       service {
         name     = "abc-nodes-minio-console"
         port     = "console"
         provider = "nomad"
-        tags     = ["abc-nodes", "minio", "console"]
+        tags = [
+          "abc-nodes", "minio", "console",
+          "traefik.enable=true",
+          "traefik.http.routers.minio-console.rule=Host(`minio-console.aither`)",
+          "traefik.http.routers.minio-console.service=minio-console",
+          "traefik.http.services.minio-console.loadbalancer.server.port=9001",
+        ]
       }
     }
   }

@@ -1,5 +1,5 @@
 # Loki (logs) — abc-nodes floor (single-process dev-style config)
-# Default: chunks/index under /loki in the container (ephemeral).
+# Storage: MinIO S3 backend for chunks; in-memory ring for single-node.
 
 variable "datacenters" {
   type    = list(string)
@@ -9,6 +9,27 @@ variable "datacenters" {
 variable "loki_image" {
   type    = string
   default = "grafana/loki:3.3.2"
+}
+
+variable "minio_endpoint" {
+  type        = string
+  description = "MinIO host:port without scheme, e.g. 100.70.185.46:9000"
+  default     = "100.70.185.46:9000"
+}
+
+variable "minio_access_key" {
+  type    = string
+  default = "minioadmin"
+}
+
+variable "minio_secret_key" {
+  type    = string
+  default = "minioadmin"
+}
+
+variable "loki_bucket" {
+  type    = string
+  default = "loki"
 }
 
 job "abc-nodes-loki" {
@@ -27,7 +48,8 @@ job "abc-nodes-loki" {
     network {
       mode = "bridge"
       port "http" {
-        to = 3100
+        static = 3100
+        to     = 3100
       }
     }
 
@@ -61,7 +83,7 @@ schema_config:
   configs:
     - from: 2020-10-24
       store: tsdb
-      object_store: filesystem
+      object_store: s3
       schema: v13
       index:
         prefix: index_
@@ -71,8 +93,14 @@ storage_config:
   tsdb_shipper:
     active_index_directory: /loki/tsdb-index
     cache_location: /loki/tsdb-cache
-  filesystem:
-    directory: /loki/chunks
+  aws:
+    bucketnames: ${var.loki_bucket}
+    endpoint: ${var.minio_endpoint}
+    access_key_id: ${var.minio_access_key}
+    secret_access_key: ${var.minio_secret_key}
+    insecure: true
+    s3forcepathstyle: true
+    region: us-east-1
 
 limits_config:
   reject_old_samples: true
@@ -90,7 +118,12 @@ EOF
         name     = "abc-nodes-loki"
         port     = "http"
         provider = "nomad"
-        tags     = ["abc-nodes", "loki", "logs"]
+        tags = [
+          "abc-nodes", "loki", "logs",
+          "traefik.enable=true",
+          "traefik.http.routers.loki.rule=Host(`loki.aither`)",
+          "traefik.http.services.loki.loadbalancer.server.port=3100",
+        ]
       }
     }
   }

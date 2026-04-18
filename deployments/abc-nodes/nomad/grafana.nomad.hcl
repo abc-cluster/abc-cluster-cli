@@ -32,7 +32,8 @@ job "abc-nodes-grafana" {
     network {
       mode = "bridge"
       port "http" {
-        to = 3000
+        static = 3000
+        to     = 3000
       }
     }
 
@@ -46,6 +47,30 @@ job "abc-nodes-grafana" {
       env {
         GF_SECURITY_ADMIN_PASSWORD = var.grafana_admin_password
         GF_SERVER_HTTP_PORT        = "3000"
+        GF_PATHS_PROVISIONING      = "/local/provisioning"
+      }
+
+      template {
+        data        = <<EOF
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    url: http://100.70.185.46:9090
+    access: proxy
+    isDefault: true
+    editable: false
+
+  - name: Loki
+    type: loki
+    uid: loki
+    url: http://100.70.185.46:3100
+    access: proxy
+    isDefault: false
+    editable: false
+EOF
+        destination = "local/provisioning/datasources/default.yaml"
       }
 
       resources {
@@ -57,7 +82,12 @@ job "abc-nodes-grafana" {
         name     = "abc-nodes-grafana"
         port     = "http"
         provider = "nomad"
-        tags     = ["abc-nodes", "grafana", "ui"]
+        tags = [
+          "abc-nodes", "grafana", "ui",
+          "traefik.enable=true",
+          "traefik.http.routers.grafana.rule=Host(`grafana.aither`)",
+          "traefik.http.services.grafana.loadbalancer.server.port=3000",
+        ]
       }
     }
   }

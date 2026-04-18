@@ -27,7 +27,8 @@ job "abc-nodes-prometheus" {
     network {
       mode = "bridge"
       port "http" {
-        to = 9090
+        static = 9090
+        to     = 9090
       }
     }
 
@@ -40,6 +41,7 @@ job "abc-nodes-prometheus" {
           "--config.file=/local/prometheus.yml",
           "--storage.tsdb.path=/prometheus",
           "--web.enable-lifecycle",
+          "--web.enable-remote-write-receiver",
         ]
       }
 
@@ -65,7 +67,12 @@ EOF
         name     = "abc-nodes-prometheus"
         port     = "http"
         provider = "nomad"
-        tags     = ["abc-nodes", "prometheus", "metrics"]
+        tags = [
+          "abc-nodes", "prometheus", "metrics",
+          "traefik.enable=true",
+          "traefik.http.routers.prometheus.rule=Host(`prometheus.aither`)",
+          "traefik.http.services.prometheus.loadbalancer.server.port=9090",
+        ]
       }
     }
   }

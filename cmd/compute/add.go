@@ -139,6 +139,7 @@ Examples:
 	cmd.Flags().String("tailscale-key-description", "", "When auto-creating a Tailscale auth key, set key description")
 	cmd.Flags().Bool("nomad-use-tailscale-ip", false, "Set Nomad advertise address to the node's Tailscale IPv4; also works when Tailscale was configured manually")
 	cmd.Flags().String("nomad-advertise-ip", "", "Set Nomad advertise address to an explicit Tailscale IP")
+	cmd.Flags().Int("nomad-http-api-port", 4646, "Nomad HTTP API port written into ~/.abc admin.services.nomad.nomad_addr (default 4646; override if your agent uses another port)")
 	cmd.Flags().String("package-install-method", packageInstallMethodStatic, "Install method for Nomad and Tailscale: static (default) or package-manager")
 	cmd.Flags().String("tailscale-install-method", "", "DEPRECATED: use --package-install-method")
 	_ = cmd.Flags().MarkHidden("tailscale-install-method")
@@ -963,15 +964,19 @@ func bootstrapNomadACL(ctx context.Context, ex Executor, addr string) (string, e
 type aclTokenWiring int
 
 const (
-	aclWiringSkippedKnown aclTokenWiring = iota // abc already had a token; remote bootstrap not run
-	aclWiringFreshBootstrap                     // nomad acl bootstrap returned a new SecretID
-	aclWiringReusedAfterBootstrapDone           // bootstrap already done on server; token from abc
+	aclWiringSkippedKnown             aclTokenWiring = iota // abc already had a token; remote bootstrap not run
+	aclWiringFreshBootstrap                                 // nomad acl bootstrap returned a new SecretID
+	aclWiringReusedAfterBootstrapDone                       // bootstrap already done on server; token from abc
 )
 
 func runACLBootstrap(ctx context.Context, cmd *cobra.Command, ex Executor, nodeCfg NodeConfig, devMode bool, w io.Writer) error {
+	httpPort, err := nomadHTTPAPIPortFromCmd(cmd)
+	if err != nil {
+		return err
+	}
 	if known := strings.TrimSpace(nomadTokenForNodeAdd(cmd)); known != "" {
 		fmt.Fprintf(w, "    Nomad ACL token already known to abc; skipping nomad acl bootstrap.\n")
-		return wireNomadACLToken(nodeCfg, devMode, w, known, aclWiringSkippedKnown)
+		return wireNomadACLToken(nodeCfg, devMode, w, known, aclWiringSkippedKnown, httpPort)
 	}
 
 	bootstrapAddr := nodeCfg.Address
@@ -986,14 +991,25 @@ func runACLBootstrap(ctx context.Context, cmd *cobra.Command, ex Executor, nodeC
 				fmt.Fprintf(w, "    ! ACL already bootstrapped; pass a static token with --nomad-token (or NOMAD_TOKEN / ABC_TOKEN), or save nomad_token on the active context\n")
 				return nil
 			}
-			return wireNomadACLToken(nodeCfg, devMode, w, token, aclWiringReusedAfterBootstrapDone)
+			return wireNomadACLToken(nodeCfg, devMode, w, token, aclWiringReusedAfterBootstrapDone, httpPort)
 		}
 		return fmt.Errorf("acl bootstrap: %w", err)
 	}
-	return wireNomadACLToken(nodeCfg, devMode, w, token, aclWiringFreshBootstrap)
+	return wireNomadACLToken(nodeCfg, devMode, w, token, aclWiringFreshBootstrap, httpPort)
 }
 
-func wireNomadACLToken(nodeCfg NodeConfig, devMode bool, w io.Writer, token string, kind aclTokenWiring) error {
+func nomadHTTPAPIPortFromCmd(cmd *cobra.Command) (int, error) {
+	p, err := cmd.Flags().GetInt("nomad-http-api-port")
+	if err != nil {
+		return 0, err
+	}
+	if p < 1 || p > 65535 {
+		return 0, fmt.Errorf("nomad-http-api-port must be between 1 and 65535")
+	}
+	return p, nil
+}
+
+func wireNomadACLToken(nodeCfg NodeConfig, devMode bool, w io.Writer, token string, kind aclTokenWiring, httpPort int) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil
@@ -1021,7 +1037,7 @@ func wireNomadACLToken(nodeCfg NodeConfig, devMode bool, w io.Writer, token stri
 	if contextAddr == "" {
 		contextAddr = strings.TrimSpace(nodeCfg.Address)
 	}
-	if err := persistNomadContext(contextAddr, token); err != nil {
+	if err := persistNomadContext(contextAddr, token, httpPort); err != nil {
 		return fmt.Errorf("save nomad context: %w", err)
 	}
 	// Remote /etc/nomad.d/nomad.token is written once at end of dev-mode install via
@@ -1029,7 +1045,7 @@ func wireNomadACLToken(nodeCfg NodeConfig, devMode bool, w io.Writer, token stri
 	return nil
 }
 
-func persistNomadContext(advertiseAddr, token string) error {
+func persistNomadContext(advertiseAddr, token string, httpPort int) error {
 	if token == "" {
 		return nil
 	}
@@ -1049,8 +1065,9 @@ func persistNomadContext(advertiseAddr, token string) error {
 	if ctx.Admin.Services.Nomad == nil {
 		ctx.Admin.Services.Nomad = &appconfig.NomadService{}
 	}
-	if strings.TrimSpace(advertiseAddr) != "" {
-		ctx.Admin.Services.Nomad.Addr = "http://" + strings.TrimSpace(advertiseAddr) + ":4646"
+	if host := strings.TrimSpace(advertiseAddr); host != "" {
+		hostPort := net.JoinHostPort(host, strconv.Itoa(httpPort))
+		ctx.Admin.Services.Nomad.Addr = "http://" + hostPort
 	}
 	ctx.Admin.Services.Nomad.Token = token
 	cfg.Contexts[canon] = ctx

@@ -63,21 +63,47 @@ func (c Context) rustfsS3APIEndpoint() string {
 	return v
 }
 
-func (c Context) abcNodesSharedStorageEnv(s3Endpoint string) map[string]string {
+// svc is "minio" or "rustfs" — selects admin.services.<svc>.access_key / secret_key before abc_nodes.
+func (c Context) abcNodesSharedStorageEnv(s3Endpoint string, svc string) map[string]string {
 	if !c.IsABCNodesCluster() {
 		return nil
 	}
+	var ak, sk string
+	switch svc {
+	case "minio":
+		if v, ok := GetAdminFloorField(&c.Admin.Services, "minio", "access_key"); ok {
+			ak = v
+		}
+		if v, ok := GetAdminFloorField(&c.Admin.Services, "minio", "secret_key"); ok {
+			sk = v
+		}
+	case "rustfs":
+		if v, ok := GetAdminFloorField(&c.Admin.Services, "rustfs", "access_key"); ok {
+			ak = v
+		}
+		if v, ok := GetAdminFloorField(&c.Admin.Services, "rustfs", "secret_key"); ok {
+			sk = v
+		}
+	}
 	n := c.abcNodes()
-	if n == nil {
+	if ak == "" || sk == "" {
+		if n != nil {
+			if ak == "" {
+				ak = strings.TrimSpace(n.S3AccessKey)
+			}
+			if sk == "" {
+				sk = strings.TrimSpace(n.S3SecretKey)
+			}
+			if ak == "" {
+				ak = strings.TrimSpace(n.MinioRootUser)
+			}
+			if sk == "" {
+				sk = strings.TrimSpace(n.MinioRootPassword)
+			}
+		}
+	}
+	if n == nil && ak == "" && sk == "" && strings.TrimSpace(s3Endpoint) == "" {
 		return nil
-	}
-	ak := strings.TrimSpace(n.S3AccessKey)
-	sk := strings.TrimSpace(n.S3SecretKey)
-	if ak == "" {
-		ak = strings.TrimSpace(n.MinioRootUser)
-	}
-	if sk == "" {
-		sk = strings.TrimSpace(n.MinioRootPassword)
 	}
 	out := make(map[string]string)
 	if ak != "" {
@@ -86,20 +112,24 @@ func (c Context) abcNodesSharedStorageEnv(s3Endpoint string) map[string]string {
 	if sk != "" {
 		out["AWS_SECRET_ACCESS_KEY"] = sk
 	}
-	if r := strings.TrimSpace(n.S3Region); r != "" {
-		out["AWS_DEFAULT_REGION"] = r
+	if n != nil {
+		if r := strings.TrimSpace(n.S3Region); r != "" {
+			out["AWS_DEFAULT_REGION"] = r
+		}
 	}
 	if ep := strings.TrimSpace(s3Endpoint); ep != "" {
 		out["AWS_ENDPOINT_URL"] = ep
 		out["AWS_ENDPOINT_URL_S3"] = ep
 	}
-	mu := strings.TrimSpace(n.MinioRootUser)
-	mp := strings.TrimSpace(n.MinioRootPassword)
-	if mu != "" {
-		out["MINIO_ROOT_USER"] = mu
-	}
-	if mp != "" {
-		out["MINIO_ROOT_PASSWORD"] = mp
+	if n != nil {
+		mu := strings.TrimSpace(n.MinioRootUser)
+		mp := strings.TrimSpace(n.MinioRootPassword)
+		if mu != "" {
+			out["MINIO_ROOT_USER"] = mu
+		}
+		if mp != "" {
+			out["MINIO_ROOT_PASSWORD"] = mp
+		}
 	}
 	if len(out) == 0 {
 		return nil
@@ -108,16 +138,17 @@ func (c Context) abcNodesSharedStorageEnv(s3Endpoint string) map[string]string {
 }
 
 // AbcNodesMinioStorageCLIEnv returns environment variables for mc / mcli when cluster_type
-// is abc-nodes: credentials from admin.abc_nodes, S3 API base URL from admin.services.minio.endpoint
-// (legacy admin.abc_nodes.s3_endpoint is still honored until config is saved after migration).
+// is abc-nodes: credentials from admin.services.minio.access_key / secret_key when set, else
+// admin.abc_nodes; S3 API base URL from admin.services.minio.endpoint (legacy s3_endpoint in memory).
 func (c Context) AbcNodesMinioStorageCLIEnv() map[string]string {
-	return c.abcNodesSharedStorageEnv(c.minioS3APIEndpoint())
+	return c.abcNodesSharedStorageEnv(c.minioS3APIEndpoint(), "minio")
 }
 
 // AbcNodesRustfsStorageCLIEnv returns environment variables for the rustfs CLI when cluster_type
-// is abc-nodes: same credentials as MinIO helpers, S3 API base URL from admin.services.rustfs.endpoint only.
+// is abc-nodes: credentials from admin.services.rustfs.access_key / secret_key when set, else
+// admin.abc_nodes; S3 API base URL from admin.services.rustfs.endpoint only.
 func (c Context) AbcNodesRustfsStorageCLIEnv() map[string]string {
-	return c.abcNodesSharedStorageEnv(c.rustfsS3APIEndpoint())
+	return c.abcNodesSharedStorageEnv(c.rustfsS3APIEndpoint(), "rustfs")
 }
 
 // migrateAbcNodesLegacyS3Endpoint copies deprecated admin.abc_nodes.s3_endpoint into

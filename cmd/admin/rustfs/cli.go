@@ -12,7 +12,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [rustfs-args...]",
 		Short:              "Run the local RustFS CLI",
-		Long:               "Run the local rustfs binary as a passthrough alias. Optional leading `--binary-location <path>`; use `--` for verbatim argv to rustfs. Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged. When the active context has cluster_type abc-nodes and admin.abc_nodes credentials plus admin.services.rustfs.endpoint are set, AWS_* defaults are merged only for keys not already set in the process environment.",
+		Long:               "Run the local rustfs binary as a passthrough alias. Optional leading `--binary-location <path>`; use `--` for verbatim argv to rustfs. Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged. When the active context has cluster_type abc-nodes, AWS_* defaults merge from admin.services.rustfs.access_key / secret_key (if set), else admin.abc_nodes, plus admin.services.rustfs.endpoint — only for keys not already set in the process environment.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runRustFSCLI,

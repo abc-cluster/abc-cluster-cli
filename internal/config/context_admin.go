@@ -9,19 +9,42 @@ type NomadService struct {
 	Region string `yaml:"nomad_region,omitempty"` // Nomad multi-region ID (e.g. global), not contexts.region
 }
 
-// AdminFloorService holds URLs synced from running Nomad jobs (abc-nodes floor).
+// AdminFloorService holds URLs synced from running Nomad jobs (abc-nodes floor)
+// plus operator-supplied credentials (never written by config sync).
 // Use endpoint for S3 API bases (MinIO, RustFS) and http for HTTP services (tusd, Grafana, …).
+// traefik_http / traefik_endpoint mirror http / endpoint but hold Host()-style public
+// bases from Traefik (config sync when abc-nodes-traefik is running); Nomad dynamic
+// ports stay in http / endpoint.
+// access_key/secret_key suit S3-compatible services; user/password suit web UIs.
 type AdminFloorService struct {
 	HTTP     string `yaml:"http,omitempty"`
 	Endpoint string `yaml:"endpoint,omitempty"`
+	// TraefikHTTP / TraefikEndpoint are public router bases (scheme + hostname), not Nomad host:port.
+	TraefikHTTP     string `yaml:"traefik_http,omitempty"`
+	TraefikEndpoint string `yaml:"traefik_endpoint,omitempty"`
+	AccessKey       string `yaml:"access_key,omitempty"`
+	SecretKey       string `yaml:"secret_key,omitempty"`
+	User            string `yaml:"user,omitempty"`
+	Password        string `yaml:"password,omitempty"`
+	// PingEntryPoint names the entry point used for `traefik healthcheck` static snippets
+	// (default in Traefik is "traefik", i.e. the dashboard listener). Only used for traefik.
+	PingEntryPoint string `yaml:"ping_entrypoint,omitempty"`
 }
 
-// IsEmpty reports whether both URL fields are unset.
+// IsEmpty reports whether all URL and credential fields are unset.
 func (a *AdminFloorService) IsEmpty() bool {
 	if a == nil {
 		return true
 	}
-	return strings.TrimSpace(a.HTTP) == "" && strings.TrimSpace(a.Endpoint) == ""
+	return strings.TrimSpace(a.HTTP) == "" &&
+		strings.TrimSpace(a.Endpoint) == "" &&
+		strings.TrimSpace(a.TraefikHTTP) == "" &&
+		strings.TrimSpace(a.TraefikEndpoint) == "" &&
+		strings.TrimSpace(a.AccessKey) == "" &&
+		strings.TrimSpace(a.SecretKey) == "" &&
+		strings.TrimSpace(a.User) == "" &&
+		strings.TrimSpace(a.Password) == "" &&
+		strings.TrimSpace(a.PingEntryPoint) == ""
 }
 
 // AdminServices holds operator-facing integrations under contexts.<name>.admin.services.
@@ -34,6 +57,7 @@ type AdminServices struct {
 	Loki       *AdminFloorService `yaml:"loki,omitempty"`
 	Ntfy       *AdminFloorService `yaml:"ntfy,omitempty"`
 	Rustfs     *AdminFloorService `yaml:"rustfs,omitempty"`
+	Traefik    *AdminFloorService `yaml:"traefik,omitempty"`
 }
 
 // AdminABCNodes holds optional static operator credentials for abc-nodes–style
