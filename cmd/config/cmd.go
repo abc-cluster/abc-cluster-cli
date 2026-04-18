@@ -84,7 +84,6 @@ Supported keys follow a dot-separated path:
   defaults.region               Nomad region (e.g., za-cpt)
 	contexts.<name>.endpoint          API endpoint URL
 		contexts.<name>.upload_endpoint          Tus upload endpoint URL (direct Nomad tusd when synced)
-		contexts.<name>.upload_endpoint_traefik  Optional; tus upload URL via Traefik Host() (from admin services config sync)
 			contexts.<name>.upload_token      Tus upload token
 	contexts.<name>.access_token      Access token
 	contexts.<name>.cluster_type      Platform tier (abc-nodes | abc-cluster | abc-cloud)
@@ -103,8 +102,6 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.admin.abc_nodes.s3_secret_key     S3 secret key
 		contexts.<name>.admin.abc_nodes.s3_region           AWS_DEFAULT_REGION
 		contexts.<name>.admin.services.minio.endpoint       MinIO S3 API base URL — Nomad dynamic port when synced (mc; AWS_ENDPOINT_URL / AWS_ENDPOINT_URL_S3)
-		contexts.<name>.admin.services.<svc>.traefik_http       Optional; public HTTP UI base via Traefik (sync when traefik job runs)
-		contexts.<name>.admin.services.<svc>.traefik_endpoint   Optional; public API / S3-style base via Traefik (sync when traefik job runs)
 		contexts.<name>.admin.services.minio.access_key     Optional; overrides abc_nodes S3 keys for mc when set
 		contexts.<name>.admin.services.minio.secret_key     Optional; paired with access_key
 		contexts.<name>.admin.services.<svc>.user|password  Optional web UI creds per floor service (e.g. grafana); preserved by config sync
@@ -115,7 +112,7 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.admin.services.grafana_alloy.http   Grafana Alloy UI (Nomad job abc-nodes-alloy, port ui; config sync)
 		contexts.<name>.admin.services.vault.http           Vault API base URL (Nomad job abc-nodes-vault, port http; merged into VAULT_ADDR for vault cli)
 		contexts.<name>.admin.services.vault.access_key     Optional; merged into VAULT_TOKEN for vault cli; config sync sets from Nomad job when VAULT_DEV_ROOT_TOKEN_ID is in the abc-nodes-vault spec (lab -dev)
-		contexts.<name>.admin.services.traefik.http             Traefik dashboard base URL (Nomad sync; also used by config sync + Traefik CLI for API/healthcheck when Traefik job is running)
+		contexts.<name>.admin.services.traefik.http             Traefik dashboard base URL (Nomad sync; also used by Traefik CLI for API/healthcheck when Traefik job is running)
 		contexts.<name>.admin.services.traefik.endpoint         Traefik web entrypoint base URL (Nomad port http, usually :80)
 		contexts.<name>.admin.services.traefik.ping_entrypoint  Optional; entry point name for traefik healthcheck snippets (default traefik)
 		contexts.<name>.admin.abc_nodes.s3_endpoint         Deprecated alias for admin.services.minio.endpoint

@@ -49,7 +49,6 @@
 //	        #   admin.services.minio.endpoint
 //	        #   admin.services.rustfs.endpoint
 //	        #   admin.services.traefik.http / endpoint  (Nomad dashboard vs web entry; from config sync)
-//	        #   admin.services.*.traefik_http / traefik_endpoint  (optional; Traefik Host() bases from sync)
 //	defaults:
 //	  output: "table"
 //	  region: ""
@@ -82,10 +81,9 @@ func DefaultConfigPath() string {
 
 // Context holds connection details for one named context.
 type Context struct {
-	Endpoint              string `yaml:"endpoint"`
-	UploadEndpoint        string `yaml:"upload_endpoint,omitempty"`
-	UploadEndpointTraefik string `yaml:"upload_endpoint_traefik,omitempty"`
-	UploadToken           string `yaml:"upload_token,omitempty"`
+	Endpoint       string `yaml:"endpoint"`
+	UploadEndpoint string `yaml:"upload_endpoint,omitempty"`
+	UploadToken    string `yaml:"upload_token,omitempty"`
 	AccessToken           string `yaml:"access_token"`
 	OrgID                 string `yaml:"organization_id,omitempty"`
 	WorkspaceID           string `yaml:"workspace_id,omitempty"`
@@ -372,8 +370,6 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.Endpoint, true
 		case "upload_endpoint":
 			return ctx.UploadEndpoint, true
-		case "upload_endpoint_traefik":
-			return ctx.UploadEndpointTraefik, true
 		case "upload_token":
 			return ctx.UploadToken, true
 		case "access_token":
@@ -510,8 +506,6 @@ func (c *Config) Set(key, value string) error {
 			ctx.Endpoint = value
 		case "upload_endpoint":
 			ctx.UploadEndpoint = value
-		case "upload_endpoint_traefik":
-			ctx.UploadEndpointTraefik = value
 		case "upload_token":
 			ctx.UploadToken = value
 		case "access_token":
@@ -669,8 +663,6 @@ func (c *Config) Unset(key string) error {
 			ctx.Endpoint = ""
 		case "upload_endpoint":
 			ctx.UploadEndpoint = ""
-		case "upload_endpoint_traefik":
-			ctx.UploadEndpointTraefik = ""
 		case "upload_token":
 			ctx.UploadToken = ""
 		case "access_token":
@@ -712,9 +704,6 @@ func (c *Config) AllKeys() [][2]string {
 		out = append(out, [2]string{"contexts." + name + ".endpoint", ctx.Endpoint})
 		if ctx.UploadEndpoint != "" {
 			out = append(out, [2]string{"contexts." + name + ".upload_endpoint", ctx.UploadEndpoint})
-		}
-		if ctx.UploadEndpointTraefik != "" {
-			out = append(out, [2]string{"contexts." + name + ".upload_endpoint_traefik", ctx.UploadEndpointTraefik})
 		}
 		if ctx.UploadToken != "" {
 			out = append(out, [2]string{"contexts." + name + ".upload_token", maskToken(ctx.UploadToken)})

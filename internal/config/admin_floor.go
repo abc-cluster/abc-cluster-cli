@@ -33,7 +33,7 @@ func floorPtr(s *AdminServices, svc string) **AdminFloorService {
 }
 
 // GetAdminFloorField returns admin.services.<svc>.<field>.
-// Known fields: http, endpoint, traefik_http, traefik_endpoint, access_key, secret_key, user, password, ping_entrypoint.
+// Known fields: http, endpoint, access_key, secret_key, user, password, ping_entrypoint.
 func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
 	pp := floorPtr(s, svc)
 	if pp == nil {
@@ -49,12 +49,6 @@ func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
 		return v, v != ""
 	case "endpoint":
 		v := strings.TrimSpace(fs.Endpoint)
-		return v, v != ""
-	case "traefik_http":
-		v := strings.TrimSpace(fs.TraefikHTTP)
-		return v, v != ""
-	case "traefik_endpoint":
-		v := strings.TrimSpace(fs.TraefikEndpoint)
 		return v, v != ""
 	case "access_key":
 		v := strings.TrimSpace(fs.AccessKey)
@@ -83,7 +77,7 @@ func SetAdminFloorField(s *AdminServices, svc, field, value string) error {
 		return fmt.Errorf("unknown admin.services floor service %q", svc)
 	}
 	switch field {
-	case "http", "endpoint", "traefik_http", "traefik_endpoint", "access_key", "secret_key", "user", "password", "ping_entrypoint":
+	case "http", "endpoint", "access_key", "secret_key", "user", "password", "ping_entrypoint":
 	default:
 		return fmt.Errorf("unknown field %q for admin.services.%s", field, svc)
 	}
@@ -96,10 +90,6 @@ func SetAdminFloorField(s *AdminServices, svc, field, value string) error {
 		fs.HTTP = value
 	case "endpoint":
 		fs.Endpoint = value
-	case "traefik_http":
-		fs.TraefikHTTP = value
-	case "traefik_endpoint":
-		fs.TraefikEndpoint = value
 	case "access_key":
 		fs.AccessKey = value
 	case "secret_key":
@@ -129,10 +119,6 @@ func UnsetAdminFloorField(s *AdminServices, svc, field string) error {
 		fs.HTTP = ""
 	case "endpoint":
 		fs.Endpoint = ""
-	case "traefik_http":
-		fs.TraefikHTTP = ""
-	case "traefik_endpoint":
-		fs.TraefikEndpoint = ""
 	case "access_key":
 		fs.AccessKey = ""
 	case "secret_key":
@@ -187,12 +173,6 @@ func AppendAdminFloorAllKeys(prefix string, s AdminServices, out [][2]string) []
 		}
 		if v := strings.TrimSpace(fs.Endpoint); v != "" {
 			pairs = append(pairs, pair{svc, "endpoint", v})
-		}
-		if v := strings.TrimSpace(fs.TraefikHTTP); v != "" {
-			pairs = append(pairs, pair{svc, "traefik_http", v})
-		}
-		if v := strings.TrimSpace(fs.TraefikEndpoint); v != "" {
-			pairs = append(pairs, pair{svc, "traefik_endpoint", v})
 		}
 		if v := strings.TrimSpace(fs.AccessKey); v != "" {
 			pairs = append(pairs, pair{svc, "access_key", v})
