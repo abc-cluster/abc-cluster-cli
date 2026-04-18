@@ -49,10 +49,11 @@ For **`cluster_type: abc-nodes`** contexts you can persist operator credentials 
 | `nomad_namespace` | Exported as **`NOMAD_NAMESPACE`** for `abc admin services nomad cli` when that env var is not already set (e.g. `default` or a dedicated namespace). |
 | `s3_access_key` / `s3_secret_key` | Merged into **`AWS_ACCESS_KEY_ID`** / **`AWS_SECRET_ACCESS_KEY`** for `abc admin services minio cli` and **`rustfs cli`** when those env vars are unset. |
 | `s3_region` | Sets **`AWS_DEFAULT_REGION`** when unset. |
-| `s3_endpoint` | Sets **`AWS_ENDPOINT_URL`** and **`AWS_ENDPOINT_URL_S3`** when unset (point at MinIO or RustFS HTTP API). |
+| `admin.services.minio.endpoint` | MinIO **S3 API** base URL (no trailing slash). Merged into **`AWS_ENDPOINT_URL`** / **`AWS_ENDPOINT_URL_S3`** for **`minio cli`** only. |
+| `admin.services.rustfs.endpoint` | RustFS **S3 API** base URL for **`rustfs cli`** only (so MinIO and RustFS can coexist on one context). |
 | `minio_root_user` / `minio_root_password` | Used as **`MINIO_ROOT_*`** when set; if `s3_*` keys are omitted, they also supply the AWS-style keys above. |
 
-Process environment always wins over config for the same variable name. Set values with `abc config set contexts.<name>.admin.abc_nodes.s3_access_key '…'` (see `abc config set --help` text for the full key list). **Lab warning:** these values are plaintext on disk; restrict file permissions (`0600`) and do not commit real secrets.
+Process environment always wins over config for the same variable name. Set credentials with e.g. `abc config set contexts.<name>.admin.abc_nodes.s3_access_key '…'` and S3 bases with `abc config set contexts.<name>.admin.services.minio.endpoint 'http://…'` (see `abc config set --help`). Populate service URLs from Nomad with **`abc admin services config sync`**. **Lab warning:** these values are plaintext on disk; restrict file permissions (`0600`) and do not commit real secrets.
 
 ## Submit with `abc admin services nomad cli`
 
@@ -87,7 +88,7 @@ abc admin services nomad cli -- job run -detach \
 |------|------------------------|--------|
 | 1    | `minio.nomad.hcl`      | S3 API + console; create buckets (e.g. `tusd`) with `mc` or a follow-up batch job. |
 | 2    | `rustfs.nomad.hcl`   | Optional S3-compatible store; uses distinct ports from MinIO. |
-| 3    | `tusd.nomad.hcl`     | Set `-var minio_s3_endpoint=...` to your MinIO **S3** URL (see job comments). |
+| 3    | `tusd.nomad.hcl`     | Set `-var minio_s3_endpoint=...` to the MinIO **S3 API** host port (job port `api`, in-container `:9000`), not the console port. Use **no trailing slash**. From bridge networking, the node’s **Tailscale IP can hairpin-fail** to itself — prefer a **LAN IP** or route that works from the allocation. Ensure bucket `tusd` (or `s3_bucket`) exists. |
 | 4    | `prometheus.nomad.hcl` | Scrapes itself; extend `prometheus.yml` template for node_exporter / Nomad metrics. |
 | 5    | `loki.nomad.hcl`     | Single-store dev-style config; tune for production. |
 | 6    | `grafana.nomad.hcl`  | Set `grafana_admin_password`; add Prometheus datasource in UI or provisioning later. |

@@ -101,7 +101,9 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.admin.abc_nodes.s3_access_key     S3 access key (abc-nodes floor; merged into mc/rustfs env if unset)
 		contexts.<name>.admin.abc_nodes.s3_secret_key     S3 secret key
 		contexts.<name>.admin.abc_nodes.s3_region           AWS_DEFAULT_REGION
-		contexts.<name>.admin.abc_nodes.s3_endpoint         S3 API base URL (AWS_ENDPOINT_URL / AWS_ENDPOINT_URL_S3)
+		contexts.<name>.admin.services.minio.endpoint       MinIO S3 API base URL (mc; AWS_ENDPOINT_URL / AWS_ENDPOINT_URL_S3)
+		contexts.<name>.admin.services.rustfs.endpoint      RustFS S3 API base URL (rustfs CLI; AWS_*)
+		contexts.<name>.admin.abc_nodes.s3_endpoint         Deprecated alias for admin.services.minio.endpoint
 		contexts.<name>.admin.abc_nodes.minio_root_user     MinIO root user (fallback for s3_access_key; MINIO_ROOT_USER)
 		contexts.<name>.admin.abc_nodes.minio_root_password MinIO root password (fallback for s3_secret_key; MINIO_ROOT_PASSWORD)
 
