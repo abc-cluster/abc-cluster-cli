@@ -34,6 +34,8 @@ func printSetupScript(
 	communityDrivers communityDriverInstallConfig,
 	javaDriverCfg javaDriverInstallConfig,
 	skipEnable, skipStart bool,
+	cniPlugins bool,
+	cniPluginsVersion string,
 ) error {
 	version := cfg.Version
 	if version == "" {
@@ -212,6 +214,29 @@ func printSetupScript(
 		fmt.Fprintf(w, "sudo chmod 755 \"%s\"\n", binPath)
 		fmt.Fprintf(w, "sudo chown root:root \"%s\"\n", binPath)
 		fmt.Fprintf(w, "rm \"/tmp/${NOMAD_ZIP}\" \"/tmp/${NOMAD_SHA}\"\n")
+		fmt.Fprintln(w)
+	}
+
+	// ── 3b. CNI reference plugins ─────────────────────────────────────────────
+	needsCNIScript := goos == "linux" && (cniPlugins || communityDrivers.Has(communityDriverContainerd))
+	if needsCNIScript {
+		cniVer := strings.TrimSpace(cniPluginsVersion)
+		if cniVer == "" {
+			cniVer = defaultCNIPluginsVersion
+		}
+		steps, err := cniPluginInstallSteps(goarch, cniVer)
+		if err != nil {
+			return err
+		}
+		source := "--cni-plugins"
+		if !cniPlugins && communityDrivers.Has(communityDriverContainerd) {
+			source = "auto (--community-driver=containerd)"
+		}
+		fmt.Fprintf(w, "# ── 3b. CNI reference plugins v%s (%s) ──────────────────────────────────\n", normalizeReleaseVersion(cniVer), source)
+		fmt.Fprintf(w, "# https://developer.hashicorp.com/nomad/docs/networking/cni#install-cni-reference-plugins\n")
+		for _, step := range steps {
+			fmt.Fprintln(w, step)
+		}
 		fmt.Fprintln(w)
 	}
 

@@ -53,6 +53,7 @@ This document describes every command available in the `abc` CLI.
 - [infra compute list](#infra-compute-list)
 - [infra compute show](#infra-compute-show)
 - [infra compute probe](#infra-compute-probe)
+- [infra compute node debug](#infra-compute-node-debug)
 - [infra storage size](#infra-storage-size)
 - [admin services nomad cli](#admin-services-nomad-cli)
 - [admin services cli setup](#admin-services-cli-setup)
@@ -1487,7 +1488,7 @@ Jump host support reads `~/.ssh/config` and resolves `ProxyJump` entries automat
 | `--node-class`          | Nomad node class label (optional)                      |            |
 | `--server-join`         | Nomad server address(es) to join (repeatable)          |            |
 | `--dev-mode`            | Run Nomad in local dev mode (soft onboarding; no cluster join) | `false` |
-| `--network-interface`   | Nomad client network interface                         | `tailscale0` when Tailscale is used |
+| `--network-interface`   | Nomad client `network_interface` (bandwidth fingerprint); omit for automatic; avoid `tailscale0` for bridge/CNI | (unset) |
 | `--host-volume`         | Nomad host volume `name=path[:read_only]` (repeatable) |            |
 | `--scratch-host-volume` | Configure default `scratch` host volume                | `true`     |
 | `--scratch-host-volume-path` | Path for the scratch host volume                 | `/opt/nomad/scratch` |
@@ -1669,6 +1670,24 @@ abc --sudo infra compute probe nomad-client-02 --jurisdiction ZA
 abc --sudo infra compute probe nomad-client-02 --json --wait-timeout 2m
 abc --sudo infra compute probe nomad-arm-01 --platform=linux/arm64
 abc --sudo infra compute probe nomad-client-02 --wait-timeout=10m -- --timeout=5m --verbose
+```
+
+---
+
+## `infra compute node debug`
+
+SSH (or local shell) diagnostics for **Linux Nomad clients** when jobs use **`network { mode = "bridge" }`**: checks the **`bridge` kernel module** (scheduler fingerprint), **`cni_path`** / plugin binaries, **`network_interface`** in `client.hcl`, and filtered **`journalctl -u nomad`** lines. Same SSH flags as **`infra compute add --remote=…`** (`--user`, `--password` / `ABC_NODE_PASSWORD`, jump host, etc.).
+
+Does **not** require `--sudo` on the abc command (no Jurist gate); it only needs SSH access to the node.
+
+```
+abc infra compute node debug [flags]
+```
+
+```bash
+abc infra compute node debug --remote=sun-aither
+abc infra compute node debug --remote=10.0.0.5 --user=ubuntu --password="$ABC_NODE_PASSWORD"
+abc infra compute node debug
 ```
 
 ---

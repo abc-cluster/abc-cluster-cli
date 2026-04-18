@@ -18,11 +18,14 @@ func NewCmd() *cobra.Command {
 		Short: "Inspect and manage cluster compute resources (requires --sudo)",
 		Long: `Commands for inspecting and managing compute resources on the ABC-cluster platform.
 
-All compute operations require --sudo and an admin-tier token.
+Most operations require --sudo and an admin-tier token (Jurist). The exception is
+  abc infra compute node debug
+which uses SSH or the local shell only (no --sudo on the abc command).
 
   abc infra compute list --sudo
   abc infra compute show --sudo nomad-client-02
   abc infra compute add nomad-client-03 --remote=10.0.0.5
+  abc infra compute node debug --remote=sun-aither
   abc infra compute terminate --sudo nomad-client-02`,
 	}
 
@@ -39,6 +42,7 @@ All compute operations require --sudo and an admin-tier token.
 		newAddCmd(),
 		newTerminateCmd(),
 		newProbeCmd(),
+		newNodeCmd(),
 	)
 	return cmd
 }

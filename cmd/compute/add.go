@@ -66,6 +66,11 @@ Examples:
     --jump-host=bastion.example.com --jump-user=ec2-user \
     --server-join=10.10.0.1 --datacenter=za-cpt
 
+  # Remote Nomad dev + ACL already bootstrapped: pass a static management token
+  # (same --nomad-token as other infra compute commands; updates ~/.abc and /etc/nomad.d/nomad.token when applicable)
+  abc infra compute add --sudo --remote=sun-aither --user=ubuntu --dev-mode --acl --acl-bootstrap \
+    --nomad-token=s.xxx
+
   # Print a self-contained install script (no SSH connection made)
   abc infra compute add --remote=10.10.0.50 --print-commands \
     --target-os=linux/amd64 --server-join=10.10.0.1`,
@@ -79,18 +84,7 @@ Examples:
 
 	// ── Transport flags (new) ─────────────────────────────────────────────────
 	cmd.Flags().Bool("local", false, "Install on the current machine")
-	cmd.Flags().String("remote", "", "SSH target host or IP for remote installation")
-	cmd.Flags().String("user", "", "SSH user for remote install (default: current OS user)")
-	cmd.Flags().String("ssh-key", "", "Path to SSH private key (default: ~/.ssh/id_rsa, then SSH agent)")
-	cmd.Flags().Int("ssh-port", 22, "SSH port (default: 22)")
-	cmd.Flags().Bool("skip-host-key-check", false, "Disable known_hosts verification (insecure; for dev/testing only)")
-	cmd.Flags().String("password", "", "Node login password (used for SSH auth and sudo -S; also ABC_NODE_PASSWORD env var)")
-
-	// ── Jump host flags ───────────────────────────────────────────────────────
-	cmd.Flags().String("jump-host", "", "SSH jump/bastion host to proxy through (equivalent to ssh -J)")
-	cmd.Flags().String("jump-user", "", "Username on the jump host (default: same as --user)")
-	cmd.Flags().Int("jump-port", 22, "SSH port on the jump host (default: 22)")
-	cmd.Flags().String("jump-key", "", "SSH private key for the jump host (default: same as --ssh-key)")
+	registerComputeSSHTransportFlags(cmd)
 
 	// ── Nomad — node role ─────────────────────────────────────────────────────
 	// NOTE: Intentionally disabled for now; abc node add is client-only.
@@ -102,10 +96,12 @@ Examples:
 	cmd.Flags().String("node-class", "", "Nomad node class label (optional)")
 	cmd.Flags().StringArray("server-join", nil, "Nomad server address(es) to join (repeatable); maps to client.server_join.retry_join")
 	cmd.Flags().Bool("dev-mode", false, "Run Nomad agent in dev mode (soft onboarding, no server join required)")
-	cmd.Flags().String("network-interface", "", "Nomad client network_interface value (defaults to tailscale0 when using Tailscale)")
+	cmd.Flags().String("network-interface", "", "Nomad client network_interface (bandwidth fingerprint); leave unset for automatic. Do not set to tailscale0 for bridge/CNI jobs — use a physical NIC (e.g. enp3s0f0) or omit; Tailscale is for addresses via --nomad-advertise-ip / --tailscale, not this field")
 	cmd.Flags().StringArray("host-volume", nil, "Nomad client host volume in name=path[:read_only] format (repeatable)")
 	cmd.Flags().Bool("scratch-host-volume", true, "Configure a default Nomad client host volume named scratch")
 	cmd.Flags().String("scratch-host-volume-path", "/opt/nomad/scratch", "Path for the default scratch host volume")
+	cmd.Flags().Bool("cni-plugins", false, fmt.Sprintf("Install CNI reference plugins from containernetworking/plugins into %s (auto-enabled with --community-driver=containerd)", cniPluginsInstallDir))
+	cmd.Flags().String("cni-plugins-version", "", fmt.Sprintf("CNI reference plugins version (default: v%s)", defaultCNIPluginsVersion))
 	cmd.Flags().StringArray("community-driver", nil, "Experimental: install community task drivers (currently supported: containerd, exec2)")
 	cmd.Flags().String("containerd-nerdctl-version", defaultContainerdNerdctlVersion, "Experimental: nerdctl-full version for --community-driver=containerd")
 	cmd.Flags().String("containerd-driver-version", defaultContainerdDriverVersion, "Experimental: nomad-driver-containerd release version for --community-driver=containerd")
@@ -250,9 +246,6 @@ func runPrintCommands(cmd *cobra.Command) error {
 		return fmt.Errorf("--tailscale-key-expiry must be >= 0")
 	}
 	networkInterface := mustGetString(cmd, "network-interface")
-	if !cmd.Flags().Changed("network-interface") && networkInterface == "" && (useTailscale || nomadUseTailscaleIP) {
-		networkInterface = "tailscale0"
-	}
 	hostVolumes, err := hostVolumesFromFlags(cmd)
 	if err != nil {
 		return err
@@ -367,6 +360,9 @@ func runPrintCommands(cmd *cobra.Command) error {
 		SkipStart:     skipStart,
 	}
 
+	cniPluginsFlag, _ := cmd.Flags().GetBool("cni-plugins")
+	cniPluginsVersion, _ := cmd.Flags().GetString("cni-plugins-version")
+
 	return printSetupScript(
 		cmd.OutOrStdout(),
 		goos,
@@ -386,6 +382,8 @@ func runPrintCommands(cmd *cobra.Command) error {
 		javaDriverCfg,
 		skipEnable,
 		skipStart,
+		cniPluginsFlag,
+		cniPluginsVersion,
 	)
 }
 
@@ -438,68 +436,12 @@ func runLocalAdd(cmd *cobra.Command) error {
 
 func runSSHAdd(cmd *cobra.Command, remote string) error {
 	out := cmd.OutOrStdout()
-
-	// 1. Load ~/.ssh/config defaults for this alias (Hostname, Port, User,
-	//    IdentityFile, ProxyJump, StrictHostKeyChecking).
-	sshCfg, isAlias := loadSSHConfigEntry(remote)
-
-	// 2. CLI flags override config-file values.
-	//    cmd.Flags().Changed() is true only when the user explicitly passed the
-	//    flag — cobra defaults do NOT set Changed, so port=22 in ~/.ssh/config
-	//    is correctly preserved when --ssh-port is omitted.
-	if cmd.Flags().Changed("user") {
-		sshCfg.User, _ = cmd.Flags().GetString("user")
-	}
-	if cmd.Flags().Changed("ssh-port") {
-		sshCfg.Port, _ = cmd.Flags().GetInt("ssh-port")
-	}
-	if cmd.Flags().Changed("ssh-key") {
-		sshCfg.KeyFile, _ = cmd.Flags().GetString("ssh-key")
-	}
-	if cmd.Flags().Changed("jump-host") {
-		sshCfg.JumpHost, _ = cmd.Flags().GetString("jump-host")
-	}
-	if cmd.Flags().Changed("jump-user") {
-		sshCfg.JumpUser, _ = cmd.Flags().GetString("jump-user")
-	}
-	if cmd.Flags().Changed("jump-port") {
-		sshCfg.JumpPort, _ = cmd.Flags().GetInt("jump-port")
-	}
-	if cmd.Flags().Changed("jump-key") {
-		sshCfg.JumpKeyFile, _ = cmd.Flags().GetString("jump-key")
-	}
-	// Boolean: OR the flag value with the config-file value (security-conservative).
-	if skip, _ := cmd.Flags().GetBool("skip-host-key-check"); skip {
-		sshCfg.SkipHostKeyCheck = true
-	}
-
-	// Resolve password: flag takes precedence over environment variable.
-	password, _ := cmd.Flags().GetString("password")
-	if password == "" {
-		password = os.Getenv("ABC_NODE_PASSWORD")
-	}
-	sshCfg.Password = password
-
-	// 3. Print connection banner.
-	switch {
-	case sshCfg.JumpHost != "":
-		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d via jump host %s...\n",
-			sshCfg.User, remote, sshCfg.Port, sshCfg.JumpHost)
-	case isAlias:
-		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d (resolved: %s:%d via ~/.ssh/config)...\n",
-			sshCfg.User, remote, sshCfg.Port, sshCfg.Host, sshCfg.Port)
-	default:
-		fmt.Fprintf(out, "\n  Connecting to %s@%s:%d...\n", sshCfg.User, remote, sshCfg.Port)
-	}
-
-	// 4. Dial and run install.
-	ex, err := newSSHExec(cmd.Context(), sshCfg)
+	ex, err := sshExecutorFromRemoteFlags(cmd.Context(), cmd, remote, out)
 	if err != nil {
 		return fmt.Errorf("SSH connect: %w", err)
 	}
 	defer ex.Close()
 	fmt.Fprintf(out, "  ✓ Connected (%s/%s)\n", ex.OS(), ex.Arch())
-
 	return runInstall(cmd.Context(), cmd, ex, out)
 }
 
@@ -529,9 +471,6 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		return fmt.Errorf("--tailscale-key-expiry must be >= 0")
 	}
 	networkInterface := mustGetString(cmd, "network-interface")
-	if !cmd.Flags().Changed("network-interface") && networkInterface == "" && (useTailscale || nomadUseTailscaleIP) {
-		networkInterface = "tailscale0"
-	}
 	hostVolumes, err := hostVolumesFromFlags(cmd)
 	if err != nil {
 		return err
@@ -630,6 +569,9 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 			nodeCfg.Address = "0.0.0.0"
 		}
 	}
+	cniPluginsFlag, _ := cmd.Flags().GetBool("cni-plugins")
+	cniPluginsVersion, _ := cmd.Flags().GetString("cni-plugins-version")
+
 	if dryRun {
 		if nomadUseTailscaleIP && nodeCfg.Advertise == "" {
 			if tsIP, tsErr := DetectTailscaleIPv4(ctx, ex); tsErr == nil {
@@ -643,7 +585,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 				}
 			}
 		}
-		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, devMode, aclBootstrap, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg)
+		printDryRun(w, ex, nodeCfg, nomadVersion, useTailscale, packageInstallMethod, tsHostname, serverJoin, devMode, aclBootstrap, tsAuthKey != "", tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable, tsKeyExpiry, nomadUseTailscaleIP, communityDrivers, localDrivers, javaDriverCfg, cniPluginsFlag, cniPluginsVersion)
 		return nil
 	}
 
@@ -753,7 +695,16 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 		}
 	}
 
-	// 3. Nomad
+	// 3. CNI reference plugins (needed for Nomad bridge networking and containerd-driver)
+	needsCNI := (cniPluginsFlag || communityDrivers.Has(communityDriverContainerd)) && ex.OS() == "linux"
+	if needsCNI {
+		fmt.Fprintf(w, "\n  Installing CNI reference plugins...\n")
+		if err := InstallCNIPlugins(ctx, ex, cniPluginsVersion, w); err != nil {
+			return err
+		}
+	}
+
+	// 4. Nomad
 	installCfg := NomadInstallConfig{
 		Version:       nomadVersion,
 		InstallMethod: packageInstallMethod,
@@ -798,15 +749,8 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	bootstrapAfterPostSetup := devMode && aclBootstrap && needsPostSetup
 	if aclBootstrap && !bootstrapAfterPostSetup {
 		fmt.Fprintf(w, "\n  Bootstrapping Nomad ACL...\n")
-		if err := runACLBootstrap(ctx, ex, nodeCfg, devMode, w); err != nil {
+		if err := runACLBootstrap(ctx, cmd, ex, nodeCfg, devMode, w); err != nil {
 			return err
-		}
-	}
-	if devMode && nodeCfg.ACL && !aclBootstrap {
-		if token := resolveNomadTokenForNode(); token != "" {
-			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
-				return fmt.Errorf("save nomad token on node: %w", err)
-			}
 		}
 	}
 	// 5. Post-setup driver installation (after node has joined and is healthy)
@@ -855,15 +799,17 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	}
 	if aclBootstrap && bootstrapAfterPostSetup {
 		fmt.Fprintf(w, "\n  Bootstrapping Nomad ACL (after post-setup)...\n")
-		if err := runACLBootstrap(ctx, ex, nodeCfg, devMode, w); err != nil {
+		if err := runACLBootstrap(ctx, cmd, ex, nodeCfg, devMode, w); err != nil {
 			return err
 		}
 	}
-	if devMode && nodeCfg.ACL && !aclBootstrap {
-		if token := resolveNomadTokenForNode(); token != "" {
-			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
-				return fmt.Errorf("save nomad token on node: %w", err)
-			}
+
+	// After all Nomad restarts and ACL wiring, align /etc/nomad.d/nomad.token on the
+	// target with whatever token abc resolves now (active context / flags / env),
+	// including a token just written to ~/.abc by bootstrap.
+	if devMode && !skipStart {
+		if err := syncNomadOperatorTokenFromABCToNode(ctx, cmd, ex, w); err != nil {
+			return err
 		}
 	}
 
@@ -1013,7 +959,21 @@ func bootstrapNomadACL(ctx context.Context, ex Executor, addr string) (string, e
 	return resp.SecretID, nil
 }
 
-func runACLBootstrap(ctx context.Context, ex Executor, nodeCfg NodeConfig, devMode bool, w io.Writer) error {
+// aclTokenWiring describes how the Nomad ACL token was obtained for messaging only.
+type aclTokenWiring int
+
+const (
+	aclWiringSkippedKnown aclTokenWiring = iota // abc already had a token; remote bootstrap not run
+	aclWiringFreshBootstrap                     // nomad acl bootstrap returned a new SecretID
+	aclWiringReusedAfterBootstrapDone           // bootstrap already done on server; token from abc
+)
+
+func runACLBootstrap(ctx context.Context, cmd *cobra.Command, ex Executor, nodeCfg NodeConfig, devMode bool, w io.Writer) error {
+	if known := strings.TrimSpace(nomadTokenForNodeAdd(cmd)); known != "" {
+		fmt.Fprintf(w, "    Nomad ACL token already known to abc; skipping nomad acl bootstrap.\n")
+		return wireNomadACLToken(nodeCfg, devMode, w, known, aclWiringSkippedKnown)
+	}
+
 	bootstrapAddr := nodeCfg.Address
 	if strings.TrimSpace(bootstrapAddr) == "" {
 		bootstrapAddr = nodeCfg.Advertise
@@ -1021,33 +981,51 @@ func runACLBootstrap(ctx context.Context, ex Executor, nodeCfg NodeConfig, devMo
 	token, err := bootstrapNomadACL(ctx, ex, bootstrapAddr)
 	if err != nil {
 		if errors.Is(err, errACLBootstrapAlreadyDone) {
-			token = resolveNomadTokenForNode()
+			token = nomadTokenForNodeAdd(cmd)
 			if token == "" {
-				fmt.Fprintf(w, "    ! ACL already bootstrapped; set NOMAD_TOKEN to persist on node\n")
+				fmt.Fprintf(w, "    ! ACL already bootstrapped; pass a static token with --nomad-token (or NOMAD_TOKEN / ABC_TOKEN), or save nomad_token on the active context\n")
 				return nil
 			}
-			fmt.Fprintf(w, "    ! ACL already bootstrapped; using existing token from env/config\n")
-		} else {
-			return fmt.Errorf("acl bootstrap: %w", err)
+			return wireNomadACLToken(nodeCfg, devMode, w, token, aclWiringReusedAfterBootstrapDone)
 		}
+		return fmt.Errorf("acl bootstrap: %w", err)
 	}
-	if token != "" {
+	return wireNomadACLToken(nodeCfg, devMode, w, token, aclWiringFreshBootstrap)
+}
+
+func wireNomadACLToken(nodeCfg NodeConfig, devMode bool, w io.Writer, token string, kind aclTokenWiring) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	switch kind {
+	case aclWiringSkippedKnown:
+		if devMode {
+			fmt.Fprintf(w, "    ✓ Refreshed active context using saved token (remote nomad.token synced at end of install)\n")
+		} else {
+			fmt.Fprintf(w, "    ✓ Refreshed active context using saved token\n")
+		}
+	case aclWiringReusedAfterBootstrapDone:
+		fmt.Fprintf(w, "    ! ACL already bootstrapped on server; using token from --nomad-token / env / active context\n")
+		if devMode {
+			fmt.Fprintf(w, "    ✓ Refreshed active context (remote nomad.token synced at end of install)\n")
+		} else {
+			fmt.Fprintf(w, "    ✓ Refreshed active context\n")
+		}
+	case aclWiringFreshBootstrap:
 		fmt.Fprintf(w, "    ✓ ACL bootstrap complete\n")
 		fmt.Fprintf(w, "    Management token: %s\n", token)
 		fmt.Fprintf(w, "    Export for this shell: export NOMAD_TOKEN=%s\n", token)
-		contextAddr := strings.TrimSpace(nodeCfg.Advertise)
-		if contextAddr == "" {
-			contextAddr = strings.TrimSpace(nodeCfg.Address)
-		}
-		if err := persistNomadContext(contextAddr, token); err != nil {
-			return fmt.Errorf("save nomad context: %w", err)
-		}
-		if devMode {
-			if err := persistNomadTokenOnNode(ctx, ex, token); err != nil {
-				return fmt.Errorf("save nomad token on node: %w", err)
-			}
-		}
 	}
+	contextAddr := strings.TrimSpace(nodeCfg.Advertise)
+	if contextAddr == "" {
+		contextAddr = strings.TrimSpace(nodeCfg.Address)
+	}
+	if err := persistNomadContext(contextAddr, token); err != nil {
+		return fmt.Errorf("save nomad context: %w", err)
+	}
+	// Remote /etc/nomad.d/nomad.token is written once at end of dev-mode install via
+	// syncNomadOperatorTokenFromABCToNode so it matches ~/.abc after bootstrap saves.
 	return nil
 }
 
@@ -1059,9 +1037,9 @@ func persistNomadContext(advertiseAddr, token string) error {
 	if err != nil {
 		return err
 	}
-	ctxName := cfg.ActiveContext
+	ctxName := strings.TrimSpace(cfg.ActiveContext)
 	if ctxName == "" {
-		ctxName = "default"
+		return fmt.Errorf("no active_context set; run: abc context use <name>")
 	}
 	if !cfg.HasDefinedContext(ctxName) {
 		return fmt.Errorf("no saved context %q (set active_context or run abc context use)", ctxName)
@@ -1078,6 +1056,27 @@ func persistNomadContext(advertiseAddr, token string) error {
 	cfg.Contexts[canon] = ctx
 	cfg.ActiveContext = ctxName
 	return cfg.Save()
+}
+
+// syncNomadOperatorTokenFromABCToNode writes nomadTokenForNodeAdd (active context,
+// --nomad-token, NOMAD_TOKEN, ABC_TOKEN) to /etc/nomad.d/nomad.token on the install
+// target. Invoked once at the end of dev-mode installs after every restart so the
+// on-node file matches the operator laptop, including after ACL bootstrap updates
+// ~/.abc.
+func syncNomadOperatorTokenFromABCToNode(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Writer) error {
+	if ex.OS() == "windows" {
+		return nil
+	}
+	tok := strings.TrimSpace(nomadTokenForNodeAdd(cmd))
+	if tok == "" {
+		return nil
+	}
+	fmt.Fprintf(w, "\n  Syncing Nomad ACL token from abc config to remote %s...\n", "/etc/nomad.d/nomad.token")
+	if err := persistNomadTokenOnNode(ctx, ex, tok); err != nil {
+		return fmt.Errorf("sync nomad token from abc config to node: %w", err)
+	}
+	fmt.Fprintf(w, "    ✓ Remote token file matches operator abc context\n")
+	return nil
 }
 
 func persistNomadTokenOnNode(ctx context.Context, ex Executor, token string) error {
@@ -1101,17 +1100,54 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func resolveNomadTokenForNode() string {
-	if token := strings.TrimSpace(os.Getenv("NOMAD_TOKEN")); token != "" {
-		return token
+// nomadTokenFlagFromCmdChain returns the first non-empty nomad-token from this
+// command or an ancestor (matches infra compute persistent --nomad-token wiring).
+func nomadTokenFlagFromCmdChain(cmd *cobra.Command) string {
+	seen := make(map[*cobra.Command]struct{})
+	for c := cmd; c != nil; c = c.Parent() {
+		if _, dup := seen[c]; dup {
+			break
+		}
+		seen[c] = struct{}{}
+		if c.PersistentFlags().Lookup("nomad-token") != nil {
+			if v, _ := c.PersistentFlags().GetString("nomad-token"); strings.TrimSpace(v) != "" {
+				return v
+			}
+		}
+		if c.Flags().Lookup("nomad-token") != nil {
+			if v, _ := c.Flags().GetString("nomad-token"); strings.TrimSpace(v) != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// nomadTokenForNodeAdd resolves the Nomad ACL token for compute add flows that
+// must reuse a static token after ACL bootstrap (remote dev restarts, pushing
+// token to /etc/nomad.d/nomad.token, updating ~/.abc). Order: non-empty
+// --nomad-token on this command or an ancestor (defaults from ABC_TOKEN then
+// NOMAD_TOKEN per flag definition), then NOMAD_TOKEN, then ABC_TOKEN, then
+// active context admin.services.nomad.nomad_token.
+func nomadTokenForNodeAdd(cmd *cobra.Command) string {
+	if cmd != nil {
+		if tok := strings.TrimSpace(nomadTokenFlagFromCmdChain(cmd)); tok != "" {
+			return tok
+		}
+	}
+	if tok := strings.TrimSpace(os.Getenv("NOMAD_TOKEN")); tok != "" {
+		return tok
+	}
+	if tok := strings.TrimSpace(os.Getenv("ABC_TOKEN")); tok != "" {
+		return tok
 	}
 	cfg, err := appconfig.Load()
 	if err != nil {
 		return ""
 	}
-	ctxName := cfg.ActiveContext
+	ctxName := strings.TrimSpace(cfg.ActiveContext)
 	if ctxName == "" {
-		ctxName = "default"
+		return ""
 	}
 	ctx, ok := cfg.ContextNamed(ctxName)
 	if !ok {
@@ -1122,7 +1158,7 @@ func resolveNomadTokenForNode() string {
 
 // ─── Dry-run ──────────────────────────────────────────────────────────────────
 
-func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, devMode bool, aclBootstrap bool, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, localDrivers localDriverInstallConfig, javaDriverCfg javaDriverInstallConfig) {
+func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTailscale bool, packageInstallMethod, tsHostname string, serverJoin []string, devMode bool, aclBootstrap bool, hasExplicitTSKey, tsCreateAuthKey, tsKeyEphemeral, tsKeyReusable bool, tsKeyExpiry time.Duration, nomadUseTailscaleIP bool, communityDrivers communityDriverInstallConfig, localDrivers localDriverInstallConfig, javaDriverCfg javaDriverInstallConfig, cniPlugins bool, cniPluginsVersion string) {
 	fmt.Fprintf(w, "\n  Dry-run plan:\n")
 	fmt.Fprintf(w, "    Target:       %s/%s\n", ex.OS(), ex.Arch())
 	fmt.Fprintf(w, "    Install mode: %s\n", packageInstallMethod)
@@ -1175,6 +1211,17 @@ func printDryRun(w io.Writer, ex Executor, cfg NodeConfig, version string, useTa
 		fmt.Fprintf(w, "    Java driver setup (post-setup after node join):\n")
 		fmt.Fprintf(w, "      - JDK versions: %s\n", strings.Join(javaDriverCfg.JDKVersions, ", "))
 		fmt.Fprintf(w, "      - Default JDK: %s\n", javaDriverCfg.DefaultJDKVersion)
+	}
+	if cniPlugins || communityDrivers.Has(communityDriverContainerd) {
+		v := strings.TrimSpace(cniPluginsVersion)
+		if v == "" {
+			v = defaultCNIPluginsVersion
+		}
+		source := "--cni-plugins"
+		if !cniPlugins && communityDrivers.Has(communityDriverContainerd) {
+			source = "auto (--community-driver=containerd)"
+		}
+		fmt.Fprintf(w, "    CNI plugins:  v%s → %s (%s)\n", normalizeReleaseVersion(v), cniPluginsInstallDir, source)
 	}
 	if useTailscale {
 		fmt.Fprintf(w, "    Tailscale:    install + tailscale up (%s)", packageInstallMethod)

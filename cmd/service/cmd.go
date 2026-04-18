@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -139,6 +140,18 @@ func runAllStatus(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
+	if cfg, err := config.Load(); err == nil && cfg != nil && strings.TrimSpace(cfg.ActiveContext) != "" {
+		fmt.Fprintf(out, "  Context      %s\n", cfg.ActiveContext)
+		if canon := cfg.ResolveContextName(cfg.ActiveContext); canon != "" && canon != cfg.ActiveContext {
+			fmt.Fprintf(out, "  Canonical    %s\n", canon)
+		}
+		if canon := cfg.ResolveContextName(cfg.ActiveContext); canon != "" {
+			if als := config.AliasesResolvingToCanon(cfg, canon); len(als) > 0 {
+				fmt.Fprintf(out, "  Aliases      %s\n", strings.Join(als, ", "))
+			}
+		}
+		fmt.Fprintln(out)
+	}
 	fmt.Fprintf(out, "  %-22s %-10s %-12s %-10s\n", "SERVICE", "STATUS", "VERSION", "LATENCY")
 	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 58))
 
