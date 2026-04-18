@@ -86,7 +86,8 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.upload_endpoint   Tus upload endpoint URL
 			contexts.<name>.upload_token      Tus upload token
 	contexts.<name>.access_token      Access token
-	contexts.<name>.cluster           Cluster ID/name
+	contexts.<name>.cluster_type      Platform tier (abc-nodes | abc-cluster | abc-cloud)
+	contexts.<name>.aliases           Comma-separated alternate names for abc context use
 	contexts.<name>.organization_id   Organization ID
 	contexts.<name>.workspace_id      Workspace ID
 	contexts.<name>.region            Region override for context

@@ -2,6 +2,7 @@ package contextcmd
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -19,7 +20,7 @@ orgs, workspaces, and regions.
 
 Contexts are stored in ~/.abc/config.yaml under contexts.<name>. A full context
 may list aliases: or singular alias: for extra names you can pass to abc context use.
-A top-level string entry (e.g. default: aither) is still supported as a redirect.
+A top-level string entry (e.g. primary: aither) is still supported as a redirect.
 The active context controls which endpoint, token, cluster, org, workspace, and region the CLI uses.
 `,
 	}
@@ -37,7 +38,7 @@ func newListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List saved contexts",
-		Long:  "List all saved contexts and highlight the active one.",
+		Long:  "List primary context names, alternate names (aliases), and endpoint. Use 'abc context show' for full fields.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := cfg.Load()
@@ -45,37 +46,35 @@ func newListCmd() *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			names := c.AllContextEntryNames()
-			if len(names) == 0 {
+			if len(c.Contexts) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No contexts configured.")
 				return nil
 			}
 
+			names := make([]string, 0, len(c.Contexts))
+			for n := range c.Contexts {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+
+			activeCanon := ""
+			if strings.TrimSpace(c.ActiveContext) != "" {
+				activeCanon = c.ResolveContextName(c.ActiveContext)
+			}
+
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ACTIVE\tNAME\tALIAS OF\tALIASES\tCLUSTER\tORG\tWORKSPACE\tREGION\tENDPOINT\n")
+			fmt.Fprintf(w, "ACTIVE\tNAME\tALIASES\tENDPOINT\n")
 			for _, name := range names {
-				ctx, _ := c.ContextNamed(name)
-				aliasOf := ""
-				if t, ok := c.ContextAliases[name]; ok {
-					aliasOf = t
-				}
-				aliasesCol := ""
-				if _, isPrimary := c.Contexts[name]; isPrimary {
-					aliasesCol = strings.Join(cfg.AliasesResolvingToCanon(c, name), ",")
-				}
+				ctx := c.Contexts[name]
+				aliasesCol := strings.Join(cfg.AliasesResolvingToCanon(c, name), ",")
 				active := ""
-				if c.ActiveContext == name {
+				if activeCanon != "" && activeCanon == name {
 					active = "*"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 					active,
 					name,
-					aliasOf,
 					aliasesCol,
-					ctx.Cluster,
-					ctx.OrgID,
-					ctx.WorkspaceID,
-					ctx.Region,
 					ctx.Endpoint)
 			}
 			return w.Flush()
@@ -128,9 +127,6 @@ func newShowCmd() *cobra.Command {
 			}
 			if ctx.UploadToken != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Upload token: %s\n", maskToken(ctx.UploadToken))
-			}
-			if ctx.Cluster != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Cluster: %s\n", ctx.Cluster)
 			}
 			if ctx.OrgID != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Organization: %s\n", ctx.OrgID)
@@ -185,7 +181,6 @@ func newAddCmd() *cobra.Command {
 	var uploadEndpoint string
 	var uploadToken string
 	var token string
-	var cluster string
 	var organizationID string
 	var workspaceID string
 	var region string
@@ -196,7 +191,7 @@ func newAddCmd() *cobra.Command {
 		Long: `Add a new named context and make it active.
 
 A context includes endpoint, upload endpoint, upload token, access token,
-optional cluster and organization IDs, optional workspace ID, and optional region.
+optional organization ID, optional workspace ID, and optional region.
 
 If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate slashes).
 `,
@@ -236,7 +231,6 @@ If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate 
 				UploadEndpoint: uploadEp,
 				UploadToken:    uploadToken,
 				AccessToken:    token,
-				Cluster:        cluster,
 				OrgID:          organizationID,
 				WorkspaceID:    workspaceID,
 				Region:         region,
@@ -257,7 +251,6 @@ If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate 
 	cmd.Flags().StringVar(&uploadEndpoint, "upload-endpoint", "", "Tus upload endpoint URL (default: <endpoint>/files/)")
 	cmd.Flags().StringVar(&uploadToken, "upload-token", "", "Tus upload token")
 	cmd.Flags().StringVar(&token, "access-token", "", "API access token")
-	cmd.Flags().StringVar(&cluster, "cluster", "", "Cluster ID/name")
 	cmd.Flags().StringVar(&organizationID, "organization-id", "", "Organization ID")
 	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID")
 	cmd.Flags().StringVar(&region, "region", "", "Region")

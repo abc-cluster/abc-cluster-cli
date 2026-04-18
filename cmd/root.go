@@ -195,9 +195,6 @@ func init() {
 	}
 
 	clusterDefault := utils.EnvOrDefault("ABC_CLUSTER")
-	if clusterDefault == "" && activeCtx.Cluster != "" {
-		clusterDefault = activeCtx.Cluster
-	}
 
 	// Elevation flags.
 	rootCmd.PersistentFlags().Bool("sudo", false,
