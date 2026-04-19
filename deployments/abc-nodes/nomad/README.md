@@ -56,6 +56,32 @@ For **`cluster_type: abc-nodes`** contexts you can persist operator credentials 
 
 Process environment always wins over config for the same variable name. Set credentials with e.g. `abc config set contexts.<name>.admin.abc_nodes.s3_access_key '…'` and S3 bases with `abc config set contexts.<name>.admin.services.minio.endpoint 'http://…'` (see `abc config set --help`). Populate service URLs from Nomad with **`abc admin services config sync`**. **Lab warning:** these values are plaintext on disk; restrict file permissions (`0600`) and do not commit real secrets.
 
+## Nomad Pack bundles (`abc-nodes-base` / `abc-nodes-enhanced`)
+
+Pack names must use underscores for [`nomad-pack`](https://github.com/hashicorp/nomad-pack). Two curated packs live under **`nomad-packs/`**:
+
+| Directory / pack name   | Maps to cluster idea   | Jobs rendered |
+|-------------------------|------------------------|----------------|
+| `nomad-packs/abc_nodes_base` | **abc-nodes-base** (minimal floor) | `minio`, `tusd` |
+| `nomad-packs/abc_nodes_enhanced` | **abc-nodes-enhanced** (floor + monitoring) | same as base plus **Prometheus, Loki, Grafana, Alloy** (matches `AbcNodesClusterFloorEnhanced`: metrics, logs, Alloy) |
+
+Render defaults to HCL job files, then submit with the Nomad CLI (or `nomad-pack run` for pack-managed lifecycle):
+
+```bash
+cd deployments/abc-nodes/nomad-packs/abc_nodes_base
+nomad-pack render . -o /tmp/abc-nodes-base-render -y
+abc admin services nomad cli -- job validate /tmp/abc-nodes-base-render/abc_nodes_base/minio.nomad
+abc admin services nomad cli -- job run -detach /tmp/abc-nodes-base-render/abc_nodes_base/minio.nomad
+# … then tusd.nomad with -var or a var-file for minio_s3_endpoint, credentials, etc.
+
+cd ../abc_nodes_enhanced
+nomad-pack render . -o /tmp/abc-nodes-enh-render -y \
+  --var='nomad_token=<your-nomad-acl-token>'
+# Order: minio → (create `loki` bucket) → prometheus → loki → grafana → tusd → alloy (see table below).
+```
+
+Override any pack default with `nomad-pack render … --var key=value` or `-f overrides.hcl` (HCL attribute syntax). **Enhanced** defaults assume Prometheus/Loki/Grafana listen on `127.0.0.1` from the host (Alloy uses `raw_exec` + host network); adjust `grafana_*_url`, `loki_minio_endpoint`, `nomad_addr`, and remote-write URLs for your topology.
+
 ## Submit with `abc admin services nomad cli`
 
 The Nomad CLI is invoked as a passthrough; use **`abc admin services nomad cli -- …`** so everything after `--` is forwarded verbatim to `nomad` (same argv as upstream). Address and token default from the active abc context (override with `NOMAD_ADDR` / `NOMAD_TOKEN` or admin flags on the parent command).

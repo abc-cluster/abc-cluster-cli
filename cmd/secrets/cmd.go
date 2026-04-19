@@ -1,18 +1,16 @@
 // Package secrets implements the "abc secrets" command group.
 //
-// Manages encrypted secrets stored in the config file using password-based
-// encryption (mozilla/sops local encryption mode). All write operations require the
-// --unsafe-local flag and ABC_CRYPT_PASSWORD environment variable.
+// Supports three backends:
+//   - local   — encrypted secrets stored in ~/.abc/config.yaml (password-based)
+//   - nomad   — secrets stored in Nomad Variables at abc/secrets/<ns>/<name>
+//   - vault   — secrets stored in Vault KV v2 at secret/data/abc/<ns>/<name>
 //
-// Schema (in ~/.abc/config.yaml): per active context (see contexts.<name>.secrets).
+// Admin role: set/delete require a token with write access to the backend.
+// User role:  list shows key names; get is intentionally blocked for cluster-side
+//             backends (secrets reach jobs via template nomadVar / vault stanza, not CLI).
 //
-//	contexts:
-//	  my-ctx:
-//	    crypt:
-//	      password: "..."
-//	      salt: "..."
-//	    secrets:
-//	      my-api-key: "<base64 ciphertext>"
+// Default backend: "local" for backward compatibility.
+// Override: --backend nomad | vault, or set capabilities.secrets in config after sync.
 package secrets
 
 import (
@@ -27,21 +25,41 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "secrets",
-		Short: "Manage encrypted secrets stored in config file",
-		Long: `Manage encrypted secrets without exposing credentials.
+		Short: "Manage secrets (local, Nomad Variables, or Vault KV v2)",
+		Long: `Manage secrets across three backends:
 
-Secrets are encrypted locally using password-based encryption (local password mode).
-All operations use password-based local encryption.
-Values from ~/.abc/config.yaml take precedence; otherwise ABC_CRYPT_PASSWORD and optional ABC_CRYPT_SALT are used.
+  local  — encrypted in ~/.abc/config.yaml (password-based)
+  nomad  — Nomad Variables at abc/secrets/<namespace>/<name>
+  vault  — Vault KV v2 at secret/data/abc/<namespace>/<name>
+
+Admin commands (set/delete) require a token with write access.
+User read access: secrets reach jobs via HCL template references —
+use 'abc secrets ref <name>' to get the template snippet.
 
 Examples:
+  # Local encrypted storage (backward-compatible)
   abc secrets init --unsafe-local
-  export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-  abc secrets set my-api-key "sk-1234567890abcdef" --unsafe-local
-  abc secrets get my-api-key --unsafe-local
-  abc secrets list
-  abc secrets delete my-api-key --unsafe-local`,
+  abc secrets set my-key "value" --unsafe-local
+  abc secrets get my-key --unsafe-local
+
+  # Nomad Variables (admin)
+  abc secrets set db-password "s3cr3t" --backend nomad
+  abc secrets list --backend nomad
+  abc secrets ref db-password --backend nomad
+
+  # Vault KV v2 (admin, requires VAULT_TOKEN)
+  abc secrets set db-password "s3cr3t" --backend vault
+  abc secrets ref db-password --backend vault`,
 	}
+
+	// Backend selection and cluster-side connection flags (used by nomad + vault backends).
+	cmd.PersistentFlags().String("backend", "local", "Secret backend: local | nomad | vault")
+	cmd.PersistentFlags().String("namespace", "", "Nomad namespace (default: active context abc_nodes.nomad_namespace or 'default')")
+	cmd.PersistentFlags().String("nomad-addr", "", "Nomad API address (overrides config)")
+	cmd.PersistentFlags().String("nomad-token", "", "Nomad ACL token (overrides config)")
+	cmd.PersistentFlags().String("region", "", "Nomad region")
+	cmd.PersistentFlags().String("vault-addr", "", "Vault address (overrides VAULT_ADDR env and config)")
+	cmd.PersistentFlags().String("vault-token", "", "Vault token (overrides VAULT_TOKEN env)")
 
 	cmd.AddCommand(
 		newInitCmd(),
@@ -49,107 +67,271 @@ Examples:
 		newGetCmd(),
 		newListCmd(),
 		newDeleteCmd(),
+		newRefCmd(),
+		newBackendCmd(),
 	)
 
 	return cmd
 }
 
-// newSetCmd returns the "secrets set" subcommand.
+func backendFromCmd(cmd *cobra.Command) string {
+	b, _ := cmd.Flags().GetString("backend")
+	if b == "" {
+		b, _ = cmd.Root().PersistentFlags().GetString("backend")
+	}
+	return b
+}
+
+// ── set ───────────────────────────────────────────────────────────────────────
+
 func newSetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: "Store an encrypted secret",
-		Long: `Store a value as an encrypted secret in the config file.
+		Short: "Store a secret",
+		Long: `Store a secret in the selected backend.
 
-Requires --unsafe-local flag. Values from ~/.abc/config.yaml take precedence; otherwise ABC_CRYPT_PASSWORD and optional ABC_CRYPT_SALT are used.
-
-Examples:
-  export ABC_CRYPT_PASSWORD="passphrase"
-  abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe-local
-  abc secrets set db-url "postgres://user:pass@localhost/db" --unsafe-local`,
-
+  local  — requires --unsafe-local and ABC_CRYPT_PASSWORD
+  nomad  — requires admin Nomad token with write access to abc/secrets/*
+  vault  — requires VAULT_TOKEN (or --vault-token) with write access`,
 		Args: cobra.ExactArgs(2),
 		RunE: runSetSecret,
 	}
-
-	cmd.Flags().Bool("unsafe-local", false, "Allow writing encrypted secrets locally (requires ABC_CRYPT_PASSWORD)")
-
+	cmd.Flags().Bool("unsafe-local", false, "Allow writing encrypted secrets to local config (local backend)")
 	return cmd
 }
 
-// newGetCmd returns the "secrets get" subcommand.
+func runSetSecret(cmd *cobra.Command, args []string) error {
+	backend := backendFromCmd(cmd)
+	name, value := args[0], args[1]
+
+	switch backend {
+	case "nomad":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		return runNomadSet(cmd, cfg, name, value)
+	case "vault":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		return runVaultSet(cmd, cfg, name, value)
+	default:
+		return runLocalSet(cmd, name, value)
+	}
+}
+
+// ── get ───────────────────────────────────────────────────────────────────────
+
 func newGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <key>",
-		Short: "Retrieve and decrypt a secret",
-		Long: `Get a secret by key, decrypting it on output.
+		Short: "Retrieve a secret",
+		Long: `Retrieve and output a secret from the selected backend.
 
-Requires --unsafe-local flag. Values from ~/.abc/config.yaml take precedence; otherwise ABC_CRYPT_PASSWORD and optional ABC_CRYPT_SALT are used.
-
-Examples:
-  export ABC_CRYPT_PASSWORD="passphrase"
-  abc secrets get aws-access-key --unsafe-local
-  abc secrets get db-url --unsafe-local | xargs echo "DB URL:"`,
-
+  local  — requires --unsafe-local and ABC_CRYPT_PASSWORD
+  nomad  — admin token required; non-admins should use 'abc secrets ref' instead
+  vault  — requires VAULT_TOKEN with read access`,
 		Args: cobra.ExactArgs(1),
 		RunE: runGetSecret,
 	}
-
-	cmd.Flags().Bool("unsafe-local", false, "Allow reading encrypted secrets locally (requires ABC_CRYPT_PASSWORD)")
-
+	cmd.Flags().Bool("unsafe-local", false, "Allow reading encrypted secrets from local config (local backend)")
 	return cmd
 }
 
-// newListCmd returns the "secrets list" subcommand.
+func runGetSecret(cmd *cobra.Command, args []string) error {
+	backend := backendFromCmd(cmd)
+	name := args[0]
+
+	switch backend {
+	case "nomad":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		return runNomadGet(cmd, cfg, name)
+	case "vault":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		return runVaultGet(cmd, cfg, name)
+	default:
+		return runLocalGet(cmd, name)
+	}
+}
+
+// ── list ──────────────────────────────────────────────────────────────────────
+
 func newListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List all secret keys",
-		Long: `List all secrets stored in the config file.
+		Short: "List secret keys",
+		Long: `List secret keys in the selected backend.
 
-Without --unsafe-local: shows only key names.
-With --unsafe-local: decrypts and displays all secrets (requires ABC_CRYPT_PASSWORD).
-
-Examples:
-  abc secrets list                           # List key names only
-  export ABC_CRYPT_PASSWORD="passphrase"
-  abc secrets list --unsafe-local                  # List with decrypted values`,
+  local  — shows key names (add --unsafe-local to decrypt values)
+  nomad  — lists Nomad Variables under abc/secrets/<namespace>/
+  vault  — lists Vault KV v2 keys under secret/data/abc/<namespace>/`,
 		Args: cobra.NoArgs,
 		RunE: runListSecrets,
 	}
-
-	cmd.Flags().Bool("unsafe-local", false, "Decrypt and display secret values locally (requires ABC_CRYPT_PASSWORD)")
-
+	cmd.Flags().Bool("unsafe-local", false, "Decrypt and display values (local backend only, requires ABC_CRYPT_PASSWORD)")
 	return cmd
 }
 
-// newDeleteCmd returns the "secrets delete" subcommand.
+func runListSecrets(cmd *cobra.Command, _ []string) error {
+	backend := backendFromCmd(cmd)
+
+	switch backend {
+	case "nomad":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		return runNomadList(cmd, cfg)
+	case "vault":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		return runVaultList(cmd, cfg)
+	default:
+		return runLocalList(cmd)
+	}
+}
+
+// ── delete ────────────────────────────────────────────────────────────────────
+
 func newDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <key>",
 		Short: "Delete a secret",
-		Long: `Remove a secret from the config file.
-
-Requires --unsafe-local flag.
-
-Examples:
-  abc secrets delete aws-access-key --unsafe-local
-  abc secrets delete old-credential --unsafe-local`,
-		Args: cobra.ExactArgs(1),
-		RunE: runDeleteSecret,
+		Args:  cobra.ExactArgs(1),
+		RunE:  runDeleteSecret,
 	}
-
-	cmd.Flags().Bool("unsafe-local", false, "Allow deleting secrets")
+	cmd.Flags().Bool("unsafe-local", false, "Allow deleting local secrets")
 	cmd.Flags().Bool("yes", false, "Skip confirmation prompt")
-
 	return cmd
 }
 
-// runSetSecret handles "abc secrets set <key> <value> --unsafe-local"
-func runSetSecret(cmd *cobra.Command, args []string) error {
+func runDeleteSecret(cmd *cobra.Command, args []string) error {
+	backend := backendFromCmd(cmd)
+	name := args[0]
+
+	switch backend {
+	case "nomad":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		if !confirmDelete(cmd, name) {
+			return fmt.Errorf("deletion cancelled")
+		}
+		return runNomadDelete(cmd, cfg, name)
+	case "vault":
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		if !confirmDelete(cmd, name) {
+			return fmt.Errorf("deletion cancelled")
+		}
+		return runVaultDelete(cmd, cfg, name)
+	default:
+		return runLocalDelete(cmd, name)
+	}
+}
+
+func confirmDelete(cmd *cobra.Command, name string) bool {
+	yes, _ := cmd.Flags().GetBool("yes")
+	if yes {
+		return true
+	}
+	fmt.Fprintf(cmd.OutOrStderr(), "Delete secret %q? (y/n) ", name)
+	var response string
+	if _, err := fmt.Scanln(&response); err != nil {
+		return false
+	}
+	return response == "y" || response == "yes"
+}
+
+// ── ref ───────────────────────────────────────────────────────────────────────
+
+func newRefCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ref <name>",
+		Short: "Print the HCL template snippet to read a secret in a Nomad job",
+		Long: `Print the Nomad job template snippet that reads the named secret at runtime.
+
+  nomad backend — outputs a nomadVar HCL call (alloc identity reads the variable)
+  vault backend — outputs a vault secret HCL call (requires vault stanza in job)
+
+Examples:
+  abc secrets ref db-password --backend nomad
+  abc secrets ref db-password --backend vault`,
+		Args: cobra.ExactArgs(1),
+		RunE: runRef,
+	}
+}
+
+func runRef(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	backend := backendFromCmd(cmd)
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	ns := nomadSecretsNamespace(cmd, cfg)
+
+	var ref string
+	switch backend {
+	case "vault":
+		ref = vaultSecretRef(ns, name)
+	default:
+		ref = nomadSecretRef(ns, name)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), ref)
+	return nil
+}
+
+// ── backend subcommand ────────────────────────────────────────────────────────
+
+func newBackendCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "backend",
+		Short: "Backend management commands",
+	}
+	cmd.AddCommand(newBackendSetupCmd())
+	return cmd
+}
+
+func newBackendSetupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Create the Nomad ACL policy that grants job allocations read access to abc/secrets/*",
+		Long: `Creates (or updates) the "abc-secrets-alloc-read" Nomad ACL policy so that
+job allocations using nomadVar template calls can read secrets at runtime.
+
+Requires an admin Nomad token.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			return runNomadBackendSetup(cmd, cfg)
+		},
+	}
+}
+
+// ── local backend helpers ─────────────────────────────────────────────────────
+
+func runLocalSet(cmd *cobra.Command, key, value string) error {
 	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
 	if !unsafeLocal {
-		return fmt.Errorf("set requires --unsafe-local flag")
+		return fmt.Errorf("set requires --unsafe-local flag (or use --backend nomad/vault)")
 	}
 
 	password := os.Getenv("ABC_CRYPT_PASSWORD")
@@ -159,46 +341,34 @@ func runSetSecret(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
 	password, salt, err = resolveSecretCredentials(cmd, cfg, password, salt)
 	if err != nil {
 		return err
 	}
-
 	ctxName, ctx, err := cfg.ContextForSecrets()
 	if err != nil {
 		return err
 	}
-
-	key := args[0]
-	value := args[1]
-
 	if ctx.Secrets == nil {
 		ctx.Secrets = map[string]string{}
 	}
-
-	// Encrypt the value
 	encrypted, err := config.EncryptField(value, password, salt)
 	if err != nil {
 		return fmt.Errorf("encrypt secret: %w", err)
 	}
-
 	ctx.Secrets[key] = encrypted
 	cfg.Contexts[ctxName] = ctx
-
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Secret %q stored.\n", key)
+	fmt.Fprintf(cmd.OutOrStdout(), "Secret %q stored (local).\n", key)
 	return nil
 }
 
-// runGetSecret handles "abc secrets get <key> --unsafe-local"
-func runGetSecret(cmd *cobra.Command, args []string) error {
+func runLocalGet(cmd *cobra.Command, key string) error {
 	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
 	if !unsafeLocal {
-		return fmt.Errorf("get requires --unsafe-local flag")
+		return fmt.Errorf("get requires --unsafe-local flag (or use --backend nomad/vault)")
 	}
 
 	password := os.Getenv("ABC_CRYPT_PASSWORD")
@@ -208,63 +378,49 @@ func runGetSecret(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
 	password, salt, err = resolveSecretCredentials(cmd, cfg, password, salt)
 	if err != nil {
 		return err
 	}
-
 	_, ctx, err := cfg.ContextForSecrets()
 	if err != nil {
 		return err
 	}
-
-	key := args[0]
-
 	encrypted, ok := ctx.Secrets[key]
 	if !ok {
 		return fmt.Errorf("secret %q not found", key)
 	}
-
-	// Decrypt the value
 	decrypted, err := config.DecryptField(encrypted, password, salt)
 	if err != nil {
 		return fmt.Errorf("decrypt secret: %w", err)
 	}
-
-	// Output to stdout (pipe-safe, no newline for compatibility with xargs etc)
 	fmt.Fprint(cmd.OutOrStdout(), decrypted)
 	return nil
 }
 
-// runListSecrets handles "abc secrets list [--unsafe-local]"
-func runListSecrets(cmd *cobra.Command, args []string) error {
+func runLocalList(cmd *cobra.Command) error {
 	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
 	ctxName, ctx, err := cfg.ContextForSecrets()
 	if err != nil {
 		return err
 	}
-
 	if len(ctx.Secrets) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No secrets stored for context %q.\n", ctxName)
+		fmt.Fprintf(cmd.OutOrStdout(), "No secrets stored for context %q (local).\n", ctxName)
 		return nil
 	}
 
 	if unsafeLocal {
 		password := os.Getenv("ABC_CRYPT_PASSWORD")
 		salt := os.Getenv("ABC_CRYPT_SALT")
-
 		password, salt, err = resolveSecretCredentials(cmd, cfg, password, salt)
 		if err != nil {
 			return err
 		}
-
 		fmt.Fprintf(cmd.OutOrStdout(), "KEY\tVALUE\n")
 		for key, encrypted := range ctx.Secrets {
 			decrypted, err := config.DecryptField(encrypted, password, salt)
@@ -275,57 +431,43 @@ func runListSecrets(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", key, decrypted)
 		}
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "SECRETS (context %q, %d keys):\n", ctxName, len(ctx.Secrets))
+		fmt.Fprintf(cmd.OutOrStdout(), "SECRETS (local, context %q, %d keys):\n", ctxName, len(ctx.Secrets))
 		for key := range ctx.Secrets {
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", key)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "\nUse --unsafe-local to view decrypted values (requires ABC_CRYPT_PASSWORD)\n")
+		fmt.Fprintln(cmd.OutOrStdout(), "\nUse --unsafe-local to view decrypted values (requires ABC_CRYPT_PASSWORD)")
 	}
-
 	return nil
 }
 
-// runDeleteSecret handles "abc secrets delete <key> --unsafe-local"
-func runDeleteSecret(cmd *cobra.Command, args []string) error {
+func runLocalDelete(cmd *cobra.Command, key string) error {
 	unsafeLocal, _ := cmd.Flags().GetBool("unsafe-local")
 	if !unsafeLocal {
-		return fmt.Errorf("delete requires --unsafe-local flag")
+		return fmt.Errorf("delete requires --unsafe-local flag (or use --backend nomad/vault)")
 	}
-
-	key := args[0]
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
 	ctxName, ctx, err := cfg.ContextForSecrets()
 	if err != nil {
 		return err
 	}
-
 	if _, ok := ctx.Secrets[key]; !ok {
 		return fmt.Errorf("secret %q not found", key)
 	}
 
-	// Confirm deletion
-	yes, _ := cmd.Flags().GetBool("yes")
-	if !yes {
-		fmt.Fprintf(cmd.OutOrStderr(), "Delete secret %q? (y/n) ", key)
-		var response string
-		if _, err := fmt.Scanln(&response); err != nil || (response != "y" && response != "yes") {
-			return fmt.Errorf("deletion cancelled")
-		}
+	if !confirmDelete(cmd, key) {
+		return fmt.Errorf("deletion cancelled")
 	}
 
 	delete(ctx.Secrets, key)
 	cfg.Contexts[ctxName] = ctx
-
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Secret %q deleted.\n", key)
+	fmt.Fprintf(cmd.OutOrStdout(), "Secret %q deleted (local).\n", key)
 	return nil
 }
 
@@ -367,8 +509,7 @@ func resolveSecretCredentials(cmd *cobra.Command, cfg *config.Config, envPasswor
 	}
 
 	if envPassword == "" {
-		return "", "", fmt.Errorf("ABC_CRYPT_PASSWORD not set and no contexts.<name>.crypt.password on the active context; set ABC_CRYPT_PASSWORD or run: abc secrets init --unsafe-local (after abc context use <name>)")
+		return "", "", fmt.Errorf("ABC_CRYPT_PASSWORD not set and no crypt.password in config; run: abc secrets init --unsafe-local")
 	}
-
 	return envPassword, envSalt, nil
 }

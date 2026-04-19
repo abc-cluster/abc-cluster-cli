@@ -1,25 +1,49 @@
-# HashiCorp Vault — abc-nodes floor (lab **-dev** mode only)
+# HashiCorp Vault — abc-nodes floor (Raft integrated storage)
 #
-# In-memory storage; data is lost on restart. For production use HashiCorp’s
-# reference architecture (HA, raft/integrated storage, auto-unseal), not this job.
+# Persists data to /opt/nomad/vault/data on the host via Raft integrated storage.
+# Uses raw_exec so the process has full access to host paths and ports.
+# https://developer.hashicorp.com/vault/docs/configuration/storage/raft
 #
-# After `job run`, set the same root token in ~/.abc, e.g.:
-#   abc config set contexts.<name>.admin.services.vault.access_key '<dev-root-token>'
+# First-run initialization (once, after the job is running):
+#   export VAULT_ADDR=http://<node-ip>:8200
+#   vault operator init           # prints 5 unseal keys + root token — store securely
+#   vault operator unseal         # run 3× with different key shares
+#   vault operator unseal
+#   vault operator unseal
+#
+# Enable KV v2 for abc secrets (using root token):
+#   export VAULT_TOKEN=<root-token>
+#   vault secrets enable -path=secret kv-v2
+#
+# Wire into abc config:
+#   abc config set admin.services.vault.http "http://<node-ip>:8200"
+#   abc cluster capabilities sync
+#
+# Admin — store / rotate a secret:
+#   abc secrets set my-key "s3cr3t" --backend vault
+#
+# Job template reference (non-admin safe, no plaintext exposure):
+#   abc secrets ref my-key --backend vault
 
 variable "datacenters" {
   type    = list(string)
   default = ["dc1", "default"]
 }
 
-variable "vault_image" {
+variable "vault_version" {
   type    = string
-  default = "hashicorp/vault:1.18.3"
+  default = "1.18.3"
 }
 
-variable "vault_dev_root_token_id" {
-  type        = string
-  description = "Root token ID for -dev (lab only; rotate for anything serious)."
-  default     = "dev-root-token"
+# Host path for Raft data — survives Nomad restarts and alloc replacement.
+variable "vault_data_dir" {
+  type    = string
+  default = "/opt/nomad/vault/data"
+}
+
+variable "vault_node_id" {
+  type    = string
+  default = "abc-nodes-vault-1"
 }
 
 job "abc-nodes-vault" {
@@ -36,26 +60,53 @@ job "abc-nodes-vault" {
     count = 1
 
     network {
-      mode = "bridge"
-      port "http" {
+      mode = "host"
+      port "api" {
         static = 8200
-        to     = 8200
+      }
+      port "cluster" {
+        static = 8201
       }
     }
 
     task "vault" {
-      driver = "containerd-driver"
+      driver = "raw_exec"
 
       config {
-        image = var.vault_image
-        args  = ["server", "-dev"]
+        command = "/bin/sh"
+        args = [
+          "-c",
+          "chmod +x ${NOMAD_TASK_DIR}/vault && mkdir -p ${var.vault_data_dir} && exec ${NOMAD_TASK_DIR}/vault server -config=${NOMAD_TASK_DIR}/vault.hcl",
+        ]
       }
 
-      env {
-        VAULT_DEV_ROOT_TOKEN_ID  = var.vault_dev_root_token_id
-        VAULT_DEV_LISTEN_ADDRESS = "0.0.0.0:8200"
-        VAULT_API_ADDR           = "http://0.0.0.0:8200"
-        VAULT_LOG_LEVEL          = "INFO"
+      artifact {
+        source      = "https://releases.hashicorp.com/vault/${var.vault_version}/vault_${var.vault_version}_linux_amd64.zip"
+        destination = "local/"
+      }
+
+      # Vault static configuration.
+      # ${var.*} is resolved by HCL at job-parse time.
+      # {{ env "..." }} is resolved by the Nomad template engine at alloc start.
+      template {
+        data        = <<EOF
+disable_mlock = true
+ui            = true
+
+listener "tcp" {
+  address     = "0.0.0.0:8200"
+  tls_disable = 1
+}
+
+storage "raft" {
+  path    = "${var.vault_data_dir}"
+  node_id = "${var.vault_node_id}"
+}
+
+api_addr     = "http://{{ env "NOMAD_IP_api" }}:{{ env "NOMAD_PORT_api" }}"
+cluster_addr = "http://{{ env "NOMAD_IP_cluster" }}:{{ env "NOMAD_PORT_cluster" }}"
+EOF
+        destination = "local/vault.hcl"
       }
 
       resources {
@@ -65,14 +116,16 @@ job "abc-nodes-vault" {
 
       service {
         name     = "abc-nodes-vault"
-        port     = "http"
+        port     = "api"
         provider = "nomad"
-        tags = [
-          "abc-nodes", "vault", "secrets",
-          "traefik.enable=true",
-          "traefik.http.routers.vault.rule=Host(`vault.aither`)",
-          "traefik.http.services.vault.loadbalancer.server.port=8200",
-        ]
+        tags     = ["abc-nodes", "vault", "secrets"]
+
+        check {
+          type     = "http"
+          path     = "/v1/sys/health?standbyok=true&sealedok=true&uninitok=true"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

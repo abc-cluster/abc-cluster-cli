@@ -1,64 +1,9 @@
-# Grafana Alloy (observability agent) — abc-nodes floor
-# Collects: host metrics (unix exporter), Nomad per-node metrics, Nomad alloc
-# logs from the local host filesystem. Ships metrics → Prometheus, logs → Loki.
-#
-# type=system: one allocation per eligible node so every Nomad client tails its
-# own alloc logs (count=1 would only ship logs from workloads on that single node).
-#
-# raw_exec + host network: read /var/lib/nomad/... and reach the central Loki /
-# Prometheus HTTP ports on the cluster host (host part of nomad_addr by default).
-
-variable "datacenters" {
-  type    = list(string)
-  default = ["dc1", "default"]
-}
-
-variable "alloy_version" {
-  type    = string
-  default = "1.15.1"
-}
-
-variable "nomad_addr" {
-  type    = string
-  default = "100.70.185.46:4646"
-}
-
-variable "nomad_token" {
-  type    = string
-  default = "0ca13634-c413-c24b-627c-f6f1efbff721"
-}
-
-# Full URLs; leave empty to derive from the host part of nomad_addr (same host as
-# Nomad API is typical for single-node or tailnet single-observability-node setups).
-variable "prometheus_url" {
-  type        = string
-  description = "Prometheus remote_write URL; empty = http://<nomad_addr host>:9090/api/v1/write"
-  default     = ""
-}
-
-variable "loki_url" {
-  type        = string
-  description = "Loki push URL; empty = http://<nomad_addr host>:3100/loki/api/v1/push"
-  default     = ""
-}
-
-locals {
-  nomad_http_host = split(":", var.nomad_addr)[0]
-  prometheus_remote_write_url = var.prometheus_url != "" ? var.prometheus_url : "http://${local.nomad_http_host}:9090/api/v1/write"
-  loki_push_url                 = var.loki_url != "" ? var.loki_url : "http://${local.nomad_http_host}:3100/loki/api/v1/push"
-}
-
-variable "nomad_alloc_log_path" {
-  type        = string
-  description = "Glob path to Nomad allocation log files on the host."
-  default     = "/var/lib/nomad/alloc/*/alloc/logs/*.std*.*"
-}
+# Grafana Alloy — abc-nodes enhanced pack (raw_exec on host)
 
 job "abc-nodes-alloy" {
   region      = "global"
-  datacenters = var.datacenters
-  # One Alloy per node — required so alloc logs on each client are tailed locally.
-  type = "system"
+  datacenters = [[ var "datacenters" . | toStringList ]]
+  type        = "service"
 
   meta {
     abc_cluster_type = "abc-nodes"
@@ -66,6 +11,8 @@ job "abc-nodes-alloy" {
   }
 
   group "alloy" {
+    count = 1
+
     network {
       mode = "host"
       port "ui" {
@@ -77,7 +24,6 @@ job "abc-nodes-alloy" {
       driver = "raw_exec"
 
       config {
-        # chmod required because GitHub zip does not preserve execute bit
         command = "/bin/sh"
         args = [
           "-c",
@@ -86,7 +32,7 @@ job "abc-nodes-alloy" {
       }
 
       artifact {
-        source      = "https://github.com/grafana/alloy/releases/download/v${var.alloy_version}/alloy-linux-amd64.zip"
+        source      = "https://github.com/grafana/alloy/releases/download/v[[ var "alloy_version" . ]]/alloy-linux-amd64.zip"
         destination = "local/"
       }
 
@@ -102,16 +48,16 @@ prometheus.scrape "host_metrics" {
   scrape_interval = "30s"
 }
 
-// ── Nomad metrics (local agent on this host; avoids duplicate scrapes of one server)
+// ── Nomad cluster metrics ─────────────────────────────────────────────────────
 prometheus.scrape "nomad_metrics" {
   targets = [{
-    __address__      = "127.0.0.1:4646",
+    __address__      = [[ var "nomad_addr" . | quote ]],
     __metrics_path__ = "/v1/metrics",
   }]
   params = {
     "format" = ["prometheus"],
   }
-  bearer_token    = "${var.nomad_token}"
+  bearer_token    = [[ var "nomad_token" . | quote ]]
   scrape_interval = "30s"
   forward_to      = [prometheus.remote_write.local.receiver]
   job_name        = "nomad"
@@ -120,13 +66,13 @@ prometheus.scrape "nomad_metrics" {
 // ── Remote write → Prometheus ─────────────────────────────────────────────────
 prometheus.remote_write "local" {
   endpoint {
-    url = "${local.prometheus_remote_write_url}"
+    url = [[ var "alloy_prometheus_remote_write_url" . | quote ]]
   }
 }
 
 // ── Nomad alloc log collection → Loki ────────────────────────────────────────
 local.file_match "nomad_alloc_logs" {
-  path_targets = [{__path__ = "${var.nomad_alloc_log_path}"}]
+  path_targets = [{__path__ = [[ var "nomad_alloc_log_path" . | quote ]]}]
 }
 
 loki.source.file "nomad_logs" {
@@ -151,7 +97,7 @@ loki.process "add_labels" {
 
 loki.write "local" {
   endpoint {
-    url = "${local.loki_push_url}"
+    url = [[ var "alloy_loki_push_url" . | quote ]]
   }
 }
 EOF

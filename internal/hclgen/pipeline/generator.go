@@ -28,6 +28,10 @@ type Spec struct {
 	Revision    string
 	Profile     string
 	ExtraConfig string
+
+	// StaticEnv is merged into the task env block as literal strings (abc-nodes
+	// enhanced floor: Loki, Prometheus, Grafana Alloy).
+	StaticEnv map[string]string
 }
 
 // generateHeadJobHCL produces a Nomad HCL job spec for a Nextflow head job
@@ -58,6 +62,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	// run_uuid forces a new allocation on each submission.
 	metaBody := jobBody.AppendNewBlock("meta", nil).Body()
 	metaBody.SetAttributeValue("run_uuid", cty.StringVal(runUUID))
+	if len(spec.StaticEnv) > 0 {
+		metaBody.SetAttributeValue("abc_monitoring_floor", cty.StringVal("enhanced"))
+	}
 
 	groupBody := jobBody.AppendNewBlock("group", []string{"head"}).Body()
 
@@ -119,6 +126,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	envBody := taskBody.AppendNewBlock("env", nil).Body()
 	envBody.SetAttributeValue("NOMAD_ADDR", cty.StringVal(nomadAddr))
 	envBody.SetAttributeValue("NOMAD_TOKEN", cty.StringVal(nomadToken))
+	for _, k := range utils.SortedKeys(spec.StaticEnv) {
+		envBody.SetAttributeValue(k, cty.StringVal(spec.StaticEnv[k]))
+	}
 
 	return utils.PrettyPrintHCL(string(f.Bytes()))
 }

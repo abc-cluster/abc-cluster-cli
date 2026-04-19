@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +27,10 @@ func newRunCmd() *cobra.Command {
 		Use:   "run <name-or-url>",
 		Short: "Submit a Nextflow pipeline head job to Nomad",
 		Long: `Submit a Nextflow pipeline as a head job to the ABC Nomad cluster.
+
+On abc-nodes contexts with an enhanced monitoring floor (Loki / Prometheus /
+Grafana Alloy), the head task env includes ABC_NODES_* URLs synced from
+capabilities or admin.services; base abc-nodes clusters omit them.
 
 <name-or-url> can be:
   - A saved pipeline name (stored in Nomad Variables via "abc pipeline add")
@@ -154,6 +159,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	spec := mergeSpec(base, override)
 	spec.defaults()
 
+	// Translate secret://name param values to Nomad template refs for abc-nodes.
+	translateSecretParams(spec)
+
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	// Read Nomad connection details for embedding in the head job env block.
@@ -264,6 +272,58 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 	fmt.Fprintf(out, "    abc job logs %s --follow\n", jobName)
 	fmt.Fprintf(out, "    abc job show %s\n", jobName)
 	return nil
+}
+
+// translateSecretParams rewrites param values of the form "secret://name" to
+// the appropriate Nomad template reference for the active context's secrets
+// backend. The rewritten string is embedded in params.json inside a Nomad
+// template block, so the {{ }} syntax is evaluated at alloc start.
+func translateSecretParams(spec *PipelineSpec) {
+	if len(spec.Params) == 0 {
+		return
+	}
+	c, err := abccfg.Load()
+	if err != nil {
+		return
+	}
+	ctx := c.ActiveCtx()
+	caps := ctx.Capabilities
+
+	ns := spec.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+
+	backend := "nomad"
+	if caps != nil && (caps.Secrets == "vault" || caps.Secrets == "vault+sealed") {
+		backend = "vault"
+	}
+
+	for k, v := range spec.Params {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		name, found := strings.CutPrefix(s, "secret://")
+		if !found {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if backend == "vault" {
+			spec.Params[k] = fmt.Sprintf(
+				`{{ with secret "secret/data/abc/%s/%s" }}{{ .Data.data.value }}{{ end }}`,
+				ns, name,
+			)
+		} else {
+			spec.Params[k] = fmt.Sprintf(
+				`{{ with nomadVar "abc/secrets/%s/%s" }}{{ index . "value" }}{{ end }}`,
+				ns, name,
+			)
+		}
+	}
 }
 
 func newRunUUID() string {

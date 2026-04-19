@@ -103,6 +103,13 @@ CLASS 3 — META  (Nomad meta block → NOMAD_META_<KEY> in the task)
                                Example: --meta=sample_id=S001
                                         → NOMAD_META_SAMPLE_ID=S001
 
+ABC-NODES ENHANCED FLOOR  (automatic env injection)
+  For contexts with cluster_type abc-nodes, when capabilities (or synced
+  admin.services URLs) indicate Loki / Prometheus / Grafana Alloy, generated
+  batch tasks include ABC_NODES_CLUSTER_FLOOR=enhanced plus ABC_NODES_LOKI_*,
+  ABC_NODES_PROMETHEUS_*, and ABC_NODES_GRAFANA_ALLOY_HTTP as appropriate.
+  Base abc-nodes clusters (no monitoring stack) omit these variables.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PARAMS FILE  (YAML, lowest priority after env vars)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
