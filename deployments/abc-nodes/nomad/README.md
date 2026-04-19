@@ -82,6 +82,17 @@ nomad-pack render . -o /tmp/abc-nodes-enh-render -y \
 
 Override any pack default with `nomad-pack render … --var key=value` or `-f overrides.hcl` (HCL attribute syntax). **Enhanced** defaults assume Prometheus/Loki/Grafana listen on `127.0.0.1` from the host (Alloy uses `raw_exec` + host network); adjust `grafana_*_url`, `loki_minio_endpoint`, `nomad_addr`, and remote-write URLs for your topology.
 
+## Scripted deploy + E2E
+
+From the **`abc-cluster-cli` repo root**:
+
+```bash
+./deployments/abc-nodes/nomad/scripts/deploy-observability-stack.sh
+./deployments/abc-nodes/nomad/scripts/e2e-observability-stack.sh   # needs Go + ~/.abc context
+```
+
+Set `ABC_NODES_ALLOY_PURGE_FOR_SYSTEM=0` to skip the automatic Alloy **service→system** migration (purge).
+
 ## Submit with `abc admin services nomad cli`
 
 The Nomad CLI is invoked as a passthrough; use **`abc admin services nomad cli -- …`** so everything after `--` is forwarded verbatim to `nomad` (same argv as upstream). Address and token default from the active abc context (override with `NOMAD_ADDR` / `NOMAD_TOKEN` or admin flags on the parent command).
@@ -118,16 +129,46 @@ abc admin services nomad cli -- job run -detach \
 | 3    | `tusd.nomad.hcl`     | Set `-var minio_s3_endpoint=...` to the MinIO **S3 API** host port (job port `api`, in-container `:9000`), not the console port. Use **no trailing slash**. From bridge networking, the node’s **Tailscale IP can hairpin-fail** to itself — prefer a **LAN IP** or route that works from the allocation. Ensure bucket `tusd` (or `s3_bucket`) exists. |
 | 4    | `prometheus.nomad.hcl` | Scrapes itself; extend `prometheus.yml` template for node_exporter / Nomad metrics. |
 | 5    | `loki.nomad.hcl`     | Single-store dev-style config; tune for production. |
-| 6    | `grafana.nomad.hcl`  | Set `grafana_admin_password`; add Prometheus datasource in UI or provisioning later. |
+| 6    | `grafana.nomad.hcl`  | Set `grafana_admin_password`; datasources + **Nomad allocation logs** dashboard are provisioned (Loki URL must include `/loki` when Loki uses `path_prefix`). |
 | 7    | `ntfy.nomad.hcl`     | `ntfy serve` behind HTTP port. |
-| 8    | `vault.nomad.hcl`    | **Lab `-dev` in-memory** Vault on **:8200**; data lost on restart. Set `vault_dev_root_token_id` with `-var`, then `abc config set …admin.services.vault.access_key` to match so `abc admin services vault cli` picks up `VAULT_TOKEN`. Not for production. |
-| 9    | `traefik.nomad.hcl`  | Host-network reverse proxy; register after backends so `nomadService` templates resolve. Dashboard **8888**, HTTP entry **80**; `abc admin services config sync` writes `admin.services.traefik.http` / `endpoint`. |
+| 8    | `vault.nomad.hcl`    | HashiCorp Vault with **Raft integrated storage** on **:8200**. Data persists to `/opt/nomad/vault/data` on the host (override: `-var vault_data_dir=/your/path`). **First run:** `vault operator init` → save 5 unseal keys + root token; `vault operator unseal` ×3; `vault secrets enable -path=secret kv-v2`. Wire into abc: `abc config set admin.services.vault.http http://<ip>:8200 && abc cluster capabilities sync`. See the file header for the full workflow. |
+| 9    | `traefik.nomad.hcl`  | Host-network reverse proxy; register after backends so `nomadService` templates resolve. Dashboard **8888**, HTTP entry **80**; `abc cluster capabilities sync` writes `admin.services.traefik.http`. |
+| 10   | `job-notifier.nomad.hcl` | Streams the Nomad `/v1/event/stream?topic=Allocation` feed (raw_exec, host network) and POSTs to **ntfy** when any alloc reaches `complete`, `failed`, or `lost`. Requires `jq` on the host. Topic defaults to `abc-jobs` on port 8088. Submit after ntfy. |
+
+**`alloy.nomad.hcl`:** submit **after** Prometheus + Loki + Grafana. **System** job (one alloc per node); tails **`/opt/nomad/data/...`** and **`/var/lib/nomad/...`** alloc log globs. Labels `alloc_id`, `task`, and `stream` are extracted from the `filename` label in `loki.process` — the pipeline source must be `"filename"` (not `"__path__"`, which is an internal discovery label not forwarded to pipeline stages). Migrating from an older **service**-typed Alloy: Nomad cannot change type in place — use `scripts/deploy-observability-stack.sh` (purges when `ABC_NODES_ALLOY_PURGE_FOR_SYSTEM=1`) or `nomad job stop -purge abc-nodes-alloy` then re-run.
+
+**`grafana-dashboard-abc-nodes.json`:** pre-built Grafana dashboard for the abc-nodes enhanced stack. Import via `POST /api/dashboards/import` or the Grafana UI (`+` → Import → Upload JSON). Covers cluster health stats, node CPU/memory/disk/network, job and alloc status, scheduler RPC latency, and a Loki log panel filtered by `task` and `stream`. Variables: `node`, `job`, `task`.
+
+## Capabilities sync
+
+After the floor jobs are running, let the CLI discover what is available:
+
+```bash
+abc cluster capabilities sync
+```
+
+This queries the Nomad service registry (falls back to job listing on 403) and writes two things to the active context config:
+
+1. **`capabilities.*`** — a structured record of which services are running (`storage`, `uploads`, `logging`, `monitoring`, `observability`, `notifications`, `secrets`, `proxy`).
+2. **`admin.services.<svc>.http|endpoint`** — the discovered URL for each service (never overwrites values you set manually).
+
+Once synced:
+- `abc data upload` automatically uses `admin.services.tusd.http/files/` as the tus endpoint (no `--endpoint` flag needed).
+- `abc secrets set/get/list/delete --backend vault` resolves the Vault address from `admin.services.vault.http`.
+- `abc pipeline run` with `secret://name` params translates to the backend indicated by `capabilities.secrets`.
+- `capabilities.notifications` is set when ntfy is running; `job-notifier` sends push notifications to the `abc-jobs` ntfy topic on job completion/failure.
+
+View the stored state at any time:
+
+```bash
+abc cluster capabilities show
+```
 
 ## “All other tools”
 
-These specs cover the **floor stack** called out for `abc-nodes` (storage, tus, metrics, logs, push, Vault lab, Traefik). **CLI-style tools** under `abc admin services` (Nomad / MinIO **mc** / RustFS / Vault / Nebula / Tailscale / Rclone / **Traefik** passthroughs) are thin wrappers around upstream binaries; floor **URLs and tokens** for Vault merge from `~/.abc` when `cluster_type` is `abc-nodes` (see table above for the shipped `vault.nomad.hcl` job).
+These specs cover the **floor stack** called out for `abc-nodes` (storage, tus, metrics, logs, push, Vault, Traefik). **CLI-style tools** under `abc admin services` (Nomad / MinIO **mc** / RustFS / Vault / Nebula / Tailscale / Rclone / **Traefik** passthroughs) are thin wrappers around upstream binaries; floor **URLs and tokens** for Vault merge from `~/.abc` when `cluster_type` is `abc-nodes`.
 
-For **Tailscale**, **Nebula**, and similar, use upstream Nomad examples or vendor packs if you need them as jobs. Production Vault should follow HashiCorp’s reference architecture instead of the bundled **`-dev`** job.
+For **Tailscale**, **Nebula**, and similar, use upstream Nomad examples or vendor packs if you need them as jobs. Production Vault should follow HashiCorp’s reference architecture instead of the bundled single-node Raft job.
 
 ## Operational notes
 

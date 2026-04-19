@@ -1,9 +1,9 @@
-# Grafana Alloy — abc-nodes enhanced pack (raw_exec on host)
+# Grafana Alloy — abc-nodes enhanced pack (raw_exec, host network, system job)
 
 job "abc-nodes-alloy" {
   region      = "global"
   datacenters = [[ var "datacenters" . | toStringList ]]
-  type        = "service"
+  type        = "system"
 
   meta {
     abc_cluster_type = "abc-nodes"
@@ -11,8 +11,6 @@ job "abc-nodes-alloy" {
   }
 
   group "alloy" {
-    count = 1
-
     network {
       mode = "host"
       port "ui" {
@@ -48,7 +46,7 @@ prometheus.scrape "host_metrics" {
   scrape_interval = "30s"
 }
 
-// ── Nomad cluster metrics ─────────────────────────────────────────────────────
+// ── Nomad /v1/metrics (nomad_addr; not loopback — bind_addr may omit 127.0.0.1)
 prometheus.scrape "nomad_metrics" {
   targets = [{
     __address__      = [[ var "nomad_addr" . | quote ]],
@@ -63,20 +61,25 @@ prometheus.scrape "nomad_metrics" {
   job_name        = "nomad"
 }
 
-// ── Remote write → Prometheus ─────────────────────────────────────────────────
 prometheus.remote_write "local" {
   endpoint {
-    url = [[ var "alloy_prometheus_remote_write_url" . | quote ]]
+    url = [[ if eq (var "alloy_prometheus_remote_write_url" .) "" -]][[ printf "http://%s:9090/api/v1/write" (index (splitList ":" (var "nomad_addr" .)) 0) | quote ]][[ else -]][[ var "alloy_prometheus_remote_write_url" . | quote ]][[ end ]]
   }
 }
 
-// ── Nomad alloc log collection → Loki ────────────────────────────────────────
-local.file_match "nomad_alloc_logs" {
-  path_targets = [{__path__ = [[ var "nomad_alloc_log_path" . | quote ]]}]
+// Tail both common Nomad data_dir layouts.
+local.file_match "nomad_alloc_logs_opt" {
+  path_targets = [{__path__ = "/opt/nomad/data/alloc/*/alloc/logs/*.std*.*"}]
 }
-
-loki.source.file "nomad_logs" {
-  targets    = local.file_match.nomad_alloc_logs.targets
+loki.source.file "nomad_logs_opt" {
+  targets    = local.file_match.nomad_alloc_logs_opt.targets
+  forward_to = [loki.process.add_labels.receiver]
+}
+local.file_match "nomad_alloc_logs_varlib" {
+  path_targets = [{__path__ = "/var/lib/nomad/alloc/*/alloc/logs/*.std*.*"}]
+}
+loki.source.file "nomad_logs_varlib" {
+  targets    = local.file_match.nomad_alloc_logs_varlib.targets
   forward_to = [loki.process.add_labels.receiver]
 }
 
@@ -97,7 +100,7 @@ loki.process "add_labels" {
 
 loki.write "local" {
   endpoint {
-    url = [[ var "alloy_loki_push_url" . | quote ]]
+    url = [[ if eq (var "alloy_loki_push_url" .) "" -]][[ printf "http://%s:3100/loki/api/v1/push" (index (splitList ":" (var "nomad_addr" .)) 0) | quote ]][[ else -]][[ var "alloy_loki_push_url" . | quote ]][[ end ]]
   }
 }
 EOF

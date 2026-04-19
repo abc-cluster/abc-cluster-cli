@@ -26,6 +26,8 @@ This document describes every command available in the `abc` CLI.
   - [secrets get](#secrets-get-key)
   - [secrets list](#secrets-list)
   - [secrets delete](#secrets-delete-key)
+  - [secrets ref](#secrets-ref-key)
+  - [secrets backend setup](#secrets-backend-setup)
 - [submit](#submit)
 - [pipeline run](#pipeline-run)
 - [pipeline lifecycle](#pipeline-lifecycle)
@@ -62,6 +64,8 @@ This document describes every command available in the `abc` CLI.
 - [admin services rustfs cli](#admin-services-rustfs-cli)
 - [admin services vault cli](#admin-services-vault-cli)
 - [cluster](#cluster)
+  - [cluster capabilities sync](#cluster-capabilities-sync)
+  - [cluster capabilities show](#cluster-capabilities-show)
 - [accounting](#accounting)
 - [emissions](#emissions)
 - [compliance](#compliance)
@@ -311,6 +315,13 @@ $ abc config set contexts.myorg.endpoint https://api.myorg.example
 | `contexts.<name>.admin.services.nomad.nomad_addr` | Node Nomad API URL (set by infra) | `http://10.70.185.46:4646` |
 | `contexts.<name>.admin.services.nomad.nomad_token` | Nomad ACL token (set by infra) | `s.123...` |
 | `contexts.<name>.admin.services.nomad.nomad_region` | Nomad scheduler region if required | `global` |
+| `contexts.<name>.admin.services.tusd.http` | tusd tus upload base URL (set by capabilities sync) | `http://10.0.0.1:8080` |
+| `contexts.<name>.admin.services.minio.endpoint` | MinIO S3 API base URL | `http://10.0.0.1:9000` |
+| `contexts.<name>.admin.services.rustfs.endpoint` | RustFS S3 API base URL | `http://10.0.0.1:9100` |
+| `contexts.<name>.admin.services.vault.http` | Vault API base URL | `http://10.0.0.1:8200` |
+| `contexts.<name>.admin.services.grafana.http` | Grafana HTTP URL | `http://10.0.0.1:3000` |
+| `contexts.<name>.admin.services.prometheus.http` | Prometheus HTTP URL | `http://10.0.0.1:9090` |
+| `contexts.<name>.admin.services.traefik.http` | Traefik dashboard URL | `http://10.0.0.1:8888` |
 
 ### `config get KEY`
 
@@ -445,14 +456,25 @@ $ abc context delete org-a-za-cpt
 
 ## `secrets`
 
-Manage encrypted credentials stored in the config file without exposing them to the backend.
-Uses password-based encryption (local password mode) with no external KMS required.
+Manage secrets across three backends: **local** (AES-256-GCM in `~/.abc/config.yaml`), **nomad** (Nomad Variables, encrypted at rest), and **vault** (HashiCorp Vault KV v2).
 
-Values from `~/.abc/config.yaml` take precedence. If no crypt password is configured there, `ABC_CRYPT_PASSWORD` and optional `ABC_CRYPT_SALT` are used and cached for future operations.
+**Backend selection:** use `--backend local|nomad|vault` (default: `local`). On abc-nodes contexts the backend is usually `nomad` or `vault` depending on what is running; use `abc cluster capabilities sync` to detect which is available.
+
+**Persistent flags** (all `secrets` subcommands):
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--backend` | `local` | Secret backend: `local`, `nomad`, or `vault` |
+| `--namespace` | context / `default` | Nomad namespace (nomad and vault backends) |
+| `--nomad-addr` | context / env | Nomad API address override |
+| `--nomad-token` | context / env | Nomad ACL token override |
+| `--region` | context / env | Nomad RPC region override |
+| `--vault-addr` | config / `VAULT_ADDR` / `127.0.0.1:8200` | Vault API address override |
+| `--vault-token` | `VAULT_TOKEN` env | Vault token override |
 
 ### `secrets init`
 
-Generate `defaults.crypt_password` and `defaults.crypt_salt` in the config file when they are not already set (so you can use `abc secrets` / `abc data encrypt` without exporting `ABC_CRYPT_PASSWORD` every time). Requires `--unsafe-local`.
+Generate `defaults.crypt_password` and `defaults.crypt_salt` in the config file when they are not already set (local backend only). Requires `--unsafe-local`.
 
 | Flag | Description |
 |------|-------------|
@@ -466,77 +488,83 @@ abc secrets init --unsafe-local --force   # rotate stored crypt material
 
 ### `secrets set KEY VALUE`
 
-Store an encrypted credential. Requires `--unsafe-local` flag.
-
-Values from `~/.abc/config.yaml` are canonical; if `ABC_CRYPT_PASSWORD` differs from config, the config value is used and a warning is emitted.
+Store a secret. For the local backend, requires `--unsafe-local`. For nomad/vault backends, requires a token with write permissions.
 
 ```bash
-$ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-$ abc secrets set aws-access-key "AKIAIOSFODNN7EXAMPLE" --unsafe-local
-✓ Secret "aws-access-key" stored.
+# Local (AES-256-GCM in config file)
+abc secrets set aws-key "AKIAIOSFODNN7EXAMPLE" --unsafe-local
 
-$ abc secrets set db-password "postgres://user:pass@localhost/db" --unsafe-local
-✓ Secret "db-password" stored.
+# Nomad Variables (abc-nodes)
+abc secrets set my-key "s3cr3t" --backend nomad
+
+# Vault KV v2 (abc-nodes with Vault)
+export VAULT_TOKEN=<root-token>
+abc secrets set my-key "s3cr3t" --backend vault
 ```
 
 ### `secrets get KEY`
 
-Retrieve and decrypt a secret. Requires `--unsafe-local` flag.
-
-Values from `~/.abc/config.yaml` are canonical; if `ABC_CRYPT_PASSWORD` differs from config, the config value is used and a warning is emitted.
+Retrieve a secret value.
 
 ```bash
-$ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-$ abc secrets get aws-access-key --unsafe-local
-AKIAIOSFODNN7EXAMPLE
-
-# Pipe-compatible (no trailing newline)
-$ export AWS_ACCESS_KEY_ID=$(ABC_CRYPT_PASSWORD="..." abc secrets get aws-access-key --unsafe-local)
+abc secrets get aws-key --unsafe-local
+abc secrets get my-key --backend nomad
+abc secrets get my-key --backend vault
 ```
+
+> **Note (nomad backend):** Secrets stored in Nomad Variables are ACL-protected. Non-admin tokens receive a 403 with instructions to use `abc secrets ref` instead.
 
 ### `secrets list`
 
-List all stored secret keys. Without `--unsafe-local`, shows only key names (not values).
-With `--unsafe-local`, decrypts and displays all key-value pairs.
+List stored secret keys (and values with `--unsafe-local` for the local backend).
 
 ```bash
-# List keys only (no password needed)
-$ abc secrets list
-SECRETS (2):
-  aws-access-key
-  db-password
-
-Use --unsafe-local to view decrypted values (requires ABC_CRYPT_PASSWORD)
-
-# List with decrypted values
-$ export ABC_CRYPT_PASSWORD="my-secret-passphrase"
-$ abc secrets list --unsafe-local
-KEY               VALUE
-aws-access-key    AKIAIOSFODNN7EXAMPLE
-db-password       postgres://user:pass@localhost/db
+$ abc secrets list                          # local: key names only
+$ abc secrets list --unsafe-local           # local: keys + decrypted values
+$ abc secrets list --backend nomad          # nomad: lists abc/secrets/<namespace>/* paths
+$ abc secrets list --backend vault          # vault: lists secret/metadata/abc/<namespace>/ keys
 ```
 
 ### `secrets delete KEY`
 
-Delete a secret from the config file. Requires `--unsafe-local` flag and confirms before deletion.
+Delete a secret.
 
 ```bash
-$ abc secrets delete aws-access-key --unsafe-local
-Delete secret "aws-access-key"? (y/n) y
-✓ Secret "aws-access-key" deleted.
-
-# Skip confirmation with --yes
-$ abc secrets delete db-password --unsafe-local --yes
-✓ Secret "db-password" deleted.
+abc secrets delete aws-key --unsafe-local
+abc secrets delete my-key --backend nomad
+abc secrets delete my-key --backend vault
 ```
 
-**Encryption Details:**
+### `secrets ref KEY`
+
+Print the Nomad template HCL snippet to read a secret at runtime inside a Nomad job allocation. The secret value is never exposed in plaintext through the CLI.
+
+```bash
+$ abc secrets ref my-key --backend nomad
+{{ with nomadVar "abc/secrets/default/my-key" }}{{ index . "value" }}{{ end }}
+
+$ abc secrets ref my-key --backend vault
+{{ with secret "secret/data/abc/default/my-key" }}{{ .Data.data.value }}{{ end }}
+```
+
+Use these snippets in job template blocks, or pass `secret://name` in pipeline params (see [`pipeline run`](#pipeline-run) below — the translation is automatic).
+
+### `secrets backend setup`
+
+Create the Nomad ACL policy that lets job allocations read secrets at runtime (nomad backend only). Requires a token with ACL policy write permissions.
+
+```bash
+abc secrets backend setup --backend nomad
+# Creates policy "abc-secrets-alloc-read" granting namespace:read on abc/secrets/<namespace>/*
+```
+
+**Local backend encryption details:**
 
 - Algorithm: AES-256-GCM with random nonce per secret
 - Key derivation: scrypt (16384, 8, 1) — same as `abc data encrypt/decrypt`
 - Environment variables: `ABC_CRYPT_PASSWORD` (required), `ABC_CRYPT_SALT` (optional)
 - Offline: No network, no external KMS — suitable for air-gapped environments
-- Storage: Secrets stored in `~/.abc/config.yaml` under the `secrets` section (encrypted)
+- Storage: `~/.abc/config.yaml` under the `secrets` section (encrypted)
 
 ---
 
@@ -661,6 +689,25 @@ abc pipeline run <name-or-url> [flags]
 | `--logs`              | Stream head job logs after submit                                   |         |
 | `--dry-run`           | Print generated HCL without submitting                              |         |
 
+### Secret params (`secret://name`)
+
+On **abc-nodes** contexts, param values that start with `secret://` are automatically translated to Nomad template references before the job is submitted. The secret is resolved at alloc start inside the allocation — the plaintext is never passed through the CLI.
+
+The backend is determined by `capabilities.secrets` in the active context (set by `abc cluster capabilities sync`):
+- `nomad` → `{{ with nomadVar "abc/secrets/<namespace>/name" }}{{ index . "value" }}{{ end }}`
+- `vault` / `vault+sealed` → `{{ with secret "secret/data/abc/<namespace>/name" }}{{ .Data.data.value }}{{ end }}`
+
+```yaml
+# params.yaml
+input: "secret://s3-input-key"
+outdir: "s3://my-bucket/results"
+```
+
+```bash
+abc pipeline run rnaseq --params-file params.yaml
+# → secret://s3-input-key is rewritten to the nomadVar/vault template ref at submission time
+```
+
 ### Examples
 
 ```bash
@@ -676,6 +723,9 @@ abc pipeline run nf-core/rnaseq \
   --cpu 2000 --memory 8192 \
   --profile test,docker \
   --wait
+
+# Dry-run to inspect the generated HCL (including translated secret refs)
+abc pipeline run rnaseq --params-file params.yaml --dry-run
 ```
 
 ---
@@ -1267,7 +1317,7 @@ abc data upload <path> [flags]
 | Flag               | Env var               | Description                                                         |
 |--------------------|-----------------------|---------------------------------------------------------------------|
 | `--name`           |                       | Display name for the uploaded file                                  |
-| `--endpoint`       | `ABC_UPLOAD_ENDPOINT` | Tus endpoint URL (default: context upload endpoint or `<url>/files/` from API URL) |
+| `--endpoint`       | `ABC_UPLOAD_ENDPOINT` | Tus endpoint URL (default: context `upload_endpoint` → abc-nodes `admin.services.tusd.http/files/` → `<url>/files/` from API URL) |
 | `--upload-token`   | `ABC_UPLOAD_TOKEN`    | Bearer token for tus (or context upload token; falls back to `--access-token`) |
 | `--crypt-password` |                       | rclone crypt password for client-side encryption                    |
 | `--crypt-salt`     |                       | rclone crypt salt (password2)                                       |
@@ -1805,7 +1855,72 @@ By default this command resolves `vault`, then `bao`, then `openbao` on `PATH`. 
 
 ## `cluster`
 
-Manage the cluster fleet. All cluster operations require `--cloud`.
+The `cluster` group has two distinct areas:
+
+- **`abc cluster capabilities`** — inspects and stores what services are running on an **abc-nodes** cluster (no `--cloud` required; reads Nomad directly).
+- **`abc cluster list/status/provision/decommission`** — manages the cloud-managed cluster fleet (all require `--cloud`).
+
+### `cluster capabilities sync`
+
+Query the Nomad service registry (or job listing as fallback) for running `abc-nodes-*` services, populate `capabilities` and `admin.services.*` endpoint URLs in the active context config, and print what was detected.
+
+```bash
+abc cluster capabilities sync
+```
+
+**Flags** (all optional — defaults come from `admin.services.nomad.*` in the active context):
+
+| Flag | Description |
+|------|-------------|
+| `--nomad-addr` | Nomad API address (bypasses `$NOMAD_ADDR` / `$ABC_ADDR` env vars) |
+| `--nomad-token` | Nomad ACL token |
+| `--region` | Nomad RPC region |
+
+The command requires at minimum `namespace:list-jobs` (service registry requires `namespace:read-job`; falls back to job listing on 403). Use `abc config set admin.services.nomad.nomad_addr http://<ip>:4646` if your context does not have a Nomad address configured.
+
+**What gets written to config:**
+
+| Config key | Populated from |
+|------------|----------------|
+| `capabilities.storage` | `minio` or `rustfs` depending on which S3 job is running |
+| `capabilities.uploads` | `true` if `abc-nodes-tusd` is running |
+| `capabilities.upload_ui` | `true` if `abc-nodes-uppy` is running |
+| `capabilities.logging` | `true` if `abc-nodes-loki` is running |
+| `capabilities.monitoring` | `true` if `abc-nodes-prometheus` is running |
+| `capabilities.observability` | `true` if `abc-nodes-alloy` is running |
+| `capabilities.notifications` | `true` if `abc-nodes-ntfy` is running |
+| `capabilities.secrets` | `nomad` (default), `vault`, or `vault+sealed` (probed from Vault `/v1/sys/health`) |
+| `capabilities.proxy` | `true` if `abc-nodes-traefik` is running |
+| `capabilities.last_synced` | RFC 3339 timestamp of the sync run |
+| `admin.services.<svc>.http` / `.endpoint` | URL discovered from service instances or allocation ports (never overwrites an existing non-empty value) |
+
+```bash
+# Example output
+Detected services via Nomad service registry.
+Capabilities synced for context "my-cluster":
+  storage:       minio
+  uploads:       true
+  upload_ui:     false
+  logging:       true
+  monitoring:    true
+  observability: true
+  notifications: false
+  secrets:       vault
+  proxy:         true
+  last_synced:   2026-04-19T10:30:00Z
+```
+
+> **abc-nodes upload integration:** once `capabilities.uploads == true` and `admin.services.tusd.http` is populated, `abc data upload` automatically uses `<tusd_http>/files/` as the endpoint without any extra flags.
+
+### `cluster capabilities show`
+
+Print the stored capabilities for the active context.
+
+```bash
+abc cluster capabilities show
+```
+
+---
 
 ### `cluster list` (requires `--cloud`)
 

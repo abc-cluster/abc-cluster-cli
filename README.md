@@ -79,9 +79,11 @@ abc <command> <subcommand> [flags]
 
 | Command group    | Subcommands                                    | Description                                  |
 |------------------|------------------------------------------------|----------------------------------------------|
-| `pipeline`       | `run`                                          | Submit and manage Nextflow pipeline runs      |
+| `pipeline`       | `run`, `add`, `list`, `info`, `update`, `delete`, `export`, `import`, `params` | Submit and manage Nextflow pipeline runs |
 | `job`            | `run`, `list`, `show`, `stop`, `logs`, `status`, `dispatch` | Submit and manage Nomad batch jobs |
 | `data`           | `upload`, `encrypt`, `decrypt`, `download`     | Upload and manage data files                 |
+| `secrets`        | `set`, `get`, `list`, `delete`, `ref`, `backend setup` | Manage secrets (local / Nomad Variables / Vault KV v2) |
+| `cluster`        | `capabilities sync`, `capabilities show`, `list`, `status`, `provision`, `decommission` | Inspect and manage clusters |
 
 For detailed flag references, examples, and preamble directive documentation, see **[USAGE.md](./USAGE.md)**.
 
@@ -89,7 +91,7 @@ For detailed flag references, examples, and preamble directive documentation, se
 
 ```bash
 # Run a pipeline
-abc pipeline run --pipeline https://github.com/org/my-pipeline --revision main
+abc pipeline run https://github.com/org/my-pipeline --revision main
 
 # Generate a Nomad HCL job spec from an annotated script
 abc job run myjob.sh
@@ -98,16 +100,8 @@ abc job run myjob.sh
 abc job run myjob.sh --submit --watch
 
 # Upload a file (tus endpoint / token from context, ABC_UPLOAD_*, or flags)
+# On abc-nodes contexts: auto-discovers tusd URL after 'abc cluster capabilities sync'
 abc data upload ./data.csv
-
-# Generate local crypt defaults once (optional)
-abc secrets init --unsafe-local
-
-# Run open-source service CLIs through abc wrappers
-abc admin services nebula cli -version
-abc admin services rustfs cli status
-abc admin services vault cli status
-abc admin services traefik cli version
 
 # Encrypt a file before uploading
 abc data encrypt ./data.csv --crypt-password "secret"
@@ -117,14 +111,55 @@ abc data upload ./data.csv.encrypted
 abc data download --tool wget --driver containerd --source https://example.com/file.zip --destination /tmp/dl --node my-nomad-node
 ```
 
+### abc-nodes secrets & capabilities
+
+```bash
+# Discover running services on an abc-nodes cluster and populate config
+abc cluster capabilities sync
+abc cluster capabilities show
+
+# Store a secret in Nomad Variables (abc-nodes)
+abc secrets set my-key "s3cr3t" --backend nomad
+
+# Store a secret in Vault KV v2 (abc-nodes with Vault)
+export VAULT_TOKEN=<root-token>
+abc secrets set my-key "s3cr3t" --backend vault
+
+# Get the Nomad template ref for a secret (use in pipeline params, job scripts)
+abc secrets ref my-key --backend nomad   # → {{ with nomadVar "abc/secrets/default/my-key" }}...{{ end }}
+
+# Use a secret as a pipeline parameter — translated to a template ref at submit time
+abc pipeline run rnaseq --params-file params.yaml
+# params.yaml: { input: "secret://s3-key" }  → nomadVar ref injected into params.json at runtime
+
+# Local crypt defaults (no backend required)
+abc secrets init --unsafe-local
+abc secrets set aws-key "AKIA..." --unsafe-local
+
+# Run open-source service CLIs through abc wrappers
+abc admin services nebula cli -version
+abc admin services rustfs cli status
+abc admin services vault cli status
+abc admin services traefik cli version
+```
+
 ### Nomad floor jobs (`abc-nodes`)
 
-Example **Nomad** service specs for MinIO, RustFS, tusd, Prometheus, Grafana, Loki, ntfy, and Traefik live under **`deployments/abc-nodes/nomad/`**. Validate or run them with the Nomad CLI passthrough (uses your active abc context for `NOMAD_ADDR` / token):
+Example **Nomad** service specs for MinIO, RustFS, tusd, Prometheus, Grafana, Loki, ntfy, Vault, and Traefik live under **`deployments/abc-nodes/nomad/`**. Validate or run them with the Nomad CLI passthrough (uses your active abc context for `NOMAD_ADDR` / token):
 
 ```bash
 abc admin services nomad cli -- job validate deployments/abc-nodes/nomad/minio.nomad.hcl
 abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
 ```
+
+After services are running, sync discovered endpoints and capabilities to your config:
+
+```bash
+abc cluster capabilities sync    # auto-populates admin.services.* URLs and capabilities block
+abc cluster capabilities show    # view what was detected
+```
+
+`vault.nomad.hcl` runs HashiCorp Vault with **Raft integrated storage** (data persisted at `/opt/nomad/vault/data`). See the first-run initialization instructions in the file header.
 
 See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering. Curated **`nomad-pack`** bundles for **base** (MinIO + tusd) vs **enhanced** (+ monitoring stack) are under **`deployments/abc-nodes/nomad-packs/`** (see the same README).
 
