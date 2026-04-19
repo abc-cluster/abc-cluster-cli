@@ -62,15 +62,90 @@ datasources:
     isDefault: true
     editable: false
 
+  # Must match abc-nodes-loki common.path_prefix (/loki); otherwise Grafana calls
+  # /api/v1/... on :3100 and the datasource looks "unreachable".
   - name: Loki
     type: loki
     uid: loki
-    url: http://100.70.185.46:3100
+    url: http://100.70.185.46:3100/loki
     access: proxy
     isDefault: false
     editable: false
+    jsonData:
+      maxLines: 1000
 EOF
         destination = "local/provisioning/datasources/default.yaml"
+      }
+
+      # Provisioned dashboard: Nomad alloc stdout/stderr (labels from Alloy).
+      template {
+        data        = <<EOF
+apiVersion: 1
+providers:
+  - name: abc-nodes
+    orgId: 1
+    folder: ABC Nodes
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /local/provisioning/dashboards/files
+EOF
+        destination = "local/provisioning/dashboards/dashboard.yaml"
+      }
+
+      template {
+        destination = "local/provisioning/dashboards/files/nomad-loki-logs.json"
+        data        = <<EOF
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 22, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{stream=~\"stdout|stderr\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Nomad allocation logs (Alloy file tail → Loki)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["abc-nodes", "nomad", "loki"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Nomad allocation logs",
+  "uid": "abc-nodes-nomad-loki-logs",
+  "version": 1,
+  "weekStart": ""
+}
+EOF
       }
 
       resources {

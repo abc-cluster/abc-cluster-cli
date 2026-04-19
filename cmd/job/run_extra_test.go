@@ -739,3 +739,89 @@ func TestJobRun_InvalidPriority(t *testing.T) {
 		t.Fatal("expected error for non-integer --priority")
 	}
 }
+
+// ── Monitoring floor (abc-nodes enhanced) via ABC_CONFIG_FILE ───────────────
+
+func TestJobRun_EnhancedAbcNodesConfig_InjectsMonitoringEnvAndMeta(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `version: "1.0"
+active_context: enh
+contexts:
+  enh:
+    endpoint: https://api.example.com
+    access_token: tok
+    cluster_type: abc-nodes
+    capabilities:
+      logging: true
+      monitoring: true
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+        loki:
+          http: http://192.168.55.1:3100
+        prometheus:
+          http: http://192.168.55.1:9090
+`
+	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+
+	script := "#!/bin/bash\n#ABC --name=enhmon\necho hi\n"
+	p := writeTempScript(t, "enh_mon.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "ABC_NODES_LOKI_PUSH_URL") {
+		t.Fatalf("expected Loki push URL in generated HCL:\n%s", out)
+	}
+	if !strings.Contains(out, "ABC_NODES_PROMETHEUS_REMOTE_WRITE_URL") {
+		t.Fatalf("expected Prometheus remote_write URL:\n%s", out)
+	}
+	if !strings.Contains(out, "abc_monitoring_floor") {
+		t.Fatalf("expected job meta abc_monitoring_floor:\n%s", out)
+	}
+}
+
+func TestJobRun_BaseAbcNodesConfig_NoMonitoringEnv(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `version: "1.0"
+active_context: base
+contexts:
+  base:
+    endpoint: https://api.example.com
+    access_token: tok
+    cluster_type: abc-nodes
+    capabilities:
+      logging: false
+      monitoring: false
+      observability: false
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+        loki:
+          http: http://192.168.55.9:3100
+`
+	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+
+	script := "#!/bin/bash\n#ABC --name=basemon\necho hi\n"
+	p := writeTempScript(t, "base_mon.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out, "ABC_NODES_LOKI_PUSH_URL") {
+		t.Fatalf("did not expect monitoring env on base floor:\n%s", out)
+	}
+	if strings.Contains(out, "abc_monitoring_floor") {
+		t.Fatalf("did not expect abc_monitoring_floor meta on base floor:\n%s", out)
+	}
+}

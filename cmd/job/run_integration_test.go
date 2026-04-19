@@ -10,10 +10,17 @@ package job_test
 // Usage:
 //   NOMAD_ADDR=http://localhost:4646 go test -tags integration -v ./cmd/job/...
 //
+// Observability stack (Loki + Prometheus) smoke test (optional):
+//   ABC_INTEGRATION_OBS_STACK=1 go test -tags integration -v -timeout=15m -run TestIntegration_ObsStack ./cmd/job/...
+// Uses abc CLI config only for Nomad submit (no --nomad-addr); see monitoring_stack_integration_test.go.
+//
 // Optional env vars:
 //   NOMAD_TOKEN       — ACL token (empty = dev agent with ACLs disabled)
 //   ABC_TEST_TIMEOUT  — max seconds to wait for job completion (default: 60)
 //   ABC_TEST_NS       — Nomad namespace to use (default: "default")
+//   ABC_INTEGRATION_LOKI_REQUIRE — set to 0 to skip the Loki log sentinel check in
+//     TestIntegration_ObsStackJobStdoutReachableInLokiAndPrometheusAlive (Prometheus
+//     check still runs). Use when Alloy does not tail client alloc logs into Loki.
 //
 // requireNomad(t) skips the test if NOMAD_ADDR is not set, so it is safe to
 // include the build tag in broader test runs without a Nomad server.
@@ -122,15 +129,179 @@ func nomadJobStatus(t *testing.T, addr, jobID string) string {
 	return job.Status
 }
 
+// nomadJobType returns the Nomad job type (batch, service, system, …).
+func nomadJobType(t *testing.T, addr, jobID string) string {
+	t.Helper()
+	tok := os.Getenv("NOMAD_TOKEN")
+	ns := testNamespace()
+	url := fmt.Sprintf("%s/v1/job/%s?namespace=%s", addr, jobID, ns)
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	if tok != "" {
+		req.Header.Set("X-Nomad-Token", tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return ""
+	}
+	defer resp.Body.Close()
+	var job struct {
+		Type string `json:"Type"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(body, &job)
+	return job.Type
+}
+
+// nomadBatchJobAllocationsSucceeded reports whether every allocation for a batch
+// job finished successfully (client complete + main task exit 0). Nomad often
+// leaves batch jobs at API Status "dead" even when work succeeded; callers
+// should treat that as success when this returns true.
+func nomadBatchJobAllocationsSucceeded(t *testing.T, addr, jobID string) bool {
+	t.Helper()
+	tok := os.Getenv("NOMAD_TOKEN")
+	ns := testNamespace()
+	listURL := fmt.Sprintf("%s/v1/job/%s/allocations?namespace=%s", addr, jobID, ns)
+	req, _ := http.NewRequest(http.MethodGet, listURL, nil)
+	if tok != "" {
+		req.Header.Set("X-Nomad-Token", tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return false
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var stubs []struct {
+		ID           string `json:"ID"`
+		ClientStatus string `json:"ClientStatus"`
+	}
+	if err := json.Unmarshal(body, &stubs); err != nil || len(stubs) == 0 {
+		return false
+	}
+	for _, st := range stubs {
+		if strings.ToLower(st.ClientStatus) != "complete" {
+			return false
+		}
+		if st.ID == "" {
+			return false
+		}
+		allocURL := fmt.Sprintf("%s/v1/allocation/%s?namespace=%s", addr, st.ID, ns)
+		r2, _ := http.NewRequest(http.MethodGet, allocURL, nil)
+		if tok != "" {
+			r2.Header.Set("X-Nomad-Token", tok)
+		}
+		ar, err := http.DefaultClient.Do(r2)
+		if err != nil || ar.StatusCode != http.StatusOK {
+			if ar != nil {
+				ar.Body.Close()
+			}
+			return false
+		}
+		ab, _ := io.ReadAll(ar.Body)
+		ar.Body.Close()
+		var full struct {
+			TaskStates map[string]struct {
+				Events []struct {
+					Type     string `json:"Type"`
+					ExitCode int    `json:"ExitCode"`
+					Failed   bool   `json:"Failed"`
+				} `json:"Events"`
+			} `json:"TaskStates"`
+		}
+		if err := json.Unmarshal(ab, &full); err != nil {
+			return false
+		}
+		if len(full.TaskStates) == 0 {
+			return false
+		}
+		for _, ts := range full.TaskStates {
+			taskOK := false
+			for i := len(ts.Events) - 1; i >= 0; i-- {
+				ev := ts.Events[i]
+				if ev.Type == "Terminated" {
+					taskOK = !ev.Failed && ev.ExitCode == 0
+					break
+				}
+			}
+			if !taskOK {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// nomadJobFirstCompleteAllocID returns one allocation ID with ClientStatus "complete",
+// or empty when none are listed that way.
+func nomadJobFirstCompleteAllocID(t *testing.T, addr, jobID string) string {
+	t.Helper()
+	tok := os.Getenv("NOMAD_TOKEN")
+	ns := testNamespace()
+	listURL := fmt.Sprintf("%s/v1/job/%s/allocations?namespace=%s", addr, jobID, ns)
+	req, _ := http.NewRequest(http.MethodGet, listURL, nil)
+	if tok != "" {
+		req.Header.Set("X-Nomad-Token", tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return ""
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var stubs []struct {
+		ID           string `json:"ID"`
+		ClientStatus string `json:"ClientStatus"`
+	}
+	if err := json.Unmarshal(body, &stubs); err != nil {
+		return ""
+	}
+	for _, st := range stubs {
+		if strings.EqualFold(st.ClientStatus, "complete") && st.ID != "" {
+			return st.ID
+		}
+	}
+	return ""
+}
+
+// nomadTerminalStatus maps raw Nomad job Status into values integration tests use:
+// batch jobs that are API "dead" but finished successfully are reported as "complete".
+func nomadTerminalStatus(t *testing.T, addr, jobID, raw string) string {
+	t.Helper()
+	if raw == "complete" {
+		return "complete"
+	}
+	if raw != "dead" {
+		return raw
+	}
+	jt := nomadJobType(t, addr, jobID)
+	if jt == "batch" || jt == "sysbatch" {
+		if nomadBatchJobAllocationsSucceeded(t, addr, jobID) {
+			return "complete"
+		}
+	}
+	return "dead"
+}
+
 // waitForJobTerminal polls until the job reaches "complete" or "dead", or times out.
 func waitForJobTerminal(t *testing.T, addr, jobID string, timeout time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		status := nomadJobStatus(t, addr, jobID)
-		switch status {
-		case "complete", "dead":
-			return status
+		raw := nomadJobStatus(t, addr, jobID)
+		if raw == "complete" {
+			return "complete"
+		}
+		if raw == "dead" {
+			return nomadTerminalStatus(t, addr, jobID, raw)
 		}
 		time.Sleep(2 * time.Second)
 	}

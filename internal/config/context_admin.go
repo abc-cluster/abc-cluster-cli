@@ -52,6 +52,7 @@ type AdminServices struct {
 	Rustfs       *AdminFloorService `yaml:"rustfs,omitempty"`
 	Vault        *AdminFloorService `yaml:"vault,omitempty"`
 	Traefik      *AdminFloorService `yaml:"traefik,omitempty"`
+	Uppy         *AdminFloorService `yaml:"uppy,omitempty"`
 }
 
 // AdminABCNodes holds optional static operator credentials for abc-nodes–style

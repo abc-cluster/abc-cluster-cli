@@ -1,0 +1,1 @@
+Rendered abc_nodes_enhanced jobs: minio, tusd, prometheus, loki, grafana, alloy. Deploy MinIO before Loki (Loki uses MinIO as object store). See deployments/abc-nodes/nomad/README.md for host volumes and ordering.

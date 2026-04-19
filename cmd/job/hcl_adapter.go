@@ -1,8 +1,43 @@
 package job
 
-import jobhcl "github.com/abc-cluster/abc-cluster-cli/internal/hclgen/job"
+import (
+	"maps"
+
+	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	jobhcl "github.com/abc-cluster/abc-cluster-cli/internal/hclgen/job"
+)
+
+// mergeJobMetaForMonitoringFloor returns job meta: a copy of base plus
+// abc_monitoring_floor=enhanced when static monitoring env is injected.
+func mergeJobMetaForMonitoringFloor(base map[string]string, staticEnv map[string]string) map[string]string {
+	if len(staticEnv) == 0 {
+		if len(base) == 0 {
+			return nil
+		}
+		return maps.Clone(base)
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = make(map[string]string)
+	}
+	out["abc_monitoring_floor"] = "enhanced"
+	return out
+}
 
 func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
+	if spec == nil {
+		return ""
+	}
+	var static map[string]string
+	if c, err := cfg.Load(); err == nil {
+		static = cfg.AbcNodesMonitoringEnv(c.ActiveCtx())
+	}
+	return generateHCLFromSpec(spec, scriptName, scriptContent, static)
+}
+
+// generateHCLFromSpec builds Nomad HCL for a resolved jobSpec and optional
+// monitoring static env (used by tests and generateHCL).
+func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, staticEnv map[string]string) string {
 	if spec == nil {
 		return ""
 	}
@@ -57,7 +92,7 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 		SlurmStderrFile:     spec.SlurmStderrFile,
 		SlurmNTasks:         spec.SlurmNTasks,
 		IncludeHPCCompatEnv: spec.IncludeHPCCompatEnv,
-		Meta:                spec.Meta,
+		Meta:                mergeJobMetaForMonitoringFloor(spec.Meta, staticEnv),
 		Conda:               spec.Conda,
 		Pixi:                spec.Pixi,
 		Ports:               spec.Ports,
@@ -79,6 +114,7 @@ func generateHCL(spec *jobSpec, scriptName, scriptContent string) string {
 		ExposeAllocDir:      spec.ExposeAllocDir,
 		ExposeTaskDir:       spec.ExposeTaskDir,
 		ExposeSecretsDir:    spec.ExposeSecretsDir,
+		StaticEnv:           staticEnv,
 	}
 	return jobhcl.Generate(hclSpec, scriptName, scriptContent)
 }

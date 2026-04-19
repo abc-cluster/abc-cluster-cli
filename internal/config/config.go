@@ -89,8 +89,9 @@ type Context struct {
 	WorkspaceID           string `yaml:"workspace_id,omitempty"`
 	Region                string `yaml:"region,omitempty"`
 	// ClusterType is one of abc-nodes | abc-cluster | abc-cloud (platform tier).
-	ClusterType string `yaml:"cluster_type,omitempty"`
-	Admin       Admin  `yaml:"admin,omitempty"`
+	ClusterType  string        `yaml:"cluster_type,omitempty"`
+	Admin        Admin         `yaml:"admin,omitempty"`
+	Capabilities *Capabilities `yaml:"capabilities,omitempty"`
 
 	// Per-context encrypted secrets (abc secrets) and local crypt key material (rclone crypt / secrets).
 	Secrets map[string]string `yaml:"secrets,omitempty"`

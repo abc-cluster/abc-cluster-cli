@@ -126,7 +126,7 @@ abc admin services nomad cli -- job validate deployments/abc-nodes/nomad/minio.n
 abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
 ```
 
-See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering.
+See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering. Curated **`nomad-pack`** bundles for **base** (MinIO + tusd) vs **enhanced** (+ monitoring stack) are under **`deployments/abc-nodes/nomad-packs/`** (see the same README).
 
 ## Development
 

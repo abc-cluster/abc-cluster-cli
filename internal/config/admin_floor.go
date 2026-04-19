@@ -27,6 +27,8 @@ func floorPtr(s *AdminServices, svc string) **AdminFloorService {
 		return &s.Vault
 	case "traefik":
 		return &s.Traefik
+	case "uppy":
+		return &s.Uppy
 	default:
 		return nil
 	}
@@ -151,6 +153,7 @@ func NormalizeFloorServices(ctx *Context) {
 	s.Rustfs = nilIfFloorEmpty(s.Rustfs)
 	s.Vault = nilIfFloorEmpty(s.Vault)
 	s.Traefik = nilIfFloorEmpty(s.Traefik)
+	s.Uppy = nilIfFloorEmpty(s.Uppy)
 }
 
 func nilIfFloorEmpty(a *AdminFloorService) *AdminFloorService {
@@ -200,6 +203,7 @@ func AppendAdminFloorAllKeys(prefix string, s AdminServices, out [][2]string) []
 	add("rustfs", s.Rustfs)
 	add("vault", s.Vault)
 	add("traefik", s.Traefik)
+	add("uppy", s.Uppy)
 	for _, p := range pairs {
 		v := p.val
 		switch p.field {

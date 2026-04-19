@@ -82,6 +82,10 @@ type Spec struct {
 	ExposeAllocDir     bool
 	ExposeTaskDir      bool
 	ExposeSecretsDir   bool
+
+	// StaticEnv is merged into the task env block as literal strings (no Nomad
+	// interpolation). Used for abc-nodes enhanced floor wiring (Loki, Prometheus, Alloy).
+	StaticEnv map[string]string
 }
 
 func Generate(spec Spec, scriptName, scriptContent string) string {
@@ -287,7 +291,7 @@ func escapeNomadInterpolation(s string) string {
 }
 
 func appendEnvBlock(taskBody *hclwrite.Body, spec Spec) {
-	if !spec.IncludeHPCCompatEnv && !hasExplicitRuntimeExposure(spec) && len(spec.Ports) == 0 {
+	if !spec.IncludeHPCCompatEnv && !hasExplicitRuntimeExposure(spec) && len(spec.Ports) == 0 && len(spec.StaticEnv) == 0 {
 		return
 	}
 	envBody := taskBody.AppendNewBlock("env", nil).Body()
@@ -345,6 +349,10 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec Spec) {
 		envBody.SetAttributeValue("NOMAD_IP_"+up, cty.StringVal(fmt.Sprintf("${NOMAD_IP_%s}", p)))
 		envBody.SetAttributeValue("NOMAD_PORT_"+up, cty.StringVal(fmt.Sprintf("${NOMAD_PORT_%s}", p)))
 		envBody.SetAttributeValue("NOMAD_ADDR_"+up, cty.StringVal(fmt.Sprintf("${NOMAD_ADDR_%s}", p)))
+	}
+
+	for _, k := range utils.SortedKeys(spec.StaticEnv) {
+		envBody.SetAttributeValue(k, cty.StringVal(spec.StaticEnv[k]))
 	}
 }
 

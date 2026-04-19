@@ -224,6 +224,33 @@ type NomadLogFrame struct {
 
 // ── Nomad Variables types ─────────────────────────────────────────────────────
 
+// ── Service registry types ────────────────────────────────────────────────────
+
+// NomadServiceNameEntry is one service name entry from GET /v1/services.
+type NomadServiceNameEntry struct {
+	ServiceName string   `json:"ServiceName"`
+	Tags        []string `json:"Tags"`
+}
+
+// nomadServiceNamespacedStub is the per-namespace grouping returned by GET /v1/services.
+type nomadServiceNamespacedStub struct {
+	Namespace string                  `json:"Namespace"`
+	Services  []NomadServiceNameEntry `json:"Services"`
+}
+
+// NomadServiceInstance is one running instance from GET /v1/service/<name>.
+type NomadServiceInstance struct {
+	ID          string   `json:"ID"`
+	ServiceName string   `json:"ServiceName"`
+	Namespace   string   `json:"Namespace"`
+	NodeID      string   `json:"NodeID"`
+	AllocID     string   `json:"AllocID"`
+	JobID       string   `json:"JobID"`
+	Address     string   `json:"Address"`
+	Port        int      `json:"Port"`
+	Tags        []string `json:"Tags"`
+}
+
 // NomadVariableStub is one entry from GET /v1/vars.
 type NomadVariableStub struct {
 	Namespace   string `json:"Namespace"`
@@ -618,6 +645,36 @@ func (c *NomadClient) StreamLogs(ctx context.Context, allocID, task, logType, or
 	return lastEndOffset, scanner.Err()
 }
 
+// ── Services API methods ──────────────────────────────────────────────────────
+
+// ListServices returns all service name entries across namespaces.
+// Pass namespace="" to query all namespaces.
+func (c *NomadClient) ListServices(ctx context.Context, namespace string) ([]NomadServiceNameEntry, error) {
+	q := url.Values{}
+	if namespace != "" {
+		q.Set("namespace", namespace)
+	}
+	var raw []nomadServiceNamespacedStub
+	if err := c.get(ctx, "/v1/services", q, &raw); err != nil {
+		return nil, err
+	}
+	var out []NomadServiceNameEntry
+	for _, ns := range raw {
+		out = append(out, ns.Services...)
+	}
+	return out, nil
+}
+
+// GetServiceInstances returns all running instances of a named service.
+func (c *NomadClient) GetServiceInstances(ctx context.Context, name, namespace string) ([]NomadServiceInstance, error) {
+	q := url.Values{}
+	if namespace != "" {
+		q.Set("namespace", namespace)
+	}
+	var out []NomadServiceInstance
+	return out, c.get(ctx, "/v1/service/"+url.PathEscape(name), q, &out)
+}
+
 // ── Variables API methods ─────────────────────────────────────────────────────
 
 // ListVariables returns variable stubs under the given path prefix.
@@ -804,6 +861,14 @@ func (c *NomadClient) CloudGetServiceHealth(ctx context.Context, out interface{}
 // CloudGetServiceVersion fetches version info for a named backend service.
 func (c *NomadClient) CloudGetServiceVersion(ctx context.Context, service string, out interface{}) error {
 	return c.get(ctx, "/v1/cloud/version/"+url.PathEscape(service), nil, out)
+}
+
+// ── ACL policy API methods ────────────────────────────────────────────────────
+
+// ApplyACLPolicy creates or updates a Nomad ACL policy by name.
+// body should contain Name, Description, and Rules fields.
+func (c *NomadClient) ApplyACLPolicy(ctx context.Context, name string, body interface{}) error {
+	return c.put(ctx, "/v1/acl/policy/"+url.PathEscape(name), nil, body, nil)
 }
 
 // PutVariable creates or updates a variable at the given path.

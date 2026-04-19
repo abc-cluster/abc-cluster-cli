@@ -13,8 +13,9 @@ import (
 // 1) explicit --endpoint when non-empty (including when user cleared default to use context)
 // 2) ABC_UPLOAD_ENDPOINT
 // 3) active context upload_endpoint
-// 4) derived from active context API endpoint (<endpoint>/files/)
-// 5) derived from server URL / --url (<url>/files/)
+// 4) abc-nodes context: admin.services.tusd.http + "/files/" (when capabilities.uploads is true)
+// 5) derived from active context API endpoint (<endpoint>/files/)
+// 6) derived from server URL / --url (<url>/files/)
 func resolveUploadEndpoint(cmd *cobra.Command, flagEndpoint, serverURL string) (string, error) {
 	if cmd.Flags().Changed("endpoint") {
 		if v := strings.TrimSpace(flagEndpoint); v != "" {
@@ -32,11 +33,18 @@ func resolveUploadEndpoint(cmd *cobra.Command, flagEndpoint, serverURL string) (
 	if err != nil {
 		return "", fmt.Errorf("load config: %w", err)
 	}
-	if v := strings.TrimSpace(c.ActiveCtx().UploadEndpoint); v != "" {
+	actx := c.ActiveCtx()
+	if v := strings.TrimSpace(actx.UploadEndpoint); v != "" {
 		return v, nil
 	}
 
-	if ep := strings.TrimSpace(c.ActiveCtx().Endpoint); ep != "" {
+	if actx.Capabilities != nil && actx.Capabilities.Uploads {
+		if h, ok := cfg.GetAdminFloorField(&actx.Admin.Services, "tusd", "http"); ok && h != "" {
+			return strings.TrimRight(h, "/") + "/files/", nil
+		}
+	}
+
+	if ep := strings.TrimSpace(actx.Endpoint); ep != "" {
 		if derived, err := cfg.DeriveUploadEndpointFromAPI(ep); err == nil {
 			return derived, nil
 		}
