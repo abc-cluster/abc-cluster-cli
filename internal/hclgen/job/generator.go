@@ -131,6 +131,10 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 
 	groupBody := jobBody.AppendNewBlock("group", []string{"main"}).Body()
 	groupBody.SetAttributeValue("count", cty.NumberIntVal(int64(spec.Nodes)))
+	// Batch scripts should fail fast; Nomad's default restart policy retries exit
+	// failures (several attempts with backoff), delaying terminal job status.
+	groupBody.AppendNewBlock("restart", nil).Body().
+		SetAttributeValue("attempts", cty.NumberIntVal(0))
 
 	if spec.NoNetwork {
 		groupBody.AppendNewBlock("network", nil).Body().

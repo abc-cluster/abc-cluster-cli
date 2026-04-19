@@ -48,12 +48,6 @@ locals {
   loki_push_url                 = var.loki_url != "" ? var.loki_url : "http://${local.nomad_http_host}:3100/loki/api/v1/push"
 }
 
-variable "nomad_alloc_log_path" {
-  type        = string
-  description = "Glob path to Nomad allocation log files on the host."
-  default     = "/var/lib/nomad/alloc/*/alloc/logs/*.std*.*"
-}
-
 job "abc-nodes-alloy" {
   region      = "global"
   datacenters = var.datacenters
@@ -102,10 +96,10 @@ prometheus.scrape "host_metrics" {
   scrape_interval = "30s"
 }
 
-// ── Nomad metrics (local agent on this host; avoids duplicate scrapes of one server)
+// ── Nomad /v1/metrics (use nomad_addr; loopback often does not match bind_addr).
 prometheus.scrape "nomad_metrics" {
   targets = [{
-    __address__      = "127.0.0.1:4646",
+    __address__      = "${var.nomad_addr}",
     __metrics_path__ = "/v1/metrics",
   }]
   params = {
@@ -125,19 +119,29 @@ prometheus.remote_write "local" {
 }
 
 // ── Nomad alloc log collection → Loki ────────────────────────────────────────
-local.file_match "nomad_alloc_logs" {
-  path_targets = [{__path__ = "${var.nomad_alloc_log_path}"}]
+// Tail both common data_dir layouts (official Linux packages often use /opt/nomad/data).
+local.file_match "nomad_alloc_logs_opt" {
+  path_targets = [{__path__ = "/opt/nomad/data/alloc/*/alloc/logs/*.std*.*"}]
 }
-
-loki.source.file "nomad_logs" {
-  targets    = local.file_match.nomad_alloc_logs.targets
+loki.source.file "nomad_logs_opt" {
+  targets    = local.file_match.nomad_alloc_logs_opt.targets
+  forward_to = [loki.process.add_labels.receiver]
+}
+local.file_match "nomad_alloc_logs_varlib" {
+  path_targets = [{__path__ = "/var/lib/nomad/alloc/*/alloc/logs/*.std*.*"}]
+}
+loki.source.file "nomad_logs_varlib" {
+  targets    = local.file_match.nomad_alloc_logs_varlib.targets
   forward_to = [loki.process.add_labels.receiver]
 }
 
 loki.process "add_labels" {
+  // Extract alloc_id, task, stream from the "filename" label (the path forwarded
+  // by loki.source.file). "__path__" is an internal discovery label not available
+  // in the pipeline stage — "filename" is the correct source here.
   stage.regex {
     expression = "/alloc/(?P<alloc_id>[^/]+)/alloc/logs/(?P<task>[^.]+)\\.(?P<stream>std(?:out|err))\\."
-    source     = "__path__"
+    source     = "filename"
   }
   stage.labels {
     values = {

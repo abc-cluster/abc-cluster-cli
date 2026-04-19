@@ -17,7 +17,9 @@ import (
 	"log/slog"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
 	"github.com/spf13/cobra"
 )
 
@@ -155,6 +157,7 @@ EXAMPLES
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
 	cmd.Flags().Bool("watch", false, "Stream logs after --submit")
 	cmd.Flags().Duration("watch-timeout", 0, "Timeout for --watch log streaming (0 = no timeout)")
+	cmd.Flags().Bool("notify", false, "Print ntfy subscription URL after submit (requires capabilities.notifications)")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
 
 	// Scheduler overrides (mirror preamble Class 1)
@@ -483,6 +486,10 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 	fmt.Fprintf(out, "\n  Track progress:\n")
 	fmt.Fprintf(out, "    abc job logs %s --follow\n", spec.Name)
 	fmt.Fprintf(out, "    abc job show %s\n", spec.Name)
+
+	if notify, _ := cmd.Flags().GetBool("notify"); notify {
+		printNtfySubscriptionHint(out)
+	}
 	return nil
 }
 
@@ -519,4 +526,32 @@ func newSubmissionID() string {
 		return fmt.Sprintf("sub-%d", os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+// printNtfySubscriptionHint prints the ntfy topic URL so the user can
+// subscribe for job completion/failure push notifications.
+func printNtfySubscriptionHint(w io.Writer) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	ctx := cfg.ActiveCtx()
+	if ctx.Capabilities == nil || !ctx.Capabilities.Notifications {
+		return
+	}
+	ntfyHTTP, ok := config.GetAdminFloorField(&ctx.Admin.Services, "ntfy", "http")
+	if !ok || ntfyHTTP == "" {
+		return
+	}
+
+	// Verify ntfy is reachable before printing (non-fatal).
+	nc := floor.NewNtfyClient(ntfyHTTP)
+	if !nc.Healthy(context.Background()) {
+		return
+	}
+
+	topic := "abc-jobs"
+	fmt.Fprintf(w, "\n  Push notifications (ntfy):\n")
+	fmt.Fprintf(w, "    Subscribe: %s/%s\n", strings.TrimRight(ntfyHTTP, "/"), topic)
+	fmt.Fprintf(w, "    App:       ntfy.sh  (iOS / Android / Desktop)\n")
 }

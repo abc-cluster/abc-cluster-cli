@@ -111,9 +111,9 @@ variable "grafana_prometheus_url" {
 }
 
 variable "grafana_loki_url" {
-  description = "Loki base URL for Grafana datasource provisioning"
+  description = "Loki base URL for Grafana (must include path_prefix /loki when Loki uses common.path_prefix)"
   type        = string
-  default     = "http://127.0.0.1:3100"
+  default     = "http://127.0.0.1:3100/loki"
 }
 
 # ── Grafana Alloy (raw_exec on host) ─────────────────────────────────────────
@@ -136,17 +136,13 @@ variable "nomad_token" {
 }
 
 variable "alloy_prometheus_remote_write_url" {
-  type    = string
-  default = "http://127.0.0.1:9090/api/v1/write"
+  description = "Prometheus remote_write URL; empty = derived from nomad_addr host + :9090"
+  type        = string
+  default     = ""
 }
 
 variable "alloy_loki_push_url" {
-  type    = string
-  default = "http://127.0.0.1:3100/loki/api/v1/push"
-}
-
-variable "nomad_alloc_log_path" {
+  description = "Loki push URL; empty = derived from nomad_addr host + :3100/loki/api/v1/push"
   type        = string
-  description = "Glob path to Nomad allocation log files on the host"
-  default     = "/var/lib/nomad/alloc/*/alloc/logs/*.std*.*"
+  default     = ""
 }

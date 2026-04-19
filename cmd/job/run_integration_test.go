@@ -16,6 +16,9 @@ package job_test
 //
 // Optional env vars:
 //   NOMAD_TOKEN       — ACL token (empty = dev agent with ACLs disabled)
+//   ABC_TOKEN         — alternate token env; if both ABC_TOKEN and NOMAD_TOKEN are set,
+//                       executeCmd integration paths pass --nomad-token from NOMAD_TOKEN first
+//                       so in-process cobra matches raw HTTP helpers (see integrationNomadAuthFlags).
 //   ABC_TEST_TIMEOUT  — max seconds to wait for job completion (default: 60)
 //   ABC_TEST_NS       — Nomad namespace to use (default: "default")
 //   ABC_INTEGRATION_LOKI_REQUIRE — set to 0 to skip the Loki log sentinel check in
@@ -83,6 +86,21 @@ func ensureNomadEnv() {
 	if token == "" && strings.TrimSpace(ctx.NomadToken()) != "" {
 		_ = os.Setenv("NOMAD_TOKEN", strings.TrimSpace(ctx.NomadToken()))
 	}
+}
+
+// integrationNomadAuthFlags returns argv fragments for executeCmd after --nomad-addr so the
+// in-process cobra command uses the same token as requireNomad's raw HTTP calls.
+// Persistent flag defaults use EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"); when both env vars
+// are set to different tokens, the weaker ABC_TOKEN would win and Nomad can return 403 on
+// jobs/parse while GET /v1/status/leader still succeeds with NOMAD_TOKEN.
+func integrationNomadAuthFlags() []string {
+	if tok := strings.TrimSpace(os.Getenv("NOMAD_TOKEN")); tok != "" {
+		return []string{"--nomad-token", tok}
+	}
+	if tok := strings.TrimSpace(os.Getenv("ABC_TOKEN")); tok != "" {
+		return []string{"--nomad-token", tok}
+	}
+	return nil
 }
 
 // testNamespace returns the namespace to use for integration tests.
@@ -385,9 +403,9 @@ func TestIntegration_DryRunDoesNotRegisterJob(t *testing.T) {
 	script := fmt.Sprintf("#!/bin/bash\n#ABC --name=%s\necho dryrun\n", uniqueSuffix)
 	p := writeTempScript(t, "dryrun.sh", script)
 
-	out, err := executeCmd(t, p, "--dry-run",
-		"--nomad-addr", addr,
-	)
+	out, err := executeCmd(t, append([]string{p, "--dry-run",
+		"--nomad-addr", addr},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		t.Fatalf("--dry-run failed: %v", err)
 	}
@@ -421,10 +439,10 @@ echo "integration test OK"
 exit 0
 `
 	p := writeTempScript(t, "exec_ok.sh", script)
-	out, err := executeCmd(t, p, "--submit",
+	out, err := executeCmd(t, append([]string{p, "--submit",
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		t.Fatalf("--submit failed: %v\noutput: %s", err, out)
 	}
@@ -443,16 +461,18 @@ exit 0
 func TestIntegration_FailingJobReachesDeadStatus(t *testing.T) {
 	addr := requireNomad(t)
 
-	script := `#!/bin/bash
+	script := `#!/bin/sh
 #ABC --name=integration-exec-fail
+#ABC --cores=1
+#ABC --mem=64M
 echo "about to fail"
 exit 42
 `
 	p := writeTempScript(t, "exec_fail.sh", script)
-	out, err := executeCmd(t, p, "--submit",
+	out, err := executeCmd(t, append([]string{p, "--submit",
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		t.Fatalf("--submit failed: %v\noutput: %s", err, out)
 	}
@@ -474,11 +494,11 @@ func TestIntegration_SubmitWithNameOverride(t *testing.T) {
 
 	script := "#!/bin/bash\n#ABC --cores=1\necho custom name test\n"
 	p := writeTempScript(t, "name_override.sh", script)
-	out, err := executeCmd(t, p, "--submit",
+	out, err := executeCmd(t, append([]string{p, "--submit",
 		"--name", customName,
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		t.Fatalf("--submit failed: %v\noutput: %s", err, out)
 	}
@@ -503,10 +523,10 @@ echo "node $NOMAD_ALLOC_INDEX"
 sleep 2
 `
 	p := writeTempScript(t, "multinode.sh", script)
-	out, err := executeCmd(t, p, "--submit",
+	out, err := executeCmd(t, append([]string{p, "--submit",
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		t.Fatalf("--submit failed: %v\noutput: %s", err, out)
 	}
@@ -554,10 +574,10 @@ func TestIntegration_WatchStreamsStdout(t *testing.T) {
 	p := writeTempScript(t, "watch.sh", script)
 
 	// --watch blocks until the job finishes and streams stdout.
-	out, err := executeCmd(t, p, "--submit", "--watch",
+	out, err := executeCmd(t, append([]string{p, "--submit", "--watch",
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		// A non-zero exit from the watched job is OK — we still get output.
 		t.Logf("--watch returned err (may be job exit code): %v", err)
@@ -645,10 +665,10 @@ printf "exec driver: OK\n"
 exit 0
 `
 	p := writeTempScript(t, "driver_exec.sh", script)
-	out, err := executeCmd(t, p, "--submit",
+	out, err := executeCmd(t, append([]string{p, "--submit",
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		t.Fatalf("--submit failed: %v\noutput: %s", err, out)
 	}
@@ -689,10 +709,10 @@ func TestIntegration_DockerDriverCompletes(t *testing.T) {
 echo "docker driver: OK"
 `
 	p := writeTempScript(t, "driver_docker.sh", script)
-	out, err := executeCmd(t, p, "--submit",
+	out, err := executeCmd(t, append([]string{p, "--submit",
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	if err != nil {
 		t.Fatalf("--submit failed: %v\noutput: %s", err, out)
 	}
@@ -716,10 +736,10 @@ func TestIntegration_GPUJobPlanShowsConstraintFailure(t *testing.T) {
 echo "GPU job"
 `
 	p := writeTempScript(t, "gpu_plan.sh", script)
-	out, err := executeCmd(t, p, "--dry-run",
+	out, err := executeCmd(t, append([]string{p, "--dry-run",
 		"--nomad-addr", addr,
-		"--namespace", testNamespace(),
-	)
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
 	// --dry-run may succeed even if placement fails (it's a plan, not a submission).
 	// We just verify it doesn't panic and produces output.
 	_ = err

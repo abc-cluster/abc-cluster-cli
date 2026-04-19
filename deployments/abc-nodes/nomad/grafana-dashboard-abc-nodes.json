@@ -1,0 +1,421 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": { "list": [] },
+  "description": "abc-nodes cluster monitoring: Nomad jobs, node resources, alloc metrics, logs, and system health",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "Cluster Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "red", "text": "Down" }, "1": { "color": "green", "text": "Up" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Nomad Client Alive",
+      "type": "stat",
+      "targets": [{ "datasource": { "uid": "prometheus" }, "expr": "min(nomad_client_uptime) > 0", "legendFormat": "client" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Autopilot Healthy",
+      "type": "stat",
+      "targets": [{ "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_autopilot_healthy", "legendFormat": "autopilot" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Running Jobs",
+      "type": "stat",
+      "targets": [{ "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_status_running", "legendFormat": "running" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] }, "unit": "short" }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Failed Jobs",
+      "type": "stat",
+      "targets": [{ "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_status_dead", "legendFormat": "dead/failed" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Active Heartbeats",
+      "type": "stat",
+      "targets": [{ "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_heartbeat_active", "legendFormat": "heartbeats" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "id": 6,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Client Uptime",
+      "type": "stat",
+      "targets": [{ "datasource": { "uid": "prometheus" }, "expr": "min(nomad_client_uptime)", "legendFormat": "uptime" }]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 101,
+      "title": "Node Resources",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "MHz", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 6 },
+      "id": 10,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "CPU — Allocated vs Unallocated",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocated_cpu", "legendFormat": "allocated {{host}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_unallocated_cpu", "legendFormat": "unallocated {{host}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 6 },
+      "id": 11,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Memory — Allocated vs Unallocated",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocated_memory", "legendFormat": "allocated {{host}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_unallocated_memory", "legendFormat": "unallocated {{host}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "id": 12,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Host Memory — Available",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "node_memory_MemAvailable_bytes", "legendFormat": "available {{instance}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "node_memory_MemTotal_bytes", "legendFormat": "total {{instance}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "id": 13,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Host CPU Usage by Mode",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "rate(node_cpu_seconds_total{mode!=\"idle\"}[2m])", "legendFormat": "{{mode}} {{cpu}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "Bps", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 20 },
+      "id": 14,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Disk I/O",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "rate(node_disk_read_bytes_total[2m])", "legendFormat": "read {{device}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "rate(node_disk_written_bytes_total[2m])", "legendFormat": "write {{device}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "Bps", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 20 },
+      "id": 15,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Network I/O",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "rate(node_network_receive_bytes_total{device!~\"lo|veth.*\"}[2m])", "legendFormat": "rx {{device}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "rate(node_network_transmit_bytes_total{device!~\"lo|veth.*\"}[2m])", "legendFormat": "tx {{device}}" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "id": 102,
+      "title": "Job & Allocation Status",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 28 },
+      "id": 20,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Job Summary — Task Group Counts",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_running{namespace=\"default\"}", "legendFormat": "running {{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_complete{namespace=\"default\"}", "legendFormat": "complete {{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_failed{namespace=\"default\"}", "legendFormat": "failed {{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_queued{namespace=\"default\"}", "legendFormat": "queued {{exported_job}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 28 },
+      "id": 21,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Alloc CPU Usage %",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_cpu_total_percent / 100", "legendFormat": "{{exported_job}}/{{task}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 35 },
+      "id": 22,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Alloc Memory RSS",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_memory_rss", "legendFormat": "{{exported_job}}/{{task}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 35 },
+      "id": 23,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Alloc Memory Usage",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_memory_usage", "legendFormat": "{{exported_job}}/{{task}}" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "id": 103,
+      "title": "Nomad Scheduler & RPC",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 43 },
+      "id": 30,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Scheduler Evals / Allocs",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "rate(nomad_nomad_worker_invoke_scheduler_count[2m])", "legendFormat": "invocations/s {{scheduler_type}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ms", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 43 },
+      "id": 31,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "RPC Request Latency (p99)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_rpc_request{quantile=\"0.99\"}", "legendFormat": "p99 {{method}}" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 50 },
+      "id": 104,
+      "title": "Allocation Logs",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 51 },
+      "id": 40,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "title": "Nomad Alloc Logs (all tasks)",
+      "type": "logs",
+      "targets": [
+        { "datasource": { "uid": "loki" }, "expr": "{job=\"nomad-alloc\"} | task=~\".+\"", "legendFormat": "" }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 65 },
+      "id": 41,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "title": "Stderr Only (errors / warnings)",
+      "type": "logs",
+      "targets": [
+        { "datasource": { "uid": "loki" }, "expr": "{stream=\"stderr\"}", "legendFormat": "" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["abc-nodes", "nomad", "observability"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(nomad_client_uptime, host)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "node",
+        "options": [],
+        "query": { "query": "label_values(nomad_client_uptime, host)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "sort": 0,
+        "type": "query",
+        "label": "Node"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(nomad_nomad_job_summary_running, exported_job)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": { "query": "label_values(nomad_nomad_job_summary_running, exported_job)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "sort": 0,
+        "type": "query",
+        "label": "Job"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "loki", "uid": "loki" },
+        "definition": "label_values(task)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "task",
+        "options": [],
+        "query": "label_values(task)",
+        "refresh": 2,
+        "regex": "",
+        "sort": 0,
+        "type": "query",
+        "label": "Task"
+      }
+    ]
+  },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "abc-nodes Cluster Overview",
+  "uid": "abc-nodes-overview",
+  "version": 1
+}

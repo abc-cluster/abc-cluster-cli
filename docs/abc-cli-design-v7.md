@@ -36,6 +36,24 @@
 | Add `abc secrets` command for managing encrypted credentials | ✅ Done | `cmd/secrets/cmd.go` |
 | Config file location: `$HOME/.abc/config.yaml` | ✅ Done | `internal/config/config.go` |
 
+### 0.5 abc-nodes Integration (post-v7)
+
+The following features were implemented after the v7 epoch to support **`cluster_type: abc-nodes`** contexts:
+
+| Change | Status | File(s) |
+|--------|--------|---------|
+| `abc cluster capabilities sync` — query Nomad service registry, fall back to job listing on 403, populate `capabilities.*` and `admin.services.*` in config | ✅ Done | `cmd/cluster/capabilities.go`, `internal/config/capabilities.go` |
+| `abc cluster capabilities show` — print stored capabilities for active context | ✅ Done | `cmd/cluster/capabilities.go` |
+| `abc secrets --backend nomad` — store/get/list/delete secrets in Nomad Variables (`abc/secrets/<ns>/<name>`) | ✅ Done | `cmd/secrets/nomad_backend.go` |
+| `abc secrets --backend vault` — store/get/list/delete secrets in Vault KV v2 (`secret/data/abc/<ns>/<name>`) | ✅ Done | `cmd/secrets/vault_backend.go` |
+| `abc secrets ref KEY --backend nomad|vault` — print Nomad template HCL snippet (no plaintext) | ✅ Done | `cmd/secrets/cmd.go` |
+| `abc secrets backend setup --backend nomad` — create `abc-secrets-alloc-read` ACL policy | ✅ Done | `cmd/secrets/nomad_backend.go` |
+| `abc data upload` abc-nodes tusd fallback: auto-use `admin.services.tusd.http/files/` when `capabilities.uploads == true` | ✅ Done | `cmd/data/upload_resolve.go` |
+| `abc pipeline run` `secret://name` param translation: rewrite to nomadVar/vault template ref before HCL generation | ✅ Done | `cmd/pipeline/run.go` |
+| `vault.nomad.hcl` Raft integrated storage: durable Vault with data at `/opt/nomad/vault/data` | ✅ Done | `deployments/abc-nodes/nomad/vault.nomad.hcl` |
+| `nomadClientForCapabilities()`: bypass cloud-gateway env vars (`ABC_ADDR`/`NOMAD_ADDR`) for abc-nodes Nomad access | ✅ Done | `cmd/cluster/capabilities.go` |
+| `cfg.ResolveContextName()` alias fix in capabilities sync: write to canonical context name, not alias, to prevent `Save()` collision | ✅ Done | `cmd/cluster/capabilities.go` |
+
 ### 0.2 Structural decisions
 
 - **Aliases:** `abc accounting` is canonical for cloud spend / namespace caps; `abc cost` and `abc budget` remain **aliases**. Other old names (`abc node`, `abc namespace`, `abc service`) have been removed cleanly without backward-compat shims.
@@ -89,6 +107,31 @@ Fallback policy:
 - If abc already implements the operation, use the native implementation.
 - If the operation is Nomad-specific and not yet implemented, invoke the local `nomad` CLI using **`admin.services.nomad`** (`nomad_addr`, `nomad_token`, optional **`nomad_region`**). Bare `http://host` for `nomad_addr` is normalized to **`http://host:4646`** before calls.
 - This keeps developer workflows moving while native coverage catches up.
+
+### 0.6 XTDB, auditing, and tier boundaries (design note)
+
+This subsection records **agreed platform direction** (2026): where persistent *audit* belongs vs operational logs, and why the **`abc` CLI / abc-nodes (OSS-1)** layer should not host XTDB as the primary audit store.
+
+**Authoritative reference:** the ABC Cluster platform vision (working draft: *ABC Cluster — Platform Vision*, `abc-cluster-vision.md`) defines three tiers — **OSS-1 (abc-node)**, **OSS-2 (abc-cluster)**, **Commercial (abc-cloud)** — and what each deliberately includes or omits.
+
+| Concern | OSS-1 (abc-nodes + CLI) | OSS-2 onward (Khan + Jurist + …) |
+|--------|-------------------------|-----------------------------------|
+| **Operational forensics** | **Grafana Loki** (allocation logs), **Prometheus**, Nomad API, optional ntfy — sufficient for Server Manager / Bioinformatician / PI personas at this tier. | Same signals plus control-plane logs in Loki; cross-component drill-down in Grafana. |
+| **Grant-auditable / policy decision trail** | **Out of scope by design** — vision explicitly places compliance personas (audit trails, policy enforcement, cross-institutional access) **above** OSS-1. | **XTDB** — bitemporal **decisions**, **CloudEvents**, cost transfers, lineage, OPA policy snapshots, etc.; **Jurist** performs OPA evaluation, mutation, and **XTDB audit logging**; **Khan** is the admission edge. |
+
+**Why not integrate XTDB “from the CLI / Nomad-only path” first**
+
+1. **Scope before features** — OSS-1 must remain **functionally complete without a control plane**; adding XTDB to every abc-nodes lab raises state, backup, and upgrade burden without Khan/Jurist semantics.
+2. **Single writer of record** — If the CLI or a raw Nomad-side job writes audit rows while **Jurist** is later defined as the writer of **admission decisions**, you risk **two sources of truth** and expensive reconciliation.
+3. **Separation of concerns** — **Loki** answers “what did the task print / what did the agent ship?” **XTDB** answers “what did the *platform* decide, under which policy version, for which subject, at which valid time?” Those are different products in the vision.
+
+**Preferred incremental path**
+
+- **OSS-1:** keep strengthening **Loki + metrics + Nomad metadata** (operational persistence and search).
+- **OSS-2 thin vertical:** emit **one or two CloudEvent-shaped facts** from **Khan or Jurist** into XTDB (same envelope the vision describes for the commercial event system), proving schema and queries before widening scope.
+- **CLI role:** when a control plane exists, the CLI should **call Khan** for admission-backed actions; it should not become a parallel XTDB client for policy-adjacent events in place of Jurist.
+
+**Non-goal:** presenting OSS-1 + XTDB as **grant-auditable** without the full OSS-2 admission chain — that would contradict the tier boundary in the vision document.
 
 ---
 
@@ -154,11 +197,15 @@ abc
 │   ├── list                           List all configuration keys
 │   └── unset  KEY                     Unset (clear) a configuration key
 │
-├── secrets
-│   ├── set    KEY VALUE --unsafe-local      Store an encrypted credential
-│   ├── get    KEY --unsafe-local            Retrieve and decrypt a credential
-│   ├── list   [--unsafe-local]              List all secret keys (and values if --unsafe-local)
-│   └── delete KEY --unsafe-local            Delete a secret
+├── secrets                                  [--backend local|nomad|vault] [--namespace <ns>]
+│   ├── init   --unsafe-local               Generate local crypt defaults
+│   ├── set    KEY VALUE                     Store a secret (local: requires --unsafe-local)
+│   ├── get    KEY                           Retrieve a secret
+│   ├── list                                 List stored secret keys
+│   ├── delete KEY                           Delete a secret
+│   ├── ref    KEY                           Print Nomad template HCL snippet (no plaintext)
+│   └── backend
+│       └── setup                            Create Nomad ACL policy for alloc read access
 │
 │  ── Unified entry point ────────────────────────────────────────────────
 ├── submit       <target> [flags]                (auto-detects pipeline/module/job)
@@ -215,10 +262,13 @@ abc
 │
 │  ── Cluster ─────────────────────────────────────────────────────────────
 ├── cluster
-│   ├── list     [flags]
-│   ├── status   [name]
-│   ├── provision    [flags]
-│   └── decommission <name> [flags]
+│   ├── capabilities                         (abc-nodes: reads Nomad directly, no --cloud needed)
+│   │   ├── sync                             Query Nomad, populate capabilities + admin.services.*
+│   │   └── show                             Print stored capabilities for active context
+│   ├── list     [flags]                     (requires --cloud)
+│   ├── status   [name]                      (requires --cloud)
+│   ├── provision    [flags]                 (requires --cloud)
+│   └── decommission <name> [flags]          (requires --cloud)
 │
 │  ── Cost / Budget ───────────────────────────────────────────────────────
 ├── accounting                                   (aliases: cost, budget; optional --budget)
@@ -555,23 +605,46 @@ Clear a configuration key, reverting to environment variables or built-in defaul
 
 ---
 
-## 6.1 Local Credential Storage with `abc secrets`
+## 6.1 Secret Management with `abc secrets`
 
 **Overview:**
 
-Credentials and API keys are stored locally in the config file using password-based encryption.
-No backend server is required. All encryption/decryption happens locally via the `abc secrets`
-command with the `--unsafe-local` flag.
+`abc secrets` supports three backends:
+
+| Backend | Storage | Use case |
+|---------|---------|----------|
+| `local` (default) | AES-256-GCM in `~/.abc/config.yaml` | Workstation credentials; no network required |
+| `nomad` | Nomad Variables (`abc/secrets/<ns>/<name>`) | abc-nodes clusters; encrypted at rest by Nomad |
+| `vault` | Vault KV v2 (`secret/data/abc/<ns>/<name>`) | abc-nodes clusters with HashiCorp Vault running |
 
 **Commands:**
 
-| Command | Purpose | Requires `--unsafe-local` |
-|---------|---------|--------------------|
-| `abc secrets set <key> <value>` | Store an encrypted credential | Yes (`ABC_CRYPT_PASSWORD`) |
-| `abc secrets get <key>` | Retrieve and decrypt a credential | Yes (`ABC_CRYPT_PASSWORD`) |
-| `abc secrets list` | List all secret keys (not values) | No |
-| `abc secrets list --unsafe-local` | List keys and decrypted values | Yes (`ABC_CRYPT_PASSWORD`) |
-| `abc secrets delete <key>` | Remove a secret | Yes |
+| Command | Purpose | Notes |
+|---------|---------|-------|
+| `abc secrets set <key> <value>` | Store a secret | Local: requires `--unsafe-local`; nomad/vault: requires write token |
+| `abc secrets get <key>` | Retrieve a secret | Nomad: 403 for non-admin tokens (use `ref` instead) |
+| `abc secrets list` | List stored keys | |
+| `abc secrets delete <key>` | Remove a secret | |
+| `abc secrets ref <key>` | Print Nomad template HCL snippet | No plaintext; for use in job templates |
+| `abc secrets backend setup` | Create Nomad ACL alloc-read policy | Nomad backend only |
+
+**Secret path conventions:**
+
+- Nomad: `abc/secrets/<namespace>/<name>` — stored as `{"value": "<plaintext>"}`
+- Vault KV v2: `secret/data/abc/<namespace>/<name>` — stored as `{"data": {"value": "<plaintext>"}}`
+
+**Template refs (for use in Nomad job templates and pipeline params):**
+
+```
+# nomad backend
+{{ with nomadVar "abc/secrets/default/my-key" }}{{ index . "value" }}{{ end }}
+
+# vault backend
+{{ with secret "secret/data/abc/default/my-key" }}{{ .Data.data.value }}{{ end }}
+```
+
+`abc secrets ref <key>` prints the appropriate snippet for the active context's secrets backend.
+`abc pipeline run` automatically translates `secret://name` param values to the correct ref before HCL generation.
 
 ## 6.2 Context Management
 
