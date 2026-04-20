@@ -1,0 +1,74 @@
+# Example ~/.abc/config.yaml for abc-nodes WIP (aither / su-mbhg ACL layout).
+# Copy to ~/.abc/config.yaml or ABC_CONFIG_FILE, replace REPLACE_* placeholders with
+# real values from deployments/abc-nodes/acl/tokens.env (see acl/README.md).
+#
+# Personas: optional auth.whoami = <cluster-id>:<nomad-namespace>:<role> (Nomad token self may differ).
+# Bootstrap / initial Nomad token: use `auth: root` (or auth.root: true) on that context.
+# For research-group contexts you can instead set admin.whoami with a _<role> suffix; Nomad namespace is derived from the prefix.
+#   aither-bootstrap         — Nomad bootstrap token only (before ACL bootstrap).
+#   aither-cluster-admin     — Nomad management or full admin token; operates cluster-wide.
+#   su-mbhg-bioinformatics-admin — Research group admin (group namespace + elevated policy).
+#   su-mbhg-bioinformatics-user  — Researcher / pipeline submitter (group namespace, member/submit token).
+#
+version: "1.0"
+active_context: su-mbhg-bioinformatics-user
+
+contexts:
+  aither-bootstrap:
+    cluster_type: abc-nodes
+    endpoint: https://api.abc-cluster.io
+    access_token: ""
+    aliases: [bootstrap]
+    auth: root
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://100.70.185.46:4646
+          nomad_token: REPLACE_WITH_NOMAD_BOOTSTRAP_SECRET_ID
+          nomad_region: global
+
+  aither-cluster-admin:
+    cluster_type: abc-nodes
+    endpoint: https://api.abc-cluster.io
+    access_token: ""
+    aliases: [cluster-admin]
+    auth:
+      whoami: aither:default:cluster-admin
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://100.70.185.46:4646
+          nomad_token: REPLACE_WITH_NOMAD_MGMT_TOKEN
+          nomad_region: global
+      abc_nodes:
+        nomad_namespace: default
+
+  su-mbhg-bioinformatics-admin:
+    cluster_type: abc-nodes
+    endpoint: https://api.abc-cluster.io
+    access_token: ""
+    aliases: [rg-bio-admin, su-mbhg-bioinformatics-group-admin]
+    auth:
+      whoami: aither:su-mbhg-bioinformatics:group-admin
+    admin:
+      whoami: su-mbhg-bioinformatics_admin
+      services:
+        nomad:
+          nomad_addr: http://100.70.185.46:4646
+          nomad_token: REPLACE_WITH_NOMAD_TOKEN_BIO_ADMIN
+          nomad_region: global
+
+  su-mbhg-bioinformatics-user:
+    cluster_type: abc-nodes
+    endpoint: https://api.abc-cluster.io
+    access_token: ""
+    aliases: [rg-bio-user, su-mbhg-bioinformatics-alice]
+    auth:
+      whoami: aither:su-mbhg-bioinformatics:researcher
+    admin:
+      whoami: su-mbhg-bioinformatics_researcher
+      services:
+        nomad:
+          nomad_addr: http://100.70.185.46:4646
+          nomad_token: REPLACE_WITH_NOMAD_TOKEN_BIO_ALICE_OR_BIO_SUBMIT
+          nomad_region: global

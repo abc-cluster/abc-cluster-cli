@@ -41,11 +41,7 @@ func nomadSecretsNamespace(cmd *cobra.Command, cfg *config.Config) string {
 	if ns := flagStringOrEmpty(cmd, "namespace"); ns != "" {
 		return ns
 	}
-	ctx := cfg.ActiveCtx()
-	if ctx.Admin.ABCNodes != nil && ctx.Admin.ABCNodes.NomadNamespace != "" {
-		return ctx.Admin.ABCNodes.NomadNamespace
-	}
-	return "default"
+	return cfg.ActiveCtx().AbcNodesNomadNamespaceOrDefault()
 }
 
 func runNomadSet(cmd *cobra.Command, cfg *config.Config, name, value string) error {

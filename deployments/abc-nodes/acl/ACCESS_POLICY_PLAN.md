@@ -15,12 +15,31 @@ Traefik, Alloy, and Wave.
 |-----------|---------|-------------|
 | `default` | Unused (Nomad built-in) | — |
 | `services` | All cluster infrastructure jobs — admin only | — |
+| `applications` | **Planned** — shared platform application jobs (e.g. GVDS, BRIMS); not research pipelines | TBD (likely 75–80, below infra core, above group batch) |
 | `su-mbhg-bioinformatics` | Research group jobs — high priority | 70 |
 | `su-mbhg-hostgen` | Research group jobs — normal priority | 50 |
 
 **`services` namespace** is write-protected: only tokens carrying the
 `services-admin` policy (cluster-admin) can submit or manage jobs there.
 Group tokens see nothing in `services`.
+
+### Planned: `applications` namespace
+
+We will add a dedicated Nomad namespace **`applications`** so long-lived **platform applications** (for example **GVDS**, **BRIMS**, and similar services) are isolated from:
+
+- **`services`** — core abc-nodes floor (Traefik, MinIO, Vault, observability, auth helpers). Those jobs stay tightly controlled and minimal.
+- **Research group namespaces** — Nextflow / pipeline workloads owned by a single group. Platform apps are cross-cutting and should not compete for the same ACL story as group members.
+
+**Rollout plan (ACL + ops):**
+
+1. **Namespace object** — Add `acl/namespaces/applications.hcl` (name `applications`, priority to be chosen after we confirm scheduler behaviour next to groups 70/50 and `services` job meta).
+2. **Policies** — Introduce something analogous to `services-admin`, e.g. **`applications-admin`** (cluster-admin and/or a small platform team): write access only inside `applications`. Optionally **`applications-read`** for observers if we need shared dashboards or support accounts.
+3. **Tokens** — Create dedicated Nomad ACL tokens for deploying and upgrading platform apps; **do not** reuse group pipeline tokens or member tokens. Research-group policies remain scoped to `su-mbhg-*` namespaces only.
+4. **Nomad job specs** — New or migrated jobs for GVDS, BRIMS, etc. set `namespace = "applications"` (and use distinct job names so they never land in `default` or a group namespace by mistake).
+5. **CLI contexts** — Operators maintain a separate `~/.abc` context (or `admin.whoami` / `admin.abc_nodes.nomad_namespace`) pointed at **`applications`** when running `abc job`, `abc admin services nomad cli`, or templated deploys for those apps.
+6. **Ingress / auth** — Route public or VPN traffic via Traefik in `services` as today; application workloads in `applications` remain backend-only unless a job explicitly publishes ports through the mesh (same pattern as other app jobs).
+
+This namespace is **not yet created** in the repo; the table row above marks intent. When the namespace and policies exist, extend the policy matrix in §1.1 and update `acl/README.md` directory layout.
 
 ---
 

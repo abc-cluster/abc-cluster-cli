@@ -103,7 +103,9 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.admin.services.nomad.nomad_token   Node-specific Nomad ACL token (updates auth.whoami from Nomad when reachable)
 		contexts.<name>.admin.services.nomad.nomad_region Nomad RPC region (e.g. global); not contexts.region
 		contexts.<name>.auth.whoami                         Nomad operator label (usually auto-filled from the token via Nomad)
-		contexts.<name>.admin.abc_nodes.nomad_namespace    Nomad namespace for abc-nodes contexts (NOMAD_NAMESPACE when unset in env)
+		contexts.<name>.auth.root                           When true, marks a Nomad bootstrap / management-token context; YAML shorthand auth: root is accepted on load
+		contexts.<name>.admin.whoami                        Optional persona label; for abc-nodes, Nomad namespace can be derived from a _admin / _researcher / … suffix (e.g. su-mbhg-bioinformatics_admin → namespace su-mbhg-bioinformatics)
+		contexts.<name>.admin.abc_nodes.nomad_namespace    Explicit Nomad namespace for abc-nodes (overrides admin.whoami derivation; NOMAD_NAMESPACE when unset in env)
 		contexts.<name>.admin.abc_nodes.s3_access_key     S3 access key (abc-nodes floor; merged into mc/rustfs env if unset)
 		contexts.<name>.admin.abc_nodes.s3_secret_key     S3 secret key
 		contexts.<name>.admin.abc_nodes.s3_region           AWS_DEFAULT_REGION

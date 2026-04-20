@@ -15,6 +15,7 @@ Vault, Grafana, and Wave.
 |------|-----------|
 | Isolate research-group jobs | One Nomad namespace per group |
 | Protect infrastructure jobs | Dedicated `services` namespace (admin-only) |
+| Host shared platform apps (GVDS, BRIMS, …) | **Planned:** dedicated `applications` namespace + narrow ACLs (see `ACCESS_POLICY_PLAN.md`) |
 | Control who submits jobs | ACL policy per group × role |
 | Prioritise between groups | `priority` field + batch preemption |
 | Per-user S3 data isolation | MinIO `${aws:username}` IAM policy condition |
@@ -38,6 +39,7 @@ acl/
 ├── namespaces/
 │   ├── su-mbhg-bioinformatics.hcl         # Priority 70 (high)
 │   └── su-mbhg-hostgen.hcl               # Priority 50 (normal)
+│   # Planned: applications.hcl (platform apps namespace — see § Planned below)
 │
 ├── policies/
 │   ├── admin.hcl                          # Full cluster admin
@@ -65,6 +67,18 @@ acl/
 └── nextflow-configs/                      # Nextflow config templates per group
 ```
 
+Example `~/.abc` multi-persona contexts (cluster-admin, group admin, group user): `../examples/abc-config.personas.yaml`.
+
+---
+
+## CLI contexts (`~/.abc/config.yaml`)
+
+For day-to-day use, define **one context per Nomad identity** (different `nomad_token` + `nomad_namespace`). A worked example that matches this directory’s token names (`NOMAD_MGMT_TOKEN`, `NOMAD_TOKEN_BIO_ADMIN`, `NOMAD_TOKEN_BIO_ALICE`, …) lives at:
+
+`examples/abc-config.personas.yaml` (under `deployments/abc-nodes/examples/`)
+
+Copy it to `~/.abc/config.yaml` (or merge the `contexts:` entries), substitute real secrets, then `abc context use <name>` to switch persona.
+
 ---
 
 ## Namespace + priority model
@@ -73,6 +87,9 @@ acl/
 services namespace      — cluster infrastructure (admin-only)
   priority 90           — core storage/proxy
   priority 80           — auth + notification helpers
+
+applications namespace  — planned: platform apps (GVDS, BRIMS, …), not group pipelines
+  priority TBD         — between infra helpers and group high (see ACCESS_POLICY_PLAN.md)
 
 su-mbhg-bioinformatics  — research group, HIGH priority
   priority 70           — preempts hostgen batch jobs
@@ -192,6 +209,12 @@ abc admin services nomad cli -- job run \
 # Place Traefik ForwardAuth config (hot-reload)
 sudo cp acl/tusd-auth/traefik-nomad-auth.yml /etc/traefik/dynamic/
 ```
+
+---
+
+## Planned: `applications` namespace
+
+We intend to add a Nomad namespace **`applications`** for **shared platform workloads** (examples: **GVDS**, **BRIMS**) so they are not mixed with **`services`** (core floor) or **`su-mbhg-*`** (per-group research jobs). Namespace HCL, ACL policies, tokens, and job specs are outlined in **`ACCESS_POLICY_PLAN.md`** (section *Planned: `applications` namespace*). Nothing under `acl/namespaces/` ships for `applications` until that rollout is executed.
 
 ---
 

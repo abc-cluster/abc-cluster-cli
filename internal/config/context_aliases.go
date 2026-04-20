@@ -166,6 +166,7 @@ func mergeContextsFromRaw(raw map[string]interface{}, cfg *Config) error {
 			}
 			aliases[name] = target
 		case map[string]interface{}:
+			normalizeContextAuthScalarInMap(t)
 			b, err := yaml.Marshal(t)
 			if err != nil {
 				return fmt.Errorf("contexts.%q: %w", name, err)
