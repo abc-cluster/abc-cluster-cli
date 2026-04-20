@@ -35,7 +35,7 @@ func floorPtr(s *AdminServices, svc string) **AdminFloorService {
 }
 
 // GetAdminFloorField returns admin.services.<svc>.<field>.
-// Known fields: http, endpoint, access_key, secret_key, user, password, ping_entrypoint.
+// Known fields: http, endpoint, access_key, secret_key, user, password, ping_entrypoint, dashboard.
 func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
 	pp := floorPtr(s, svc)
 	if pp == nil {
@@ -67,6 +67,9 @@ func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
 	case "ping_entrypoint":
 		v := strings.TrimSpace(fs.PingEntryPoint)
 		return v, v != ""
+	case "dashboard":
+		v := strings.TrimSpace(fs.Dashboard)
+		return v, v != ""
 	default:
 		return "", false
 	}
@@ -79,7 +82,7 @@ func SetAdminFloorField(s *AdminServices, svc, field, value string) error {
 		return fmt.Errorf("unknown admin.services floor service %q", svc)
 	}
 	switch field {
-	case "http", "endpoint", "access_key", "secret_key", "user", "password", "ping_entrypoint":
+	case "http", "endpoint", "access_key", "secret_key", "user", "password", "ping_entrypoint", "dashboard":
 	default:
 		return fmt.Errorf("unknown field %q for admin.services.%s", field, svc)
 	}
@@ -102,6 +105,8 @@ func SetAdminFloorField(s *AdminServices, svc, field, value string) error {
 		fs.Password = value
 	case "ping_entrypoint":
 		fs.PingEntryPoint = value
+	case "dashboard":
+		fs.Dashboard = value
 	}
 	if fs.IsEmpty() {
 		*pp = nil
@@ -131,6 +136,8 @@ func UnsetAdminFloorField(s *AdminServices, svc, field string) error {
 		fs.Password = ""
 	case "ping_entrypoint":
 		fs.PingEntryPoint = ""
+	case "dashboard":
+		fs.Dashboard = ""
 	default:
 		return fmt.Errorf("unknown field %q for admin.services.%s", field, svc)
 	}

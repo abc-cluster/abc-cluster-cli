@@ -23,6 +23,9 @@ type AdminFloorService struct {
 	// PingEntryPoint names the entry point used for `traefik healthcheck` static snippets
 	// (default in Traefik is "traefik", i.e. the dashboard listener). Only used for traefik.
 	PingEntryPoint string `yaml:"ping_entrypoint,omitempty"`
+	// Dashboard is an optional direct URL to a service UI page (e.g. a Grafana dashboard).
+	// Written by capabilities sync; never overwritten if already set by the operator.
+	Dashboard string `yaml:"dashboard,omitempty"`
 }
 
 // IsEmpty reports whether all URL and credential fields are unset.
@@ -36,7 +39,8 @@ func (a *AdminFloorService) IsEmpty() bool {
 		strings.TrimSpace(a.SecretKey) == "" &&
 		strings.TrimSpace(a.User) == "" &&
 		strings.TrimSpace(a.Password) == "" &&
-		strings.TrimSpace(a.PingEntryPoint) == ""
+		strings.TrimSpace(a.PingEntryPoint) == "" &&
+		strings.TrimSpace(a.Dashboard) == ""
 }
 
 // AdminServices holds operator-facing integrations under contexts.<name>.admin.services.
