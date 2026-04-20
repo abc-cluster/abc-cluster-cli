@@ -22,6 +22,7 @@ variable "rustfs_secret_key" {
 }
 
 job "abc-nodes-rustfs" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

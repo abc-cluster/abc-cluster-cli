@@ -24,6 +24,7 @@ variable "uppy_max_file_size_mb" {
 }
 
 job "abc-nodes-uppy" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

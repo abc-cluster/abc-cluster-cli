@@ -19,6 +19,7 @@ variable "traefik_version" {
 }
 
 job "abc-nodes-traefik" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

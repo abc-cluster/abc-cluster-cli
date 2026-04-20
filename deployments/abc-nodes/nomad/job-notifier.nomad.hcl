@@ -36,6 +36,7 @@ variable "ntfy_topic" {
 }
 
 job "abc-nodes-job-notifier" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

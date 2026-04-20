@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GroupAdminFullBucketAccess",
+      "Effect": "Allow",
+      "Action": ["s3:*"],
+      "Resource": [
+        "arn:aws:s3:::su-mbhg-bioinformatics",
+        "arn:aws:s3:::su-mbhg-bioinformatics/*"
+      ]
+    },
+    {
+      "Sid": "TusdUploadAreaReadAll",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket", "s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::tusd",
+        "arn:aws:s3:::tusd/uploads/*"
+      ]
+    }
+  ]
+}

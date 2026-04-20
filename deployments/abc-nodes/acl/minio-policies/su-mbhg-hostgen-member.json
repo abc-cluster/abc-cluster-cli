@@ -1,0 +1,40 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListGroupBucket",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::su-mbhg-hostgen"],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": ["${aws:username}/*", "${aws:username}"]
+        }
+      }
+    },
+    {
+      "Sid": "OwnPrefixFullAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:GetObjectTagging",
+        "s3:PutObjectTagging"
+      ],
+      "Resource": ["arn:aws:s3:::su-mbhg-hostgen/${aws:username}/*"]
+    },
+    {
+      "Sid": "SharedResultsReadOnly",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": ["arn:aws:s3:::su-mbhg-hostgen/shared/*"]
+    },
+    {
+      "Sid": "TusdUploadOwnFiles",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": ["arn:aws:s3:::tusd/uploads/${aws:username}/*"]
+    }
+  ]
+}

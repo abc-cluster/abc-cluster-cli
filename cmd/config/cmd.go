@@ -9,10 +9,13 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +39,8 @@ Subcommands:
   abc config set KEY VALUE    Set a configuration key
   abc config get KEY          Get a configuration key
   abc config list             List all configuration keys
-  abc config unset KEY        Unset (clear) a configuration key`,
+  abc config unset KEY        Unset (clear) a configuration key
+  abc config fmt              Validate and rewrite config with sorted keys`,
 	}
 
 	cmd.AddCommand(newInitCmd())
@@ -44,6 +48,7 @@ Subcommands:
 	cmd.AddCommand(newGetCmd())
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newUnsetCmd())
+	cmd.AddCommand(newFmtCmd())
 
 	return cmd
 }
@@ -95,8 +100,9 @@ Supported keys follow a dot-separated path:
 	contexts.<name>.crypt.salt        Optional salt for contexts.<name>.crypt.password
 	contexts.<name>.secrets.*         Encrypted values managed via abc secrets (per context)
 		contexts.<name>.admin.services.nomad.nomad_addr   Nomad HTTP API base URL; for http:// include an explicit :PORT (same as other admin.services URLs)
-		contexts.<name>.admin.services.nomad.nomad_token   Node-specific Nomad ACL token
+		contexts.<name>.admin.services.nomad.nomad_token   Node-specific Nomad ACL token (updates auth.whoami from Nomad when reachable)
 		contexts.<name>.admin.services.nomad.nomad_region Nomad RPC region (e.g. global); not contexts.region
+		contexts.<name>.auth.whoami                         Nomad operator label (usually auto-filled from the token via Nomad)
 		contexts.<name>.admin.abc_nodes.nomad_namespace    Nomad namespace for abc-nodes contexts (NOMAD_NAMESPACE when unset in env)
 		contexts.<name>.admin.abc_nodes.s3_access_key     S3 access key (abc-nodes floor; merged into mc/rustfs env if unset)
 		contexts.<name>.admin.abc_nodes.s3_secret_key     S3 secret key
@@ -135,6 +141,7 @@ Example:
 			if err := c.Set(key, value); err != nil {
 				return err
 			}
+			trySyncNomadWhoami(cmd, c, key)
 
 			if err := c.Save(); err != nil {
 				return fmt.Errorf("save config: %w", err)
@@ -248,4 +255,33 @@ Example:
 			return nil
 		},
 	}
+}
+
+// trySyncNomadWhoami fills contexts.<name>.auth.whoami after nomad_token is set, using Nomad GET /v1/acl/token/self.
+func trySyncNomadWhoami(cmd *cobra.Command, c *cfg.Config, setKey string) {
+	parts := strings.Split(setKey, ".")
+	if len(parts) != 6 || parts[0] != "contexts" || parts[2] != "admin" || parts[3] != "services" || parts[4] != "nomad" || parts[5] != "nomad_token" {
+		return
+	}
+	ctxName := parts[1]
+	canon := c.ResolveContextName(ctxName)
+	if canon == "" {
+		return
+	}
+	ctx := c.Contexts[canon]
+	addr, tok, region := ctx.NomadAddr(), ctx.NomadToken(), ctx.NomadRegion()
+	if addr == "" || tok == "" {
+		return
+	}
+	nc := utils.NewNomadClient(addr, tok, region)
+	label, err := utils.NomadTokenWhoamiLabel(context.Background(), nc)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Note: could not resolve Nomad ACL identity (auth.whoami): %v\n", err)
+		return
+	}
+	if label == "" {
+		return
+	}
+	ctx.SetAuthWhoami(label)
+	c.Contexts[canon] = ctx
 }

@@ -17,6 +17,7 @@ variable "grafana_admin_password" {
 }
 
 job "abc-nodes-grafana" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

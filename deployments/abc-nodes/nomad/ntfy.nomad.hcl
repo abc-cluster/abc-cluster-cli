@@ -39,6 +39,7 @@ variable "ntfy_attachment_bucket" {
 }
 
 job "abc-nodes-ntfy" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
