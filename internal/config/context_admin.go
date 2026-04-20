@@ -14,12 +14,12 @@ type NomadService struct {
 // Use endpoint for S3 API bases (MinIO, RustFS) and http for HTTP services (tusd, Grafana, Grafana Alloy, Vault, …).
 // access_key/secret_key suit S3-compatible services; user/password suit web UIs.
 type AdminFloorService struct {
-	HTTP       string `yaml:"http,omitempty"`
-	Endpoint   string `yaml:"endpoint,omitempty"`
-	AccessKey  string `yaml:"access_key,omitempty"`
-	SecretKey  string `yaml:"secret_key,omitempty"`
-	User       string `yaml:"user,omitempty"`
-	Password   string `yaml:"password,omitempty"`
+	HTTP      string `yaml:"http,omitempty"`
+	Endpoint  string `yaml:"endpoint,omitempty"`
+	AccessKey string `yaml:"access_key,omitempty"`
+	SecretKey string `yaml:"secret_key,omitempty"`
+	User      string `yaml:"user,omitempty"`
+	Password  string `yaml:"password,omitempty"`
 	// PingEntryPoint names the entry point used for `traefik healthcheck` static snippets
 	// (default in Traefik is "traefik", i.e. the dashboard listener). Only used for traefik.
 	PingEntryPoint string `yaml:"ping_entrypoint,omitempty"`
@@ -78,6 +78,10 @@ type AdminABCNodes struct {
 
 // Admin holds optional admin-plane settings for a context.
 type Admin struct {
+	// Whoami is an optional operator persona label for abc-nodes contexts (e.g. su-mbhg-bioinformatics_admin).
+	// When admin.abc_nodes.nomad_namespace is unset, Nomad namespace defaults are derived from known
+	// _<role> suffixes on Whoami (see deriveNomadNamespaceFromAdminWhoami).
+	Whoami   string         `yaml:"whoami,omitempty"`
 	Services AdminServices  `yaml:"services,omitempty"`
 	ABCNodes *AdminABCNodes `yaml:"abc_nodes,omitempty"`
 }

@@ -32,8 +32,10 @@
 //	      salt:     "..."
 //	    secrets:         # encrypted map; managed via abc secrets
 //	      my-key: "base64..."
+//	    auth: root              # optional shorthand: Nomad bootstrap / management token (same as auth.root: true)
 //	    auth:
 //	      whoami: "lab-admin"   # optional; Nomad ACL token label from GET /v1/acl/token/self (token Name, policies, or management)
+//	      root: true            # optional; marks bootstrap-token contexts (can combine with whoami)
 //	    admin:
 //	      services:
 //	        nomad:
@@ -86,10 +88,10 @@ type Context struct {
 	Endpoint       string `yaml:"endpoint"`
 	UploadEndpoint string `yaml:"upload_endpoint,omitempty"`
 	UploadToken    string `yaml:"upload_token,omitempty"`
-	AccessToken           string `yaml:"access_token"`
-	OrgID                 string `yaml:"organization_id,omitempty"`
-	WorkspaceID           string `yaml:"workspace_id,omitempty"`
-	Region                string `yaml:"region,omitempty"`
+	AccessToken    string `yaml:"access_token"`
+	OrgID          string `yaml:"organization_id,omitempty"`
+	WorkspaceID    string `yaml:"workspace_id,omitempty"`
+	Region         string `yaml:"region,omitempty"`
 	// ClusterType is one of abc-nodes | abc-cluster | abc-cloud (platform tier).
 	ClusterType  string        `yaml:"cluster_type,omitempty"`
 	Admin        Admin         `yaml:"admin,omitempty"`
@@ -314,7 +316,8 @@ func (c *Config) ClearContext(name string) {
 //
 // Nomad: contexts.<name>.admin.services.nomad.nomad_addr / nomad_token / nomad_region
 // (nomad_addr for http:// must include an explicit :PORT when set via config.Set).
-// Auth: contexts.<name>.auth.whoami (Nomad ACL token label; optional, often filled automatically).
+// Auth: contexts.<name>.auth.whoami | auth.root | shorthand auth: root (bootstrap token).
+// Admin: contexts.<name>.admin.whoami (optional persona label; Nomad namespace can be derived for abc-nodes).
 // abc-nodes floor: contexts.<name>.admin.abc_nodes.<field> (see AdminABCNodes).
 func (c *Config) Get(key string) (string, bool) {
 	parts := strings.Split(key, ".")
@@ -351,13 +354,28 @@ func (c *Config) Get(key string) (string, bool) {
 			return "", false
 		}
 		if len(parts) == 4 && parts[2] == "auth" {
-			if parts[3] != "whoami" {
-				return "", false
-			}
 			if ctx.Auth == nil {
 				return "", false
 			}
-			return ctx.Auth.Whoami, true
+			switch parts[3] {
+			case "whoami":
+				if strings.TrimSpace(ctx.Auth.Whoami) == "" {
+					return "", false
+				}
+				return ctx.Auth.Whoami, true
+			case "root":
+				if !ctx.Auth.Root {
+					return "", false
+				}
+				return "true", true
+			}
+			return "", false
+		}
+		if len(parts) == 4 && parts[2] == "admin" && parts[3] == "whoami" {
+			if v := strings.TrimSpace(ctx.Admin.Whoami); v != "" {
+				return v, true
+			}
+			return "", false
 		}
 		// contexts.<name>.admin.services.<svc>.<field>
 		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" {
@@ -380,13 +398,17 @@ func (c *Config) Get(key string) (string, bool) {
 		}
 		// contexts.<name>.admin.abc_nodes.<field>
 		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "abc_nodes" {
+			if parts[4] == "nomad_namespace" {
+				if v := strings.TrimSpace(ctx.resolvedAbcNodesNomadNamespace()); v != "" {
+					return v, true
+				}
+				return "", false
+			}
 			n := ctx.abcNodes()
 			if n == nil {
 				return "", false
 			}
 			switch parts[4] {
-			case "nomad_namespace":
-				return n.NomadNamespace, true
 			case "s3_access_key":
 				return n.S3AccessKey, true
 			case "s3_secret_key":
@@ -536,6 +558,11 @@ func (c *Config) Set(key, value string) error {
 			c.Contexts[canon] = ctx
 			return nil
 		}
+		if len(parts) == 4 && parts[2] == "admin" && parts[3] == "whoami" {
+			ctx.Admin.Whoami = strings.TrimSpace(value)
+			c.Contexts[canon] = ctx
+			return nil
+		}
 		if len(parts) == 4 && parts[2] == "crypt" {
 			switch parts[3] {
 			case "password":
@@ -549,10 +576,29 @@ func (c *Config) Set(key, value string) error {
 			return nil
 		}
 		if len(parts) == 4 && parts[2] == "auth" {
-			if parts[3] != "whoami" {
-				return fmt.Errorf("unknown auth field %q (expected whoami)", parts[3])
+			switch parts[3] {
+			case "whoami":
+				ctx.SetAuthWhoami(value)
+			case "root":
+				v := strings.TrimSpace(strings.ToLower(value))
+				truth := v == "true" || v == "1" || v == "yes"
+				if !truth && v != "" && v != "false" && v != "0" && v != "no" {
+					return fmt.Errorf("contexts.%s.auth.root: expected true or false", canon)
+				}
+				if truth {
+					if ctx.Auth == nil {
+						ctx.Auth = &ContextAuth{}
+					}
+					ctx.Auth.Root = true
+				} else {
+					if ctx.Auth != nil {
+						ctx.Auth.Root = false
+					}
+					ctx.clearAuthIfEmpty()
+				}
+			default:
+				return fmt.Errorf("unknown auth field %q (expected whoami or root)", parts[3])
 			}
-			ctx.SetAuthWhoami(value)
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -702,6 +748,11 @@ func (c *Config) Unset(key string) error {
 			c.Contexts[canon] = ctx
 			return nil
 		}
+		if len(parts) == 4 && parts[2] == "admin" && parts[3] == "whoami" {
+			ctx.Admin.Whoami = ""
+			c.Contexts[canon] = ctx
+			return nil
+		}
 		if len(parts) == 4 && parts[2] == "crypt" {
 			switch parts[3] {
 			case "password":
@@ -715,10 +766,17 @@ func (c *Config) Unset(key string) error {
 			return nil
 		}
 		if len(parts) == 4 && parts[2] == "auth" {
-			if parts[3] != "whoami" {
-				return fmt.Errorf("unknown auth field %q (expected whoami)", parts[3])
+			switch parts[3] {
+			case "whoami":
+				ctx.SetAuthWhoami("")
+			case "root":
+				if ctx.Auth != nil {
+					ctx.Auth.Root = false
+				}
+				ctx.clearAuthIfEmpty()
+			default:
+				return fmt.Errorf("unknown auth field %q (expected whoami or root)", parts[3])
 			}
-			ctx.SetAuthWhoami("")
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -793,8 +851,16 @@ func (c *Config) AllKeys() [][2]string {
 		if ctx.ClusterType != "" {
 			out = append(out, [2]string{"contexts." + name + ".cluster_type", ctx.ClusterType})
 		}
-		if ctx.Auth != nil && strings.TrimSpace(ctx.Auth.Whoami) != "" {
-			out = append(out, [2]string{"contexts." + name + ".auth.whoami", ctx.Auth.Whoami})
+		if ctx.Auth != nil {
+			if strings.TrimSpace(ctx.Auth.Whoami) != "" {
+				out = append(out, [2]string{"contexts." + name + ".auth.whoami", ctx.Auth.Whoami})
+			}
+			if ctx.Auth.Root {
+				out = append(out, [2]string{"contexts." + name + ".auth.root", "true"})
+			}
+		}
+		if v := strings.TrimSpace(ctx.Admin.Whoami); v != "" {
+			out = append(out, [2]string{"contexts." + name + ".admin.whoami", v})
 		}
 		if als := AliasesResolvingToCanon(c, name); len(als) > 0 {
 			out = append(out, [2]string{"contexts." + name + ".aliases", strings.Join(als, ",")})

@@ -16,27 +16,60 @@ func (c Context) abcNodes() *AdminABCNodes {
 	return c.Admin.ABCNodes
 }
 
+// Suffixes longest-first so e.g. "_researcher" wins over a hypothetical shorter overlap.
+var adminWhoamiNomadNamespaceSuffixes = []string{
+	"_researcher",
+	"_submit",
+	"_member",
+	"_admin",
+	"_user",
+}
+
+// deriveNomadNamespaceFromAdminWhoami returns the Nomad namespace implied by admin.whoami
+// when it uses a known trailing _<role> pattern. Empty string if none match.
+func deriveNomadNamespaceFromAdminWhoami(whoami string) string {
+	w := strings.TrimSpace(whoami)
+	if w == "" {
+		return ""
+	}
+	for _, suf := range adminWhoamiNomadNamespaceSuffixes {
+		if strings.HasSuffix(w, suf) {
+			ns := strings.TrimSpace(strings.TrimSuffix(w, suf))
+			if ns != "" {
+				return ns
+			}
+		}
+	}
+	return ""
+}
+
+func (c Context) resolvedAbcNodesNomadNamespace() string {
+	if n := c.abcNodes(); n != nil {
+		if v := strings.TrimSpace(n.NomadNamespace); v != "" {
+			return v
+		}
+	}
+	if !c.IsABCNodesCluster() {
+		return ""
+	}
+	return deriveNomadNamespaceFromAdminWhoami(c.Admin.Whoami)
+}
+
 // AbcNodesNomadNamespaceForCLI returns NOMAD_NAMESPACE to inject for Nomad CLI
-// passthrough when cluster_type is abc-nodes, admin.abc_nodes.nomad_namespace is set,
-// and the operator has not already exported NOMAD_NAMESPACE.
+// passthrough when cluster_type is abc-nodes and a namespace is resolved from
+// admin.abc_nodes.nomad_namespace or admin.whoami, and the operator has not
+// already exported NOMAD_NAMESPACE.
 func (c Context) AbcNodesNomadNamespaceForCLI() string {
 	if !c.IsABCNodesCluster() {
 		return ""
 	}
-	n := c.abcNodes()
-	if n == nil {
-		return ""
-	}
-	return strings.TrimSpace(n.NomadNamespace)
+	return c.resolvedAbcNodesNomadNamespace()
 }
 
-// AbcNodesNomadNamespaceOrDefault returns admin.abc_nodes.nomad_namespace when set, else "default".
+// AbcNodesNomadNamespaceOrDefault returns the resolved Nomad namespace for abc-nodes
+// (explicit admin.abc_nodes.nomad_namespace, else derived from admin.whoami), else "default".
 func (c Context) AbcNodesNomadNamespaceOrDefault() string {
-	n := c.abcNodes()
-	if n == nil {
-		return "default"
-	}
-	if v := strings.TrimSpace(n.NomadNamespace); v != "" {
+	if v := c.resolvedAbcNodesNomadNamespace(); v != "" {
 		return v
 	}
 	return "default"

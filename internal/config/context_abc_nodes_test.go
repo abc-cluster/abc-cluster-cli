@@ -185,3 +185,31 @@ func TestAbcNodesNomadNamespaceForCLI(t *testing.T) {
 		t.Fatalf("namespace: got %q want staging", got)
 	}
 }
+
+func TestAbcNodesNomadNamespaceFromAdminWhoami(t *testing.T) {
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Admin: Admin{
+			Whoami: "su-mbhg-bioinformatics_admin",
+		},
+	}
+	if got := ctx.AbcNodesNomadNamespaceOrDefault(); got != "su-mbhg-bioinformatics" {
+		t.Fatalf("OrDefault: got %q", got)
+	}
+	if got := ctx.AbcNodesNomadNamespaceForCLI(); got != "su-mbhg-bioinformatics" {
+		t.Fatalf("ForCLI: got %q", got)
+	}
+}
+
+func TestAbcNodesNomadNamespaceExplicitOverridesWhoami(t *testing.T) {
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Admin: Admin{
+			Whoami:   "su-mbhg-bioinformatics_admin",
+			ABCNodes: &AdminABCNodes{NomadNamespace: "override-ns"},
+		},
+	}
+	if got := ctx.AbcNodesNomadNamespaceOrDefault(); got != "override-ns" {
+		t.Fatalf("OrDefault: got %q", got)
+	}
+}

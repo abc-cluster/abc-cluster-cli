@@ -54,6 +54,10 @@ The following features were implemented after the v7 epoch to support **`cluster
 | `nomadClientForCapabilities()`: bypass cloud-gateway env vars (`ABC_ADDR`/`NOMAD_ADDR`) for abc-nodes Nomad access | ✅ Done | `cmd/cluster/capabilities.go` |
 | `cfg.ResolveContextName()` alias fix in capabilities sync: write to canonical context name, not alias, to prevent `Save()` collision | ✅ Done | `cmd/cluster/capabilities.go` |
 
+### 0.6 Planned Nomad namespace: `applications`
+
+ACL and operations docs describe a future **`applications`** Nomad namespace for **cross-group platform jobs** (e.g. **GVDS**, **BRIMS**) — separate from **`services`** (abc-nodes floor) and from **`su-mbhg-*`** research namespaces. Rollout steps, policy sketch, and priority notes live in **`deployments/abc-nodes/acl/ACCESS_POLICY_PLAN.md`** (*Planned: `applications` namespace*). The CLI already supports arbitrary `nomad_namespace` / `admin.whoami` derivation per context; no code change is required to *use* the namespace once it exists in Nomad.
+
 ### 0.2 Structural decisions
 
 - **Aliases:** `abc accounting` is canonical for cloud spend / namespace caps; `abc cost` and `abc budget` remain **aliases**. Other old names (`abc node`, `abc namespace`, `abc service`) have been removed cleanly without backward-compat shims.
@@ -1706,3 +1710,4 @@ a "not yet implemented" message at runtime.
 | `#ABC --green` preamble | §0.6 phase 3 | Low — deferred to green energy window |
 | `#ABC --budget=<cap>` preamble | §0.6 phase 3 | Low — job-level spend cap |
 | Enhanced `--dry-run` (cost/carbon estimate) | §0.6 phase 3 | Low |
+| Nomad `applications` namespace + ACLs for GVDS/BRIMS-style jobs | §0.6 + `deployments/abc-nodes/acl/*` | Medium — infra doc + `namespace apply` / policies when ready |
