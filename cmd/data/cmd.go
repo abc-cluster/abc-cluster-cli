@@ -64,5 +64,7 @@ func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFact
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
 	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace))
 	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace))
+	cmd.AddCommand(newLsCmd())
+	cmd.AddCommand(newStatCmd())
 	return cmd
 }

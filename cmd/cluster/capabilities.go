@@ -203,6 +203,15 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// ── Step 4: Populate Grafana dashboard URL if not already set ────────────
+	if caps.Monitoring {
+		grafanaHTTP, ok := config.GetAdminFloorField(&ctx.Admin.Services, "grafana", "http")
+		if ok && grafanaHTTP != "" {
+			dashboardURL := strings.TrimRight(grafanaHTTP, "/") + "/d/abc-nodes-overview"
+			_ = config.SetAdminFloorField(&ctx.Admin.Services, "grafana", "dashboard", dashboardURL)
+		}
+	}
+
 	ctx.Capabilities = caps
 	cfg.Contexts[ctxName] = ctx
 
@@ -212,6 +221,13 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Capabilities synced for context %q:\n", ctxName)
 	printCapabilities(cmd, caps)
+
+	// Emit vault sealed warning after sync so it's visible without --verbose.
+	if caps.Secrets == "vault+sealed" {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"\n  Warning: Vault is running but SEALED — secrets backend unavailable.\n"+
+				"  Run: abc admin services vault cli -- operator unseal\n\n")
+	}
 	return nil
 }
 
@@ -391,6 +407,13 @@ func printCapabilities(cmd *cobra.Command, caps *config.Capabilities) {
 	fmt.Fprintf(w, "  proxy:         %v\n", caps.Proxy)
 	if !caps.LastSynced.IsZero() {
 		fmt.Fprintf(w, "  last_synced:   %s\n", caps.LastSynced.Format(time.RFC3339))
+	}
+	// Load config to show dashboard URL if available.
+	if cfg, err := config.Load(); err == nil {
+		ctx := cfg.ActiveCtx()
+		if dash, ok := config.GetAdminFloorField(&ctx.Admin.Services, "grafana", "dashboard"); ok && dash != "" {
+			fmt.Fprintf(w, "  dashboard:     %s\n", dash)
+		}
 	}
 }
 

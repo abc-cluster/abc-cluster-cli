@@ -14,6 +14,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
 	"github.com/spf13/cobra"
 )
 
@@ -253,6 +254,9 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Warnings: %s\n", resp.Warnings)
 	}
 
+	// Fire-and-forget Grafana annotation so the dashboard timeline marks this submit.
+	go annotateGrafanaPipelineStart(spec.Name, jobName, resp.EvalID)
+
 	wait, _ := cmd.Flags().GetBool("wait")
 	streamLogs, _ := cmd.Flags().GetBool("logs")
 
@@ -332,4 +336,29 @@ func newRunUUID() string {
 		return fmt.Sprintf("run-%d", os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+// annotateGrafanaPipelineStart writes a point annotation to Grafana so
+// pipeline start events appear on the dashboard timeline.
+// Called as a goroutine — failure is silently ignored.
+func annotateGrafanaPipelineStart(pipelineName, jobName, evalID string) {
+	cfg, err := abccfg.Load()
+	if err != nil {
+		return
+	}
+	ctx := cfg.ActiveCtx()
+	if ctx.Capabilities == nil || !ctx.Capabilities.Monitoring {
+		return
+	}
+	grafanaHTTP, ok := abccfg.GetAdminFloorField(&ctx.Admin.Services, "grafana", "http")
+	if !ok || grafanaHTTP == "" {
+		return
+	}
+	user, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, "grafana", "user")
+	password, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, "grafana", "password")
+
+	gc := floor.NewGrafanaClient(grafanaHTTP, user, password)
+	text := fmt.Sprintf("Pipeline started: %s (job: %s, eval: %s)", pipelineName, jobName, evalID)
+	tags := []string{"abc", "pipeline", "started"}
+	_ = gc.Annotate(context.Background(), text, tags)
 }

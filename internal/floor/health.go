@@ -155,10 +155,23 @@ func ProbeMinIO(ctx context.Context, baseURL string) ServiceHealth {
 	return ServiceHealth{Name: "minio", URL: baseURL, Healthy: ok, Detail: detail}
 }
 
-// ProbeRustFS checks RustFS /minio/health/live (RustFS mirrors MinIO endpoints).
+// ProbeRustFS checks RustFS reachability. RustFS mirrors MinIO endpoints but may
+// require auth on /minio/health/live; a 403 response is treated as "reachable".
 func ProbeRustFS(ctx context.Context, baseURL string) ServiceHealth {
-	ok, detail := probeHTTP(ctx, strings.TrimRight(baseURL, "/")+"/minio/health/live")
-	return ServiceHealth{Name: "rustfs", URL: baseURL, Healthy: ok, Detail: detail}
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(baseURL, "/")+"/minio/health/live", nil)
+	if err != nil {
+		return ServiceHealth{Name: "rustfs", URL: baseURL, Detail: "unreachable"}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ServiceHealth{Name: "rustfs", URL: baseURL, Detail: "unreachable"}
+	}
+	resp.Body.Close()
+	// 200 = healthy (anonymous ok); 403 = reachable but auth required — still up.
+	healthy := resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusForbidden
+	return ServiceHealth{Name: "rustfs", URL: baseURL, Healthy: healthy}
 }
 
 // ProbeTusd checks tusd / for a 200 or known response.
