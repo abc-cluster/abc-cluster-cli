@@ -33,6 +33,7 @@ variable "loki_bucket" {
 }
 
 job "abc-nodes-loki" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

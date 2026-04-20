@@ -1,0 +1,248 @@
+# Nomad ACL — Multi-Group Cluster Sharing (abc-nodes / aither)
+
+Cluster: **aither** — `http://100.70.185.46:4646` — ACL enabled, single node.
+
+This directory contains the ACL policy design and bootstrap scripts for sharing
+the abc-nodes cluster between multiple research groups running Nextflow pipelines.
+See `ACCESS_POLICY_PLAN.md` for the full policy specification including MinIO,
+Vault, Grafana, and Wave.
+
+---
+
+## Design goals
+
+| Goal | Mechanism |
+|------|-----------|
+| Isolate research-group jobs | One Nomad namespace per group |
+| Protect infrastructure jobs | Dedicated `services` namespace (admin-only) |
+| Control who submits jobs | ACL policy per group × role |
+| Prioritise between groups | `priority` field + batch preemption |
+| Per-user S3 data isolation | MinIO `${aws:username}` IAM policy condition |
+| Upload authentication | Traefik ForwardAuth → `abc-nodes-auth` |
+
+> **Resource quotas** are a Nomad Enterprise feature. Fairness in OSS relies
+> on job priority + preemption only.
+
+---
+
+## Directory layout
+
+```
+acl/
+├── README.md                              # This file
+├── ACCESS_POLICY_PLAN.md                  # Full policy specification
+├── apply-su-mbhg.sh                       # Bootstrap script (run once)
+├── tokens.env                             # Generated token secrets (chmod 600, gitignored)
+├── server-preemption-patch.hcl            # Snippet to persist preemption in server HCL
+│
+├── namespaces/
+│   ├── su-mbhg-bioinformatics.hcl         # Priority 70 (high)
+│   └── su-mbhg-hostgen.hcl               # Priority 50 (normal)
+│
+├── policies/
+│   ├── admin.hcl                          # Full cluster admin
+│   ├── services-admin.hcl                 # services namespace admin (cluster-admin only)
+│   ├── observer.hcl                       # Read-only, all namespaces
+│   ├── su-mbhg-bioinformatics-group-admin.hcl
+│   ├── su-mbhg-bioinformatics-submit.hcl
+│   ├── su-mbhg-bioinformatics-member.hcl
+│   ├── su-mbhg-hostgen-group-admin.hcl
+│   ├── su-mbhg-hostgen-submit.hcl
+│   └── su-mbhg-hostgen-member.hcl
+│
+├── minio-policies/
+│   ├── su-mbhg-bioinformatics-group-admin.json
+│   ├── su-mbhg-bioinformatics-member.json  # Per-user prefix isolation
+│   ├── su-mbhg-hostgen-group-admin.json
+│   ├── su-mbhg-hostgen-member.json
+│   └── pipeline-service-account.json
+│
+├── tusd-auth/
+│   ├── README.md                          # ForwardAuth service docs
+│   ├── abc-nodes-auth.nomad.hcl           # Auth service job (→ services namespace)
+│   └── traefik-nomad-auth.yml             # Traefik dynamic config
+│
+└── nextflow-configs/                      # Nextflow config templates per group
+```
+
+---
+
+## Namespace + priority model
+
+```
+services namespace      — cluster infrastructure (admin-only)
+  priority 90           — core storage/proxy
+  priority 80           — auth + notification helpers
+
+su-mbhg-bioinformatics  — research group, HIGH priority
+  priority 70           — preempts hostgen batch jobs
+
+su-mbhg-hostgen         — research group, NORMAL priority
+  priority 50           — can be preempted by bioinformatics
+
+(shared opportunistic)
+  priority 30           — always preemptible
+```
+
+---
+
+## Token + user naming
+
+**Convention: `su-mbhg-<group>_<username>`**
+
+The Nomad token Name equals the MinIO username. The Nomad token SecretID equals
+the MinIO secret key. One credential pair per user, no extra distribution needed.
+
+| Token / MinIO user | Nomad policy | MinIO policy |
+|---|---|---|
+| `su-mbhg-bioinformatics_submit` | `su-mbhg-bioinformatics-submit` | group-admin |
+| `su-mbhg-bioinformatics_admin` | `su-mbhg-bioinformatics-group-admin` | group-admin |
+| `su-mbhg-bioinformatics_alice` | `su-mbhg-bioinformatics-member` | member |
+| `su-mbhg-hostgen_submit` | `su-mbhg-hostgen-submit` | group-admin |
+| `su-mbhg-hostgen_admin` | `su-mbhg-hostgen-group-admin` | group-admin |
+| `su-mbhg-hostgen_bob` | `su-mbhg-hostgen-member` | member |
+
+---
+
+## Step-by-step setup (already applied on aither)
+
+### 1. Enable ACL (server restart required)
+
+Add to each Nomad server HCL:
+```hcl
+acl { enabled = true }
+```
+Then `sudo systemctl restart nomad` on each node (rolling for multi-node).
+
+### 2. Bootstrap the management token
+
+```bash
+nomad acl bootstrap
+# Save the SecretID as your management token.
+# Store it in Vault at secret/abc-nodes/nomad/management-token
+# and wire into abc: abc config set contexts.min.admin.services.nomad.nomad_token <token>
+```
+
+### 3. Enable batch preemption
+
+```bash
+export NOMAD_ADDR=http://100.70.185.46:4646
+export NOMAD_TOKEN=<management-token>
+abc admin services nomad cli -- operator scheduler set-config \
+  -preempt-batch-scheduler=true \
+  -preempt-sysbatch-scheduler=true
+```
+
+### 4. Apply namespaces and policies
+
+```bash
+# Namespaces (note: no -f flag)
+abc admin services nomad cli -- namespace apply acl/namespaces/su-mbhg-bioinformatics.hcl
+abc admin services nomad cli -- namespace apply acl/namespaces/su-mbhg-hostgen.hcl
+
+# Policies
+for policy in services-admin observer \
+  su-mbhg-bioinformatics-group-admin su-mbhg-bioinformatics-submit su-mbhg-bioinformatics-member \
+  su-mbhg-hostgen-group-admin su-mbhg-hostgen-submit su-mbhg-hostgen-member; do
+  abc admin services nomad cli -- acl policy apply \
+    -description "$policy" "$policy" "acl/policies/${policy}.hcl"
+done
+```
+
+### 5. Create tokens
+
+```bash
+# See acl/apply-su-mbhg.sh for the full bootstrap script.
+bash acl/apply-su-mbhg.sh
+# Tokens written to acl/tokens.env (chmod 600 — never commit)
+```
+
+### 6. Set up MinIO
+
+```bash
+MC=~/.abc/binaries/mc
+$MC alias set sunminio http://100.70.185.46:9000 minioadmin minioadmin --api s3v4
+
+# Buckets
+$MC mb sunminio/su-mbhg-bioinformatics
+$MC mb sunminio/su-mbhg-hostgen
+echo "" | $MC pipe sunminio/su-mbhg-bioinformatics/shared/.keep
+echo "" | $MC pipe sunminio/su-mbhg-hostgen/shared/.keep
+
+# IAM policies
+for p in su-mbhg-bioinformatics-group-admin su-mbhg-bioinformatics-member \
+         su-mbhg-hostgen-group-admin su-mbhg-hostgen-member; do
+  $MC admin policy create sunminio "$p" "acl/minio-policies/${p}.json"
+done
+
+# IAM users (source tokens.env first)
+source acl/tokens.env
+$MC admin user add sunminio su-mbhg-bioinformatics_alice $NOMAD_TOKEN_BIO_ALICE
+$MC admin policy attach sunminio su-mbhg-bioinformatics-member \
+  --user su-mbhg-bioinformatics_alice
+# ... repeat for other users
+```
+
+### 7. Deploy abc-nodes-auth
+
+```bash
+abc admin services nomad cli -- job run \
+  deployments/abc-nodes/nomad/abc-nodes-auth.nomad.hcl
+
+# Place Traefik ForwardAuth config (hot-reload)
+sudo cp acl/tusd-auth/traefik-nomad-auth.yml /etc/traefik/dynamic/
+```
+
+---
+
+## Adding a new research group
+
+1. Copy a namespace HCL → `acl/namespaces/su-mbhg-<newgroup>.hcl`; set name, priority.
+2. Copy the three policy HCLs → `acl/policies/su-mbhg-<newgroup>-{group-admin,submit,member}.hcl`; update namespace name.
+3. Copy the two MinIO policy JSONs → `acl/minio-policies/su-mbhg-<newgroup>-{group-admin,member}.json`; update bucket name.
+4. Apply all five files (namespace + 2 Nomad policies + 2 MinIO policies).
+5. Create tokens and MinIO users following the convention above.
+6. Extend `POLICY_MAP` in `deployments/abc-nodes/nomad/abc-nodes-auth.nomad.hcl` and redeploy.
+
+---
+
+## Common operations
+
+```bash
+# List namespaces
+abc admin services nomad cli -- namespace list
+
+# List policies
+abc admin services nomad cli -- acl policy list
+
+# List tokens
+abc admin services nomad cli -- acl token list
+
+# Check running jobs in services namespace
+abc admin services nomad cli -- job status -namespace services
+
+# List MinIO users
+~/.abc/binaries/mc admin user list sunminio
+
+# Verify auth service
+curl -si -H "X-Nomad-Token: $(grep BIO_ALICE acl/tokens.env | cut -d= -f2)" \
+  http://100.70.185.46:9191/auth
+```
+
+---
+
+## Optional: Node pools
+
+Node pools (Nomad 1.6+) provide physical node isolation beyond priority.
+Proposed split when additional nodes are added:
+
+| Pool | Nodes | Purpose |
+|------|-------|---------|
+| `infra` | aither (and future infra node) | Services, head jobs |
+| `compute` | future compute nodes | Pipeline task allocations |
+
+Apply: `abc admin services nomad cli -- node-pool apply acl/node-pools/infra.hcl`  
+Then add `node_pool = "infra"` to the relevant `client {}` stanzas and restart.
+
+> `node_pool_config` inside a **namespace** HCL is **Enterprise-only** in Nomad OSS
+> and will cause a 500 error if included. Omit it.

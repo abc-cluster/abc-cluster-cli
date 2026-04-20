@@ -24,6 +24,7 @@ variable "minio_root_password" {
 }
 
 job "abc-nodes-minio" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

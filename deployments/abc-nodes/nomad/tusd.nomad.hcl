@@ -54,6 +54,7 @@ variable "s3_region" {
 }
 
 job "abc-nodes-tusd" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

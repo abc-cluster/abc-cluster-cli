@@ -1070,6 +1070,12 @@ func persistNomadContext(advertiseAddr, token string, httpPort int) error {
 		ctx.Admin.Services.Nomad.Addr = "http://" + hostPort
 	}
 	ctx.Admin.Services.Nomad.Token = token
+	if strings.TrimSpace(ctx.Admin.Services.Nomad.Addr) != "" && strings.TrimSpace(token) != "" {
+		nc := utils.NewNomadClient(ctx.Admin.Services.Nomad.Addr, token, ctx.NomadRegion())
+		if label, err := utils.NomadTokenWhoamiLabel(context.Background(), nc); err == nil && label != "" {
+			ctx.SetAuthWhoami(label)
+		}
+	}
 	cfg.Contexts[canon] = ctx
 	cfg.ActiveContext = ctxName
 	return cfg.Save()

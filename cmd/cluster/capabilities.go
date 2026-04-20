@@ -12,6 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// grafanaFloorDashboardPath is the URL path for the dashboard provisioned in
+// deployments/abc-nodes/nomad/grafana.nomad.hcl (JSON uid: abc-nodes-nomad-loki-logs).
+const grafanaFloorDashboardPath = "/d/abc-nodes-nomad-loki-logs/nomad-allocation-logs"
+
 // nomadClientForCapabilities builds a NomadClient for direct abc-nodes access.
 //
 // Unlike nomadClientFromCmd, it does NOT fall back to ABC_ADDR / NOMAD_ADDR env
@@ -207,12 +211,15 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 	if caps.Monitoring {
 		grafanaHTTP, ok := config.GetAdminFloorField(&ctx.Admin.Services, "grafana", "http")
 		if ok && grafanaHTTP != "" {
-			dashboardURL := strings.TrimRight(grafanaHTTP, "/") + "/d/abc-nodes-overview"
+			dashboardURL := strings.TrimRight(grafanaHTTP, "/") + grafanaFloorDashboardPath
 			_ = config.SetAdminFloorField(&ctx.Admin.Services, "grafana", "dashboard", dashboardURL)
 		}
 	}
 
 	ctx.Capabilities = caps
+	if label, err := utils.NomadTokenWhoamiLabel(bg, nc); err == nil && label != "" {
+		ctx.SetAuthWhoami(label)
+	}
 	cfg.Contexts[ctxName] = ctx
 
 	if err := cfg.Save(); err != nil {

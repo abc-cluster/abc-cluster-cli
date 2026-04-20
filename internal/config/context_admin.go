@@ -152,6 +152,11 @@ func normalizeContextNomad(ctx *Context) {
 	if strings.TrimSpace(ctx.Admin.Services.Nomad.Token) == "" {
 		ctx.Admin.Services.Nomad.Token = token
 	}
+	if ctx.Admin.Services.Nomad != nil {
+		if a := strings.TrimSpace(ctx.Admin.Services.Nomad.Addr); a != "" {
+			ctx.Admin.Services.Nomad.Addr = CanonicalNomadAPIAddrForYAML(a)
+		}
+	}
 	if strings.TrimSpace(ctx.Admin.Services.Nomad.Addr) == "" && strings.TrimSpace(ctx.Admin.Services.Nomad.Token) == "" {
 		ctx.Admin.Services.Nomad = nil
 	}

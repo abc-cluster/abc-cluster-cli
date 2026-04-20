@@ -1,8 +1,28 @@
 {
   "__inputs": [],
   "__requires": [],
-  "annotations": { "list": [] },
-  "description": "abc-nodes cluster monitoring: Nomad jobs, node resources, alloc metrics, logs, and system health",
+  "annotations": { "list": [
+    {
+      "builtIn": 1,
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "enable": true,
+      "hide": true,
+      "iconColor": "rgba(0, 211, 255, 1)",
+      "name": "Annotations & Alerts",
+      "type": "dashboard"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "enable": true,
+      "expr": "changes(nomad_nomad_job_status_running[1m]) > 0",
+      "hide": false,
+      "iconColor": "green",
+      "name": "Job state changes",
+      "step": "60s",
+      "titleFormat": "job event"
+    }
+  ]},
+  "description": "abc-nodes cluster monitoring: Nomad jobs, node resources, alloc metrics, group/user fairness, and logs",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -99,6 +119,7 @@
       "type": "stat",
       "targets": [{ "datasource": { "uid": "prometheus" }, "expr": "min(nomad_client_uptime)", "legendFormat": "uptime" }]
     },
+
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
@@ -118,8 +139,8 @@
       "title": "CPU — Allocated vs Unallocated",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocated_cpu", "legendFormat": "allocated {{host}}" },
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_unallocated_cpu", "legendFormat": "unallocated {{host}}" }
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocated_cpu{host=~\"$node\"}", "legendFormat": "allocated {{host}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_unallocated_cpu{host=~\"$node\"}", "legendFormat": "unallocated {{host}}" }
       ]
     },
     {
@@ -134,8 +155,8 @@
       "title": "Memory — Allocated vs Unallocated",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocated_memory", "legendFormat": "allocated {{host}}" },
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_unallocated_memory", "legendFormat": "unallocated {{host}}" }
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocated_memory{host=~\"$node\"}", "legendFormat": "allocated {{host}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_unallocated_memory{host=~\"$node\"}", "legendFormat": "unallocated {{host}}" }
       ]
     },
     {
@@ -201,11 +222,12 @@
         { "datasource": { "uid": "prometheus" }, "expr": "rate(node_network_transmit_bytes_total{device!~\"lo|veth.*\"}[2m])", "legendFormat": "tx {{device}}" }
       ]
     },
+
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
       "id": 102,
-      "title": "Job & Allocation Status",
+      "title": "Job & Allocation Status (all namespaces)",
       "type": "row"
     },
     {
@@ -220,10 +242,10 @@
       "title": "Job Summary — Task Group Counts",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_running{namespace=\"default\"}", "legendFormat": "running {{exported_job}}" },
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_complete{namespace=\"default\"}", "legendFormat": "complete {{exported_job}}" },
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_failed{namespace=\"default\"}", "legendFormat": "failed {{exported_job}}" },
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_queued{namespace=\"default\"}", "legendFormat": "queued {{exported_job}}" }
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_running{namespace=~\"$namespace\"}", "legendFormat": "running {{namespace}}/{{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_complete{namespace=~\"$namespace\"}", "legendFormat": "complete {{namespace}}/{{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_failed{namespace=~\"$namespace\"}", "legendFormat": "failed {{namespace}}/{{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_queued{namespace=~\"$namespace\"}", "legendFormat": "queued {{namespace}}/{{exported_job}}" }
       ]
     },
     {
@@ -238,7 +260,7 @@
       "title": "Alloc CPU Usage %",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_cpu_total_percent / 100", "legendFormat": "{{exported_job}}/{{task}}" }
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\",exported_job=~\"$job\"} / 100", "legendFormat": "{{namespace}}/{{exported_job}}/{{task}}" }
       ]
     },
     {
@@ -253,7 +275,7 @@
       "title": "Alloc Memory RSS",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_memory_rss", "legendFormat": "{{exported_job}}/{{task}}" }
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_memory_rss{namespace=~\"$namespace\",exported_job=~\"$job\"}", "legendFormat": "{{namespace}}/{{exported_job}}/{{task}}" }
       ]
     },
     {
@@ -268,12 +290,208 @@
       "title": "Alloc Memory Usage",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_memory_usage", "legendFormat": "{{exported_job}}/{{task}}" }
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_memory_usage{namespace=~\"$namespace\",exported_job=~\"$job\"}", "legendFormat": "{{namespace}}/{{exported_job}}/{{task}}" }
       ]
     },
+
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "id": 105,
+      "title": "Group Fairness — Resource Share by Namespace",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "CPU MHz currently allocated per research group namespace. A dominant slice means that group is monopolising the cluster.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "MHz", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 43 },
+      "id": 50,
+      "options": {
+        "displayLabels": ["name", "value"],
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value"] },
+        "pieType": "donut",
+        "tooltip": { "mode": "single" }
+      },
+      "title": "CPU Share by Group (now)",
+      "type": "piechart",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace) (nomad_client_allocs_cpu_allocated_mhz)", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Memory (MB) currently allocated per research group namespace.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "mbytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 43 },
+      "id": 51,
+      "options": {
+        "displayLabels": ["name", "value"],
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value"] },
+        "pieType": "donut",
+        "tooltip": { "mode": "single" }
+      },
+      "title": "Memory Share by Group (now)",
+      "type": "piechart",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace) (nomad_client_allocs_memory_allocated) / 1048576", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Number of running task group allocations per namespace. Imbalance signals group monopolisation.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 43 },
+      "id": 52,
+      "options": {
+        "displayLabels": ["name", "value"],
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value"] },
+        "pieType": "donut",
+        "tooltip": { "mode": "single" }
+      },
+      "title": "Running Allocations by Group (now)",
+      "type": "piechart",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace) (nomad_nomad_job_summary_running)", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "CPU usage trend per namespace over time — reveals if one group is consistently crowding others.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "MHz", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 50 },
+      "id": 53,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "CPU Allocation Trend by Group",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace) (nomad_client_allocs_cpu_allocated_mhz)", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Memory allocation trend per namespace over time.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "mbytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 50 },
+      "id": 54,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Memory Allocation Trend by Group",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace) (nomad_client_allocs_memory_allocated) / 1048576", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Queued allocations per namespace — a persistent queue means that group cannot schedule and may be starving the others.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 57 },
+      "id": 55,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Queued Allocations by Group (scheduler pressure)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace) (nomad_nomad_job_summary_queued)", "legendFormat": "{{namespace}} queued" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Preempted allocations — Nomad has evicted lower-priority jobs to make room. Non-zero means fairness enforcement is working.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 57 },
+      "id": 56,
+      "options": { "legend": { "calcs": ["lastNotNull", "sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Preempted Allocations (fairness enforcement)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "increase(nomad_nomad_plan_preemption_eval_count[5m])", "legendFormat": "preemptions/5m" }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 64 },
+      "id": 106,
+      "title": "Per-Group Job Detail — $namespace",
+      "type": "row",
+      "repeat": "namespace",
+      "repeatDirection": "h"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 65 },
+      "id": 60,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Jobs in $namespace",
+      "type": "timeseries",
+      "repeatByVariable": "namespace",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_running{namespace=\"$namespace\"}", "legendFormat": "running {{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_failed{namespace=\"$namespace\"}", "legendFormat": "failed {{exported_job}}" },
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_job_summary_queued{namespace=\"$namespace\"}", "legendFormat": "queued {{exported_job}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 65 },
+      "id": 61,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "CPU % by Task in $namespace",
+      "type": "timeseries",
+      "repeatByVariable": "namespace",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_cpu_total_percent{namespace=\"$namespace\"} / 100", "legendFormat": "{{exported_job}}/{{task}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 65 },
+      "id": 62,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Memory RSS by Task in $namespace",
+      "type": "timeseries",
+      "repeatByVariable": "namespace",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "nomad_client_allocs_memory_rss{namespace=\"$namespace\"}", "legendFormat": "{{exported_job}}/{{task}}" }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 72 },
       "id": 103,
       "title": "Nomad Scheduler & RPC",
       "type": "row"
@@ -284,7 +502,7 @@
         "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 43 },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 73 },
       "id": 30,
       "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "title": "Scheduler Evals / Allocs",
@@ -299,7 +517,7 @@
         "defaults": { "color": { "mode": "palette-classic" }, "unit": "ms", "min": 0 },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 43 },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 73 },
       "id": 31,
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "title": "RPC Request Latency (p99)",
@@ -308,16 +526,17 @@
         { "datasource": { "uid": "prometheus" }, "expr": "nomad_nomad_rpc_request{quantile=\"0.99\"}", "legendFormat": "p99 {{method}}" }
       ]
     },
+
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 50 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 80 },
       "id": 104,
-      "title": "Allocation Logs",
+      "title": "Allocation Logs — $namespace / $task",
       "type": "row"
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 51 },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 81 },
       "id": 40,
       "options": {
         "dedupStrategy": "none",
@@ -329,15 +548,15 @@
         "sortOrder": "Descending",
         "wrapLogMessage": false
       },
-      "title": "Nomad Alloc Logs (all tasks)",
+      "title": "Alloc Logs (namespace=$namespace  task=$task)",
       "type": "logs",
       "targets": [
-        { "datasource": { "uid": "loki" }, "expr": "{job=\"nomad-alloc\"} | task=~\".+\"", "legendFormat": "" }
+        { "datasource": { "uid": "loki" }, "expr": "{job=\"nomad-alloc\",task=~\"$task\"} | namespace=~\"$namespace\"", "legendFormat": "" }
       ]
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 65 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 95 },
       "id": 41,
       "options": {
         "dedupStrategy": "none",
@@ -349,17 +568,49 @@
         "sortOrder": "Descending",
         "wrapLogMessage": false
       },
-      "title": "Stderr Only (errors / warnings)",
+      "title": "Stderr Only (namespace=$namespace)",
       "type": "logs",
       "targets": [
-        { "datasource": { "uid": "loki" }, "expr": "{stream=\"stderr\"}", "legendFormat": "" }
+        { "datasource": { "uid": "loki" }, "expr": "{job=\"nomad-alloc\",stream=\"stderr\"} | namespace=~\"$namespace\"", "legendFormat": "" }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Log volume per group/namespace over time — spikes may indicate runaway jobs or errors.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 105 },
+      "id": 70,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Log Volume by Group (lines/min)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "loki" }, "expr": "sum by (namespace) (rate({job=\"nomad-alloc\"}[1m]))", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Stderr log rate per group — a persistently high stderr rate often signals job failures.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 105 },
+      "id": 71,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Stderr Rate by Group (error signal)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "loki" }, "expr": "sum by (namespace) (rate({job=\"nomad-alloc\",stream=\"stderr\"}[1m]))", "legendFormat": "{{namespace}} stderr" }
       ]
     }
   ],
   "refresh": "30s",
   "schemaVersion": 36,
   "style": "dark",
-  "tags": ["abc-nodes", "nomad", "observability"],
+  "tags": ["abc-nodes", "nomad", "observability", "multi-group"],
   "templating": {
     "list": [
       {
@@ -374,23 +625,41 @@
         "query": { "query": "label_values(nomad_client_uptime, host)", "refId": "StandardVariableQuery" },
         "refresh": 2,
         "regex": "",
-        "sort": 0,
+        "sort": 1,
         "type": "query",
         "label": "Node"
       },
       {
         "current": {},
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(nomad_nomad_job_summary_running, exported_job)",
+        "definition": "label_values(nomad_nomad_job_summary_running, namespace)",
         "hide": 0,
         "includeAll": true,
-        "multi": false,
-        "name": "job",
+        "allValue": ".*",
+        "multi": true,
+        "name": "namespace",
         "options": [],
-        "query": { "query": "label_values(nomad_nomad_job_summary_running, exported_job)", "refId": "StandardVariableQuery" },
+        "query": { "query": "label_values(nomad_nomad_job_summary_running, namespace)", "refId": "StandardVariableQuery" },
         "refresh": 2,
         "regex": "",
-        "sort": 0,
+        "sort": 1,
+        "type": "query",
+        "label": "Group / Namespace"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(nomad_nomad_job_summary_running{namespace=~\"$namespace\"}, exported_job)",
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "name": "job",
+        "options": [],
+        "query": { "query": "label_values(nomad_nomad_job_summary_running{namespace=~\"$namespace\"}, exported_job)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
         "type": "query",
         "label": "Job"
       },
@@ -400,13 +669,14 @@
         "definition": "label_values(task)",
         "hide": 0,
         "includeAll": true,
+        "allValue": ".+",
         "multi": false,
         "name": "task",
         "options": [],
         "query": "label_values(task)",
         "refresh": 2,
         "regex": "",
-        "sort": 0,
+        "sort": 1,
         "type": "query",
         "label": "Task"
       }
@@ -417,5 +687,5 @@
   "timezone": "browser",
   "title": "abc-nodes Cluster Overview",
   "uid": "abc-nodes-overview",
-  "version": 1
+  "version": 2
 }

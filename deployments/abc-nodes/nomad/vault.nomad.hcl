@@ -47,6 +47,7 @@ variable "vault_node_id" {
 }
 
 job "abc-nodes-vault" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -122,7 +123,10 @@ EOF
 
         check {
           type     = "http"
-          path     = "/v1/sys/health?standbyok=true&sealedok=true&uninitok=true"
+          # standbyok   → return 200 when in standby (instead of 429)
+          # uninitcode  → return 200 when uninitialized (instead of 501)
+          # sealedcode  → return 200 when sealed (instead of 503)
+          path     = "/v1/sys/health?standbyok=true&uninitcode=200&sealedcode=200"
           interval = "15s"
           timeout  = "3s"
         }

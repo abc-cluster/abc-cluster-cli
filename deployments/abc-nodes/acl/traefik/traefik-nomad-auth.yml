@@ -1,0 +1,45 @@
+# Traefik dynamic configuration — Nomad token ForwardAuth for tusd
+#
+# Drop this file into the Traefik file-provider directory (configured via
+# --providers.file.directory in the Traefik Nomad job).
+#
+# What this does:
+#   - Adds a ForwardAuth middleware called "nomad-auth" that calls the
+#     abc-nodes-auth sidecar on port 9191.
+#   - Attaches the middleware to the tusd router so every upload request
+#     must carry a valid Nomad ACL token.
+#   - Forwards the X-Auth-User, X-Auth-Group, X-Auth-Namespace headers
+#     to tusd (tusd ignores them but they appear in tusd access logs and
+#     can be used for future per-user quota enforcement).
+#
+# Users authenticate by setting the Nomad token as an HTTP header:
+#   curl -H "X-Nomad-Token: <token>" http://tusd.aither/files/ ...
+#   curl -H "Authorization: Bearer <token>" http://tusd.aither/files/ ...
+
+http:
+  middlewares:
+    nomad-auth:
+      forwardAuth:
+        address: "http://127.0.0.1:9191/auth"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - "X-Auth-User"
+          - "X-Auth-Group"
+          - "X-Auth-Namespace"
+
+  routers:
+    tusd-authenticated:
+      rule: "Host(`tusd.aither`) || Host(`100.70.185.46`) && PathPrefix(`/files`)"
+      middlewares:
+        - nomad-auth
+      service: tusd-backend
+      # Attach to the existing entryPoint used for tusd.
+      # Adjust entryPoint name to match your Traefik job config.
+      entryPoints:
+        - web
+
+  services:
+    tusd-backend:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080"

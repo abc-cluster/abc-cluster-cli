@@ -12,6 +12,7 @@ variable "prometheus_image" {
 }
 
 job "abc-nodes-prometheus" {
+  namespace = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

@@ -32,10 +32,12 @@
 //	      salt:     "..."
 //	    secrets:         # encrypted map; managed via abc secrets
 //	      my-key: "base64..."
+//	    auth:
+//	      whoami: "lab-admin"   # optional; Nomad ACL token label from GET /v1/acl/token/self (token Name, policies, or management)
 //	    admin:
 //	      services:
 //	        nomad:
-//	          nomad_addr:  "http://100.70.185.46:4646"  # must include :PORT for http (not assumed)
+//	          nomad_addr:  "http://100.70.185.46:4646"  # http must use an explicit :PORT on write; bare http://host is rewritten to :4646 on load/set
 //	          nomad_token: "s.123..."
 //	          nomad_region: "global"   # optional; Nomad RPC region (not the same as contexts.region)
 //	      abc_nodes:              # optional; static operator creds when cluster_type is abc-nodes
@@ -109,6 +111,9 @@ type Context struct {
 	// Singular "alias" in YAML is merged into Aliases on load.
 	Aliases []string `yaml:"aliases,omitempty"`
 	Alias   string   `yaml:"alias,omitempty"`
+
+	// Auth holds derived operator identity (e.g. Nomad ACL token self).
+	Auth *ContextAuth `yaml:"auth,omitempty"`
 }
 
 // Defaults holds user-level default values.
@@ -205,20 +210,51 @@ func (c *Config) Save() error {
 	return c.SaveTo(DefaultConfigPath())
 }
 
-// SaveTo writes the config to path, creating parent directories as needed.
-// Ensures version is set to current version before writing.
-func (c *Config) SaveTo(path string) error {
+// Validate checks alias rules, active_context resolution, Nomad addresses, and cluster_type values.
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
 	if err := validateNoAliasKeyCollidesWithPrimaryName(c); err != nil {
 		return err
 	}
 	if err := validateContextAliases(c); err != nil {
 		return err
 	}
+	if ac := strings.TrimSpace(c.ActiveContext); ac != "" && !c.HasDefinedContext(ac) {
+		return fmt.Errorf("active_context %q is not a defined context or alias", ac)
+	}
+	for _, name := range sortedContextNames(c.Contexts) {
+		ctx := c.Contexts[name]
+		if err := ValidateNomadAddrForContext(ctx.NomadAddr()); err != nil {
+			return fmt.Errorf("contexts.%s.admin.services.nomad.nomad_addr: %w", name, err)
+		}
+		if tier := strings.TrimSpace(ctx.ClusterType); tier != "" {
+			if _, ok := NormalizeClusterType(tier); !ok {
+				return fmt.Errorf("contexts.%s.cluster_type: invalid value %q (want %s, %s, or %s)", name, tier, ClusterTypeABCNodes, ClusterTypeABCCluster, ClusterTypeABCCloud)
+			}
+		}
+	}
+	return nil
+}
+
+// MarshalDocumentYAML returns canonical YAML (sorted keys at each mapping level) as written by Save/SaveTo.
+// It normalizes the file version field the same way SaveTo does.
+func (c *Config) MarshalDocumentYAML() ([]byte, error) {
+	c.Version = normalizeConfigFileVersionForSave(c.Version)
+	return c.marshalConfigDocumentYAML()
+}
+
+// SaveTo writes the config to path, creating parent directories as needed.
+// Ensures version is set to current version before writing.
+func (c *Config) SaveTo(path string) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	c.Version = normalizeConfigFileVersionForSave(c.Version)
-	data, err := c.marshalConfigDocumentYAML()
+	data, err := c.MarshalDocumentYAML()
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -278,6 +314,7 @@ func (c *Config) ClearContext(name string) {
 //
 // Nomad: contexts.<name>.admin.services.nomad.nomad_addr / nomad_token / nomad_region
 // (nomad_addr for http:// must include an explicit :PORT when set via config.Set).
+// Auth: contexts.<name>.auth.whoami (Nomad ACL token label; optional, often filled automatically).
 // abc-nodes floor: contexts.<name>.admin.abc_nodes.<field> (see AdminABCNodes).
 func (c *Config) Get(key string) (string, bool) {
 	parts := strings.Split(key, ".")
@@ -312,6 +349,15 @@ func (c *Config) Get(key string) (string, bool) {
 				return ctx.Crypt.Salt, true
 			}
 			return "", false
+		}
+		if len(parts) == 4 && parts[2] == "auth" {
+			if parts[3] != "whoami" {
+				return "", false
+			}
+			if ctx.Auth == nil {
+				return "", false
+			}
+			return ctx.Auth.Whoami, true
 		}
 		// contexts.<name>.admin.services.<svc>.<field>
 		if len(parts) == 6 && parts[2] == "admin" && parts[3] == "services" {
@@ -433,13 +479,16 @@ func (c *Config) Set(key, value string) error {
 				}
 				switch parts[5] {
 				case "nomad_addr":
-					v := strings.TrimSpace(value)
+					v := CanonicalNomadAPIAddrForYAML(strings.TrimSpace(value))
 					if err := ValidateNomadAddrForContext(v); err != nil {
 						return err
 					}
 					ctx.Admin.Services.Nomad.Addr = v
 				case "nomad_token":
 					ctx.Admin.Services.Nomad.Token = value
+					if strings.TrimSpace(value) == "" {
+						ctx.SetAuthWhoami("")
+					}
 				case "nomad_region":
 					ctx.Admin.Services.Nomad.Region = value
 				default:
@@ -496,6 +545,14 @@ func (c *Config) Set(key, value string) error {
 			default:
 				return fmt.Errorf("unknown crypt field %q (expected password or salt)", parts[3])
 			}
+			c.Contexts[canon] = ctx
+			return nil
+		}
+		if len(parts) == 4 && parts[2] == "auth" {
+			if parts[3] != "whoami" {
+				return fmt.Errorf("unknown auth field %q (expected whoami)", parts[3])
+			}
+			ctx.SetAuthWhoami(value)
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -595,6 +652,7 @@ func (c *Config) Unset(key string) error {
 					ctx.Admin.Services.Nomad.Addr = ""
 				case "nomad_token":
 					ctx.Admin.Services.Nomad.Token = ""
+					ctx.ClearAuth()
 				case "nomad_region":
 					ctx.Admin.Services.Nomad.Region = ""
 				default:
@@ -653,6 +711,19 @@ func (c *Config) Unset(key string) error {
 			default:
 				return fmt.Errorf("unknown crypt field %q (expected password or salt)", parts[3])
 			}
+			c.Contexts[canon] = ctx
+			return nil
+		}
+		if len(parts) == 4 && parts[2] == "auth" {
+			if parts[3] != "whoami" {
+				return fmt.Errorf("unknown auth field %q (expected whoami)", parts[3])
+			}
+			ctx.SetAuthWhoami("")
+			c.Contexts[canon] = ctx
+			return nil
+		}
+		if len(parts) == 3 && parts[2] == "auth" {
+			ctx.ClearAuth()
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -721,6 +792,9 @@ func (c *Config) AllKeys() [][2]string {
 		}
 		if ctx.ClusterType != "" {
 			out = append(out, [2]string{"contexts." + name + ".cluster_type", ctx.ClusterType})
+		}
+		if ctx.Auth != nil && strings.TrimSpace(ctx.Auth.Whoami) != "" {
+			out = append(out, [2]string{"contexts." + name + ".auth.whoami", ctx.Auth.Whoami})
 		}
 		if als := AliasesResolvingToCanon(c, name); len(als) > 0 {
 			out = append(out, [2]string{"contexts." + name + ".aliases", strings.Join(als, ",")})
