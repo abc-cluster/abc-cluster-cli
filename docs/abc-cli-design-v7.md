@@ -6,7 +6,7 @@
 > vs stubbed for future work.
 >
 > Codebase: `github.com/abc-cluster/abc-cluster-cli`
-> Design epoch: 2026-04-16 (config: Nomad under `admin.services.nomad`; see §0.4, §5, §6)
+> Design epoch: 2026-04-16 (config: Nomad under `admin.services.nomad`; see §0.4, §0.7–§0.8, §5, §6)
 
 ---
 
@@ -136,6 +136,60 @@ This subsection records **agreed platform direction** (2026): where persistent *
 - **CLI role:** when a control plane exists, the CLI should **call Khan** for admission-backed actions; it should not become a parallel XTDB client for policy-adjacent events in place of Jurist.
 
 **Non-goal:** presenting OSS-1 + XTDB as **grant-auditable** without the full OSS-2 admission chain — that would contradict the tier boundary in the vision document.
+
+### 0.7 User-facing credentials: “one token” vs what abc-nodes can do today
+
+This subsection records **design intent** for **group members** and **group admins** who want a **single human entry point** to everything allocated to them, and how that relates to **machine credentials** on **OSS-1 (abc-nodes)** vs **OSS-2 (`abc-khan-svc` and friends)**.
+
+**What “one token” should mean (target semantics)**
+
+- **One human credential** — typically **IdP sign-in + MFA** and/or a **short-lived session** at a portal or the CLI — that **gates** issuance of **scoped, short-lived** secrets for each subsystem.
+- It does **not** mean one **long-lived** string that is pasted into Nomad, S3, Vault, and every browser flow “because it is simpler.” That pattern maximizes **blast radius** and bypasses least-privilege boundaries.
+
+**Reality on abc-nodes today (OSS-1)**
+
+- **Nomad ACL**, **object storage (MinIO/S3)**, **edge upload (Traefik/tusd)**, **Vault**, and the **`abc` CLI** each expose **different auth shapes** (tokens, keys, headers, paths). Capabilities sync and config (§0.4, §0.5) reduce **wiring friction** but do not merge those planes into a single secret.
+- A **Nomad ACL token** is a **scheduler / cluster API** credential. It is **not** a good substitute for a **browser identity** or a **data-plane object-store principal** for every persona — especially where the goal is to limit who can **dispatch**, **read secrets**, and **reach raw APIs**.
+
+**What is feasible without a control-plane broker**
+
+- **Tighten audience:** only **cluster admins** who operate the floor should hold **raw Nomad / Vault / observability** credentials; **group members** use the **`abc` CLI** for day-to-day work (§0.8). **Browser** use for members is intentionally **narrow** — see §0.8 — not “every dashboard the cluster runs.”
+- **Automation** uses **service accounts** and **narrow policies**, not shared human tokens.
+- **Naming and mirroring** (consistent namespaces, labels, URLs) reduce **operator confusion**; they do **not** reduce **secret count** unless humans **never** receive downstream keys.
+
+**What requires OSS-2 (Khan-aligned admission)**
+
+- **True** “issue me everything I am allowed to touch” from **one identity** needs a **broker** that maps **subject + role** → **policies** → **scoped** Nomad, storage, Vault, and future API credentials. That is the role envisioned for **`abc-khan-svc`** (admission edge) with **Jurist** / **XTDB** for decisions where the vision applies — not a feature bolted onto the CLI alone.
+
+**Design tension to preserve explicitly**
+
+- A **single powerful Nomad token** “for everything” is **simple to document** but **unsafe** and **misaligned** with tier boundaries (§0.6).
+- The **preferred** pattern is **session (or CLI login) + exchange** for **short-lived, purpose-scoped** credentials, with **raw cluster tokens** reserved for **break-glass** and **automation** with clear ownership.
+
+**Non-goals**
+
+- Promising **OSS-1** users a **fully unified token vault** with **central audit** of every issuance — that belongs to **OSS-2** per `abc-cluster-vision.md`.
+- Encouraging **one Nomad ACL token** as the **only** credential researchers carry for **data upload**, **secrets**, and **job control** without an admission layer.
+
+### 0.8 OSS-1 access surface: CLI-first members, portal access for cluster admins
+
+This subsection records the **intended operator vs researcher experience** on **abc-nodes (OSS-1)** — what should be documented in runbooks and how **URLs** are presented to each persona.
+
+**Group members (researchers, pipeline users)**
+
+- **Primary surface:** the **`abc` CLI** — jobs, pipelines, data movement, secrets references, and workspace-oriented flows **without** expecting a web console for Nomad, Grafana, Vault, etc.
+- **Browser exceptions (by design):** workflows that genuinely need a **web object UX** — the **MinIO** (or compatible S3) **console** / bucket UI as deployed, and the **tusd** upload path with **Uppy** (or equivalent) where large or resumable uploads are driven from the browser. Those portals are **data-plane** entry points, not substitutes for the full cluster control plane.
+- **Non-goal:** training every member to bookmark **Nomad UI**, **Grafana**, **Loki Explore**, **Vault UI**, **Traefik dashboard**, and similar — those remain **operator tools** unless OSS-2 adds an institutional console.
+
+**Cluster admins (platform / lab operators)**
+
+- **Hold the relevant credentials** (Nomad ACL, MinIO root or admin keys where policy allows, Grafana stack auth, Vault bootstrap tokens or policies, service registry URLs, etc.) per **`abc infra compute add`**, **`abc admin services`**, and deployment runbooks.
+- **May use all service portals** the floor exposes — Nomad, observability, Vault, object store, upload edge, Traefik — for provisioning, debugging, and incident response. This is **explicitly in scope** for the **cluster-admin** / **sudo** tier (§2) in documentation and ACL planning (`deployments/abc-nodes/acl/`).
+
+**Why this split**
+
+- Reduces **credential sprawl** for members: they do not need scheduler or observability logins for routine science work.
+- Keeps **blast radius** aligned with roles: powerful tokens and dashboard access stay with people who accept operational responsibility for the node.
 
 ---
 

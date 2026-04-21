@@ -117,6 +117,7 @@ Supported keys follow a dot-separated path:
 		contexts.<name>.admin.services.rustfs.access_key    Optional; overrides abc_nodes for rustfs CLI when set
 		contexts.<name>.admin.services.rustfs.secret_key    Optional; paired with rustfs access_key
 		contexts.<name>.admin.services.rustfs.http          RustFS web console URL (browser login; config sync from Nomad console port)
+		contexts.<name>.admin.services.faasd.http           faasd/OpenFaaS gateway URL (Nomad job abc-nodes-faasd, port http; used by admin health + config sync)
 		contexts.<name>.admin.services.grafana_alloy.http   Grafana Alloy UI (Nomad job abc-nodes-alloy, port ui; config sync)
 		contexts.<name>.admin.services.vault.http           Vault API base URL (Nomad job abc-nodes-vault, port http; merged into VAULT_ADDR for vault cli)
 		contexts.<name>.admin.services.vault.access_key     Optional; merged into VAULT_TOKEN for vault cli; config sync sets from Nomad job when VAULT_DEV_ROOT_TOKEN_ID is in the abc-nodes-vault spec (lab -dev)

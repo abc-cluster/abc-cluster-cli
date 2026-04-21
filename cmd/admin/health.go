@@ -88,6 +88,13 @@ func runHealth(cmd *cobra.Command, _ []string) error {
 			}
 			return floor.ProbeTusd(c, u)
 		}},
+		{"faasd", func(c context.Context) floor.ServiceHealth {
+			u := svc("faasd", "http")
+			if u == "" {
+				return floor.ServiceHealth{Name: "faasd", Detail: "not configured"}
+			}
+			return floor.ProbeFaasd(c, u)
+		}},
 		{"prometheus", func(c context.Context) floor.ServiceHealth {
 			u := svc("prometheus", "http")
 			if u == "" {

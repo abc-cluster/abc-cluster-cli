@@ -180,6 +180,12 @@ func ProbeTusd(ctx context.Context, baseURL string) ServiceHealth {
 	return ServiceHealth{Name: "tusd", URL: baseURL, Healthy: ok, Detail: detail}
 }
 
+// ProbeFaasd checks faasd/OpenFaaS gateway /healthz.
+func ProbeFaasd(ctx context.Context, baseURL string) ServiceHealth {
+	ok, detail := probeHTTP(ctx, strings.TrimRight(baseURL, "/")+"/healthz")
+	return ServiceHealth{Name: "faasd", URL: baseURL, Healthy: ok, Detail: detail}
+}
+
 // ProbeAlloy checks Grafana Alloy's HTTP UI endpoint /-/healthy.
 func ProbeAlloy(ctx context.Context, baseURL string) ServiceHealth {
 	ok, detail := probeHTTP(ctx, strings.TrimRight(baseURL, "/")+"/-/healthy")
