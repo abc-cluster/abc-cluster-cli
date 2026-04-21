@@ -56,6 +56,10 @@ abc admin services nomad cli -- var put -namespace services -force \
   nomad/jobs/abc-nodes-ntfy \
   minio_access_key="${MINIO_ROOT_USER}" \
   minio_secret_key="${MINIO_ROOT_PASSWORD}"
+abc admin services nomad cli -- var put -namespace services -force \
+  nomad/jobs/abc-nodes-tusd \
+  minio_access_key="${MINIO_ROOT_USER}" \
+  minio_secret_key="${MINIO_ROOT_PASSWORD}"
 echo "    Done."
 echo ""
 

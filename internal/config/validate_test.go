@@ -57,14 +57,40 @@ func TestValidateClusterTypeInvalid(t *testing.T) {
 		Version: CurrentVersion,
 		Contexts: map[string]Context{
 			"lab": {
-				Endpoint:     "https://x",
-				AccessToken:  "t",
-				ClusterType:  "not-a-tier",
+				Endpoint:    "https://x",
+				AccessToken: "t",
+				ClusterType: "not-a-tier",
 			},
 		},
 	}
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected error for invalid cluster_type")
+	}
+}
+
+func TestValidateVaultFloorCredSourceVaultRejected(t *testing.T) {
+	t.Parallel()
+	c := &Config{
+		Version: CurrentVersion,
+		Contexts: map[string]Context{
+			"lab": {
+				Endpoint:    "https://x",
+				AccessToken: "t",
+				Admin: Admin{
+					Services: AdminServices{
+						Vault: &AdminFloorService{
+							HTTP: "http://127.0.0.1:8200",
+							CredSource: &AdminFloorCredSource{
+								Vault: map[string]string{"http": "vault+kv2@secret/data/x#y"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error for admin.services.vault.cred_source.vault")
 	}
 }
 

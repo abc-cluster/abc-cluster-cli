@@ -16,6 +16,15 @@ func (c Context) abcNodes() *AdminABCNodes {
 	return c.Admin.ABCNodes
 }
 
+// ABCNodes returns admin.abc_nodes for this context, or nil.
+func (c Context) ABCNodes() *AdminABCNodes { return c.abcNodes() }
+
+// MinioS3APIEndpoint returns admin.services.minio.endpoint, or legacy admin.abc_nodes.s3_endpoint.
+func (c Context) MinioS3APIEndpoint() string { return c.minioS3APIEndpoint() }
+
+// RustfsS3APIEndpoint returns admin.services.rustfs.endpoint.
+func (c Context) RustfsS3APIEndpoint() string { return c.rustfsS3APIEndpoint() }
+
 // Suffixes longest-first so e.g. "_researcher" wins over a hypothetical shorter overlap.
 var adminWhoamiNomadNamespaceSuffixes = []string{
 	"_researcher",

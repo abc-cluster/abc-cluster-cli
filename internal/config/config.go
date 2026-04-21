@@ -231,6 +231,9 @@ func (c *Config) Validate() error {
 		if err := ValidateNomadAddrForContext(ctx.NomadAddr()); err != nil {
 			return fmt.Errorf("contexts.%s.admin.services.nomad.nomad_addr: %w", name, err)
 		}
+		if err := ValidateAdminServicesFloorCredSource(ctx.Admin.Services); err != nil {
+			return fmt.Errorf("contexts.%s: %w", name, err)
+		}
 		if tier := strings.TrimSpace(ctx.ClusterType); tier != "" {
 			if _, ok := NormalizeClusterType(tier); !ok {
 				return fmt.Errorf("contexts.%s.cluster_type: invalid value %q (want %s, %s, or %s)", name, tier, ClusterTypeABCNodes, ClusterTypeABCCluster, ClusterTypeABCCloud)

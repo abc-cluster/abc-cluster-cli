@@ -172,66 +172,69 @@ http:
       service: supabase-studio
 
   services:
+    # abc-nodes floor uses static host ports for each service.
+    # Keep static backends here so Traefik routing does not depend on Nomad
+    # template ACL capabilities to query the service catalog.
     grafana:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-grafana" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:3000"
     grafana-alloy:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-alloy" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:12345"
     loki:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-loki" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:3100"
     minio-s3:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-minio-s3" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:9000"
     minio-console:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-minio-console" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:9001"
     ntfy:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-ntfy" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:8088"
     prometheus:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-prometheus" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:9090"
     rustfs:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-rustfs-s3" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:9900"
     tusd:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-tusd" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:8080"
     vault:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-vault" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:8200"
     uppy:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-uppy" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:8085"
     wave:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-wave" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:9091"
     faasd:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-faasd" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:8089"
     supabase:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-supabase" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:8000"
     supabase-studio:
       loadBalancer:
-        servers:{{ range nomadService "abc-nodes-supabase-studio" }}
-          - url: "http://{{ .Address }}:{{ .Port }}"{{ end }}
+        servers:
+          - url: "http://127.0.0.1:3002"
 EOF
         destination = "local/routes.yml"
       }

@@ -14,12 +14,13 @@ type NomadService struct {
 // Use endpoint for S3 API bases (MinIO, RustFS) and http for HTTP services (tusd, Grafana, Grafana Alloy, Vault, …).
 // access_key/secret_key suit S3-compatible services; user/password suit web UIs.
 type AdminFloorService struct {
-	HTTP      string `yaml:"http,omitempty"`
-	Endpoint  string `yaml:"endpoint,omitempty"`
-	AccessKey string `yaml:"access_key,omitempty"`
-	SecretKey string `yaml:"secret_key,omitempty"`
-	User      string `yaml:"user,omitempty"`
-	Password  string `yaml:"password,omitempty"`
+	HTTP       string                `yaml:"http,omitempty"`
+	Endpoint   string                `yaml:"endpoint,omitempty"`
+	AccessKey  string                `yaml:"access_key,omitempty"`
+	SecretKey  string                `yaml:"secret_key,omitempty"`
+	User       string                `yaml:"user,omitempty"`
+	Password   string                `yaml:"password,omitempty"`
+	CredSource *AdminFloorCredSource `yaml:"cred_source,omitempty"`
 	// PingEntryPoint names the entry point used for `traefik healthcheck` static snippets
 	// (default in Traefik is "traefik", i.e. the dashboard listener). Only used for traefik.
 	PingEntryPoint string `yaml:"ping_entrypoint,omitempty"`
@@ -39,8 +40,24 @@ func (a *AdminFloorService) IsEmpty() bool {
 		strings.TrimSpace(a.SecretKey) == "" &&
 		strings.TrimSpace(a.User) == "" &&
 		strings.TrimSpace(a.Password) == "" &&
+		isCredSourceEmpty(a.CredSource) &&
 		strings.TrimSpace(a.PingEntryPoint) == "" &&
 		strings.TrimSpace(a.Dashboard) == ""
+}
+
+// AdminFloorCredSource stores per-backend credential values/references for one service.
+// local values are literals, while nomad/vault values are backend reference strings.
+type AdminFloorCredSource struct {
+	Local map[string]string `yaml:"local,omitempty"`
+	Nomad map[string]string `yaml:"nomad,omitempty"`
+	Vault map[string]string `yaml:"vault,omitempty"`
+}
+
+func isCredSourceEmpty(cs *AdminFloorCredSource) bool {
+	if cs == nil {
+		return true
+	}
+	return len(cs.Local) == 0 && len(cs.Nomad) == 0 && len(cs.Vault) == 0
 }
 
 // AdminServices holds operator-facing integrations under contexts.<name>.admin.services.

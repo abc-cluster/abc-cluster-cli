@@ -99,7 +99,7 @@ func newCLICmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "cli [logcli-args...]",
 		Short:              "Run the local logcli binary (Loki CLI) with LOKI_ADDR pre-set",
-		Long:               "Passthrough to the Grafana logcli binary. LOKI_ADDR is injected from admin.services.loki.http when not already set. Install logcli from https://github.com/grafana/loki/releases.",
+		Long:               "Passthrough to the Grafana logcli binary. Optional `--config local|nomad|vault` (default local) resolves LOKI_ADDR from admin.services.loki (cred_source + top-level). Install logcli from https://github.com/grafana/loki/releases.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runCLI,
@@ -107,7 +107,7 @@ func newCLICmd() *cobra.Command {
 }
 
 func runCLI(cmd *cobra.Command, args []string) error {
-	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
+	configSelection, binaryLocation, passthroughArgs, err := utils.ParseAdminServiceCLIArgs(args, true)
 	if err != nil {
 		return err
 	}
@@ -118,8 +118,12 @@ func runCLI(cmd *cobra.Command, args []string) error {
 	base := os.Environ()
 	if cfg, err := config.Load(); err == nil && cfg != nil {
 		ctx := cfg.ActiveCtx()
-		lokiHTTP, ok := config.GetAdminFloorField(&ctx.Admin.Services, "loki", "http")
-		if ok && lokiHTTP != "" {
+		svc := config.AdminFloorServiceNamed(&ctx.Admin.Services, "loki")
+		lokiHTTP, rerr := utils.ResolveAdminFloorField(cmd.Context(), ctx, svc, "loki", configSelection, "http")
+		if rerr != nil {
+			return rerr
+		}
+		if lokiHTTP != "" {
 			base = utils.UpsertEnvOnlyMissing(base, map[string]string{"LOKI_ADDR": lokiHTTP})
 		}
 	}
