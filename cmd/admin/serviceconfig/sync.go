@@ -37,6 +37,7 @@ var floorSyncRules = []floorSyncRule{
 	{"abc-nodes-loki", "loki", "http", "http", ""},
 	{"abc-nodes-ntfy", "ntfy", "http", "http", ""},
 	{"abc-nodes-vault", "vault", "http", "http", ""},
+	{"abc-nodes-faasd", "faasd", "http", "http", ""},
 	// Traefik: dashboard (:8888) → http; entry web (:80) → endpoint (see traefik.nomad.hcl).
 	{"abc-nodes-traefik", "traefik", "dashboard", "http", ""},
 	{"abc-nodes-traefik", "traefik", "http", "endpoint", ""},

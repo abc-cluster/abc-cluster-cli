@@ -82,8 +82,8 @@ attachment-file-size-limit: "15M"
 attachment-s3:
   endpoint: "http://${var.minio_endpoint}"
   bucket: "${var.ntfy_attachment_bucket}"
-  access-key: "${var.minio_access_key}"
-  secret-key: "${var.minio_secret_key}"
+  access-key: "{{ with nomadVar "nomad/jobs/abc-nodes-ntfy" }}{{ .minio_access_key }}{{ else }}${var.minio_access_key}{{ end }}"
+  secret-key: "{{ with nomadVar "nomad/jobs/abc-nodes-ntfy" }}{{ .minio_secret_key }}{{ else }}${var.minio_secret_key}{{ end }}"
   region: "us-east-1"
   path-style: true
 EOF

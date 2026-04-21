@@ -48,6 +48,7 @@ type AdminServices struct {
 	Nomad        *NomadService      `yaml:"nomad,omitempty"`
 	MinIO        *AdminFloorService `yaml:"minio,omitempty"`
 	Tusd         *AdminFloorService `yaml:"tusd,omitempty"`
+	Faasd        *AdminFloorService `yaml:"faasd,omitempty"`
 	Grafana      *AdminFloorService `yaml:"grafana,omitempty"`
 	GrafanaAlloy *AdminFloorService `yaml:"grafana_alloy,omitempty"`
 	Prometheus   *AdminFloorService `yaml:"prometheus,omitempty"`

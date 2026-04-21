@@ -1,5 +1,20 @@
 # Grafana (dashboards) — abc-nodes floor
-# Default: Grafana data in the container (ephemeral).
+#
+# DATA PERSISTENCE
+# ─────────────────
+#  Grafana home directory at /opt/nomad/scratch/grafana-data (scratch volume).
+#  Dashboards, users, and settings survive restarts.
+#
+# CREDENTIALS (Nomad Variables, namespace: services)
+# ───────────────────────────────────────────────────
+#  Path: nomad/jobs/abc-nodes-grafana
+#  Keys: admin_password
+#
+#  Store / rotate:
+#    abc admin services nomad cli -- var put -namespace services -force \
+#      nomad/jobs/abc-nodes-grafana admin_password=<password>
+#
+#  Falls back to the HCL variable default if the Variable is not set.
 
 variable "datacenters" {
   type    = list(string)
@@ -12,12 +27,13 @@ variable "grafana_image" {
 }
 
 variable "grafana_admin_password" {
-  type    = string
-  default = "admin"
+  type        = string
+  default     = "admin"
+  description = "Fallback only — override via Nomad Variable nomad/jobs/abc-nodes-grafana"
 }
 
 job "abc-nodes-grafana" {
-  namespace = "services"
+  namespace   = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -38,6 +54,30 @@ job "abc-nodes-grafana" {
       }
     }
 
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
+    # Grafana runs as UID 472; the host scratch dir is root-owned.
+    # This prestart task creates the data dir and sets the right ownership.
+    task "grafana-init" {
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "mkdir -p /opt/nomad/scratch/grafana-data && chown -R 472:472 /opt/nomad/scratch/grafana-data && echo OK"]
+      }
+      resources {
+        cpu    = 50
+        memory = 32
+      }
+    }
+
     task "grafana" {
       driver = "containerd-driver"
 
@@ -45,12 +85,37 @@ job "abc-nodes-grafana" {
         image = var.grafana_image
       }
 
-      env {
-        GF_SECURITY_ADMIN_PASSWORD = var.grafana_admin_password
-        GF_SERVER_HTTP_PORT        = "3000"
-        GF_PATHS_PROVISIONING      = "/local/provisioning"
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
       }
 
+      env {
+        GF_SERVER_HTTP_PORT   = "3000"
+        GF_PATHS_PROVISIONING = "/local/provisioning"
+        # Persist Grafana data (SQLite DB, sessions, plugins) to scratch volume
+        GF_PATHS_DATA         = "/scratch/grafana-data"
+        GF_PATHS_LOGS         = "/scratch/grafana-data/logs"
+        GF_PATHS_PLUGINS      = "/scratch/grafana-data/plugins"
+        # Allow provisioned dashboards to be edited in the UI (lab convenience)
+        GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH = "/local/provisioning/dashboards/files/nomad-loki-logs.json"
+      }
+
+      # Admin password: Nomad Variable takes precedence, HCL variable is fallback.
+      template {
+        destination = "secrets/grafana.env"
+        env         = true
+        data        = <<EOF
+{{ with nomadVar "nomad/jobs/abc-nodes-grafana" -}}
+GF_SECURITY_ADMIN_PASSWORD={{ .admin_password }}
+{{- else -}}
+GF_SECURITY_ADMIN_PASSWORD=${var.grafana_admin_password}
+{{- end }}
+EOF
+      }
+
+      # ── Datasources ──────────────────────────────────────────────────────────
       template {
         data        = <<EOF
 apiVersion: 1
@@ -63,8 +128,6 @@ datasources:
     isDefault: true
     editable: false
 
-  # Must match abc-nodes-loki common.path_prefix (/loki); otherwise Grafana calls
-  # /api/v1/... on :3100 and the datasource looks "unreachable".
   - name: Loki
     type: loki
     uid: loki
@@ -78,7 +141,7 @@ EOF
         destination = "local/provisioning/datasources/default.yaml"
       }
 
-      # Provisioned dashboard: Nomad alloc stdout/stderr (labels from Alloy).
+      # ── Dashboard provider ───────────────────────────────────────────────────
       template {
         data        = <<EOF
 apiVersion: 1
@@ -96,6 +159,7 @@ EOF
         destination = "local/provisioning/dashboards/dashboard.yaml"
       }
 
+      # ── Dashboard: Nomad allocation logs ────────────────────────────────────
       template {
         destination = "local/provisioning/dashboards/files/nomad-loki-logs.json"
         data        = <<EOF
@@ -143,6 +207,109 @@ EOF
   "timezone": "",
   "title": "Nomad allocation logs",
   "uid": "abc-nodes-nomad-loki-logs",
+  "version": 1,
+  "weekStart": ""
+}
+EOF
+      }
+
+      # ── Dashboard: Pipeline Jobs Monitor ────────────────────────────────────
+      # Filters Loki logs by Nomad namespace to show per-research-group activity.
+      # Label names (nomad_namespace, nomad_job_id) depend on Alloy pipeline config.
+      # Adjust the LogQL expressions if Alloy uses different label names.
+      template {
+        destination = "local/provisioning/dashboards/files/pipeline-monitor.json"
+        data        = <<EOF
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{nomad_namespace=\"su-mbhg-bioinformatics\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Bioinformatics Pipeline Logs  (su-mbhg-bioinformatics)",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+      "id": 2,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{nomad_namespace=\"su-mbhg-hostgen\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Host Genetics Pipeline Logs  (su-mbhg-hostgen)",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "id": 3,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{nomad_job_id=\"abc-nodes-job-notifier\"} |~ \"sent:\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Job Status Notifications (sent by job-notifier → ntfy)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["abc-nodes", "pipeline", "nextflow", "bioinformatics"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Pipeline Jobs Monitor",
+  "uid": "abc-nodes-pipeline-monitor",
   "version": 1,
   "weekStart": ""
 }

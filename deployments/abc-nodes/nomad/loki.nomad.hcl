@@ -97,8 +97,8 @@ storage_config:
   aws:
     bucketnames: ${var.loki_bucket}
     endpoint: ${var.minio_endpoint}
-    access_key_id: ${var.minio_access_key}
-    secret_access_key: ${var.minio_secret_key}
+    access_key_id: {{ with nomadVar "nomad/jobs/abc-nodes-loki" }}{{ .minio_access_key }}{{ else }}${var.minio_access_key}{{ end }}
+    secret_access_key: {{ with nomadVar "nomad/jobs/abc-nodes-loki" }}{{ .minio_secret_key }}{{ else }}${var.minio_secret_key}{{ end }}
     insecure: true
     s3forcepathstyle: true
     region: us-east-1

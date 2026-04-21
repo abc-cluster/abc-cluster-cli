@@ -1,10 +1,30 @@
 # MinIO object storage (service) — abc-nodes floor
-# Default: data in the container filesystem (lost on reschedule). For production,
-# replace with a group `volume` stanza + `volume_mount` backed by host_volume or CSI.
+#
+# DATA PERSISTENCE
+# ─────────────────
+#  Data stored at /opt/nomad/scratch/minio-data (via "scratch" host volume).
+#  Safe across job restarts and Nomad upgrades — data is on the host FS.
+#
+# CREDENTIALS (Nomad Variables, namespace: services)
+# ───────────────────────────────────────────────────
+#  Path: nomad/jobs/abc-nodes-minio
+#  Keys: minio_root_user, minio_root_password
+#
+#  Store / rotate:
+#    abc admin services nomad cli -- var put -namespace services -force \
+#      nomad/jobs/abc-nodes-minio \
+#      minio_root_user=<user> minio_root_password=<password>
+#
+#  If the Variable is not set, falls back to the HCL variable defaults
+#  (minioadmin/minioadmin) — change those defaults before first deploy.
+#
+# After rotating credentials:
+#   1. Update the Nomad Variable (command above)
+#   2. Redeploy: abc admin services nomad cli -- job run deployments/abc-nodes/nomad/minio.nomad.hcl
+#   3. Update the mc alias: mc alias set sunminio http://100.70.185.46:9000 <user> <pass>
 
 variable "datacenters" {
-  type = list(string)
-  # Include both common lab names so jobs schedule on single-node `default` DC clusters and typical `dc1` labs.
+  type    = list(string)
   default = ["dc1", "default"]
 }
 
@@ -14,17 +34,19 @@ variable "minio_image" {
 }
 
 variable "minio_root_user" {
-  type    = string
-  default = "minioadmin"
+  type        = string
+  default     = "minioadmin"
+  description = "Fallback only — override via Nomad Variable nomad/jobs/abc-nodes-minio"
 }
 
 variable "minio_root_password" {
-  type    = string
-  default = "minioadmin"
+  type        = string
+  default     = "minioadmin"
+  description = "Fallback only — override via Nomad Variable nomad/jobs/abc-nodes-minio"
 }
 
 job "abc-nodes-minio" {
-  namespace = "services"
+  namespace   = "services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -49,20 +71,44 @@ job "abc-nodes-minio" {
       }
     }
 
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
     task "minio" {
       driver = "containerd-driver"
 
       config {
         image = var.minio_image
         args = [
-          "server", "/data",
+          "server", "/scratch/minio-data",
           "--console-address", ":9001",
         ]
       }
 
-      env {
-        MINIO_ROOT_USER     = var.minio_root_user
-        MINIO_ROOT_PASSWORD = var.minio_root_password
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
+      }
+
+      # Credentials: Nomad Variable takes precedence over HCL variable defaults.
+      # After HCL processing, ${var.minio_root_*} become the HCL default values.
+      # At runtime the template engine uses the Variable if it exists, else falls back.
+      template {
+        destination = "secrets/minio.env"
+        env         = true
+        data        = <<EOF
+{{ with nomadVar "nomad/jobs/abc-nodes-minio" -}}
+MINIO_ROOT_USER={{ .minio_root_user }}
+MINIO_ROOT_PASSWORD={{ .minio_root_password }}
+{{- else -}}
+MINIO_ROOT_USER=${var.minio_root_user}
+MINIO_ROOT_PASSWORD=${var.minio_root_password}
+{{- end }}
+EOF
       }
 
       resources {

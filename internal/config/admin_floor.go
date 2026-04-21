@@ -11,6 +11,8 @@ func floorPtr(s *AdminServices, svc string) **AdminFloorService {
 		return &s.MinIO
 	case "tusd":
 		return &s.Tusd
+	case "faasd":
+		return &s.Faasd
 	case "grafana":
 		return &s.Grafana
 	case "grafana_alloy":
@@ -152,6 +154,7 @@ func NormalizeFloorServices(ctx *Context) {
 	s := &ctx.Admin.Services
 	s.MinIO = nilIfFloorEmpty(s.MinIO)
 	s.Tusd = nilIfFloorEmpty(s.Tusd)
+	s.Faasd = nilIfFloorEmpty(s.Faasd)
 	s.Grafana = nilIfFloorEmpty(s.Grafana)
 	s.GrafanaAlloy = nilIfFloorEmpty(s.GrafanaAlloy)
 	s.Prometheus = nilIfFloorEmpty(s.Prometheus)
@@ -202,6 +205,7 @@ func AppendAdminFloorAllKeys(prefix string, s AdminServices, out [][2]string) []
 	}
 	add("minio", s.MinIO)
 	add("tusd", s.Tusd)
+	add("faasd", s.Faasd)
 	add("grafana", s.Grafana)
 	add("grafana_alloy", s.GrafanaAlloy)
 	add("prometheus", s.Prometheus)

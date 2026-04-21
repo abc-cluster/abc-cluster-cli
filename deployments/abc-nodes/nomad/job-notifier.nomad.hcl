@@ -20,8 +20,13 @@ variable "nomad_addr" {
 }
 
 variable "nomad_token" {
-  type    = string
-  default = "0ca13634-c413-c24b-627c-f6f1efbff721"
+  type        = string
+  default     = ""
+  description = "DEPRECATED: use Nomad Variable nomad/jobs/abc-nodes-job-notifier (key: nomad_token)"
+  # !! Do NOT set a real token here — it would be committed to git.
+  # Store the token in Nomad Variables:
+  #   abc admin services nomad cli -- var put -namespace services -force \
+  #     nomad/jobs/abc-nodes-job-notifier nomad_token=<management-token>
 }
 
 variable "ntfy_url" {
@@ -140,10 +145,24 @@ EOF
       }
 
       env {
-        NOMAD_ADDR  = var.nomad_addr
-        NOMAD_TOKEN = var.nomad_token
-        NTFY_URL    = var.ntfy_url
-        NTFY_TOPIC  = var.ntfy_topic
+        NOMAD_ADDR = var.nomad_addr
+        NTFY_URL   = var.ntfy_url
+        NTFY_TOPIC = var.ntfy_topic
+      }
+
+      # NOMAD_TOKEN read from Nomad Variable at runtime — never hardcoded.
+      # Store: abc admin services nomad cli -- var put -namespace services -force \
+      #          nomad/jobs/abc-nodes-job-notifier nomad_token=<token>
+      template {
+        destination = "secrets/token.env"
+        env         = true
+        data        = <<EOF
+{{ with nomadVar "nomad/jobs/abc-nodes-job-notifier" -}}
+NOMAD_TOKEN={{ .nomad_token }}
+{{- else -}}
+NOMAD_TOKEN=
+{{- end }}
+EOF
       }
 
       resources {

@@ -20,8 +20,8 @@ const grafanaFloorDashboardPath = "/d/abc-nodes-nomad-loki-logs/nomad-allocation
 //
 // Unlike nomadClientFromCmd, it does NOT fall back to ABC_ADDR / NOMAD_ADDR env
 // vars (which typically point to the cloud gateway). It uses only:
-//   1. explicitly-passed --nomad-addr / --nomad-token flags (Changed() == true)
-//   2. active context admin.services.nomad.* in config
+//  1. explicitly-passed --nomad-addr / --nomad-token flags (Changed() == true)
+//  2. active context admin.services.nomad.* in config
 //
 // This prevents cloud-gateway tokens from being sent to the wrong host, which
 // is the most common cause of 403 on capabilities sync.
@@ -120,6 +120,7 @@ var abcNodesSvcMappings = []svcCapMapping{
 	{"abc-nodes-loki", "loki", "http"},
 	{"abc-nodes-ntfy", "ntfy", "http"},
 	{"abc-nodes-tusd", "tusd", "http"},
+	{"abc-nodes-faasd", "faasd", "http"},
 	{"abc-nodes-uppy", "uppy", "http"},
 	{"abc-nodes-vault", "vault", "http"},
 	{"abc-nodes-minio-s3", "minio", "endpoint"},
@@ -138,6 +139,7 @@ var jobToServices = map[string][]string{
 	"abc-nodes-loki":       {"abc-nodes-loki"},
 	"abc-nodes-ntfy":       {"abc-nodes-ntfy"},
 	"abc-nodes-tusd":       {"abc-nodes-tusd"},
+	"abc-nodes-faasd":      {"abc-nodes-faasd"},
 	"abc-nodes-uppy":       {"abc-nodes-uppy"},
 	"abc-nodes-vault":      {"abc-nodes-vault"},
 }
