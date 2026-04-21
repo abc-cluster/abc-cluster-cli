@@ -13,3 +13,6 @@ go.work.sum
 .tmp
 *.bin
 .cpcache
+
+# Operator-generated Vault bootstrap (root token + unseal keys); never commit
+deployments/abc-nodes/acl/vault-keys.env
