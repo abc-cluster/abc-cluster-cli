@@ -131,7 +131,9 @@ datasources:
   - name: Loki
     type: loki
     uid: loki
-    url: http://100.70.185.46:3100/loki
+    # Grafana appends /loki/api/v1/... to this URL. Do NOT include a trailing
+    # /loki here — that becomes /loki/loki/... and every query returns 404.
+    url: http://100.70.185.46:3100
     access: proxy
     isDefault: false
     editable: false
