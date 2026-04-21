@@ -193,8 +193,21 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 	return utils.PrettyPrintHCL(string(f.Bytes()))
 }
 
+// taskScriptShell returns the interpreter used to run the templated local script.
+// Minimal OCI images (e.g. Alpine or scratch-derived) often ship /bin/sh but not bash; Nomad's
+// containerd-driver workloads commonly target those images, so use sh there.
+func taskScriptShell(driver string) string {
+	switch driver {
+	case "containerd-driver":
+		return "/bin/sh"
+	default:
+		return "/bin/bash"
+	}
+}
+
 func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptContent string) {
-	scriptArg := fmt.Sprintf("local/%s", scriptName)
+	scriptArg := filepath.ToSlash(filepath.Join("local", scriptName))
+	sh := taskScriptShell(spec.Driver)
 	if spec.Driver == "slurm" {
 		inlineScript := escapeNomadInterpolation(scriptContent)
 		cfgBody.SetAttributeValue("command", cty.StringVal("/bin/bash"))
@@ -242,7 +255,7 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 			cfgBody.SetAttributeValue("walltime", cty.StringVal(secondsToWalltime(spec.WalltimeSecs)))
 		}
 	} else if spec.OutputLog != "" || spec.ErrorLog != "" {
-		cmd := fmt.Sprintf("/bin/bash %s", scriptArg)
+		cmd := fmt.Sprintf("%s %s", sh, scriptArg)
 		if spec.WalltimeSecs > 0 {
 			cmd = fmt.Sprintf("timeout %d %s", spec.WalltimeSecs, cmd)
 		}
@@ -260,21 +273,21 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 		cfgBody.SetAttributeValue("command", cty.StringVal("timeout"))
 		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
 			cty.StringVal(fmt.Sprintf("%d", spec.WalltimeSecs)),
-			cty.StringVal("/bin/bash"),
+			cty.StringVal(sh),
 			cty.StringVal(scriptArg),
 		}))
 	} else {
-		cfgBody.SetAttributeValue("command", cty.StringVal("/bin/bash"))
+		cfgBody.SetAttributeValue("command", cty.StringVal(sh))
 		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
 			cty.StringVal(scriptArg),
 		}))
 	}
 
-	if spec.Driver != "slurm" && spec.ChDir != "" {
-		cfgBody.SetAttributeValue("work_dir", cty.StringVal(spec.ChDir))
-	}
 	for _, k := range utils.SortedKeys(spec.DriverConfig) {
 		cfgBody.SetAttributeValue(k, cty.StringVal(strings.TrimSpace(spec.DriverConfig[k])))
+	}
+	if spec.Driver != "slurm" && spec.ChDir != "" {
+		cfgBody.SetAttributeValue("work_dir", cty.StringVal(spec.ChDir))
 	}
 }
 

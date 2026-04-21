@@ -375,6 +375,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 	if err := applySpecDefaults(spec, defaultName, useSBATCH); err != nil {
 		return err
 	}
+	applyAbcNodesNomadNamespaceFromConfig(spec)
 
 	// Stamp submission metadata into meta block.
 	if spec.Meta == nil {
@@ -514,6 +515,28 @@ func printPlan(cmd *cobra.Command, hcl string, plan *NomadPlanResponse) {
 const (
 	watchDelay = 10 * time.Second
 )
+
+// applyAbcNodesNomadNamespaceFromConfig sets spec.Namespace from the active abc
+// context when the operator has not set --namespace or NOMAD_NAMESPACE, so
+// generated HCL includes a namespace stanza and jobs land in the correct Nomad
+// namespace for multi-tenant Grafana / Prometheus views.
+func applyAbcNodesNomadNamespaceFromConfig(spec *jobSpec) {
+	if spec == nil || strings.TrimSpace(spec.Namespace) != "" {
+		return
+	}
+	// Bare `#ABC --namespace` / `--namespace` (no value) only exposes NOMAD_NAMESPACE
+	// into the task env — do not infer scheduler namespace from the abc context.
+	if spec.ExposeNamespaceEnv {
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return
+	}
+	if ns := strings.TrimSpace(cfg.ActiveCtx().AbcNodesNomadNamespaceForCLI()); ns != "" {
+		spec.Namespace = ns
+	}
+}
 
 func watchJobLogs(ctx context.Context, nc *nomadClient, jobID, namespace string,
 	w io.Writer, delay, timeout time.Duration) error {

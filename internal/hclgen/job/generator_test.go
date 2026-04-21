@@ -27,6 +27,30 @@ func TestGenerate_StaticEnvOnlyCreatesEnvBlock(t *testing.T) {
 	}
 }
 
+func TestGenerate_ContainerdDriverUsesShForScriptRunner(t *testing.T) {
+	spec := Spec{
+		Name:        "ctrd-job",
+		Driver:      "containerd-driver",
+		Datacenters: []string{"dc1"},
+		Nodes:       1,
+		Priority:    50,
+		WalltimeSecs: 120,
+	}
+	hcl := Generate(spec, "run.sh", "#!/bin/sh\necho ok\n")
+	if !strings.Contains(hcl, `= "timeout"`) {
+		t.Fatalf("expected walltime timeout wrapper:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, `"120"`) || !strings.Contains(hcl, `"/bin/sh"`) {
+		t.Fatalf("expected timeout args to use /bin/sh, got:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, `"120"`) || !strings.Contains(hcl, `"/bin/sh"`) || !strings.Contains(hcl, `"local/run.sh"`) {
+		t.Fatalf("expected timeout args with /bin/sh and local/run.sh, got:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, `destination = "local/run.sh"`) {
+		t.Fatalf("expected templated script under local/, got:\n%s", hcl)
+	}
+}
+
 func TestGenerate_StaticEnvSortedKeysStable(t *testing.T) {
 	spec := Spec{
 		Name:        "order-job",

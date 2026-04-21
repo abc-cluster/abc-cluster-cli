@@ -317,6 +317,22 @@ EOF
 EOF
       }
 
+      # ── Dashboard: multi-group Nomad overview (Prometheus + fixed Loki) ────
+      # Path is relative to the process cwd for `nomad job run` (repo root when
+      # using: abc admin services nomad cli -- job run deployments/.../grafana.nomad.hcl).
+      # The JSON contains Grafana legend tokens like {{host}}; without custom
+      # delimiters Nomad's consul-template pass treats them as Go templates and fails.
+      # Per-research-user panels expect abc job run names:
+      #   script-job-<institute>-<department>-<group>_<user>--<workload>-<id>
+      # Workload stress jobs use quay.io/container-perf-tools/stress-ng:latest with Nomad containerd-driver.
+      # (see deployments/abc-nodes/nomad/tests/workloads/*.sh).
+      template {
+        destination     = "local/provisioning/dashboards/files/abc-nodes-overview.json"
+        left_delimiter  = "[["
+        right_delimiter = "]]"
+        data            = file(abspath("deployments/abc-nodes/nomad/grafana-dashboard-abc-nodes.json"))
+      }
+
       resources {
         cpu    = 500
         memory = 1024
