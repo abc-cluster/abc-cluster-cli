@@ -36,6 +36,15 @@ func floorPtr(s *AdminServices, svc string) **AdminFloorService {
 	}
 }
 
+// AdminFloorServiceNamed returns the floor service struct for svc, or nil if unknown.
+func AdminFloorServiceNamed(s *AdminServices, svc string) *AdminFloorService {
+	pp := floorPtr(s, svc)
+	if pp == nil || *pp == nil {
+		return nil
+	}
+	return *pp
+}
+
 // GetAdminFloorField returns admin.services.<svc>.<field>.
 // Known fields: http, endpoint, access_key, secret_key, user, password, ping_entrypoint, dashboard.
 func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
@@ -47,34 +56,39 @@ func GetAdminFloorField(s *AdminServices, svc, field string) (string, bool) {
 		return "", false
 	}
 	fs := *pp
+	var v string
 	switch field {
 	case "http":
-		v := strings.TrimSpace(fs.HTTP)
-		return v, v != ""
+		v = strings.TrimSpace(fs.HTTP)
 	case "endpoint":
-		v := strings.TrimSpace(fs.Endpoint)
-		return v, v != ""
+		v = strings.TrimSpace(fs.Endpoint)
 	case "access_key":
-		v := strings.TrimSpace(fs.AccessKey)
-		return v, v != ""
+		v = strings.TrimSpace(fs.AccessKey)
 	case "secret_key":
-		v := strings.TrimSpace(fs.SecretKey)
-		return v, v != ""
+		v = strings.TrimSpace(fs.SecretKey)
 	case "user":
-		v := strings.TrimSpace(fs.User)
-		return v, v != ""
+		v = strings.TrimSpace(fs.User)
 	case "password":
-		v := strings.TrimSpace(fs.Password)
-		return v, v != ""
+		v = strings.TrimSpace(fs.Password)
 	case "ping_entrypoint":
-		v := strings.TrimSpace(fs.PingEntryPoint)
-		return v, v != ""
+		v = strings.TrimSpace(fs.PingEntryPoint)
 	case "dashboard":
-		v := strings.TrimSpace(fs.Dashboard)
-		return v, v != ""
+		v = strings.TrimSpace(fs.Dashboard)
 	default:
 		return "", false
 	}
+	if v != "" {
+		return v, true
+	}
+	if fs.CredSource != nil && fs.CredSource.Local != nil {
+		if lv, ok := fs.CredSource.Local[field]; ok {
+			lv = strings.TrimSpace(lv)
+			if lv != "" {
+				return lv, true
+			}
+		}
+	}
+	return "", false
 }
 
 // SetAdminFloorField sets admin.services.<svc>.<field>.
@@ -171,6 +185,15 @@ func nilIfFloorEmpty(a *AdminFloorService) *AdminFloorService {
 		return nil
 	}
 	return a
+}
+
+// ValidateAdminServicesFloorCredSource rejects unsupported credential layouts.
+// admin.services.vault must not use cred_source.vault (tokens cannot be stored in Vault-in-Vault).
+func ValidateAdminServicesFloorCredSource(s AdminServices) error {
+	if s.Vault != nil && s.Vault.CredSource != nil && len(s.Vault.CredSource.Vault) > 0 {
+		return fmt.Errorf("admin.services.vault.cred_source.vault is not supported; use cred_source.local or cred_source.nomad only")
+	}
+	return nil
 }
 
 // AppendAdminFloorAllKeys appends non-empty floor service keys for list output.

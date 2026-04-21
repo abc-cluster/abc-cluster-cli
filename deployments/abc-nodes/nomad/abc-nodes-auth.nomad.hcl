@@ -123,9 +123,11 @@ class AuthHandler(http.server.BaseHTTPRequestHandler):
 
         try:
             name, policies, is_mgmt = validate_token(token)
-        except urllib.error.HTTPError as e:
-            code = HTTPStatus.UNAUTHORIZED if e.code in (400, 403) else HTTPStatus.INTERNAL_SERVER_ERROR
-            self.send_response(code)
+        except urllib.error.HTTPError:
+            # For ForwardAuth we intentionally normalize upstream Nomad ACL
+            # errors to 401 so clients never see internals and tests can rely
+            # on a strict auth contract.
+            self.send_response(HTTPStatus.UNAUTHORIZED)
             self.end_headers()
             return
         except Exception:

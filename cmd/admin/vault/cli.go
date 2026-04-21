@@ -12,7 +12,7 @@ func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "cli [vault-args...]",
 		Short:              "Run the local Vault or OpenBao (bao) CLI",
-		Long:               "Run the local vault or OpenBao (`bao`) binary as a passthrough alias. Use optional leading `--binary-location <path>` then `--` to pass all following arguments verbatim to the underlying binary. When the active context has cluster_type abc-nodes, VAULT_ADDR / VAULT_TOKEN merge from admin.services.vault.http and admin.services.vault.access_key (optional dev token) — only for keys not already set in the process environment.",
+		Long:               "Run the local vault or OpenBao (`bao`) binary as a passthrough alias. Use optional leading `--binary-location <path>`, `--config local|nomad` (default local), then `--` to pass all following arguments verbatim to the underlying binary. Vault service credentials use cred_source.local and cred_source.nomad only (not cred_source.vault). When the active context has cluster_type abc-nodes, VAULT_ADDR / VAULT_TOKEN merge from admin.services.vault — only for keys not already set in the process environment.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runVaultCLI,
@@ -21,7 +21,7 @@ func newCLICmd() *cobra.Command {
 }
 
 func runVaultCLI(cmd *cobra.Command, args []string) error {
-	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
+	configSelection, binaryLocation, passthroughArgs, err := utils.ParseAdminServiceCLIArgs(args, false)
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,11 @@ func runVaultCLI(cmd *cobra.Command, args []string) error {
 
 	base := os.Environ()
 	if cfg, err := config.Load(); err == nil && cfg != nil {
-		base = utils.UpsertEnvOnlyMissing(base, cfg.ActiveCtx().AbcNodesVaultCLIEnv())
+		env, rerr := utils.ResolvedVaultCLIEnv(cmd.Context(), cfg, configSelection)
+		if rerr != nil {
+			return rerr
+		}
+		base = utils.UpsertEnvOnlyMissing(base, env)
 	}
 	return utils.RunExternalCLIWithEnvAndBase(cmd.Context(), passthroughArgs, binaryLocation, []string{"vault", "bao", "openbao"}, base, nil, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

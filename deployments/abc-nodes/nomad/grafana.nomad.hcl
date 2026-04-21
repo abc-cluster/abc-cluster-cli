@@ -214,9 +214,8 @@ EOF
       }
 
       # ── Dashboard: Pipeline Jobs Monitor ────────────────────────────────────
-      # Filters Loki logs by Nomad namespace to show per-research-group activity.
-      # Label names (nomad_namespace, nomad_job_id) depend on Alloy pipeline config.
-      # Adjust the LogQL expressions if Alloy uses different label names.
+      # Uses labels that are currently present in Alloy->Loki streams on abc-nodes:
+      # alloc_id, filename, stream, task, service_name.
       template {
         destination = "local/provisioning/dashboards/files/pipeline-monitor.json"
         data        = <<EOF
@@ -244,12 +243,12 @@ EOF
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{nomad_namespace=\"su-mbhg-bioinformatics\"}",
+          "expr": "{task=~\"main|test\", stream=~\"stdout|stderr\"}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Bioinformatics Pipeline Logs  (su-mbhg-bioinformatics)",
+      "title": "Recent Workload Logs (main/test tasks)",
       "type": "logs"
     },
     {
@@ -268,12 +267,12 @@ EOF
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{nomad_namespace=\"su-mbhg-hostgen\"}",
+          "expr": "{task=~\"notifier|traefik|tusd|grafana|loki|prometheus|minio\", stream=~\"stdout|stderr\"}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Host Genetics Pipeline Logs  (su-mbhg-hostgen)",
+      "title": "Core Service Logs (selected tasks)",
       "type": "logs"
     },
     {
@@ -292,7 +291,7 @@ EOF
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{nomad_job_id=\"abc-nodes-job-notifier\"} |~ \"sent:\"",
+          "expr": "{task=\"notifier\", stream=~\"stdout|stderr\"} |~ \"sent:\"",
           "queryType": "range",
           "refId": "A"
         }

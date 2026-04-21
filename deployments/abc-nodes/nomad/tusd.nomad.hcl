@@ -18,8 +18,8 @@ variable "tusd_image" {
 
 variable "minio_s3_endpoint" {
   type        = string
-  description = "MinIO S3 API base URL (no path, no trailing slash), e.g. http://192.168.1.10:21400"
-  default     = "http://127.0.0.1:9000"
+  description = "MinIO S3 API base URL (no path, no trailing slash), reachable from the tusd container network namespace."
+  default     = "http://100.70.185.46:9000"
 }
 
 variable "s3_disable_content_hashes" {
@@ -75,6 +75,35 @@ job "abc-nodes-tusd" {
       }
     }
 
+    task "ensure-s3-bucket" {
+      lifecycle {
+        hook = "prestart"
+      }
+      driver = "containerd-driver"
+
+      config {
+        image = "minio/mc:RELEASE.2025-04-16T18-13-26Z"
+        args  = ["mb", "--ignore-existing", "tusdstore/${var.s3_bucket}"]
+      }
+
+      template {
+        destination = "secrets/minio.env"
+        env         = true
+        data        = <<EOF
+{{ with nomadVar "nomad/jobs/abc-nodes-tusd" -}}
+MC_HOST_tusdstore=http://{{ .minio_access_key }}:{{ .minio_secret_key }}@100.70.185.46:9000
+{{- else -}}
+MC_HOST_tusdstore=http://${var.s3_access_key}:${var.s3_secret_key}@100.70.185.46:9000
+{{- end }}
+EOF
+      }
+
+      resources {
+        cpu    = 64
+        memory = 128
+      }
+    }
+
     task "tusd" {
       driver = "containerd-driver"
 
@@ -92,10 +121,19 @@ job "abc-nodes-tusd" {
         )
       }
 
-      env {
-        AWS_ACCESS_KEY_ID     = var.s3_access_key
-        AWS_SECRET_ACCESS_KEY = var.s3_secret_key
-        AWS_REGION            = var.s3_region
+      template {
+        destination = "secrets/s3.env"
+        env         = true
+        data        = <<EOF
+{{ with nomadVar "nomad/jobs/abc-nodes-tusd" -}}
+AWS_ACCESS_KEY_ID={{ .minio_access_key }}
+AWS_SECRET_ACCESS_KEY={{ .minio_secret_key }}
+{{- else -}}
+AWS_ACCESS_KEY_ID=${var.s3_access_key}
+AWS_SECRET_ACCESS_KEY=${var.s3_secret_key}
+{{- end }}
+AWS_REGION=${var.s3_region}
+EOF
       }
 
       resources {

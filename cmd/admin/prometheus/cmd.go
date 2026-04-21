@@ -114,7 +114,7 @@ func newCLICmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "cli [promtool-args...]",
 		Short:              "Run the local promtool binary with PROMETHEUS_URL pre-set",
-		Long:               "Passthrough to the Prometheus promtool binary. Install promtool from https://prometheus.io/download/.",
+		Long:               "Passthrough to the Prometheus promtool binary. Optional leading `--config local|nomad|vault` (default local) resolves PROMETHEUS_URL from admin.services.prometheus (cred_source + top-level). Install promtool from https://prometheus.io/download/.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runCLI,
@@ -122,7 +122,7 @@ func newCLICmd() *cobra.Command {
 }
 
 func runCLI(cmd *cobra.Command, args []string) error {
-	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
+	configSelection, binaryLocation, passthroughArgs, err := utils.ParseAdminServiceCLIArgs(args, true)
 	if err != nil {
 		return err
 	}
@@ -133,8 +133,12 @@ func runCLI(cmd *cobra.Command, args []string) error {
 	base := os.Environ()
 	if cfg, err := config.Load(); err == nil && cfg != nil {
 		ctx := cfg.ActiveCtx()
-		promHTTP, ok := config.GetAdminFloorField(&ctx.Admin.Services, "prometheus", "http")
-		if ok && promHTTP != "" {
+		svc := config.AdminFloorServiceNamed(&ctx.Admin.Services, "prometheus")
+		promHTTP, rerr := utils.ResolveAdminFloorField(cmd.Context(), ctx, svc, "prometheus", configSelection, "http")
+		if rerr != nil {
+			return rerr
+		}
+		if promHTTP != "" {
 			base = utils.UpsertEnvOnlyMissing(base, map[string]string{"PROMETHEUS_URL": promHTTP})
 		}
 	}
