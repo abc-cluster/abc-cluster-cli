@@ -21,6 +21,10 @@ package job_test
 //                       so in-process cobra matches raw HTTP helpers (see integrationNomadAuthFlags).
 //   ABC_TEST_TIMEOUT  — max seconds to wait for job completion (default: 60)
 //   ABC_TEST_NS       — Nomad namespace to use (default: "default")
+//   ABC_INTEGRATION_STRESS_NG — set to 1 to run TestIntegration_StressNgCPUWorkloadCompletes (off by default;
+//     containerd + OCI WORKDIR vs Nomad local/ templates is cluster-specific; see docs/stress-ng-containerd-and-cli.md).
+//   ABC_INTEGRATION_STRESS_TIMEOUT — max seconds to wait for TestIntegration_StressNgCPUWorkloadCompletes
+//     (default 480 when unset; workload may pull quay.io/container-perf-tools/stress-ng, then runs ~45s CPU stress).
 //   ABC_INTEGRATION_LOKI_REQUIRE — set to 0 to skip the Loki log sentinel check in
 //     TestIntegration_ObsStackJobStdoutReachableInLokiAndPrometheusAlive (Prometheus
 //     check still runs). Use when Alloy does not tail client alloc logs into Loki.
@@ -721,6 +725,54 @@ echo "docker driver: OK"
 	status := waitForJobTerminal(t, addr, jobID, integrationTimeout())
 	if status != "complete" {
 		t.Errorf("expected docker job to complete, got %q", status)
+	}
+}
+
+// TestIntegration_StressNgCPUWorkloadCompletes submits deployments/.../stress-ng-cpu-default.sh
+// (quay.io/container-perf-tools/stress-ng:latest, containerd-driver) and waits for batch completion.
+// Requires network to pull from Quay unless the image is cached on the node.
+// Opt-in: ABC_INTEGRATION_STRESS_NG=1 (see docs/stress-ng-containerd-and-cli.md).
+func TestIntegration_StressNgCPUWorkloadCompletes(t *testing.T) {
+	if os.Getenv("ABC_INTEGRATION_STRESS_NG") != "1" {
+		t.Skip("set ABC_INTEGRATION_STRESS_NG=1 to run live stress-ng integration (optional; see docs/stress-ng-containerd-and-cli.md)")
+	}
+	addr := requireNomad(t)
+
+	driverURL := addr + "/v1/agent/self"
+	req, _ := http.NewRequest(http.MethodGet, driverURL, nil)
+	if tok := os.Getenv("NOMAD_TOKEN"); tok != "" {
+		req.Header.Set("X-Nomad-Token", tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Skip("cannot determine driver availability — skipping stress-ng integration test")
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), `"containerd-driver"`) {
+		t.Skip("containerd-driver not available on this Nomad agent")
+	}
+
+	p := committedWorkloadScript(t, "stress-ng-cpu-default.sh")
+	out, err := executeCmd(t, append([]string{p, "--submit",
+		"--nomad-addr", addr,
+		"--namespace", testNamespace()},
+		integrationNomadAuthFlags()...)...)
+	if err != nil {
+		t.Fatalf("--submit failed: %v\noutput: %s", err, out)
+	}
+	jobID := extractJobID(t, out)
+	t.Cleanup(func() { stopJob(t, addr, jobID) })
+	// Image pull + stress-ng run (~45s) — allow several minutes.
+	stressWait := 8 * time.Minute
+	if s := os.Getenv("ABC_INTEGRATION_STRESS_TIMEOUT"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			stressWait = time.Duration(n) * time.Second
+		}
+	}
+	status := waitForJobTerminal(t, addr, jobID, stressWait)
+	if status != "complete" {
+		t.Errorf("expected stress-ng batch job to complete, got %q", status)
 	}
 }
 

@@ -22,7 +22,7 @@
       "titleFormat": "job event"
     }
   ]},
-  "description": "abc-nodes cluster monitoring: Nomad jobs, node resources, alloc metrics, group/user fairness, and logs",
+  "description": "abc-nodes cluster monitoring: Nomad jobs, node resources, alloc metrics, group/user fairness, per-research-user views (job names: script-job-<institute>-<department>-<group>_<user>--…), and logs",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -551,7 +551,7 @@
       "title": "Alloc Logs (namespace=$namespace  task=$task)",
       "type": "logs",
       "targets": [
-        { "datasource": { "uid": "loki" }, "expr": "{job=\"nomad-alloc\",task=~\"$task\"} | namespace=~\"$namespace\"", "legendFormat": "" }
+        { "datasource": { "uid": "loki" }, "expr": "{alloc_id=~\"$alloc_id\", task=~\"$task\", stream=~\"stdout|stderr\"}", "legendFormat": "" }
       ]
     },
     {
@@ -571,12 +571,12 @@
       "title": "Stderr Only (namespace=$namespace)",
       "type": "logs",
       "targets": [
-        { "datasource": { "uid": "loki" }, "expr": "{job=\"nomad-alloc\",stream=\"stderr\"} | namespace=~\"$namespace\"", "legendFormat": "" }
+        { "datasource": { "uid": "loki" }, "expr": "{alloc_id=~\"$alloc_id\", stream=\"stderr\"}", "legendFormat": "" }
       ]
     },
     {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Log volume per group/namespace over time — spikes may indicate runaway jobs or errors.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Active allocations per namespace (from Nomad client metrics — correlates with workload presence; log volume requires per-stream queries in Explore).",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
         "overrides": []
@@ -584,15 +584,15 @@
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 105 },
       "id": 70,
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "title": "Log Volume by Group (lines/min)",
+      "title": "Active allocations by namespace",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "loki" }, "expr": "sum by (namespace) (rate({job=\"nomad-alloc\"}[1m]))", "legendFormat": "{{namespace}}" }
+        { "datasource": { "uid": "prometheus" }, "expr": "count by (namespace) (nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"$job\"})", "legendFormat": "{{namespace}}" }
       ]
     },
     {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Stderr log rate per group — a persistently high stderr rate often signals job failures.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Failed job summary gauge by namespace (Prometheus — complements Loki stderr panels above).",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
         "overrides": []
@@ -600,10 +600,208 @@
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 105 },
       "id": 71,
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "title": "Stderr Rate by Group (error signal)",
+      "title": "Failed jobs by namespace (summary)",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "uid": "loki" }, "expr": "sum by (namespace) (rate({job=\"nomad-alloc\",stream=\"stderr\"}[1m]))", "legendFormat": "{{namespace}} stderr" }
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace) (nomad_nomad_job_summary_failed{namespace=~\"$namespace\", exported_job=~\"$job\"})", "legendFormat": "{{namespace}} failed" }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 112 },
+      "id": 108,
+      "title": "Research users — cumulative (all script-job-<slug>--… workloads)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "research_user label is parsed from exported_job via label_replace (^script-job-<institute>-<department>-<group>_<user>--). Legend shows only the slug.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 113 },
+      "id": 84,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" },
+        "stacking": { "group": "A", "mode": "normal" }
+      },
+      "title": "CPU % by research user (all tagged, stacked)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "uid": "prometheus" },
+          "expr": "sum by (research_user) (label_replace(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\")) / 100",
+          "legendFormat": "{{research_user}}"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Stacked RSS per research_user slug (all matching jobs).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 113 },
+      "id": 85,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" },
+        "stacking": { "group": "A", "mode": "normal" }
+      },
+      "title": "Memory RSS by research user (all tagged, stacked)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "uid": "prometheus" },
+          "expr": "sum by (research_user) (label_replace(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
+          "legendFormat": "{{research_user}}"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Running job gauges summed per research_user slug (same naming convention).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 120 },
+      "id": 86,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Running jobs by research user (all tagged)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "uid": "prometheus" },
+          "expr": "sum by (research_user) (label_replace(nomad_nomad_job_summary_running{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
+          "legendFormat": "{{research_user}}"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Single rollup line: sum of allocation CPU for every script-job-<slug>--… job (complements stacked per-user panel above).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 127 },
+      "id": 87,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Cluster CPU % — rollup (all tagged research jobs)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "uid": "prometheus" },
+          "expr": "sum(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}) / 100",
+          "legendFormat": "cluster (tagged)"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Single rollup: sum of allocation RSS for all tagged research jobs.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 127 },
+      "id": 88,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Cluster memory RSS — rollup (all tagged research jobs)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "uid": "prometheus" },
+          "expr": "sum(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"})",
+          "legendFormat": "cluster (tagged)"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 132 },
+      "id": 107,
+      "title": "Per research user — $research_user (legends: slug only)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Filtered by the Research user variable. Legend = institute-dept-group_user parsed from job name.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 133 },
+      "id": 80,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Running / complete / failed jobs (filtered by research user)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace, research_user) (label_replace(nomad_nomad_job_summary_running{namespace=~\"$namespace\", exported_job=~\"script-job-(${research_user:pipe})--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))", "legendFormat": "{{research_user}} (running)" },
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace, research_user) (label_replace(nomad_nomad_job_summary_complete{namespace=~\"$namespace\", exported_job=~\"script-job-(${research_user:pipe})--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))", "legendFormat": "{{research_user}} (complete)" },
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace, research_user) (label_replace(nomad_nomad_job_summary_failed{namespace=~\"$namespace\", exported_job=~\"script-job-(${research_user:pipe})--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))", "legendFormat": "{{research_user}} (failed)" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 133 },
+      "id": 81,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Alloc CPU % (filtered by research user)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace, research_user) (label_replace(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"script-job-(${research_user:pipe})--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\")) / 100", "legendFormat": "{{research_user}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes", "min": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 140 },
+      "id": 82,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Alloc memory RSS (filtered by research user)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "uid": "prometheus" }, "expr": "sum by (namespace, research_user) (label_replace(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"script-job-(${research_user:pipe})--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))", "legendFormat": "{{research_user}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Matches log lines emitted by abc job run workloads: research_user=<slug> …",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 140 },
+      "id": 83,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "title": "Workload logs (research_user tag in stdout)",
+      "type": "logs",
+      "targets": [
+        {
+          "datasource": { "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{stream=~\"stdout|stderr\", task=~\"$task\"} |= \"research_user=\" |~ \"research_user=(${research_user:pipe})\"",
+          "queryType": "range",
+          "refId": "A"
+        }
       ]
     }
   ],
@@ -648,6 +846,23 @@
       },
       {
         "current": {},
+        "allValue": ".*",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(nomad_client_allocs_memory_rss{exported_job=~\"script-job-.+--.+\"}, exported_job)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Research user (inst-dept-group_user)",
+        "multi": true,
+        "name": "research_user",
+        "options": [],
+        "query": { "query": "label_values(nomad_client_allocs_memory_rss{exported_job=~\"script-job-.+--.+\"}, exported_job)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "/^script-job-(?<value>.+?)--/",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {},
         "datasource": { "type": "prometheus", "uid": "prometheus" },
         "definition": "label_values(nomad_nomad_job_summary_running{namespace=~\"$namespace\"}, exported_job)",
         "hide": 0,
@@ -662,6 +877,23 @@
         "sort": 1,
         "type": "query",
         "label": "Job"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"$job\"}, alloc_id)",
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "name": "alloc_id",
+        "options": [],
+        "query": { "query": "label_values(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"$job\"}, alloc_id)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query",
+        "label": "Allocation"
       },
       {
         "current": {},
@@ -687,5 +919,5 @@
   "timezone": "browser",
   "title": "abc-nodes Cluster Overview",
   "uid": "abc-nodes-overview",
-  "version": 2
+  "version": 4
 }

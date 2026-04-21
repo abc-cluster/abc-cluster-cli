@@ -13,9 +13,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// executeCmd runs "abc job run <args...>" and returns stdout.
-func executeCmd(t *testing.T, args ...string) (string, error) {
+// isolatedABCConfigYAML is a minimal config so job HCL generation tests do not
+// pick up the developer's real ~/.abc (which may inject abc-nodes namespaces).
+const isolatedABCConfigYAML = `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cloud
+`
+
+// executeCmdWithABCYAML runs "abc job run <args...>" with ABC_CONFIG_FILE
+// pointing at a temp file containing yaml (overrides any inherited env).
+func executeCmdWithABCYAML(t *testing.T, yaml string, args ...string) (string, error) {
 	t.Helper()
+	cfgPath := filepath.Join(t.TempDir(), "abc.config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write temp abc config: %v", err)
+	}
+	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+
 	buf := &bytes.Buffer{}
 	root := &cobra.Command{Use: "abc"}
 	root.AddCommand(job.NewCmd())
@@ -24,6 +40,27 @@ func executeCmd(t *testing.T, args ...string) (string, error) {
 	root.SetArgs(append([]string{"job", "run"}, args...))
 	_, err := root.ExecuteC()
 	return buf.String(), err
+}
+
+// executeCmdWithConfigPath runs job run with ABC_CONFIG_FILE set to an
+// existing (or intentionally missing) path.
+func executeCmdWithConfigPath(t *testing.T, cfgPath string, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+
+	buf := &bytes.Buffer{}
+	root := &cobra.Command{Use: "abc"}
+	root.AddCommand(job.NewCmd())
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs(append([]string{"job", "run"}, args...))
+	_, err := root.ExecuteC()
+	return buf.String(), err
+}
+
+// executeCmd runs "abc job run <args...>" with an isolated abc-cloud config.
+func executeCmd(t *testing.T, args ...string) (string, error) {
+	return executeCmdWithABCYAML(t, isolatedABCConfigYAML, args...)
 }
 
 func assertJobNamePrefix(t *testing.T, out, namePrefix string) {

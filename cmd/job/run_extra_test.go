@@ -670,12 +670,6 @@ func TestJobRun_RescheduleModeFail(t *testing.T) {
 // ── A.14 Config-based Nomad address (offline) ─────────────────────────────────
 
 func TestJobRun_ConfigNomadAddrUsedAsDefault(t *testing.T) {
-	// Write a minimal config file that sets nomad_addr.
-	// Then verify that nomadAddrFromCmd returns the configured value.
-	// We can't easily test HTTP calls offline, but we can verify the config
-	// loading path by exercising NomadDefaultsFromConfig.
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
 	cfgContent := `version: "1"
 active_context: test-ctx
 contexts:
@@ -685,17 +679,12 @@ contexts:
     nomad_addr: http://10.0.0.1:4646
     nomad_token: s.testtoken
 `
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
-
 	// The nomad address should be readable from the config.
 	// Indirectly test by ensuring the command doesn't error on HCL generation
 	// (it would if config loading panicked).
 	script := "#!/bin/bash\n#ABC --name=cfg-addr\necho hi\n"
 	p := writeTempScript(t, "cfg_addr.sh", script)
-	out, err := executeCmd(t, p)
+	out, err := executeCmdWithABCYAML(t, cfgContent, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -706,11 +695,9 @@ contexts:
 
 func TestJobRun_MissingConfigFileUsesDefaults(t *testing.T) {
 	// Point to a non-existent config path — should fall back gracefully.
-	t.Setenv("ABC_CONFIG_FILE", "/tmp/nonexistent-abc-config-xyz.yaml")
-
 	script := "#!/bin/bash\n#ABC --name=no-cfg\necho hi\n"
 	p := writeTempScript(t, "no_cfg.sh", script)
-	out, err := executeCmd(t, p)
+	out, err := executeCmdWithConfigPath(t, "/tmp/nonexistent-abc-config-xyz.yaml", p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -743,7 +730,6 @@ func TestJobRun_InvalidPriority(t *testing.T) {
 // ── Monitoring floor (abc-nodes enhanced) via ABC_CONFIG_FILE ───────────────
 
 func TestJobRun_EnhancedAbcNodesConfig_InjectsMonitoringEnvAndMeta(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	raw := `version: "1.0"
 active_context: enh
 contexts:
@@ -764,14 +750,9 @@ contexts:
         prometheus:
           http: http://192.168.55.1:9090
 `
-	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
-
 	script := "#!/bin/bash\n#ABC --name=enhmon\necho hi\n"
 	p := writeTempScript(t, "enh_mon.sh", script)
-	out, err := executeCmd(t, p)
+	out, err := executeCmdWithABCYAML(t, raw, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -787,7 +768,6 @@ contexts:
 }
 
 func TestJobRun_BaseAbcNodesConfig_NoMonitoringEnv(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	raw := `version: "1.0"
 active_context: base
 contexts:
@@ -807,14 +787,9 @@ contexts:
         loki:
           http: http://192.168.55.9:3100
 `
-	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
-
 	script := "#!/bin/bash\n#ABC --name=basemon\necho hi\n"
 	p := writeTempScript(t, "base_mon.sh", script)
-	out, err := executeCmd(t, p)
+	out, err := executeCmdWithABCYAML(t, raw, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -823,5 +798,109 @@ contexts:
 	}
 	if strings.Contains(out, "abc_monitoring_floor") {
 		t.Fatalf("did not expect abc_monitoring_floor meta on base floor:\n%s", out)
+	}
+}
+
+// committedWorkloadScript returns a path to deployments/.../workloads/*.sh
+// relative to package dir cmd/job (go test cwd for this package).
+func committedWorkloadScript(t *testing.T, name string) string {
+	t.Helper()
+	p := filepath.Join("..", "..", "deployments", "abc-nodes", "nomad", "tests", "workloads", name)
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("missing committed workload script %q: %v", p, err)
+	}
+	return p
+}
+
+func TestJobRun_WorkloadStressNgCpuDefaultHCL(t *testing.T) {
+	p := committedWorkloadScript(t, "stress-ng-cpu-default.sh")
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `namespace = "default"`) {
+		t.Errorf("expected namespace default in HCL, got:\n%s", out)
+	}
+	if !strings.Contains(out, `driver = "containerd-driver"`) {
+		t.Errorf("expected containerd-driver, got:\n%s", out)
+	}
+	if !strings.Contains(out, `quay.io/container-perf-tools/stress-ng:latest`) {
+		t.Errorf("expected container-perf-tools stress-ng OCI image in HCL, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"/bin/sh", "local/stress-ng-cpu-default.sh"`) {
+		t.Errorf("expected containerd-driver tasks to run script via /bin/sh in args (timeout wrapper), got:\n%s", out)
+	}
+	if !strings.Contains(out, `destination = "local/stress-ng-cpu-default.sh"`) {
+		t.Errorf("expected templated script under local/, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"stress-ng"`) || !strings.Contains(out, "workload") {
+		t.Errorf("expected meta workload stress-ng, got:\n%s", out)
+	}
+	if !strings.Contains(out, `NOMAD_NAMESPACE = "$${NOMAD_NAMESPACE}"`) {
+		t.Errorf("expected NOMAD_NAMESPACE env passthrough in HCL, got:\n%s", out)
+	}
+}
+
+func TestJobRun_WorkloadHyperfineServicesHCL(t *testing.T) {
+	p := committedWorkloadScript(t, "hyperfine-micro-services.sh")
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `namespace = "services"`) {
+		t.Errorf("expected namespace services, got:\n%s", out)
+	}
+	if !strings.Contains(out, `driver = "containerd-driver"`) {
+		t.Errorf("expected containerd-driver, got:\n%s", out)
+	}
+	if !strings.Contains(out, `NOMAD_JOB_NAME`) {
+		t.Errorf("expected NOMAD_JOB_NAME in env from --job_name, got:\n%s", out)
+	}
+}
+
+func TestJobRun_WorkloadResearchUserJobNameHCL(t *testing.T) {
+	p := committedWorkloadScript(t, "stress-ng-cpu-user-uh-bristol-cardiology-hpc_alice.sh")
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `uh-bristol-cardiology-hpc_alice--wl-str`) {
+		t.Errorf("expected research-user workload stem in generated job/HCL, got:\n%s", out)
+	}
+	if !regexp.MustCompile(`research_user\s*=\s*"uh-bristol-cardiology-hpc_alice"`).MatchString(out) {
+		t.Errorf("expected job meta research_user=uh-bristol-cardiology-hpc_alice in HCL, got:\n%s", out)
+	}
+}
+
+func TestJobRun_WorkloadStressAbcContextInjectsNamespace(t *testing.T) {
+	raw := `version: "1.0"
+active_context: wlctx
+contexts:
+  wlctx:
+    endpoint: https://api.example.com
+    access_token: tok
+    cluster_type: abc-nodes
+    capabilities:
+      logging: false
+      monitoring: false
+      observability: false
+    admin:
+      abc_nodes:
+        nomad_namespace: from-config-tenant
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+`
+	p := committedWorkloadScript(t, "stress-ng-cpu-abc-context.sh")
+	out, err := executeCmdWithABCYAML(t, raw, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `namespace = "from-config-tenant"`) {
+		t.Errorf("expected namespace from abc context admin.abc_nodes.nomad_namespace, got:\n%s", out)
+	}
+	if !strings.Contains(out, `driver = "containerd-driver"`) {
+		t.Errorf("expected containerd-driver, got:\n%s", out)
 	}
 }

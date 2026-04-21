@@ -201,6 +201,28 @@ func TestAbcNodesNomadNamespaceFromAdminWhoami(t *testing.T) {
 	}
 }
 
+func TestAbcNodesNomadNamespaceFromColonWhoami(t *testing.T) {
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Admin: Admin{
+			Whoami: "aither:su-mbhg-bioinformatics:researcher",
+		},
+	}
+	if got := ctx.AbcNodesNomadNamespaceOrDefault(); got != "su-mbhg-bioinformatics" {
+		t.Fatalf("OrDefault: got %q", got)
+	}
+}
+
+func TestAbcNodesNomadNamespaceFromAuthWhoamiWhenAdminEmpty(t *testing.T) {
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Auth:        &ContextAuth{Whoami: "aither:su-mbhg-hostgen:researcher"},
+	}
+	if got := ctx.AbcNodesNomadNamespaceOrDefault(); got != "su-mbhg-hostgen" {
+		t.Fatalf("OrDefault: got %q", got)
+	}
+}
+
 func TestAbcNodesNomadNamespaceExplicitOverridesWhoami(t *testing.T) {
 	ctx := Context{
 		ClusterType: ClusterTypeABCNodes,

@@ -34,12 +34,34 @@ var adminWhoamiNomadNamespaceSuffixes = []string{
 	"_user",
 }
 
+// deriveNomadNamespaceFromColonPersona handles admin/auth whoami strings shaped like
+// "<realm>:<nomad-namespace>:<role>" (e.g. aither:su-mbhg-bioinformatics:researcher).
+// Returns the middle segment when it looks like a Nomad namespace slug.
+func deriveNomadNamespaceFromColonPersona(whoami string) string {
+	w := strings.TrimSpace(whoami)
+	if w == "" || strings.Contains(w, "//") {
+		return ""
+	}
+	parts := strings.Split(w, ":")
+	if len(parts) < 3 {
+		return ""
+	}
+	ns := strings.TrimSpace(parts[1])
+	if ns == "" {
+		return ""
+	}
+	return ns
+}
+
 // deriveNomadNamespaceFromAdminWhoami returns the Nomad namespace implied by admin.whoami
 // when it uses a known trailing _<role> pattern. Empty string if none match.
 func deriveNomadNamespaceFromAdminWhoami(whoami string) string {
 	w := strings.TrimSpace(whoami)
 	if w == "" {
 		return ""
+	}
+	if ns := deriveNomadNamespaceFromColonPersona(w); ns != "" {
+		return ns
 	}
 	for _, suf := range adminWhoamiNomadNamespaceSuffixes {
 		if strings.HasSuffix(w, suf) {
@@ -48,6 +70,16 @@ func deriveNomadNamespaceFromAdminWhoami(whoami string) string {
 				return ns
 			}
 		}
+	}
+	return ""
+}
+
+func (c Context) whoamiForNomadNamespaceDerivation() string {
+	if v := strings.TrimSpace(c.Admin.Whoami); v != "" {
+		return v
+	}
+	if c.Auth != nil {
+		return strings.TrimSpace(c.Auth.Whoami)
 	}
 	return ""
 }
@@ -61,12 +93,12 @@ func (c Context) resolvedAbcNodesNomadNamespace() string {
 	if !c.IsABCNodesCluster() {
 		return ""
 	}
-	return deriveNomadNamespaceFromAdminWhoami(c.Admin.Whoami)
+	return deriveNomadNamespaceFromAdminWhoami(c.whoamiForNomadNamespaceDerivation())
 }
 
 // AbcNodesNomadNamespaceForCLI returns NOMAD_NAMESPACE to inject for Nomad CLI
 // passthrough when cluster_type is abc-nodes and a namespace is resolved from
-// admin.abc_nodes.nomad_namespace or admin.whoami, and the operator has not
+// admin.abc_nodes.nomad_namespace, admin.whoami, or auth.whoami, and the operator has not
 // already exported NOMAD_NAMESPACE.
 func (c Context) AbcNodesNomadNamespaceForCLI() string {
 	if !c.IsABCNodesCluster() {
@@ -76,7 +108,7 @@ func (c Context) AbcNodesNomadNamespaceForCLI() string {
 }
 
 // AbcNodesNomadNamespaceOrDefault returns the resolved Nomad namespace for abc-nodes
-// (explicit admin.abc_nodes.nomad_namespace, else derived from admin.whoami), else "default".
+// (explicit admin.abc_nodes.nomad_namespace, else derived from admin/auth whoami), else "default".
 func (c Context) AbcNodesNomadNamespaceOrDefault() string {
 	if v := c.resolvedAbcNodesNomadNamespace(); v != "" {
 		return v
