@@ -90,24 +90,51 @@ func FinalizeJobScript(spec *jobSpec, scriptName, script string) (string, error)
 	if err := ValidateRuntimeDriver(spec); err != nil {
 		return "", err
 	}
-	out, err := applyRuntimeScriptWrap(spec, scriptName, script)
-	if err != nil {
-		return "", err
-	}
-	return out, nil
-}
-
-func applyRuntimeScriptWrap(spec *jobSpec, scriptName, script string) (string, error) {
-	rt := NormalizeRuntimeID(spec.Runtime)
-	if rt == "" {
-		return script, nil
+	var prefix []string
+	prefix = append(prefix, taskTmpPreambleLines(spec)...)
+	rt := ""
+	if spec != nil {
+		rt = NormalizeRuntimeID(spec.Runtime)
 	}
 	switch rt {
+	case "":
 	case runtimePixiExec:
-		return prependPixiWorkspaceWrapper(script, scriptName, strings.TrimSpace(spec.From), spec.Driver)
+		w, err := pixiWrapperLines(scriptName, strings.TrimSpace(spec.From), spec.Driver)
+		if err != nil {
+			return "", err
+		}
+		prefix = append(prefix, w...)
 	default:
 		return "", fmt.Errorf("internal: missing script wrapper for runtime %q", rt)
 	}
+	if len(prefix) == 0 {
+		return script, nil
+	}
+	return insertLinesAfterShebang(script, prefix), nil
+}
+
+// insertLinesAfterShebang splices insert after the first line when it is a shebang.
+func insertLinesAfterShebang(script string, insert []string) string {
+	if len(insert) == 0 {
+		return script
+	}
+	lines := strings.Split(script, "\n")
+	insertAt := 0
+	if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "#!") {
+		insertAt = 1
+	}
+	out := strings.Join(lines[:insertAt], "\n")
+	if out != "" {
+		out += "\n"
+	}
+	out += strings.Join(insert, "\n")
+	if insertAt < len(lines) {
+		rest := strings.Join(lines[insertAt:], "\n")
+		if rest != "" {
+			out += "\n" + rest
+		}
+	}
+	return out
 }
 
 // prependPixiWorkspaceWrapper injects a guard that re-execs the script under
@@ -116,34 +143,30 @@ func applyRuntimeScriptWrap(spec *jobSpec, scriptName, script string) (string, e
 //
 // Note: Pixi's `exec` subcommand does not support --manifest-path (as of
 // pixi 0.46); workspace-bound execution uses `pixi run --manifest-path`.
-func prependPixiWorkspaceWrapper(script, scriptName, manifestPath, driver string) (string, error) {
+func pixiWrapperLines(scriptName, manifestPath, driver string) ([]string, error) {
 	if scriptName == "" {
-		return "", fmt.Errorf("internal: empty script name for pixi wrapper")
-	}
-	lines := strings.Split(script, "\n")
-	insertAt := 0
-	if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "#!") {
-		insertAt = 1
+		return nil, fmt.Errorf("internal: empty script name for pixi wrapper")
 	}
 	qManifest := shellSingleQuote(manifestPath)
 	innerArg := jobhcl.ScriptArgForDriver(driver, scriptName)
 	innerQuoted := bashDoubleQuote(innerArg)
 	// Inner invocation must match ScriptArgForDriver so docker/containerd do not
 	// resolve .../local/... twice (see internal/hclgen/job ociTaskScriptArg).
-	wrapper := []string{
+	return []string{
 		`if [ "${ABC_RUNTIME_PIXI_PHASE:-}" != inner ]; then`,
 		`  export ABC_RUNTIME_PIXI_PHASE=inner`,
 		fmt.Sprintf(`  exec pixi run --manifest-path %s -- /bin/bash %s "$@"`, qManifest, innerQuoted),
 		`fi`,
 		``,
+	}, nil
+}
+
+func prependPixiWorkspaceWrapper(script, scriptName, manifestPath, driver string) (string, error) {
+	wrapper, err := pixiWrapperLines(scriptName, manifestPath, driver)
+	if err != nil {
+		return "", err
 	}
-	out := strings.Join(lines[:insertAt], "\n")
-	if out != "" {
-		out += "\n"
-	}
-	out += strings.Join(wrapper, "\n")
-	out += strings.Join(lines[insertAt:], "\n")
-	return out, nil
+	return insertLinesAfterShebang(script, wrapper), nil
 }
 
 func shellSingleQuote(s string) string {

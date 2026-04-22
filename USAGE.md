@@ -35,6 +35,8 @@ This document describes every command available in the `abc` CLI.
   - [pipeline params](#pipeline-params-name)
 - [module run](#module-run)
 - [job run](#job-run)
+  - [Software stack: runtime and from](#software-stack-runtime-and-from)
+  - [Task workspace temp](#task-workspace-temp)
   - [Preamble directives](#preamble-directives)
   - [Package manager directives](#package-manager-directives)
   - [Directive precedence](#directive-precedence)
@@ -85,6 +87,7 @@ These flags are available on every `abc` command.
 | `--workspace`    | `ABC_WORKSPACE_ID`   | Workspace ID                                     | *(user's default workspace)* |
 | `--cluster`      | `ABC_CLUSTER`        | Target a specific named cluster in the fleet     | *(unset)*                    |
 | `--quiet` / `-q` |                      | Suppress informational output to stderr          | `false`                      |
+| *(env only)*     | `ABC_CLI_DISABLE_UPDATE_CHECK` | Disable automatic GitHub release update notifications (`1`, `true`, `yes`, `on`) | *(unset)* |
 | `--debug[=N]`    | `ABC_DEBUG`          | Write structured JSON debug log (see [Debug logging](#debug-logging)) | `0` (off) |
 | `--sudo`         | `ABC_CLI_SUDO_MODE`  | Elevate to cluster-admin scope (required for admin/node write ops) | `false` |
 | `--cloud`        | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope (required for cluster/accounting write ops) | `false` |
@@ -589,7 +592,7 @@ abc submit <target> [flags]
 | 6 | `<target>` matches a saved pipeline name in Nomad Variables | `pipeline run` |
 | — | no match | error — use `--type` |
 
-> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, and `--from` (see [Software stack](#software-stack-runtime-and-from) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
+> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, `--from`, and **`--task-tmp`** (see [Software stack](#software-stack-runtime-and-from) and [Task workspace temp](#task-workspace-temp) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
 
 ### Flags
 
@@ -970,6 +973,7 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--conda`                       | `--conda=<spec>`                    | Conda spec (meta `abc_conda`; no automatic conda wrapper)         |
 | `--runtime`                     | `--runtime=<kind>`                  | Software stack provisioner (`pixi-exec`, alias `pixi`); orthogonal to `--driver` |
 | `--from`                        | `--from=<path-or-uri>`              | Native stack definition for `--runtime` (Pixi: path to `pixi.toml` on the execution host) |
+| `--task-tmp`                    | `--task-tmp`                        | Task-local temp: `TMPDIR`/`TMP`/`TEMP` → `${NOMAD_TASK_DIR}/tmp` (see [below](#task-workspace-temp)) |
 | `--hpc-compat-env`              | `--hpc_compat_env`                  | Inject legacy `SLURM_*` / `PBS_*` compatibility aliases           |
 | `--no-network`                  | `--no-network`                      | Disable network access (Nomad mode = `"none"`)                    |
 | `--port`                        | `--port=<label>`                    | Named dynamic port; injects `NOMAD_IP/PORT/ADDR_<label>`          |
@@ -1019,6 +1023,24 @@ so the preamble and body execute inside the Pixi **default** environment for tha
 - **`#ABC --pixi`:** still allowed as a separate meta hint; it does not turn on automatic wrapping (use `--runtime` + `--from` for that).
 - **Relative `--from`:** resolved on the execution host relative to the task working directory after any `#ABC --chdir`; prefer absolute cluster paths when unsure.
 
+### Task workspace temp
+
+The **`--task-tmp`** flag (or **`#ABC --task-tmp`** in the preamble) opts into a **writable scratch directory inside the task sandbox** for programs that respect `TMPDIR` (and related variables), instead of whatever the image or host defaults to.
+
+| Source | Form |
+|--------|------|
+| CLI | `--task-tmp` (boolean) |
+| Preamble | `#ABC --task-tmp` *(no value)* |
+| Params file | `task-tmp: true` *(YAML boolean becomes the same as the CLI flag)* |
+
+**Behavior:**
+
+- Nomad **meta:** `abc_task_tmp=true`.
+- Task **environment:** `TMPDIR`, `TMP`, and `TEMP` are set to `${NOMAD_TASK_DIR}/tmp` in the generated HCL.
+- **Embedded script:** right after the shebang, the CLI inserts a small block that `mkdir -p`s that directory and exports the same variables for the shell session.
+
+If you combine **`--task-tmp`** with **`--runtime=pixi-exec`**, the temp block is emitted **before** the Pixi re-exec guard so caches and downloads that honor `TMPDIR` stay on task-local disk.
+
 ### Runtime-exposure flags (Class 2)
 
 These preamble directives inject the corresponding `NOMAD_*` variable into the task's environment
@@ -1064,6 +1086,7 @@ block so the script can read the value at execution time.
 |--------------------|-------------|
 | `#ABC --conda=<spec>` | Conda environment label (`spec` = package name or env file path). Recorded as `abc_conda` in Nomad meta. Does not wrap the script automatically. |
 | `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in Nomad meta. For automatic Pixi wrapping, use **`#ABC --runtime=pixi-exec`** and **`#ABC --from=…/pixi.toml`** (see [Software stack](#software-stack-runtime-and-from)). |
+| `#ABC --task-tmp` | Task-local temp defaults (`TMPDIR`/`TMP`/`TEMP` under `${NOMAD_TASK_DIR}/tmp`). See [Task workspace temp](#task-workspace-temp). |
 
 ### Meta flags (Class 3)
 
@@ -1075,7 +1098,7 @@ block so the script can read the value at execution time.
 
 | Flag            | Description                                                        |
 |-----------------|--------------------------------------------------------------------|
-| `--params-file` | YAML file with directive key/value pairs (lowest priority after env vars). Nested keys are dot-flattened: `cores: 8` → `--cores=8`. |
+| `--params-file` | YAML file with directive key/value pairs (lowest priority after env vars). Nested keys are dot-flattened: `cores: 8` → `--cores=8`. Boolean values emit boolean flags only when true, e.g. `task-tmp: true` → `--task-tmp`. |
 
 ### Nomad connection flags
 
@@ -1137,6 +1160,7 @@ abc job run bwa-align.sh --output-file bwa-align.hcl
 #ABC --alloc_id          # expose NOMAD_ALLOC_ID
 #ABC --alloc_index       # expose NOMAD_ALLOC_INDEX (0-based, for sharding)
 #ABC --task_dir          # expose NOMAD_TASK_DIR
+#ABC --task-tmp         # TMPDIR/TMP/TEMP under ${NOMAD_TASK_DIR}/tmp
 #ABC --cpu_cores         # expose NOMAD_CPU_CORES (use for -t in tools)
 #ABC --meta=sample_id=S001
 

@@ -77,6 +77,9 @@ type jobSpec struct {
 	Runtime string
 	From    string
 
+	// TaskTmp enables task-local temp defaults (TMPDIR under NOMAD_TASK_DIR/tmp).
+	TaskTmp bool
+
 	// ── Network directives ────────────────────────────────────────────────────
 	Ports []string
 
@@ -203,6 +206,9 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.From != "" {
 		base.From = override.From
+	}
+	if override.TaskTmp {
+		base.TaskTmp = true
 	}
 	if override.NoNetwork {
 		base.NoNetwork = true

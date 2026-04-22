@@ -995,6 +995,7 @@ HCL batch job spec. Without `--submit` the HCL is printed to stdout.
 | `--conda` | `--conda=<spec>` | Conda environment spec (recorded as meta) |
 | `--runtime` | `--runtime=<kind>` | Software stack provisioner (`pixi-exec`, alias `pixi`) |
 | `--from` | `--from=<path>` | Native definition for `--runtime` (Pixi: `pixi.toml` path on execution host) |
+| `--task-tmp` | `--task-tmp` | Task-local `TMPDIR`/`TMP`/`TEMP` → `${NOMAD_TASK_DIR}/tmp`; meta `abc_task_tmp`; script `mkdir` after shebang |
 | `--no-network` | `--no-network` | Disable network access |
 | `--port` | `--port=<label>` | Named dynamic port (repeatable) |
 | `--hpc-compat-env` | `--hpc_compat_env` | Inject SLURM/PBS compatibility aliases |
@@ -1008,6 +1009,7 @@ HCL batch job spec. Without `--submit` the HCL is printed to stdout.
 | `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in meta |
 | `#ABC --runtime=<kind>` | Stack provisioner (`pixi-exec`, alias `pixi`); orthogonal to `--driver` |
 | `#ABC --from=<path>` | Native stack definition path for `--runtime` (Pixi: path to `pixi.toml`) |
+| `#ABC --task-tmp` | Boolean (no value). Sets meta `abc_task_tmp`, task env `TMPDIR`/`TMP`/`TEMP`, and a post-shebang shell block that creates `${NOMAD_TASK_DIR}/tmp`. With `pixi-exec`, that block precedes the Pixi re-exec guard. Params file: `task-tmp: true`. |
 
 **Directive precedence:**
 ```

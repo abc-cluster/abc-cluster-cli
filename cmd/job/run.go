@@ -65,6 +65,9 @@ SOFTWARE STACK  (orthogonal to --driver; see USAGE.md job run / Software stack)
   --runtime=<kind>             Stack provisioner: pixi-exec (alias: pixi)
   --from=<path-or-uri>       Backend-native definition (pixi-exec: path to pixi.toml)
 
+TASK WORKSPACE
+  --task-tmp                   Use ${NOMAD_TASK_DIR}/tmp for TMPDIR/TMP/TEMP (mkdir at start)
+
 RESCHEDULE  (stored as abc_reschedule_* meta keys)
   --reschedule-mode=<delay|fail>
   --reschedule-attempts=<int>
@@ -183,6 +186,7 @@ EXAMPLES
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
 	cmd.Flags().String("runtime", "", "Software stack runtime: pixi-exec (alias pixi); see USAGE.md")
 	cmd.Flags().String("from", "", "Definition path/URI for --runtime (e.g. pixi.toml on the execution host)")
+	cmd.Flags().Bool("task-tmp", false, "Use ${NOMAD_TASK_DIR}/tmp for TMPDIR/TMP/TEMP (see USAGE.md)")
 	cmd.Flags().Bool("no-network", false, "Disable network access for this job")
 	cmd.Flags().StringSlice("port", nil, "Named network ports")
 
@@ -318,7 +322,11 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	if v, _ := cmd.Flags().GetString("from"); v != "" {
 		spec.From = v
 	}
+	if v, _ := cmd.Flags().GetBool("task-tmp"); v {
+		spec.TaskTmp = true
+	}
 	syncStackMetaKeys(spec)
+	syncTaskTmpMeta(spec)
 	return nil
 }
 

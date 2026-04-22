@@ -20,6 +20,7 @@ type ScriptHCLOptions struct {
 	Conda     string
 	Runtime   string
 	From      string
+	TaskTmp   bool
 }
 
 // ScriptHCLResult holds the output of BuildScriptHCL.
@@ -84,7 +85,11 @@ func BuildScriptHCL(scriptPath string, opts ScriptHCLOptions) (*ScriptHCLResult,
 	if opts.From != "" {
 		spec.From = opts.From
 	}
+	if opts.TaskTmp {
+		spec.TaskTmp = true
+	}
 	syncStackMetaKeys(spec)
+	syncTaskTmpMeta(spec)
 
 	if spec.Meta == nil {
 		spec.Meta = map[string]string{}
