@@ -9,18 +9,22 @@ It brings abc-cluster concepts like pipelines and ad-hoc Nomad jobs to the termi
 Install from GitHub releases using the installer script:
 
 ```bash
-# Download the correct binary for your OS/arch into current directory
-# (uses POSIX sh — works on Alpine/busybox; `| bash` is fine too)
-curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh
+# Download the correct binary for your OS/arch into the current directory.
+# Uses the GitHub Contents API (not raw.githubusercontent.com) so `ref=main`
+# is not stuck on an outdated CDN snapshot of the installer script.
+curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+  "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh
 
 # Install to /usr/local/bin/abc (prompts for sudo password)
-curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh -s -- --sudo
+curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+  "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh -s -- --sudo
 ```
 
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh -s -- --version v1.2.3
+curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+  "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh -s -- --version v1.2.3
 ```
 
 Alternative install methods:

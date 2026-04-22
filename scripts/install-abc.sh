@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# POSIX sh: safe for `curl -fsSL .../install-abc.sh | sh`
+# POSIX sh: pipe this file into `sh` (see usage() for the recommended curl URL).
 # (`| bash` is still fine.)
 
 REPO_OWNER="abc-cluster"
@@ -27,14 +27,18 @@ Options:
   --help            Show this help message
 
 Examples:
-  # Download latest binary to current directory
-  curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh
+  # Download latest binary to current directory (GitHub Contents API: ref=main
+  # tracks the branch; raw.githubusercontent.com/.../main/... can be CDN-stale.)
+  curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+    "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh
 
   # Install latest to /usr/local/bin/abc
-  curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh -s -- --sudo
+  curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+    "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh -s -- --sudo
 
   # Install a specific version
-  curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh -s -- --version v1.2.3
+  curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+    "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh -s -- --version v1.2.3
 EOF
 }
 

@@ -17,7 +17,7 @@ const (
 	cliRepoOwner          = "abc-cluster"
 	cliRepoName           = "abc-cluster-cli"
 	updateCheckTimeout    = 1200 * time.Millisecond
-	installScriptCmdFmt   = "curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh -s -- --version %s"
+	installScriptCmdFmt   = "curl -fsSL -H \"Accept: application/vnd.github.raw+json\" \"https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main\" | sh -s -- --version %s"
 )
 
 var fetchLatestCLITag = func(ctx context.Context) (string, error) {
