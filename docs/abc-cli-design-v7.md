@@ -595,15 +595,19 @@ These values are the default Nomad connection for `abc job`, `abc pipeline`, `ab
 
 ### `abc config init`
 
-Initialize configuration interactively. Equivalent to running `abc auth login`.
+Creates the config file if needed and seeds a placeholder context **`default`** (preset public
+API endpoint). Sets **`active_context`** to **`default`** when there were no contexts yet.
+Use **`abc auth login`** or **`abc context add`** to supply credentials.
 
-**Expected output:**
+**Expected output (first run, no prior contexts):**
 ```
-Running 'abc auth login' to set up your first context...
-✓ Config initialized at /Users/name/.abc/config.yaml
+✓ Config ready at /Users/name/.abc/config.yaml
+✓ Active context: default (edit with: abc auth login  or  abc context add ...)
 ```
 
-If `ABC_CRYPT_PASSWORD` is set, access tokens will be encrypted automatically.
+If other contexts already existed without an active selection, the second line may instead prompt to run `abc context use <name>` after adding the `default` placeholder.
+
+If `ABC_CRYPT_PASSWORD` is set, access tokens will be encrypted automatically when written by other commands.
 
 ### `abc config set KEY VALUE`
 

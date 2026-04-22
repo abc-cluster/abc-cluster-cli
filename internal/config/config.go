@@ -70,6 +70,12 @@ import (
 // CurrentVersion is the current config file schema version (written first in YAML).
 const CurrentVersion = "1.0"
 
+// DefaultContextName is the placeholder context created by config init for first-time users.
+const DefaultContextName = "default"
+
+// DefaultPublicAPIEndpoint matches the auth login prompt default (ABC control plane).
+const DefaultPublicAPIEndpoint = "https://api.abc-cluster.io"
+
 // DefaultConfigPath returns the path to the config file, honouring the
 // ABC_CONFIG_FILE environment variable.
 func DefaultConfigPath() string {
@@ -139,22 +145,60 @@ func Load() (*Config, error) {
 	return LoadFrom(DefaultConfigPath())
 }
 
-// Create ensures the config file exists, creating it if necessary.
+// Create ensures the config file exists, creating it if necessary, and that a
+// placeholder context named DefaultContextName is present with ActiveContext
+// pointing at it when no active context is set. Existing files are loaded,
+// merged, and rewritten (idempotent).
 // Returns the path to the config file.
 func Create() (string, error) {
 	path := DefaultConfigPath()
+	var cfg *Config
 	if _, err := os.Stat(path); err == nil {
-		return path, nil // Already exists
+		loaded, err := LoadFrom(path)
+		if err != nil {
+			return "", err
+		}
+		cfg = loaded
+	} else if errors.Is(err, os.ErrNotExist) {
+		cfg = &Config{
+			Version:        CurrentVersion,
+			Contexts:       map[string]Context{},
+			ContextAliases: map[string]string{},
+		}
+	} else {
+		return "", fmt.Errorf("stat config %q: %w", path, err)
 	}
-	cfg := &Config{
-		Version:        CurrentVersion,
-		Contexts:       map[string]Context{},
-		ContextAliases: map[string]string{},
-	}
+	cfg.EnsureDefaultContext()
 	if err := cfg.SaveTo(path); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// EnsureDefaultContext guarantees contexts.default exists (placeholder). It does
+// not replace an existing default definition.
+//
+// If active_context is empty, it is set to DefaultContextName only when there were
+// no contexts before this call (typical first-time init), or when the only defined
+// context is DefaultContextName (repair hand-edited files).
+func (c *Config) EnsureDefaultContext() {
+	if c.Contexts == nil {
+		c.Contexts = map[string]Context{}
+	}
+	hadAny := len(c.Contexts) > 0
+	if _, ok := c.Contexts[DefaultContextName]; !ok {
+		ctx := Context{Endpoint: DefaultPublicAPIEndpoint}
+		if up, err := DeriveUploadEndpointFromAPI(DefaultPublicAPIEndpoint); err == nil {
+			ctx.UploadEndpoint = up
+		}
+		c.Contexts[DefaultContextName] = ctx
+	}
+	if strings.TrimSpace(c.ActiveContext) != "" {
+		return
+	}
+	if !hadAny || len(c.Contexts) == 1 {
+		c.ActiveContext = DefaultContextName
+	}
 }
 
 // LoadFrom reads the config file at path. If the file does not exist, an

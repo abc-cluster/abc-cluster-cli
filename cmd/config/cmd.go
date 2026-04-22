@@ -1,7 +1,7 @@
 // Package config implements the abc config command group.
 //
 // Subcommands:
-//   - init   — initialize config interactively
+//   - init   — create config file and seed a "default" context
 //   - set    — set a config key to a value
 //   - get    — get a config value
 //   - list   — list all config keys and values
@@ -29,13 +29,14 @@ func NewCmd() *cobra.Command {
 
 Configuration is stored at ~/.abc/config.yaml (or ABC_CONFIG_FILE).
 This is where cli-managed fields like default region, output format, and
-saved authentication contexts are stored.
+saved authentication contexts are stored. First-time "abc config init" writes
+a "default" context entry you can fill with "abc auth login" or "abc context add".
 
 Sensitive fields (access_token) can be encrypted with mozilla/sops.
 See 'abc config encryption' for details.
 
 Subcommands:
-  abc config init       Initialize configuration interactively
+  abc config init       Create config file and seed a placeholder "default" context
   abc config set KEY VALUE    Set a configuration key
   abc config get KEY          Get a configuration key
   abc config list             List all configuration keys
@@ -57,23 +58,32 @@ Subcommands:
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize configuration interactively",
-		Long: `Create or update ~/.abc/config.yaml interactively.
+		Short: "Create config file and seed a placeholder \"default\" context",
+		Long: `Create or update ~/.abc/config.yaml.
 
-Prompts for default settings and the first authentication context.
-Equivalent to running 'abc auth login' and 'abc config set'.`,
+Ensures the file exists and seeds a placeholder context named "default" (public
+API endpoint preset) with active_context set to "default" when none is set.
+Use "abc auth login" or "abc context add" to fill in tokens and workspace fields.`,
 		Args: cobra.NoArgs,
 		RunE: runConfigInit,
 	}
 }
 
 func runConfigInit(cmd *cobra.Command, args []string) error {
-	// For now, delegate to auth login
-	fmt.Fprintf(os.Stderr, "Running 'abc auth login' to set up your first context...\n\n")
-
-	// Use auth login directly by calling its implementation
-	cfgFile, _ := cfg.Create()
-	fmt.Fprintf(os.Stderr, "✓ Config initialized at %s\n", cfgFile)
+	cfgFile, err := cfg.Create()
+	if err != nil {
+		return fmt.Errorf("config init: %w", err)
+	}
+	c, err := cfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ Config ready at %s\n", cfgFile)
+	if ac := strings.TrimSpace(c.ActiveContext); ac != "" {
+		fmt.Fprintf(os.Stderr, "✓ Active context: %s (edit with: abc auth login  or  abc context add ...)\n", ac)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ Placeholder context %q added; pick active with: abc context use <name>\n", cfg.DefaultContextName)
+	}
 	return nil
 }
 

@@ -19,7 +19,7 @@ The ABC CLI is the day-to-day interface for **cluster-backed workflows**: config
 | [7](#exercise-7-job-run-and-nomad) | `abc job run`: `#ABC` directives, **`--task-tmp`**, optional Pixi stack, SLURM hybrid |
 | [8](#exercise-8-more-cli-commands) | Help-only tour: `pipeline`, `module`, `submit`, `infra` |
 
-**Time budget:** roughly **10 minutes × number of exercises** you complete (~80 minutes for a full pass). You do **not** need a live cluster for Exercises 1–4, 8, or for **dry-run** parts of 7.
+**Time budget:** roughly **10 minutes × number of exercises** you complete (~80 minutes for a full pass). You do **not** need a live cluster for Exercises 1–4, 8, or for **HCL-only** parts of Exercise 7 (omit **`--submit`**; that prints Nomad job HCL locally).
 
 **Difficulty:** Beginner-friendly; assumes comfort in a shell.
 
@@ -27,7 +27,20 @@ The ABC CLI is the day-to-day interface for **cluster-backed workflows**: config
 
 ## Prerequisites
 
-- `abc` on your `PATH`: `abc --version`
+- **`abc` on your `PATH`:** `abc --version`. If you do not have it yet, install from GitHub releases using the installer script (downloads the correct binary for your OS/arch):
+  ```bash
+  # Install into the current directory (see script output for PATH hints)
+  curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash
+  ```
+  Install to `/usr/local/bin/abc` (prompts for your sudo password):
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash -s -- --sudo
+  ```
+  Pin a specific release (replace the tag with the version you want):
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash -s -- --version v1.2.3
+  ```
+  Other install paths (`go install`, build from source): [README.md — Installation](README.md#installation).
 - A terminal
 - (Optional) ABC platform API URL and tokens, and/or Nomad URL and ACL token for submit paths
 - Sample data: created in the exercises below
@@ -38,7 +51,7 @@ The ABC CLI is the day-to-day interface for **cluster-backed workflows**: config
 
 **Time target:** about 10 minutes.
 
-You will create a small working tree, initialize **local crypt material** (so `secrets` / `data encrypt` work without exporting a password every time), and save an **API context** (endpoint, tokens, cluster/workspace labels). Use **`abc auth login`** for an interactive first-time setup, or **`abc context add`** if an operator gave you exact values.
+You will create a small working tree, initialize **local crypt material** (so `secrets` / `data encrypt` work without exporting a password every time), and save an **API context** (endpoint, tokens, organization / workspace / region labels). Use **`abc auth login`** for an interactive first-time setup, or **`abc context add`** if an operator gave you exact values.
 
 ### 1.1 Create a demo workspace
 
@@ -64,7 +77,7 @@ abc --version
 ### 1.4 Configuration entrypoints
 
 - **`abc auth login`** — interactive login; prompts for endpoint and token and creates or updates a context (good first run on a laptop).
-- **`abc config init`** — may delegate to the same interactive flow depending on build; use it if your team documents it.
+- **`abc config init`** — creates `~/.abc/config.yaml` and a placeholder **`default`** context with the public API endpoint preset; **no** interactive token prompts (then use **`abc auth login`** or **`abc context add`**).
 - **`abc context add`** — non-interactive when you already have URLs and tokens (used below).
 
 ### 1.5 Add a context (example)
@@ -76,10 +89,17 @@ abc context add dev \
   --endpoint https://dev.abc-cluster.cloud \
   --upload-token "UPLOAD_TOKEN" \
   --access-token "TOKEN" \
-  --cluster dev-cluster \
   --organization-id org-dev \
   --workspace-id ws-dev \
   --region za-cpt
+```
+
+If tus is **not** at `<endpoint>/files/`, add **`--upload-endpoint https://…`** to the same command (or add a second context under another name, e.g. `staging`, with the full flag set).
+
+Optional: record the platform tier for this context (`abc-nodes`, `abc-cluster`, or `abc-cloud`):
+
+```bash
+abc config set contexts.dev.cluster_type abc-cluster
 ```
 
 ### 1.6 Activate and inspect
@@ -90,7 +110,7 @@ abc context show
 abc context list
 ```
 
-**What you should see:** `dev` as the active context; endpoint, cluster, workspace, and region fields; entries in `~/.abc/config.yaml`.
+**What you should see:** `dev` as the active context; endpoint, workspace, organization, and region fields (and upload fields if you set them); entries in `~/.abc/config.yaml`.
 
 **Optional (same exercise if you have time):** add a second context (e.g. `staging`) by repeating `abc context add` with different `--endpoint` / IDs, then `abc context use` to switch.
 
@@ -232,7 +252,9 @@ When you later run a real upload, attach metadata for traceability:
 
 **Time target:** about 10 minutes.
 
-For tools other than `nextflow`, `abc data download` builds a small shell script and (with `--submit`) runs **`abc job run --submit`** so the transfer executes **on the cluster**, not necessarily on your laptop.
+For **`aria2`**, **`rclone`**, **`wget`**, and **`s5cmd`**, `abc data download` builds a small shell script and **always** invokes **`abc job run --submit`** under the hood so the transfer executes **on the cluster**, not on your laptop. There is **no** separate `--submit` flag on `abc data download` — you need a reachable Nomad API (and token) for those tools.
+
+For **`nextflow`**, the same command submits a **pipeline run** via the ABC control-plane API (needs **`--url`** / context endpoint and access token, plus `--accession` or `--params-file`); that path does **not** use the Nomad wrapper above.
 
 ### 5.1 Review download flags
 
@@ -244,7 +266,7 @@ abc data download --help
 
 ### 5.2 Optional: cluster download smoke
 
-Requires Nomad reachable (`abc infra compute add` on the context, or `NOMAD_ADDR` / `NOMAD_TOKEN`). Use `--region global` only if your site uses that Nomad RPC region (see [`USAGE.md`](USAGE.md) “Nomad connection flags”).
+Requires Nomad reachable (`abc infra compute add` on the context, or `NOMAD_ADDR` / `NOMAD_TOKEN`). This command **submits** a download job immediately (it re-invokes `abc job run --submit` in a child process, which reads the same **`~/.abc/config.yaml`** and **`NOMAD_*` / `ABC_*` environment** as a direct `abc job run`). Use **`--region`** on **`abc job run`** / **`abc job list`** when your site needs an explicit Nomad RPC region (see [`USAGE.md`](USAGE.md) “Nomad connection flags”).
 
 ```bash
 # Replace YOUR_NOMAD_NODE_NAME_OR_UUID. Prefer --driver containerd if the image provides wget.
@@ -325,7 +347,7 @@ rm -f ./large-sample.bin ./large-sample.bin.encrypted
 
 **Time target:** about 10 minutes.
 
-Turn **annotated shell scripts** into Nomad **batch** HCL. Without `--submit`, HCL is printed to stdout (safe **dry-run**). With `--submit`, the CLI talks to Nomad from your machine.
+Turn **annotated shell scripts** into Nomad **batch** HCL. **Without `--submit`**, HCL is printed to stdout (**local preview**, no Nomad call). **With `--submit`**, the CLI registers the job with Nomad. (**`--dry-run`** is separate: it asks Nomad for a placement plan without registering the job; see [Next steps](#next-steps).)
 
 **Recent CLI behaviour worth knowing:**
 
@@ -376,7 +398,7 @@ grep -E 'abc_task_tmp|TMPDIR|abc task-tmp' /tmp/abc-smoke.hcl
 abc job run ABC-smoke.sh --submit --watch --region global
 ```
 
-### 7.2 Optional: Pixi stack (dry-run only)
+### 7.2 Optional: Pixi stack (HCL only — no `--submit`)
 
 Skip if you are short on time. This only validates **HCL generation**; a real run needs `pixi` on the task image/host and a real **`pixi.toml`** at `--from`.
 
@@ -391,7 +413,7 @@ cat > pixi-dryrun.sh << 'EOF'
 echo hello
 EOF
 chmod +x pixi-dryrun.sh
-abc job run pixi-dryrun.sh | grep -E 'pixi run|abc task-tmp|ABC_RUNTIME_PIXI|abc_runtime|abc_from' | head
+abc job run pixi-dryrun.sh | grep -E 'pixi run|abc task-tmp|ABC_RUNTIME_PIXI_PHASE|abc_runtime|abc_from' | head
 ```
 
 **What you should see:** `pixi run --manifest-path`, **`abc task-tmp`** lines **above** the Pixi phase guard, and meta keys for the stack.
@@ -456,7 +478,7 @@ abc job translate --help
 
 - **`pipeline run`** — Nextflow (and similar) workflows packaged for Nomad.
 - **`module run`** — nf-core-style module execution via pipeline-gen integration.
-- **`submit`** — dispatches by **auto-detecting** whether the target is a local job script, remote pipeline URI, or module path (see [`USAGE.md`](USAGE.md) § `submit`).
+- **`submit`** — dispatches by **auto-detecting** whether the target is a local job script, remote pipeline URI, or module path (see [`USAGE.md`](USAGE.md), **submit** command).
 - **`infra compute`** — register Nomad endpoints and probes against workspace contexts.
 - **`job translate`** — explore SLURM → ABC directive mapping without submitting.
 
@@ -466,11 +488,11 @@ For service operators, `abc admin services nomad cli -- …` wraps the Nomad CLI
 
 ## Key takeaways
 
-1. **Contexts:** `abc auth login` or `abc context add` / `abc context use` — API endpoint, tokens, cluster/workspace labels, optional tus upload fields.
+1. **Contexts:** `abc auth login` or `abc context add` / `abc context use` — API endpoint, tokens, org/workspace/region labels, optional tus upload fields; optional **`contexts.<name>.cluster_type`** via `abc config set` for platform tier.
 2. **Secrets:** `abc secrets init --unsafe-local` for local crypt material; `abc secrets set/get/list --unsafe-local` for encrypted key storage.
 3. **Data at rest:** `abc data encrypt` / `abc data decrypt` share that crypt material.
 4. **Upload:** TUS resumable uploads; endpoint and token from flags, env, or context.
-5. **Download:** Tool-based transfers compile to **`abc job run`** cluster jobs; `--destination` is inside the task; `--node` pins placement.
+5. **Download:** `wget` / `aria2` / `rclone` / `s5cmd` paths always run as **`abc job run --submit`** cluster jobs; **`nextflow`** uses the ABC API pipeline path instead; `--destination` is inside the task for tool downloads; `--node` pins placement.
 6. **Jobs:** `abc job run` turns **`#ABC`** directives into Nomad HCL; **`--task-tmp`** / **`#ABC --task-tmp`** steer temp files into **`${NOMAD_TASK_DIR}/tmp`**; **`--runtime=pixi-exec`** + **`--from`** opt into Pixi (not with **`slurm`** driver); **`#SBATCH`** enables hybrid SLURM paths.
 7. **Beyond data+jobs:** `pipeline run`, `module run`, `submit`, and `infra compute` connect the same CLI to larger workflows (Exercise 8).
 
@@ -479,7 +501,8 @@ For service operators, `abc admin services nomad cli -- …` wraps the Nomad CLI
 ## Next steps
 
 - Run real uploads/downloads with your operator’s tus and Nomad settings.
-- Use `abc job run SCRIPT --dry-run` before **`--submit`** to inspect placement and resources.
+- **Local HCL only (no Nomad):** `abc job run SCRIPT` (or add **`--output-file plan.hcl`**) to inspect generated resources without contacting the cluster.
+- **Server-side plan (needs Nomad):** `abc job run SCRIPT --dry-run --region <nomad-rpc-region>` asks Nomad to evaluate placement **without** registering the job — this is **not** the same as omitting `--submit` (which only prints HCL locally).
 - Read [`USAGE.md`](USAGE.md) for every flag and preamble directive.
 - Use `abc job logs` / `abc job status` after submit to track runs.
 
@@ -517,7 +540,7 @@ Or run `abc secrets init --unsafe-local` once.
 
 | Task | Command | Notes |
 |------|---------|-------|
-| Add context | `abc context add <name> …` | Endpoint, tokens, cluster, workspace |
+| Add context | `abc context add <name> …` | Endpoint, tokens, org/workspace/region; optional `--upload-endpoint`; optional `cluster_type` via `abc config set` |
 | Interactive login | `abc auth login` | Creates/updates a context from prompts |
 | Use context | `abc context use <name>` | Switch active context |
 | Show context | `abc context show` | Inspect active context |
@@ -527,8 +550,9 @@ Or run `abc secrets init --unsafe-local` once.
 | Encrypt file | `abc data encrypt FILE` | Produces `FILE.encrypted` by default |
 | Decrypt file | `abc data decrypt FILE.encrypted` | Use `--output` to pick path |
 | Upload | `abc data upload FILE [--meta k=v …]` | Tus; endpoint/token from context/env/flags |
-| Download (tools) | `abc data download --tool wget --source URL --destination /tmp/x [--node NODE]` | Submits `job run` with `--submit` |
-| Job dry-run | `abc job run SCRIPT` | HCL to stdout |
+| Download | `abc data download --tool wget --source URL --destination /tmp/x [--node NODE]` | `wget`/`aria2`/`rclone`/`s5cmd`: always `abc job run --submit` (Nomad). `nextflow`: ABC API pipeline run (`--accession` or `--params-file`) |
+| Job HCL (local) | `abc job run SCRIPT` | HCL to stdout; optional `--output-file` |
+| Job plan (Nomad) | `abc job run SCRIPT --dry-run --region <rpc>` | Server-side evaluation; needs Nomad |
 | Job submit | `abc job run SCRIPT --submit --watch --region global` | Needs Nomad |
 | Task temp | `#ABC --task-tmp` or `--task-tmp` | `${NOMAD_TASK_DIR}/tmp`; see USAGE.md |
 | Pixi stack | `#ABC --runtime=pixi-exec` + `#ABC --from=/path/pixi.toml` | Not with `--driver=slurm` |
