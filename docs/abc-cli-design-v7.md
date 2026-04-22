@@ -993,17 +993,21 @@ HCL batch job spec. Without `--submit` the HCL is printed to stdout.
 | `--output` | `--output=<filename>` | Tee stdout to `$NOMAD_TASK_DIR/<filename>` |
 | `--error` | `--error=<filename>` | Tee stderr to `$NOMAD_TASK_DIR/<filename>` |
 | `--conda` | `--conda=<spec>` | Conda environment spec (recorded as meta) |
+| `--runtime` | `--runtime=<kind>` | Software stack provisioner (`pixi-exec`, alias `pixi`) |
+| `--from` | `--from=<path>` | Native definition for `--runtime` (Pixi: `pixi.toml` path on execution host) |
 | `--no-network` | `--no-network` | Disable network access |
 | `--port` | `--port=<label>` | Named dynamic port (repeatable) |
 | `--hpc-compat-env` | `--hpc_compat_env` | Inject SLURM/PBS compatibility aliases |
 | `--preamble-mode` | | `auto` (default), `abc`, `slurm` |
 
-**Package manager preamble directives** (script-only, no CLI flags):
+**Package manager / stack preamble directives** (also available as `abc job run` CLI flags for `--runtime` / `--from`):
 
 | Directive | Description |
 |-----------|-------------|
-| `#ABC --conda=<spec>` | Run inside a conda environment; recorded as `abc_conda` in meta |
-| `#ABC --pixi` | Run via `pixi run`; recorded as `abc_pixi=true` in meta |
+| `#ABC --conda=<spec>` | Conda label; recorded as `abc_conda` in meta (no automatic conda wrapper) |
+| `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in meta |
+| `#ABC --runtime=<kind>` | Stack provisioner (`pixi-exec`, alias `pixi`); orthogonal to `--driver` |
+| `#ABC --from=<path>` | Native stack definition path for `--runtime` (Pixi: path to `pixi.toml`) |
 
 **Directive precedence:**
 ```
@@ -1675,9 +1679,13 @@ Both prefixes accept the same directive keys. `#SBATCH` is also understood for S
 |-----|-------|----------|
 | `abc_conda` | conda spec string | `#ABC --conda=<spec>` |
 | `abc_pixi` | `"true"` | `#ABC --pixi` |
+| `abc_runtime` | e.g. `pixi-exec` | `#ABC --runtime=<kind>` or `--runtime` |
+| `abc_from` | path string | `#ABC --from=<path>` or `--from` |
 | `abc_output` | filename | `#ABC --output=<file>` |
 | `abc_error` | filename | `#ABC --error=<file>` |
 | `abc_reschedule_mode` | mode string | reschedule directives present |
+
+`pixi-exec` rejects `--no-network`, rejects a combined conda + Pixi stack, rejects the `slurm` driver (inline script), and rejects newline/NUL in `--from`. The inner script re-exec uses `internal/hclgen/job.ScriptArgForDriver` so `docker` / `containerd-driver` paths do not double `local/`.
 
 ---
 

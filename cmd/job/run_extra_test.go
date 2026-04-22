@@ -3,7 +3,7 @@ package job_test
 // run_extra_test.go — additional offline unit tests for abc job run.
 //
 // These tests complement run_test.go and cover scenarios not yet tested there:
-//   - GPU / chdir / depend / pixi directives
+//   - GPU / chdir / depend / pixi directives / --runtime + --from (Pixi workspace)
 //   - docker and hpc-bridge drivers
 //   - SLURM account / ntasks mapping
 //   - Preamble edge cases (inline comments, empty script)
@@ -130,6 +130,134 @@ func TestJobRun_PixiWithValueIsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pixi") {
 		t.Errorf("expected pixi in error message, got: %v", err)
+	}
+}
+
+func TestJobRun_PixiExecRuntimeWrapsScript(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-rt\n#ABC --runtime=pixi-exec\n#ABC --from=/cluster/proj/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_rt.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_runtime`) || !strings.Contains(out, "pixi-exec") {
+		t.Errorf("expected abc_runtime pixi-exec in meta, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_from`) || !strings.Contains(out, "/cluster/proj/pixi.toml") {
+		t.Errorf("expected abc_from in meta, got:\n%s", out)
+	}
+	if !strings.Contains(out, `pixi run --manifest-path`) {
+		t.Errorf("expected pixi run --manifest-path in templated script, got:\n%s", out)
+	}
+	if !strings.Contains(out, `ABC_RUNTIME_PIXI_PHASE`) {
+		t.Errorf("expected pixi phase guard in script, got:\n%s", out)
+	}
+}
+
+func TestJobRun_RuntimePixiAlias(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-alias\n#ABC --runtime=pixi\n#ABC --from=/x/pixi.toml\necho ok\n"
+	p := writeTempScript(t, "pixi_alias.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !regexp.MustCompile(`abc_runtime\s*=\s*"pixi-exec"`).MatchString(out) {
+		t.Errorf("expected canonical abc_runtime=pixi-exec, got:\n%s", out)
+	}
+}
+
+func TestJobRun_RuntimeFromCLIOverride(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-cli-rt\n#ABC --runtime=pixi-exec\n#ABC --from=/preamble/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_cli_rt.sh", script)
+	out, err := executeCmd(t, p, "--from", "/override/pixi.toml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "/override/pixi.toml") {
+		t.Errorf("expected CLI --from to override preamble in meta and wrapper, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_from`) || !strings.Contains(out, `"/override/pixi.toml"`) {
+		t.Errorf("expected meta abc_from from CLI, got:\n%s", out)
+	}
+	// Original #ABC lines remain in the script body as comments; only meta + wrapper use the override.
+}
+
+func TestJobRun_RuntimeRequiresFrom(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-no-from\n#ABC --runtime=pixi-exec\necho hi\n"
+	p := writeTempScript(t, "pixi_no_from.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error: runtime pixi-exec requires --from")
+	}
+}
+
+func TestJobRun_FromWithoutRuntime(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-no-rt\n#ABC --from=/x/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_no_rt.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error: --from requires --runtime")
+	}
+}
+
+func TestJobRun_RuntimePixiExecDockerDriver(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-docker\n#ABC --driver=docker\n#ABC --driver.config.image=prefix/pixi-worker:latest\n#ABC --runtime=pixi-exec\n#ABC --from=/app/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_docker.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `driver = "docker"`) {
+		t.Errorf("expected docker driver, got:\n%s", out)
+	}
+	if !strings.Contains(out, `pixi run --manifest-path`) {
+		t.Errorf("expected pixi wrapper in script, got:\n%s", out)
+	}
+	// Inner re-exec must not use .../local/... twice for docker (ociTaskScriptArg).
+	if !strings.Contains(out, `exec pixi run`) || !strings.Contains(out, `pixi_docker.sh" "$@"`) {
+		t.Errorf("expected pixi wrapper line in template, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"$${NOMAD_TASK_DIR}/pixi_docker.sh"`) {
+		t.Errorf("expected Nomad-escaped inner path $${NOMAD_TASK_DIR}/pixi_docker.sh in pixi line, got:\n%s", out)
+	}
+	if strings.Contains(out, `exec pixi run`) && strings.Contains(out, `"$${NOMAD_TASK_DIR}/local/pixi_docker.sh"`) {
+		t.Errorf("did not expect inner path .../local/pixi_docker.sh in pixi line for docker, got:\n%s", out)
+	}
+}
+
+func TestJobRun_RuntimePixiExecNoNetworkIsError(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-net\n#ABC --runtime=pixi-exec\n#ABC --from=/x/pixi.toml\n#ABC --no-network\necho hi\n"
+	p := writeTempScript(t, "pixi_nonet.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error: pixi-exec with --no-network")
+	}
+}
+
+func TestJobRun_RuntimePixiExecWithCondaIsError(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-conda\n#ABC --conda=env.yaml\n#ABC --runtime=pixi-exec\n#ABC --from=/x/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_conda.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error: pixi-exec combined with conda")
+	}
+}
+
+func TestJobRun_RuntimePixiExecSlurmDriverIsError(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-slurm\n#ABC --driver=slurm\n#ABC --runtime=pixi-exec\n#ABC --from=/x/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_slurm.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error: pixi-exec with slurm driver")
+	}
+}
+
+func TestJobRun_RuntimeUnsupportedDriver(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-bad-driver\n#ABC --driver=java\n#ABC --runtime=pixi-exec\n#ABC --from=/x/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_bad_drv.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatal("expected error: pixi-exec with unsupported driver")
 	}
 }
 

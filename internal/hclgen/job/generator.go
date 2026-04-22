@@ -223,6 +223,15 @@ func ociTaskScriptArg(driver, scriptArg string) string {
 	return scriptArg
 }
 
+// ScriptArgForDriver returns the script path argument the Nomad task passes to
+// sh/bash for this driver (equivalent to ociTaskScriptArg(local/<scriptName>)).
+// Callers that re-exec the same script (e.g. Pixi wrappers) must use this path
+// so docker/containerd tasks do not double-resolve "local/".
+func ScriptArgForDriver(driver, scriptName string) string {
+	scriptArg := filepath.ToSlash(filepath.Join("local", scriptName))
+	return ociTaskScriptArg(driver, scriptArg)
+}
+
 func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptContent string) {
 	scriptArg := filepath.ToSlash(filepath.Join("local", scriptName))
 	scriptArg = ociTaskScriptArg(spec.Driver, scriptArg)

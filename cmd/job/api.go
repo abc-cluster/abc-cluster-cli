@@ -18,6 +18,8 @@ type ScriptHCLOptions struct {
 	Cores     int
 	MemoryMB  int
 	Conda     string
+	Runtime   string
+	From      string
 }
 
 // ScriptHCLResult holds the output of BuildScriptHCL.
@@ -76,6 +78,13 @@ func BuildScriptHCL(scriptPath string, opts ScriptHCLOptions) (*ScriptHCLResult,
 		}
 		spec.Meta["abc_conda"] = opts.Conda
 	}
+	if opts.Runtime != "" {
+		spec.Runtime = opts.Runtime
+	}
+	if opts.From != "" {
+		spec.From = opts.From
+	}
+	syncStackMetaKeys(spec)
 
 	if spec.Meta == nil {
 		spec.Meta = map[string]string{}
@@ -91,7 +100,13 @@ func BuildScriptHCL(scriptPath string, opts ScriptHCLOptions) (*ScriptHCLResult,
 		spec.Name = fmt.Sprintf("%s-%s", base, submissionID[:8])
 	}
 
-	hcl := generateHCL(spec, scriptBase, string(scriptBytes))
+	scriptBody := string(scriptBytes)
+	scriptBody, err = FinalizeJobScript(spec, scriptBase, scriptBody)
+	if err != nil {
+		return nil, err
+	}
+
+	hcl := generateHCL(spec, scriptBase, scriptBody)
 	return &ScriptHCLResult{
 		HCL:       hcl,
 		JobName:   spec.Name,

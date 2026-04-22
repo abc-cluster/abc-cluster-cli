@@ -72,6 +72,11 @@ type jobSpec struct {
 	Conda string
 	Pixi  bool
 
+	// Runtime is a software-stack provisioner (orthogonal to Nomad --driver).
+	// From is a backend-native definition path/URI (e.g. pixi.toml on the host).
+	Runtime string
+	From    string
+
 	// ── Network directives ────────────────────────────────────────────────────
 	Ports []string
 
@@ -192,6 +197,12 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.Conda != "" {
 		base.Conda = override.Conda
+	}
+	if override.Runtime != "" {
+		base.Runtime = override.Runtime
+	}
+	if override.From != "" {
+		base.From = override.From
 	}
 	if override.NoNetwork {
 		base.NoNetwork = true
