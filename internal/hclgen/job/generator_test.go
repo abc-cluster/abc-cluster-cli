@@ -70,3 +70,15 @@ func TestGenerate_StaticEnvSortedKeysStable(t *testing.T) {
 		t.Fatalf("expected sorted key order AA_FIRST before ZZ_LAST; aa=%d zz=%d", iAA, iZZ)
 	}
 }
+
+func TestScriptArgForDriver(t *testing.T) {
+	if got := ScriptArgForDriver("exec", "run.sh"); got != "local/run.sh" {
+		t.Fatalf("exec: got %q", got)
+	}
+	if got := ScriptArgForDriver("docker", "run.sh"); got != "${NOMAD_TASK_DIR}/run.sh" {
+		t.Fatalf("docker: got %q", got)
+	}
+	if got := ScriptArgForDriver("containerd-driver", "x.sh"); got != "${NOMAD_TASK_DIR}/x.sh" {
+		t.Fatalf("containerd-driver: got %q", got)
+	}
+}

@@ -589,7 +589,7 @@ abc submit <target> [flags]
 | 6 | `<target>` matches a saved pipeline name in Nomad Variables | `pipeline run` |
 | — | no match | error — use `--type` |
 
-> **Conda/pixi:** To run a tool via conda or pixi, add `#ABC --conda=<spec>` or `#ABC --pixi` to your script preamble. `abc submit` does not accept `--conda` or `--pixi` flags directly.
+> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, and `--from` (see [Software stack](#software-stack-runtime-and-from) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
 
 ### Flags
 
@@ -967,6 +967,9 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--depend`                      | `--depend=<complete:job-id>`        | Block on another job via prestart lifecycle hook                  |
 | `--output`                      | `--output=<filename>`               | Tee stdout to `$NOMAD_TASK_DIR/<filename>`                        |
 | `--error`                       | `--error=<filename>`                | Tee stderr to `$NOMAD_TASK_DIR/<filename>`                        |
+| `--conda`                       | `--conda=<spec>`                    | Conda spec (meta `abc_conda`; no automatic conda wrapper)         |
+| `--runtime`                     | `--runtime=<kind>`                  | Software stack provisioner (`pixi-exec`, alias `pixi`); orthogonal to `--driver` |
+| `--from`                        | `--from=<path-or-uri>`              | Native stack definition for `--runtime` (Pixi: path to `pixi.toml` on the execution host) |
 | `--hpc-compat-env`              | `--hpc_compat_env`                  | Inject legacy `SLURM_*` / `PBS_*` compatibility aliases           |
 | `--no-network`                  | `--no-network`                      | Disable network access (Nomad mode = `"none"`)                    |
 | `--port`                        | `--port=<label>`                    | Named dynamic port; injects `NOMAD_IP/PORT/ADDR_<label>`          |
@@ -983,6 +986,38 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--reschedule-interval` | `--reschedule-interval=<duration>`  | Reschedule evaluation window (e.g. `30s`) |
 | `--reschedule-delay`    | `--reschedule-delay=<duration>`     | Base reschedule delay (e.g. `5s`)         |
 | `--reschedule-max-delay`| `--reschedule-max-delay=<duration>` | Maximum reschedule delay (e.g. `1m`)      |
+
+### Software stack: runtime and from
+
+These options configure **how dependencies are provided for your script**, separately from **`--driver`** (how Nomad launches the task: `exec`, `docker`, etc.).
+
+| Preamble directive | CLI flag | Description |
+|--------------------|----------|-------------|
+| `--runtime=<kind>` | `--runtime=<kind>` | Stack provisioner. Supported: **`pixi-exec`** (alias **`pixi`**). |
+| `--from=<path>`    | `--from=<path>`    | Backend-native definition. For **`pixi-exec`**: absolute or cluster-visible path to **`pixi.toml`**. |
+
+**Resolution:** After `--driver` is chosen (default `exec`), the CLI checks that the driver is allowed for the selected runtime, then may **rewrite the embedded script** so the task re-invokes itself under Pixi.
+
+**Pixi (`pixi-exec`):** The generated script starts with a guard that runs:
+
+`pixi run --manifest-path <from> -- /bin/bash "${NOMAD_TASK_DIR}/local/<scriptname>" …`
+
+so the preamble and body execute inside the Pixi **default** environment for that manifest. (`pixi exec` does not support `--manifest-path` in current Pixi releases; workspace-bound execution uses `pixi run`.)
+
+**Allowed Nomad task drivers with `pixi-exec`:** `exec`, `raw_exec`, `docker`, `containerd-driver`, `hpc-bridge`. The cluster image or host must provide the `pixi` binary on `PATH`.
+
+**Not supported with `pixi-exec`:** `slurm` — the bridge runs your script **inline**, so there is no task-local copy to re-exec under Pixi.
+
+**Nomad meta:** `abc_runtime`, `abc_from` (canonical runtime id is `pixi-exec` even when you pass `pixi`).
+
+**Directive precedence:** CLI overrides preamble for the same key (same as other `job run` flags).
+
+**Other edge cases:**
+
+- **`--no-network`:** rejected with `pixi-exec` (Pixi needs the network to solve/download).
+- **`--conda` / `#ABC --conda`:** rejected together with `pixi-exec` (two stacks).
+- **`#ABC --pixi`:** still allowed as a separate meta hint; it does not turn on automatic wrapping (use `--runtime` + `--from` for that).
+- **Relative `--from`:** resolved on the execution host relative to the task working directory after any `#ABC --chdir`; prefer absolute cluster paths when unsure.
 
 ### Runtime-exposure flags (Class 2)
 
@@ -1027,8 +1062,8 @@ block so the script can read the value at execution time.
 
 | Preamble directive | Description |
 |--------------------|-------------|
-| `#ABC --conda=<spec>` | Run the script inside a conda environment (`spec` = package name or env file path). Recorded as `abc_conda` in Nomad meta. |
-| `#ABC --pixi` | Run the script via `pixi run`. Recorded as `abc_pixi=true` in Nomad meta. |
+| `#ABC --conda=<spec>` | Conda environment label (`spec` = package name or env file path). Recorded as `abc_conda` in Nomad meta. Does not wrap the script automatically. |
+| `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in Nomad meta. For automatic Pixi wrapping, use **`#ABC --runtime=pixi-exec`** and **`#ABC --from=…/pixi.toml`** (see [Software stack](#software-stack-runtime-and-from)). |
 
 ### Meta flags (Class 3)
 

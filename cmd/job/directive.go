@@ -259,7 +259,8 @@ func applySpecDefaults(spec *jobSpec, defaultName string, useSBATCH bool) error 
 			spec.Meta["abc_reschedule_max_delay"] = spec.RescheduleMaxDelay
 		}
 	}
-	if spec.OutputLog != "" || spec.ErrorLog != "" || spec.Conda != "" || spec.Pixi {
+	if spec.OutputLog != "" || spec.ErrorLog != "" || spec.Conda != "" || spec.Pixi ||
+		spec.Runtime != "" || strings.TrimSpace(spec.From) != "" {
 		if spec.Meta == nil {
 			spec.Meta = map[string]string{}
 		}
@@ -276,6 +277,7 @@ func applySpecDefaults(spec *jobSpec, defaultName string, useSBATCH bool) error 
 			spec.Meta["abc_pixi"] = "true"
 		}
 	}
+	syncStackMetaKeys(spec)
 	if spec.NoNetwork && len(spec.Ports) > 0 {
 		return fmt.Errorf("no-network cannot be combined with port mapping")
 	}
@@ -457,6 +459,16 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --pixi does not accept a value", marker)
 			}
 			spec.Pixi = true
+		case "runtime":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --runtime requires a value (e.g. pixi-exec)", marker)
+			}
+			spec.Runtime = val
+		case "from":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --from requires a value (path or URI to the runtime definition)", marker)
+			}
+			spec.From = val
 		case "constraint":
 			if !hasValue {
 				return fmt.Errorf("#%s --constraint requires a value", marker)

@@ -61,6 +61,10 @@ CLASS 1 — SCHEDULER  (configure HCL stanza fields)
   --port=<label>               Dynamic port; injects NOMAD_IP/PORT/ADDR_<label>
   --driver.config.<key>=<val>  Pass arbitrary driver config fields
 
+SOFTWARE STACK  (orthogonal to --driver; see USAGE.md job run / Software stack)
+  --runtime=<kind>             Stack provisioner: pixi-exec (alias: pixi)
+  --from=<path-or-uri>       Backend-native definition (pixi-exec: path to pixi.toml)
+
 RESCHEDULE  (stored as abc_reschedule_* meta keys)
   --reschedule-mode=<delay|fail>
   --reschedule-attempts=<int>
@@ -177,6 +181,8 @@ EXAMPLES
 	cmd.Flags().String("output", "", "Tee stdout to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("error", "", "Tee stderr to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
+	cmd.Flags().String("runtime", "", "Software stack runtime: pixi-exec (alias pixi); see USAGE.md")
+	cmd.Flags().String("from", "", "Definition path/URI for --runtime (e.g. pixi.toml on the execution host)")
 	cmd.Flags().Bool("no-network", false, "Disable network access for this job")
 	cmd.Flags().StringSlice("port", nil, "Named network ports")
 
@@ -306,6 +312,13 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	if v, _ := cmd.Flags().GetBool("hpc-compat-env"); v {
 		spec.IncludeHPCCompatEnv = true
 	}
+	if v, _ := cmd.Flags().GetString("runtime"); v != "" {
+		spec.Runtime = v
+	}
+	if v, _ := cmd.Flags().GetString("from"); v != "" {
+		spec.From = v
+	}
+	syncStackMetaKeys(spec)
 	return nil
 }
 
@@ -392,7 +405,13 @@ func runJob(cmd *cobra.Command, args []string) error {
 		spec.Name = fmt.Sprintf("%s-%s", base, submissionID[:8])
 	}
 
-	hcl := generateHCL(spec, scriptBase, string(scriptBytes))
+	scriptBody := string(scriptBytes)
+	scriptBody, err = FinalizeJobScript(spec, scriptBase, scriptBody)
+	if err != nil {
+		return err
+	}
+
+	hcl := generateHCL(spec, scriptBase, scriptBody)
 
 	submit, _ := cmd.Flags().GetBool("submit")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
