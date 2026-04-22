@@ -24,7 +24,7 @@ package job_test
 //   ABC_INTEGRATION_STRESS_NG — set to 1 to run TestIntegration_StressNgCPUWorkloadCompletes (off by default;
 //     containerd + OCI WORKDIR vs Nomad local/ templates is cluster-specific; see docs/stress-ng-containerd-and-cli.md).
 //   ABC_INTEGRATION_STRESS_TIMEOUT — max seconds to wait for TestIntegration_StressNgCPUWorkloadCompletes
-//     (default 480 when unset; workload may pull quay.io/container-perf-tools/stress-ng, then runs ~45s CPU stress).
+//     (default 480 when unset; workload may pull community.wave.seqera.io/.../hyperfine_stress-ng, then runs ~45s CPU stress).
 //   ABC_INTEGRATION_LOKI_REQUIRE — set to 0 to skip the Loki log sentinel check in
 //     TestIntegration_ObsStackJobStdoutReachableInLokiAndPrometheusAlive (Prometheus
 //     check still runs). Use when Alloy does not tail client alloc logs into Loki.
@@ -729,8 +729,8 @@ echo "docker driver: OK"
 }
 
 // TestIntegration_StressNgCPUWorkloadCompletes submits deployments/.../stress-ng-cpu-default.sh
-// (quay.io/container-perf-tools/stress-ng:latest, containerd-driver) and waits for batch completion.
-// Requires network to pull from Quay unless the image is cached on the node.
+// (community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8, containerd-driver) and waits for batch completion.
+// Requires network to pull the image unless it is cached on the node.
 // Opt-in: ABC_INTEGRATION_STRESS_NG=1 (see docs/stress-ng-containerd-and-cli.md).
 func TestIntegration_StressNgCPUWorkloadCompletes(t *testing.T) {
 	if os.Getenv("ABC_INTEGRATION_STRESS_NG") != "1" {

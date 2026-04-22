@@ -824,11 +824,11 @@ func TestJobRun_WorkloadStressNgCpuDefaultHCL(t *testing.T) {
 	if !strings.Contains(out, `driver = "containerd-driver"`) {
 		t.Errorf("expected containerd-driver, got:\n%s", out)
 	}
-	if !strings.Contains(out, `quay.io/container-perf-tools/stress-ng:latest`) {
-		t.Errorf("expected container-perf-tools stress-ng OCI image in HCL, got:\n%s", out)
+	if !strings.Contains(out, `community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8`) {
+		t.Errorf("expected hyperfine_stress-ng Wave OCI image in HCL, got:\n%s", out)
 	}
-	if !strings.Contains(out, `"/bin/sh", "local/stress-ng-cpu-default.sh"`) {
-		t.Errorf("expected containerd-driver tasks to run script via /bin/sh in args (timeout wrapper), got:\n%s", out)
+	if !strings.Contains(out, `"/bin/sh", "$${NOMAD_TASK_DIR}/stress-ng-cpu-default.sh"`) {
+		t.Errorf("expected containerd-driver tasks to run script via /bin/sh with task-dir path in args (timeout wrapper), got:\n%s", out)
 	}
 	if !strings.Contains(out, `destination = "local/stress-ng-cpu-default.sh"`) {
 		t.Errorf("expected templated script under local/, got:\n%s", out)
@@ -856,19 +856,25 @@ func TestJobRun_WorkloadHyperfineServicesHCL(t *testing.T) {
 	if !strings.Contains(out, `NOMAD_JOB_NAME`) {
 		t.Errorf("expected NOMAD_JOB_NAME in env from --job_name, got:\n%s", out)
 	}
+	if !strings.Contains(out, `community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8`) {
+		t.Errorf("expected hyperfine_stress-ng Wave OCI image in HCL, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"/bin/sh", "$${NOMAD_TASK_DIR}/hyperfine-micro-services.sh"`) {
+		t.Errorf("expected containerd-driver tasks to run script via /bin/sh with task-dir path in args (timeout wrapper), got:\n%s", out)
+	}
 }
 
 func TestJobRun_WorkloadResearchUserJobNameHCL(t *testing.T) {
-	p := committedWorkloadScript(t, "stress-ng-cpu-user-uh-bristol-cardiology-hpc_alice.sh")
+	p := committedWorkloadScript(t, "stress-ng-cpu-user-uh-bristol-animaltb-hpc_alice.sh")
 	out, err := executeCmd(t, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `uh-bristol-cardiology-hpc_alice--wl-str`) {
+	if !strings.Contains(out, `uh-bristol-animaltb-hpc_alice--wl-str`) {
 		t.Errorf("expected research-user workload stem in generated job/HCL, got:\n%s", out)
 	}
-	if !regexp.MustCompile(`research_user\s*=\s*"uh-bristol-cardiology-hpc_alice"`).MatchString(out) {
-		t.Errorf("expected job meta research_user=uh-bristol-cardiology-hpc_alice in HCL, got:\n%s", out)
+	if !regexp.MustCompile(`research_user\s*=\s*"uh-bristol-animaltb-hpc_alice"`).MatchString(out) {
+		t.Errorf("expected job meta research_user=uh-bristol-animaltb-hpc_alice in HCL, got:\n%s", out)
 	}
 }
 

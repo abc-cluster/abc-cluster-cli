@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation"],
+      "Resource": ["arn:aws:s3:::su-mbhg-tbgenomics"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::su-mbhg-tbgenomics"],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "users/",
+            "users/*",
+            "shared/",
+            "shared/*",
+            "users/hanno/",
+            "users/hanno/*",
+            "shared/hanno/",
+            "shared/hanno/*"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": ["arn:aws:s3:::su-mbhg-tbgenomics/shared/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Resource": [
+        "arn:aws:s3:::su-mbhg-tbgenomics/users/hanno/*",
+        "arn:aws:s3:::su-mbhg-tbgenomics/shared/hanno/*"
+      ]
+    }
+  ]
+}

@@ -1,2 +1,3 @@
 # Nomad ACL token secrets — never commit
 tokens.env
+minio-credentials.env

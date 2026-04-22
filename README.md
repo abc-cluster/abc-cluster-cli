@@ -69,6 +69,7 @@ Additional optional environment variables:
 | `ABC_WORKSPACE_ID`  | Workspace ID to use for operations                | *(user's default workspace)*   |
 | `ABC_UPLOAD_ENDPOINT` | Tus upload endpoint used by `abc data upload` (falls back to context upload endpoint or `<url>/files/` from the API URL) | *(unset)* |
 | `ABC_UPLOAD_TOKEN`  | Bearer token used by `abc data upload` for tus auth (falls back to context upload token or `ABC_ACCESS_TOKEN`) | *(unset)* |
+| `ABC_CLI_DISABLE_UPDATE_CHECK` | Disable automatic GitHub release update notifications (`1`, `true`, `yes`, `on`) | *(unset)* |
 | `NOMAD_ADDR` / `NOMAD_TOKEN` / `NOMAD_REGION` | Override Nomad connection for one shell session | *(unset)* |
 
 ## Usage
@@ -161,7 +162,7 @@ abc cluster capabilities show    # view what was detected
 
 `vault.nomad.hcl` runs HashiCorp Vault with **Raft integrated storage** (data persisted at `/opt/nomad/vault/data`). See the first-run initialization instructions in the file header.
 
-See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering. Curated **`nomad-pack`** bundles for **base** (MinIO + tusd) vs **enhanced** (+ monitoring stack) are under **`deployments/abc-nodes/nomad-packs/`** (see the same README).
+See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering. Curated **`nomad-pack`** bundles for **base** (MinIO + tusd) vs **enhanced** (+ monitoring stack) are under **`deployments/abc-nodes/nomad-packs/`** (see the same README). Operator guide for Prometheus/Grafana/validation scripts: **`docs/abc-nodes-observability-and-operations.md`**.
 
 ## Development
 

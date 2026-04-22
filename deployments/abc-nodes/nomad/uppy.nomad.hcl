@@ -15,16 +15,16 @@ variable "nginx_image" {
 variable "tusd_endpoint" {
   type        = string
   description = "TUS upload endpoint (browser-accessible URL, must be reachable from the user's browser)."
-  default     = "http://100.70.185.46:8080/files/"
+  default     = "http://aither.mb.sun.ac.za/tusd/files/"
 }
 
 variable "uppy_max_file_size_mb" {
   type    = number
-  default = 500
+  default = 5120
 }
 
 job "abc-nodes-uppy" {
-  namespace = "services"
+  namespace = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -80,7 +80,7 @@ EOF
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Upload — aither</title>
+  <title>ABC Cluster Uploads</title>
   <link rel="stylesheet" href="https://releases.transloadit.com/uppy/v4.13.3/uppy.min.css">
   <style>
     :root {
@@ -151,6 +151,16 @@ EOF
       font-size: .875rem;
       color: var(--muted);
     }
+    .help {
+      max-width: 860px;
+      background: #141423;
+      border: 1px solid #2a2a3d;
+      border-radius: 10px;
+      padding: 0.8rem 1rem;
+      font-size: 0.82rem;
+      color: #b3b3cc;
+      line-height: 1.45;
+    }
 
     /* Uppy dark-mode overrides */
     .uppy-Dashboard-inner {
@@ -186,11 +196,16 @@ EOF
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
       </svg>
-      aither cluster
+      abc cluster
     </div>
     <h1>Upload Files</h1>
-    <p class="subtitle">Resumable uploads · up to ${var.uppy_max_file_size_mb} MB per file</p>
+    <p class="subtitle">Resumable uploads for cluster users · up to 5 GB per file</p>
   </header>
+
+  <div class="help">
+    Uploads are sent to tusd at <code>${var.tusd_endpoint}</code>. If uploads are rejected,
+    sign in via Nomad and provide a valid ACL token in your browser session or uploader client.
+  </div>
 
   <div id="uppy"></div>
 
@@ -212,7 +227,7 @@ EOF
         theme:                       "dark",
         showProgressDetails:         true,
         proudlyDisplayPoweredByUppy: false,
-        note:                        "Max ${var.uppy_max_file_size_mb} MB · resumable · all file types accepted",
+        note:                        "Max 5 GB · resumable · all file types accepted",
       })
       .use(Tus, {
         endpoint:    "${var.tusd_endpoint}",

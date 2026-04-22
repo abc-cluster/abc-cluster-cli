@@ -8,7 +8,7 @@ name        = "su-mbhg-hostgen"
 description = "SU-MBHG Host Genetics — pipelines and ad-hoc batch jobs (normal priority)"
 
 capabilities {
-  enabled_task_drivers  = ["docker", "exec"]
+  enabled_task_drivers  = ["containerd-driver", "docker", "exec"]
   disabled_task_drivers = ["raw_exec"]
 }
 

@@ -205,8 +205,27 @@ func taskScriptShell(driver string) string {
 	}
 }
 
+// ociTaskScriptArg returns the script path passed to timeout/sh/bash for OCI-backed
+// drivers. Relative "local/..." breaks when the image WORKDIR is not the allocation
+// task directory (common with prebuilt scientific images); Nomad interpolates
+// ${NOMAD_TASK_DIR} in args before the task starts.
+//
+// Use ${NOMAD_TASK_DIR}/<scriptName> (not .../local/<scriptName>): on some containerd
+// stacks NOMAD_TASK_DIR inside the container already points at the mounted "local"
+// area, so .../local/script.sh becomes /local/local/script.sh and fails.
+func ociTaskScriptArg(driver, scriptArg string) string {
+	switch driver {
+	case "containerd-driver", "docker":
+		if strings.HasPrefix(scriptArg, "local/") {
+			return "${NOMAD_TASK_DIR}/" + strings.TrimPrefix(scriptArg, "local/")
+		}
+	}
+	return scriptArg
+}
+
 func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptContent string) {
 	scriptArg := filepath.ToSlash(filepath.Join("local", scriptName))
+	scriptArg = ociTaskScriptArg(spec.Driver, scriptArg)
 	sh := taskScriptShell(spec.Driver)
 	if spec.Driver == "slurm" {
 		inlineScript := escapeNomadInterpolation(scriptContent)

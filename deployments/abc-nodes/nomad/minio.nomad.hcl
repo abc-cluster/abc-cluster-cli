@@ -46,7 +46,7 @@ variable "minio_root_password" {
 }
 
 job "abc-nodes-minio" {
-  namespace   = "services"
+  namespace   = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -108,6 +108,8 @@ MINIO_ROOT_PASSWORD={{ .minio_root_password }}
 MINIO_ROOT_USER=${var.minio_root_user}
 MINIO_ROOT_PASSWORD=${var.minio_root_password}
 {{- end }}
+# Expose Prometheus metrics endpoint without auth for in-cluster scraping.
+MINIO_PROMETHEUS_AUTH_TYPE=public
 EOF
       }
 

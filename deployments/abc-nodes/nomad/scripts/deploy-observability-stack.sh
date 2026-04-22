@@ -71,4 +71,5 @@ validate "${JOBS_DIR}/alloy.nomad.hcl"
 deploy "${JOBS_DIR}/alloy.nomad.hcl"
 
 echo "Observability stack jobs submitted. Optional: traefik after backends — ${JOBS_DIR}/traefik.nomad.hcl"
+echo "Smoke Prometheus (optional): bash ${JOBS_DIR}/scripts/validate-prometheus-abc-nodes.sh"
 echo "E2E: ABC_INTEGRATION_OBS_STACK=1 go test -tags integration -timeout=15m -run TestIntegration_ObsStack ./cmd/job/..."
