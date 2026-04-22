@@ -1,0 +1,475 @@
+# Caddy LAN entrypoint for abc-nodes services on aither.
+# Mirrors the current Traefik host routing so users on the internal network
+# can access services without Tailscale membership.
+#
+# Assumptions:
+# - Caddy runs on the same host as Nomad jobs (sun-aither)
+# - Backends are reachable on aither's Tailscale IP
+# - LAN DNS (or /etc/hosts) maps these names to aither's internal IP
+#
+# Example /etc/hosts on LAN clients:
+#   146.232.174.77 grafana.aither loki.aither minio.aither minio-console.aither \
+#               ntfy.aither prometheus.aither rustfs.aither tusd.aither \
+#               vault.aither uppy.aither wave.aither faasd.aither \
+#               supabase.aither supabase-studio.aither nomad.aither
+#
+# Caddy global options.
+{
+	# Contact email for ACME certificate operations.
+	email abhinavsharma@sun.ac.za
+	# Keep HTTP available until public cert issuance is complete.
+	auto_https disable_redirects
+}
+
+# Shared LAN bind to avoid accidental listen on wrong interface.
+(lan_bind) {
+	bind 146.232.174.77
+}
+
+# Single-host application routes for aither.mb.sun.ac.za.
+(aither_routes) {
+
+	@nomad_noslash path /nomad
+	redir @nomad_noslash /nomad/ 308
+	@nomad_prefixed path_regexp nomad_prefixed ^/nomad/(.*)$
+	redir @nomad_prefixed /{re.nomad_prefixed.1} 308
+	@grafana_noslash path /grafana
+	redir @grafana_noslash /grafana/ 308
+	@prometheus_noslash path /prometheus
+	redir @prometheus_noslash /prometheus/ 308
+	@vault_noslash path /vault
+	redir @vault_noslash /vault/ 308
+	@minio_console_noslash path /minio-console
+	redir @minio_console_noslash /minio-console/ 308
+	@nomad_root path /nomad/
+	redir @nomad_root /ui/settings/tokens 308
+	@loki_root path /loki/
+	redir @loki_root /loki/ready 308
+
+	# Root landing page for LAN users.
+	@root path /
+	handle @root {
+		header Content-Type "text/html; charset=utf-8"
+		respond <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ABC Cluster Portal</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    main {
+      width: 100%;
+      max-width: 840px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 14px;
+      padding: 1.5rem 1.5rem 1.25rem;
+    }
+    .badge {
+      display: inline-block;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.3rem 0.8rem;
+      color: #94a3b8;
+      margin-bottom: 0.9rem;
+    }
+    h1 {
+      font-size: clamp(1.5rem, 2.7vw, 2.1rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #f8fafc;
+      margin-bottom: 0.5rem;
+    }
+    h2 {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #94a3b8;
+      margin: 1rem 0 0.55rem;
+    }
+    p {
+      color: #94a3b8;
+      margin-bottom: 0.9rem;
+      line-height: 1.5;
+    }
+    .notes {
+      display: grid;
+      gap: 0.55rem;
+      margin-bottom: 1rem;
+    }
+    .note {
+      background: #162133;
+      border: 1px solid #2f405e;
+      border-radius: 0.5rem;
+      padding: 0.65rem 0.8rem;
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      line-height: 1.35;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 0.75rem;
+    }
+    .admin-grid {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    .endpoint {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.65rem;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.5rem;
+      padding: 0.8rem 0.95rem;
+      color: #e2e8f0;
+      text-decoration: none;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .endpoint:hover {
+      background: #263348;
+      border-color: #4f6a8f;
+    }
+    .endpoint-label {
+      display: block;
+      font-size: 0.73rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 0.15rem;
+    }
+    .endpoint-url {
+      font-size: 0.85rem;
+      color: #7dd3fc;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      line-height: 1.3;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 6px #22c55e;
+      flex-shrink: 0;
+    }
+    footer {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: #64748b;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="badge">LAN Gateway Active</div>
+    <h1>ABC Cluster Portal</h1>
+    <p>Access core services over LAN via Caddy, while backends stay bound to private/Tailscale addresses.</p>
+
+    <div class="notes">
+      <div class="note">Host: aither.mb.sun.ac.za</div>
+      <div class="note">Nomad sign-in: /ui/settings/tokens</div>
+      <div class="note">If a service does not load, confirm its Nomad job is running in namespace abc-services.</div>
+    </div>
+
+    <h2>Cluster Users</h2>
+    <div class="grid">
+      <a class="endpoint" href="/ui/settings/tokens">
+        <div>
+          <span class="endpoint-label">Nomad</span>
+          <span class="endpoint-url">/ui/settings/tokens</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+      <a class="endpoint" href="/minio-console/">
+        <div>
+          <span class="endpoint-label">MinIO Console</span>
+          <span class="endpoint-url">/minio-console/</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+      <a class="endpoint" href="/uppy/">
+        <div>
+          <span class="endpoint-label">Uppy Uploads</span>
+          <span class="endpoint-url">/uppy/</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+    </div>
+
+    <h2>Cluster Admins</h2>
+    <div class="grid admin-grid">
+      <a class="endpoint" href="/prometheus/graph">
+        <div>
+          <span class="endpoint-label">Prometheus</span>
+          <span class="endpoint-url">/prometheus/graph</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+      <a class="endpoint" href="/loki/ready">
+        <div>
+          <span class="endpoint-label">Loki</span>
+          <span class="endpoint-url">/loki/ready</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+      <a class="endpoint" href="/vault/ui/">
+        <div>
+          <span class="endpoint-label">Vault</span>
+          <span class="endpoint-url">/vault/ui/</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+      <a class="endpoint" href="/ntfy/">
+        <div>
+          <span class="endpoint-label">ntfy</span>
+          <span class="endpoint-url">/ntfy/</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+      <a class="endpoint" href="/grafana/login">
+        <div>
+          <span class="endpoint-label">Grafana</span>
+          <span class="endpoint-url">/grafana/login</span>
+        </div>
+        <span class="dot"></span>
+      </a>
+    </div>
+
+    <footer>Use Nomad and MinIO Console for day-to-day cluster workflows.</footer>
+  </main>
+</body>
+</html>
+HTML 200
+	}
+
+	# MinIO Console uses base href "/" and calls root-level APIs/WebSockets.
+	# Route those root paths to the console backend when using single-host mode.
+	handle /ui/* {
+		reverse_proxy 100.70.185.46:4646
+	}
+	handle /v1/* {
+		reverse_proxy 100.70.185.46:4646
+	}
+	handle /api/* {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /ws/* {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /static/* {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /images/* {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /styles/* {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /favicon* {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /manifest.json {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /Loader.svg {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /apple-icon-180x180.png {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle /safari-pinned-tab.svg {
+		reverse_proxy 100.70.185.46:9001
+	}
+
+	handle /grafana/* {
+		reverse_proxy 100.70.185.46:3000
+	}
+	handle_path /grafana-alloy/* {
+		reverse_proxy 100.70.185.46:12345
+	}
+	handle_path /loki/* {
+		reverse_proxy 100.70.185.46:3100
+	}
+	handle_path /minio/* {
+		reverse_proxy 100.70.185.46:9000
+	}
+	handle_path /minio-console/* {
+		reverse_proxy 100.70.185.46:9001
+	}
+	handle_path /ntfy/* {
+		reverse_proxy 100.70.185.46:8088
+	}
+	handle_path /prometheus/* {
+		reverse_proxy 100.70.185.46:9090 {
+			header_down Location "^/(.*)$" "/prometheus/$1"
+		}
+	}
+	handle_path /rustfs/* {
+		reverse_proxy 100.70.185.46:9900
+	}
+	handle_path /tusd/* {
+		forward_auth 100.70.185.46:9191 {
+			uri /auth
+			copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
+		}
+		reverse_proxy 100.70.185.46:8080
+	}
+	# tusd returns upload Location under /files/<id>; preserve the /files prefix
+	# (use handle, not handle_path) so PATCH/HEAD resumable calls hit tusd.
+	handle /files/* {
+		forward_auth 100.70.185.46:9191 {
+			uri /auth
+			copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
+		}
+		reverse_proxy 100.70.185.46:8080
+	}
+	handle_path /vault/* {
+		reverse_proxy 100.70.185.46:8200 {
+			header_down Location "^/(.*)$" "/vault/$1"
+		}
+	}
+	handle_path /uppy/* {
+		reverse_proxy 100.70.185.46:8090
+	}
+	handle_path /wave/* {
+		reverse_proxy 100.70.185.46:9091
+	}
+	handle_path /faasd/* {
+		reverse_proxy 100.70.185.46:8089
+	}
+	handle_path /supabase/* {
+		reverse_proxy 100.70.185.46:8000
+	}
+	handle_path /supabase-studio/* {
+		reverse_proxy 100.70.185.46:3002
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}
+
+# HTTPS endpoint with publicly trusted ACME certificate.
+# Temporarily disabled until public DNS for aither.mb.sun.ac.za resolves
+# correctly and LE issuance succeeds (current challenge errors show NXDOMAIN).
+#
+# https://aither.mb.sun.ac.za {
+# 	import lan_bind
+# 	tls {
+# 		issuer acme
+# 	}
+# 	import aither_routes
+# }
+
+# Keep HTTP active until public DNS/ACME issuance is completed.
+http://aither.mb.sun.ac.za {
+	import lan_bind
+	import aither_routes
+}
+
+# Nomad API/UI
+http://nomad.aither {
+	import lan_bind
+	# Current Nomad API bind on aither is Tailscale-only.
+	# Switch this to 146.232.174.77:4646 once Nomad is redeployed on LAN IP.
+	reverse_proxy 100.70.185.46:4646
+}
+
+http://grafana.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:3000
+}
+
+http://grafana-alloy.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:12345
+}
+
+http://loki.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:3100
+}
+
+http://minio.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:9000
+}
+
+http://minio-console.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:9001
+}
+
+http://ntfy.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:8088
+}
+
+http://prometheus.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:9090
+}
+
+http://rustfs.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:9900
+}
+
+http://tusd.aither {
+	import lan_bind
+	# Preserve current behavior: validate Nomad ACL token before proxying to tusd.
+	forward_auth 100.70.185.46:9191 {
+		uri /auth
+		copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
+	}
+	reverse_proxy 100.70.185.46:8080
+}
+
+http://vault.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:8200
+}
+
+http://uppy.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:8090
+}
+
+http://wave.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:9091
+}
+
+http://faasd.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:8089
+}
+
+http://supabase.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:8000
+}
+
+http://supabase-studio.aither {
+	import lan_bind
+	reverse_proxy 100.70.185.46:3002
+}

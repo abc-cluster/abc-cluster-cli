@@ -10,7 +10,7 @@ description = "SU-MBHG Bioinformatics — pipelines and ad-hoc batch jobs (high 
 # Allow docker and exec; raw_exec disabled for group members.
 # The group-admin policy re-enables raw_exec for emergency use.
 capabilities {
-  enabled_task_drivers  = ["docker", "exec"]
+  enabled_task_drivers  = ["containerd-driver", "docker", "exec"]
   disabled_task_drivers = ["raw_exec"]
 }
 

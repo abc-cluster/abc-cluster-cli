@@ -7,6 +7,8 @@ the abc-nodes cluster between multiple research groups running Nextflow pipeline
 See `ACCESS_POLICY_PLAN.md` for the full policy specification including MinIO,
 Vault, Grafana, and Wave.
 
+Observability (Prometheus, Grafana dashboards, validation scripts): **`docs/abc-nodes-observability-and-operations.md`**.
+
 ---
 
 ## Design goals
@@ -14,8 +16,8 @@ Vault, Grafana, and Wave.
 | Goal | Mechanism |
 |------|-----------|
 | Isolate research-group jobs | One Nomad namespace per group |
-| Protect infrastructure jobs | Dedicated `services` namespace (admin-only) |
-| Host shared platform apps (GVDS, BRIMS, …) | **Planned:** dedicated `applications` namespace + narrow ACLs (see `ACCESS_POLICY_PLAN.md`) |
+| Protect infrastructure jobs | Dedicated **`abc-services`** namespace (admin-only; legacy name `services`) |
+| Host shared platform apps (GVDS, BRIMS, …) | **`abc-applications`** namespace + narrow ACLs (see `ACCESS_POLICY_PLAN.md`) |
 | Control who submits jobs | ACL policy per group × role |
 | Prioritise between groups | `priority` field + batch preemption |
 | Per-user S3 data isolation | MinIO `${aws:username}` IAM policy condition |
@@ -33,7 +35,12 @@ acl/
 ├── README.md                              # This file
 ├── ACCESS_POLICY_PLAN.md                  # Full policy specification
 ├── apply-su-mbhg.sh                       # Bootstrap script (run once)
+├── setup-minio-namespace-buckets.sh       # Namespace bucket/policy + credential sync automation
+├── apply-research-namespace-specs.sh      # nomad namespace apply for acl/namespaces/su-*.hcl
+├── roles/
+│   └── apply-roles.sh                     # Create/update Nomad ACL roles from policies
 ├── tokens.env                             # Generated token secrets (chmod 600, gitignored)
+├── minio-credentials.env                  # Generated MinIO IAM credentials (chmod 600, gitignored)
 ├── server-preemption-patch.hcl            # Snippet to persist preemption in server HCL
 │
 ├── namespaces/
@@ -174,30 +181,76 @@ bash acl/apply-su-mbhg.sh
 # Tokens written to acl/tokens.env (chmod 600 — never commit)
 ```
 
+### 5.1 Create/update ACL roles
+
+```bash
+# Idempotently creates base roles + per-group roles
+ABC_ACTIVE_CONTEXT=abc-bootstrap \
+bash deployments/abc-nodes/acl/roles/apply-roles.sh
+
+# Optional: print token-to-role migration command templates
+ABC_ACTIVE_CONTEXT=abc-bootstrap \
+bash deployments/abc-nodes/acl/roles/apply-roles.sh --print-migration-commands
+```
+
 ### 6. Set up MinIO
 
 ```bash
-MC=~/.abc/binaries/mc
-$MC alias set sunminio http://100.70.185.46:9000 minioadmin minioadmin --api s3v4
+MINIO_USER=<root-user> MINIO_PASS=<root-pass> \
+CLUSTER_ADMIN_IAM_USER=abc-cluster-admin \
+CLUSTER_ADMIN_IAM_PASS='<strong-password>' \
+SYNC_NOMAD_VARS=1 \
+SYNC_VAULT=1 \
+VAULT_ADDR=http://100.70.185.46:8200 \
+VAULT_TOKEN=<vault-token> \
+bash deployments/abc-nodes/acl/setup-minio-namespace-buckets.sh
+```
 
-# Buckets
-$MC mb sunminio/su-mbhg-bioinformatics
-$MC mb sunminio/su-mbhg-hostgen
-echo "" | $MC pipe sunminio/su-mbhg-bioinformatics/shared/.keep
-echo "" | $MC pipe sunminio/su-mbhg-hostgen/shared/.keep
+This automation now handles:
 
-# IAM policies
-for p in su-mbhg-bioinformatics-group-admin su-mbhg-bioinformatics-member \
-         su-mbhg-hostgen-group-admin su-mbhg-hostgen-member; do
-  $MC admin policy create sunminio "$p" "acl/minio-policies/${p}.json"
-done
+- bucket = namespace naming for all configured research namespaces
+- user-scoped folder policies (`users/<user>/*`)
+- group-admin full-bucket policies
+- cluster-admin all-namespace policy
+- credential persistence to:
+  - `acl/minio-credentials.env` (local, gitignored)
+  - Nomad variables: `nomad/jobs/abc-nodes-minio-iam/<principal>` (services namespace)
+  - Vault KV v2 (optional): `secret/abc-nodes/minio-iam/<principal>`
 
-# IAM users (source tokens.env first)
-source acl/tokens.env
-$MC admin user add sunminio su-mbhg-bioinformatics_alice $NOMAD_TOKEN_BIO_ALICE
-$MC admin policy attach sunminio su-mbhg-bioinformatics-member \
-  --user su-mbhg-bioinformatics_alice
-# ... repeat for other users
+### 6.1 Credential rotation playbook
+
+Rotate MinIO IAM credentials by re-running the same automation with a new password prefix (or explicit cluster-admin password):
+
+```bash
+ABC_ACTIVE_CONTEXT=aither-bootstrap \
+MINIO_USER=<root-user> MINIO_PASS=<root-pass> \
+USER_PASSWORD_PREFIX='rot-2026-04-' \
+CLUSTER_ADMIN_IAM_USER=abc-cluster-admin \
+CLUSTER_ADMIN_IAM_PASS='<new-strong-password>' \
+SYNC_NOMAD_VARS=1 \
+SYNC_VAULT=1 \
+VAULT_ADDR=http://100.70.185.46:8200 \
+VAULT_TOKEN=<vault-token> \
+bash deployments/abc-nodes/acl/setup-minio-namespace-buckets.sh
+```
+
+What this refreshes:
+
+- MinIO IAM user secrets (existing users are retained; policy attachments are re-applied)
+- `acl/minio-credentials.env` local snapshot
+- Nomad variable copies under `nomad/jobs/abc-nodes-minio-iam/<principal>`
+- Vault KV copies under `secret/abc-nodes/minio-iam/<principal>` (if enabled)
+
+Recommended post-rotation checks:
+
+```bash
+# 1) Verify MinIO users exist
+~/.abc/binaries/mc admin user list sunminio
+
+# 2) Verify one Nomad variable entry
+ABC_ACTIVE_CONTEXT=aither-bootstrap \
+abc admin services nomad cli -- var get -namespace services \
+  nomad/jobs/abc-nodes-minio-iam/abc-cluster-admin
 ```
 
 ### 7. Deploy abc-nodes-auth
@@ -212,9 +265,9 @@ sudo cp acl/tusd-auth/traefik-nomad-auth.yml /etc/traefik/dynamic/
 
 ---
 
-## Planned: `applications` namespace
+## `abc-applications` namespace
 
-We intend to add a Nomad namespace **`applications`** for **shared platform workloads** (examples: **GVDS**, **BRIMS**) so they are not mixed with **`services`** (core floor) or **`su-mbhg-*`** (per-group research jobs). Namespace HCL, ACL policies, tokens, and job specs are outlined in **`ACCESS_POLICY_PLAN.md`** (section *Planned: `applications` namespace*). Nothing under `acl/namespaces/` ships for `applications` until that rollout is executed.
+Shared platform workloads (examples: **GVDS**, **BRIMS**) use the **`abc-applications`** Nomad namespace so they stay separate from **`abc-services`** (core floor) and **`su-*`** research namespaces. Namespace HCL lives under `acl/namespaces/abc-applications.hcl`. Historical design notes remain in **`ACCESS_POLICY_PLAN.md`**.
 
 ---
 
@@ -241,8 +294,8 @@ abc admin services nomad cli -- acl policy list
 # List tokens
 abc admin services nomad cli -- acl token list
 
-# Check running jobs in services namespace
-abc admin services nomad cli -- job status -namespace services
+# Check running jobs in platform namespace
+abc admin services nomad cli -- job status -namespace abc-services
 
 # List MinIO users
 ~/.abc/binaries/mc admin user list sunminio
@@ -269,3 +322,12 @@ Then add `node_pool = "infra"` to the relevant `client {}` stanzas and restart.
 
 > `node_pool_config` inside a **namespace** HCL is **Enterprise-only** in Nomad OSS
 > and will cause a 500 error if included. Omit it.
+
+---
+
+## Related documentation
+
+| Document | Scope |
+|----------|--------|
+| `docs/abc-nodes-observability-and-operations.md` | Prometheus, Grafana, MinIO metrics, validation scripts |
+| `docs/abc-nodes-testing-setup.md` | Stress/hyperfine workloads, MinIO bootstrap, dashboard sync |

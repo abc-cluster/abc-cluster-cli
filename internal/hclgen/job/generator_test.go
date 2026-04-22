@@ -40,11 +40,8 @@ func TestGenerate_ContainerdDriverUsesShForScriptRunner(t *testing.T) {
 	if !strings.Contains(hcl, `= "timeout"`) {
 		t.Fatalf("expected walltime timeout wrapper:\n%s", hcl)
 	}
-	if !strings.Contains(hcl, `"120"`) || !strings.Contains(hcl, `"/bin/sh"`) {
-		t.Fatalf("expected timeout args to use /bin/sh, got:\n%s", hcl)
-	}
-	if !strings.Contains(hcl, `"120"`) || !strings.Contains(hcl, `"/bin/sh"`) || !strings.Contains(hcl, `"local/run.sh"`) {
-		t.Fatalf("expected timeout args with /bin/sh and local/run.sh, got:\n%s", hcl)
+	if !strings.Contains(hcl, `"120"`) || !strings.Contains(hcl, `"/bin/sh"`) || !strings.Contains(hcl, `"$${NOMAD_TASK_DIR}/run.sh"`) {
+		t.Fatalf("expected timeout args with /bin/sh and $${NOMAD_TASK_DIR}/run.sh (Nomad-escaped), got:\n%s", hcl)
 	}
 	if !strings.Contains(hcl, `destination = "local/run.sh"`) {
 		t.Fatalf("expected templated script under local/, got:\n%s", hcl)

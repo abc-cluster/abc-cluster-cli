@@ -33,7 +33,7 @@ variable "grafana_admin_password" {
 }
 
 job "abc-nodes-grafana" {
-  namespace   = "services"
+  namespace   = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -93,6 +93,9 @@ job "abc-nodes-grafana" {
 
       env {
         GF_SERVER_HTTP_PORT   = "3000"
+        # Required when Grafana is exposed behind a reverse proxy subpath.
+        GF_SERVER_ROOT_URL = "%(protocol)s://%(domain)s/grafana/"
+        GF_SERVER_SERVE_FROM_SUB_PATH = "true"
         GF_PATHS_PROVISIONING = "/local/provisioning"
         # Persist Grafana data (SQLite DB, sessions, plugins) to scratch volume
         GF_PATHS_DATA         = "/scratch/grafana-data"
@@ -324,13 +327,29 @@ EOF
       # delimiters Nomad's consul-template pass treats them as Go templates and fails.
       # Per-research-user panels expect abc job run names:
       #   script-job-<institute>-<department>-<group>_<user>--<workload>-<id>
-      # Workload stress jobs use quay.io/container-perf-tools/stress-ng:latest with Nomad containerd-driver.
+      # Workload stress/hyperfine jobs use community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8 with Nomad containerd-driver.
       # (see deployments/abc-nodes/nomad/tests/workloads/*.sh).
       template {
         destination     = "local/provisioning/dashboards/files/abc-nodes-overview.json"
         left_delimiter  = "[["
         right_delimiter = "]]"
         data            = file(abspath("deployments/abc-nodes/nomad/grafana-dashboard-abc-nodes.json"))
+      }
+
+      # ── Dashboard: usage overview (capacity + fairness + efficiency) ────────
+      template {
+        destination     = "local/provisioning/dashboards/files/usage-overview.json"
+        left_delimiter  = "[["
+        right_delimiter = "]]"
+        data            = file(abspath("deployments/abc-nodes/nomad/grafana-dashboard-usage-overview.json"))
+      }
+
+      # ── Dashboard: bucket usage (MinIO/S3 characteristics) ─────────────────
+      template {
+        destination     = "local/provisioning/dashboards/files/bucket-usage.json"
+        left_delimiter  = "[["
+        right_delimiter = "]]"
+        data            = file(abspath("deployments/abc-nodes/nomad/grafana-dashboard-bucket-usage.json"))
       }
 
       resources {

@@ -1,6 +1,6 @@
 # Stress-ng workloads, Nomad containerd, and the abc job generator
 
-This note records why we **stopped** trying to make the generic `abc job run` HCL generator automatically “fix” every OCI + Nomad containerd combination for templated `local/*.sh` scripts. The committed workloads still use **`quay.io/container-perf-tools/stress-ng:latest`**; only the **generator workarounds** were abandoned.
+This note records why we **stopped** trying to make the generic `abc job run` HCL generator automatically “fix” every OCI + Nomad containerd combination for templated `local/*.sh` scripts. Committed stress-ng and hyperfine workloads use **`community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8`** (shell + `stress-ng` + `hyperfine`, no runtime `apt`); only the **generator workarounds** were abandoned.
 
 ## What we wanted
 
@@ -32,15 +32,15 @@ This note records why we **stopped** trying to make the generic `abc job run` HC
 
 ## Decision
 
-- **Keep** workload scripts on **`quay.io/container-perf-tools/stress-ng:latest`** (and comments in Grafana / integration docs where relevant).
-- **Keep** `taskScriptShell`: **`containerd-driver` → `/bin/sh`**, other drivers → `/bin/bash` (scratch/OCI often have no bash).
+- **Keep** workload scripts on the **Wave `hyperfine_stress-ng`** image above (same image for stress-ng and hyperfine examples; Grafana / integration comments track it).
+- **Keep** `taskScriptShell`: **`containerd-driver` → `/bin/sh`**, other drivers → `/bin/bash` (scratch/OCI often have no bash). Hyperfine example scripts are **POSIX `sh`** (`set -eu`, no `pipefail`) so `timeout … /bin/sh local/…` matches how the generator invokes them.
 - **Do not** encode further containerd cwd / `env -C` / `NOMAD_ALLOC_DIR` heuristics in **`internal/hclgen/job/generator.go`**. Those belong in **job-specific Nomad HCL**, a **custom driver config**, or **images whose `WORKDIR` matches how the operator mounts the alloc dir**.
 
 ## If you need this to work reliably today
 
 - Prefer **`docker`** driver with an image whose **`WORKDIR`** is the task dir, or set Docker **`work_dir`** in hand-written Nomad HCL where supported.
 - Or run stress-ng **without** a templated wrapper script (invoke the binary and args directly in `config`).
-- Or maintain a **small custom image** built FROM UBI/Alpine with `WORKDIR` set to the path your Nomad + containerd stack uses for the allocation.
+- Or maintain a **small custom image** built FROM UBI/Alpine with `WORKDIR` set to the path your Nomad + containerd stack uses for the allocation (the Seqera Wave image is one prebuilt option with both tools and a normal shell).
 
 ## Integration test
 

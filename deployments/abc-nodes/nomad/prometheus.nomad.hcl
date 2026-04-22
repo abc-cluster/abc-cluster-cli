@@ -12,7 +12,7 @@ variable "prometheus_image" {
 }
 
 job "abc-nodes-prometheus" {
-  namespace = "services"
+  namespace = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -55,6 +55,20 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["127.0.0.1:9090"]
+  - job_name: nomad
+    metrics_path: /v1/metrics
+    params:
+      format: ["prometheus"]
+    static_configs:
+      - targets: ["100.70.185.46:4646"]
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ["100.70.185.46:9000"]
+  - job_name: minio_bucket
+    metrics_path: /minio/v2/metrics/bucket
+    static_configs:
+      - targets: ["100.70.185.46:9000"]
 EOF
         destination = "local/prometheus.yml"
       }

@@ -1,5 +1,5 @@
 # Policy: services-admin
-# Full access to the 'services' namespace where all cluster infrastructure
+# Full access to the 'abc-services' namespace where all cluster infrastructure
 # jobs live (MinIO, Loki, Grafana, Prometheus, tusd, Vault, Traefik, ntfy,
 # Alloy, RustFS, Uppy, Wave, Docker registry, abc-nodes-auth).
 # Attach only to cluster-admin tokens — NOT to group tokens.
@@ -8,7 +8,7 @@
 #   nomad acl policy apply -description "Services namespace admin" \
 #     services-admin acl/policies/services-admin.hcl
 
-namespace "services" {
+namespace "abc-services" {
   policy = "write"
   capabilities = [
     "alloc-exec",

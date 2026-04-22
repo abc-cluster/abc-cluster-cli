@@ -97,6 +97,7 @@ from your terminal.`,
 		if utils.ExpFromCmd(cmd) && !quiet {
 			fmt.Fprintln(os.Stderr, "[abc exp] Experimental mode active — unstable features may change.")
 		}
+		maybePrintCLIUpdateNotice(os.Stderr, version, quiet)
 		return nil
 	},
 }

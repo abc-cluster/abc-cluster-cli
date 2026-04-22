@@ -73,12 +73,19 @@ func isCacheValid(filePath string, ttl time.Duration) bool {
 
 // FetchLatestRelease fetches the latest release information from GitHub.
 func FetchLatestRelease(owner, repo string) (*GitHubRelease, error) {
+	return FetchLatestReleaseWithContext(context.Background(), owner, repo)
+}
+
+// FetchLatestReleaseWithContext fetches the latest release information from GitHub
+// using the provided context.
+func FetchLatestReleaseWithContext(ctx context.Context, owner, repo string) (*GitHubRelease, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", GitHubAPIURL, owner, repo)
 
 	req, err := newGETRequest(url)
 	if err != nil {
 		return nil, fmt.Errorf("building release request: %w", err)
 	}
+	req = req.WithContext(ctx)
 
 	resp, err := doRequestWithRetry(req)
 	if err != nil {

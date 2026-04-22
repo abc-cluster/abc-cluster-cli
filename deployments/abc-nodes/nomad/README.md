@@ -222,11 +222,25 @@ Local `abc-nodes-docker-registry` on `:5000` is wired in as the image mirror.
 
 ---
 
+## Observability helper scripts
+
+| Script | Purpose |
+|--------|---------|
+| `nomad/scripts/deploy-observability-stack.sh` | MinIO → Prometheus → Loki → Grafana → Alloy |
+| `nomad/scripts/validate-prometheus-abc-nodes.sh` | HTTP checks: scrape `up`, MinIO bucket metrics, Nomad cores PromQL |
+| `nomad/scripts/redeploy-grafana-dashboards.sh` | `sync-grafana-definitions.sh` + `job run grafana.nomad.hcl` |
+| `nomad/tests/workloads/run-grafana-multi-user-burst.sh` | Parallel stress/hyperfine across `NS_USERS` namespaces |
+| `../acl/apply-research-namespace-specs.sh` | `nomad namespace apply` for each `acl/namespaces/su-*.hcl` |
+
+Full narrative: **`docs/abc-nodes-observability-and-operations.md`**.
+
+---
+
 ## Operational notes
 
-- **All jobs in `services` namespace** — research-group tokens (member, submit,
-  group-admin) cannot list or interact with these jobs. Only tokens with the
-  `services-admin` policy can manage them.
+- **Platform jobs in `abc-services` namespace** — research-group tokens (member, submit,
+  group-admin) cannot list or interact with these jobs. Only cluster / platform-admin
+  policies can manage them.
 
 - **Token for operations** — use the management token or the `cluster_services_admin`
   token. Both are in `~/.abc/config.yaml` (aither context) and `acl/tokens.env`.

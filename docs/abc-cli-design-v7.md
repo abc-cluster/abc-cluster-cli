@@ -156,6 +156,7 @@ This subsection records **design intent** for **group members** and **group admi
 - **Tighten audience:** only **cluster admins** who operate the floor should hold **raw Nomad / Vault / observability** credentials; **group members** use the **`abc` CLI** for day-to-day work (§0.8). **Browser** use for members is intentionally **narrow** — see §0.8 — not “every dashboard the cluster runs.”
 - **Automation** uses **service accounts** and **narrow policies**, not shared human tokens.
 - **Naming and mirroring** (consistent namespaces, labels, URLs) reduce **operator confusion**; they do **not** reduce **secret count** unless humans **never** receive downstream keys.
+- **Caddy/Auth gateway pattern (OSS-1 bridge):** Caddy (including auth plugins such as `authcrunch`) can enforce a single browser entry credential (for example a Nomad ACL token) and call a forward-auth service to validate it. However, this is still a **gateway pattern**, not full credential unification: mapping that Nomad identity to MinIO/tusd rights requires a token-exchange/identity service that issues scoped downstream access (preferably short-lived), rather than forwarding one long-lived Nomad token to every backend.
 
 **What requires OSS-2 (Khan-aligned admission)**
 
