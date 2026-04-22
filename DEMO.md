@@ -45,6 +45,8 @@ The ABC CLI is the day-to-day interface for **cluster-backed workflows**: config
 - (Optional) ABC platform API URL and tokens, and/or Nomad URL and ACL token for submit paths
 - Sample data: created in the exercises below
 
+**Tip (optional):** keep your usual `~/.abc/config.yaml` untouched by exporting **`ABC_CONFIG_FILE=/path/to/disposable.yaml`** for this walkthrough; all commands respect that path.
+
 ---
 
 ## Exercise 1: Workspace and context setup
@@ -60,29 +62,19 @@ mkdir -p ~/abc-demo/sample-data ~/abc-demo/encrypted-data
 cd ~/abc-demo
 ```
 
-### 1.2 Local crypt defaults (recommended)
+### 1.2 Ensure config exists (first run on this machine)
 
-Writes `defaults.crypt_password` / `defaults.crypt_salt` into `~/.abc/config.yaml` for `abc secrets` and `abc data encrypt`:
-
-```bash
-abc secrets init --unsafe-local
-```
-
-### 1.3 Verify the CLI
+On a laptop that has **never** run the CLI before, create `~/.abc/config.yaml` and a placeholder **`default`** context:
 
 ```bash
-abc --version
+abc config init
 ```
 
-### 1.4 Configuration entrypoints
+Skip this if you already have `~/.abc/config.yaml` (or `ABC_CONFIG_FILE`).
 
-- **`abc auth login`** — interactive login; prompts for endpoint and token and creates or updates a context (good first run on a laptop).
-- **`abc config init`** — creates `~/.abc/config.yaml` and a placeholder **`default`** context with the public API endpoint preset; **no** interactive token prompts (then use **`abc auth login`** or **`abc context add`**).
-- **`abc context add`** — non-interactive when you already have URLs and tokens (used below).
+### 1.3 Add a context (example)
 
-### 1.5 Add a context (example)
-
-Replace placeholders with values from your operator:
+Replace placeholders with values from your operator. This command **creates the context and makes it active** (you will generate crypt material for **that** context in the next step).
 
 ```bash
 abc context add dev \
@@ -102,7 +94,29 @@ Optional: record the platform tier for this context (`abc-nodes`, `abc-cluster`,
 abc config set contexts.dev.cluster_type abc-cluster
 ```
 
-### 1.6 Activate and inspect
+### 1.4 Local crypt defaults (recommended)
+
+`abc secrets init --unsafe-local` stores **`crypt.password`** / **`crypt.salt`** on the **active** context (the one you use for `abc secrets` / `abc data encrypt`). Run it **after** you have created and activated the context you will actually use (here: **`dev`** from step **1.3**).
+
+```bash
+abc secrets init --unsafe-local
+```
+
+If you later `abc context use other` and that context has no crypt block yet, run **`abc secrets init --unsafe-local`** again for that context (or use **`--force`** to rotate material — see `abc secrets init --help`).
+
+### 1.5 Verify the CLI
+
+```bash
+abc --version
+```
+
+### 1.6 Configuration entrypoints
+
+- **`abc auth login`** — interactive login; prompts for endpoint and token and creates or updates a context (good first run on a laptop). Run **`abc secrets init --unsafe-local`** afterward for that new context if you will use local encrypted secrets.
+- **`abc config init`** — creates `~/.abc/config.yaml` and a placeholder **`default`** context with the public API endpoint preset; **no** interactive token prompts (then use **`abc auth login`** or **`abc context add`**).
+- **`abc context add`** — non-interactive when you already have URLs and tokens (used in step **1.3**).
+
+### 1.7 Activate and inspect
 
 ```bash
 abc context use dev
@@ -112,7 +126,7 @@ abc context list
 
 **What you should see:** `dev` as the active context; endpoint, workspace, organization, and region fields (and upload fields if you set them); entries in `~/.abc/config.yaml`.
 
-**Optional (same exercise if you have time):** add a second context (e.g. `staging`) by repeating `abc context add` with different `--endpoint` / IDs, then `abc context use` to switch.
+**Optional (same exercise if you have time):** add a second context (e.g. `staging`) by repeating `abc context add` with different `--endpoint` / IDs, then `abc context use` to switch (and run **`abc secrets init --unsafe-local`** once per context that needs local crypt).
 
 ---
 
@@ -141,8 +155,8 @@ abc secrets set demo-api-key "sk-1234567890abcdef" --unsafe-local
 ### 2.3 Confirm it is not stored in plaintext
 
 ```bash
-grep -n demo-api-key ~/.abc/config.yaml || true
-cat ~/.abc/config.yaml
+grep -n demo-api-key "${ABC_CONFIG_FILE:-$HOME/.abc/config.yaml}" || true
+cat "${ABC_CONFIG_FILE:-$HOME/.abc/config.yaml}"
 ```
 
 **What you should see:** an entry under `secrets:` whose value looks like opaque base64 (not the raw API key).
@@ -453,6 +467,8 @@ abc job list --status running
 rm -f ABC-smoke.sh pixi-dryrun.sh hybrid-slurm-smoke.sh /tmp/abc-smoke.hcl
 ```
 
+Without a reachable Nomad (`NOMAD_ADDR` / token, or context defaults from `abc infra compute add`), `abc job list` prints a connection error — that is expected until a cluster is configured.
+
 **Notes:** Submit paths need a reachable cluster and valid ACL token. The SLURM example needs the **`slurm`** task driver on eligible clients. **`pixi-exec`** is rejected with **`--driver=slurm`** by design.
 
 ---
@@ -488,8 +504,8 @@ For service operators, `abc admin services nomad cli -- …` wraps the Nomad CLI
 
 ## Key takeaways
 
-1. **Contexts:** `abc auth login` or `abc context add` / `abc context use` — API endpoint, tokens, org/workspace/region labels, optional tus upload fields; optional **`contexts.<name>.cluster_type`** via `abc config set` for platform tier.
-2. **Secrets:** `abc secrets init --unsafe-local` for local crypt material; `abc secrets set/get/list --unsafe-local` for encrypted key storage.
+1. **Contexts:** `abc config init` on first run; then `abc auth login` or `abc context add` / `abc context use` — API endpoint, tokens, org/workspace/region labels, optional tus upload fields; optional **`contexts.<name>.cluster_type`** via `abc config set` for platform tier.
+2. **Secrets:** after the working context exists, `abc secrets init --unsafe-local` for per-context crypt material; `abc secrets set/get/list --unsafe-local` for encrypted key storage (repeat **`secrets init`** when you `context use` a context that has no crypt block yet).
 3. **Data at rest:** `abc data encrypt` / `abc data decrypt` share that crypt material.
 4. **Upload:** TUS resumable uploads; endpoint and token from flags, env, or context.
 5. **Download:** `wget` / `aria2` / `rclone` / `s5cmd` paths always run as **`abc job run --submit`** cluster jobs; **`nextflow`** uses the ABC API pipeline path instead; `--destination` is inside the task for tool downloads; `--node` pins placement.
@@ -544,7 +560,7 @@ Or run `abc secrets init --unsafe-local` once.
 | Interactive login | `abc auth login` | Creates/updates a context from prompts |
 | Use context | `abc context use <name>` | Switch active context |
 | Show context | `abc context show` | Inspect active context |
-| Init crypt defaults | `abc secrets init --unsafe-local` | `defaults.crypt_password` / `crypt_salt` |
+| Init crypt defaults | `abc secrets init --unsafe-local` | Writes `contexts.<active>.crypt.password` / `crypt.salt` |
 | Set secret | `abc secrets set KEY VALUE --unsafe-local` | Encrypted storage |
 | Get secret | `abc secrets get KEY --unsafe-local` | Decrypt and print |
 | Encrypt file | `abc data encrypt FILE` | Produces `FILE.encrypted` by default |
