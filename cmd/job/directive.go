@@ -260,7 +260,7 @@ func applySpecDefaults(spec *jobSpec, defaultName string, useSBATCH bool) error 
 		}
 	}
 	if spec.OutputLog != "" || spec.ErrorLog != "" || spec.Conda != "" || spec.Pixi ||
-		spec.Runtime != "" || strings.TrimSpace(spec.From) != "" {
+		spec.Runtime != "" || strings.TrimSpace(spec.From) != "" || spec.TaskTmp {
 		if spec.Meta == nil {
 			spec.Meta = map[string]string{}
 		}
@@ -278,6 +278,7 @@ func applySpecDefaults(spec *jobSpec, defaultName string, useSBATCH bool) error 
 		}
 	}
 	syncStackMetaKeys(spec)
+	syncTaskTmpMeta(spec)
 	if spec.NoNetwork && len(spec.Ports) > 0 {
 		return fmt.Errorf("no-network cannot be combined with port mapping")
 	}
@@ -459,6 +460,11 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --pixi does not accept a value", marker)
 			}
 			spec.Pixi = true
+		case "task-tmp":
+			if hasValue {
+				return fmt.Errorf("#%s --task-tmp does not accept a value", marker)
+			}
+			spec.TaskTmp = true
 		case "runtime":
 			if !hasValue || val == "" {
 				return fmt.Errorf("#%s --runtime requires a value (e.g. pixi-exec)", marker)

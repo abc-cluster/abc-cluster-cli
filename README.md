@@ -10,16 +10,17 @@ Install from GitHub releases using the installer script:
 
 ```bash
 # Download the correct binary for your OS/arch into current directory
-curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash
+# (uses POSIX sh — works on Alpine/busybox; `| bash` is fine too)
+curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh
 
 # Install to /usr/local/bin/abc (prompts for sudo password)
-curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash -s -- --sudo
+curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh -s -- --sudo
 ```
 
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | bash -s -- --version v1.2.3
+curl -fsSL https://raw.githubusercontent.com/abc-cluster/abc-cluster-cli/main/scripts/install-abc.sh | sh -s -- --version v1.2.3
 ```
 
 Alternative install methods:

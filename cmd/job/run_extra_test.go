@@ -133,6 +133,53 @@ func TestJobRun_PixiWithValueIsError(t *testing.T) {
 	}
 }
 
+func TestJobRun_TaskTmpDirective(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=task-tmp-job\n#ABC --task-tmp\necho hi\n"
+	p := writeTempScript(t, "task_tmp.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_task_tmp`) {
+		t.Errorf("expected abc_task_tmp in meta, got:\n%s", out)
+	}
+	if !strings.Contains(out, `TMPDIR`) || !strings.Contains(out, `${NOMAD_TASK_DIR}/tmp`) {
+		t.Errorf("expected TMPDIR in env block, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc task-tmp`) {
+		t.Errorf("expected task-tmp script preamble in template, got:\n%s", out)
+	}
+}
+
+func TestJobRun_TaskTmpCLI(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=task-tmp-cli\necho hi\n"
+	p := writeTempScript(t, "task_tmp_cli.sh", script)
+	out, err := executeCmd(t, p, "--task-tmp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_task_tmp`) {
+		t.Errorf("expected abc_task_tmp in meta, got:\n%s", out)
+	}
+}
+
+func TestJobRun_TaskTmpWithPixiOrder(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=order\n#ABC --task-tmp\n#ABC --runtime=pixi-exec\n#ABC --from=/x/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "order.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	iTmp := strings.Index(out, "abc task-tmp")
+	iPixi := strings.Index(out, "ABC_RUNTIME_PIXI_PHASE")
+	if iTmp < 0 || iPixi < 0 {
+		t.Fatalf("expected both blocks in template, got:\n%s", out)
+	}
+	if iTmp > iPixi {
+		t.Fatalf("expected task-tmp block before pixi guard (tmp=%d pixi=%d)", iTmp, iPixi)
+	}
+}
+
 func TestJobRun_PixiExecRuntimeWrapsScript(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --name=pixi-rt\n#ABC --runtime=pixi-exec\n#ABC --from=/cluster/proj/pixi.toml\necho hi\n"
 	p := writeTempScript(t, "pixi_rt.sh", script)

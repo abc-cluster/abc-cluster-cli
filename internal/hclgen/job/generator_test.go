@@ -71,6 +71,21 @@ func TestGenerate_StaticEnvSortedKeysStable(t *testing.T) {
 	}
 }
 
+func TestGenerate_TaskTmpInjectsEnv(t *testing.T) {
+	spec := Spec{
+		Name:        "tmp-job",
+		Driver:      "exec",
+		Datacenters: []string{"dc1"},
+		Nodes:       1,
+		Priority:    50,
+		TaskTmp:     true,
+	}
+	hcl := Generate(spec, "run.sh", "#!/bin/sh\necho ok\n")
+	if !strings.Contains(hcl, `TMPDIR`) || !strings.Contains(hcl, `${NOMAD_TASK_DIR}/tmp`) {
+		t.Fatalf("expected TMPDIR in env block:\n%s", hcl)
+	}
+}
+
 func TestScriptArgForDriver(t *testing.T) {
 	if got := ScriptArgForDriver("exec", "run.sh"); got != "local/run.sh" {
 		t.Fatalf("exec: got %q", got)

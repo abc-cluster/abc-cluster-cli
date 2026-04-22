@@ -95,6 +95,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		Meta:                mergeJobMetaForMonitoringFloor(spec.Meta, staticEnv),
 		Conda:               spec.Conda,
 		Pixi:                spec.Pixi,
+		TaskTmp:             spec.TaskTmp,
 		Ports:               spec.Ports,
 		ExposeAllocID:       spec.ExposeAllocID,
 		ExposeShortAllocID:  spec.ExposeShortAllocID,

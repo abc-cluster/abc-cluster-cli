@@ -61,6 +61,8 @@ type Spec struct {
 	Meta  map[string]string
 	Conda string
 	Pixi  bool
+	// TaskTmp sets TMPDIR/TMP/TEMP to ${NOMAD_TASK_DIR}/tmp in the task env block.
+	TaskTmp bool
 
 	Ports []string
 
@@ -341,6 +343,13 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec Spec) {
 	}
 	envBody := taskBody.AppendNewBlock("env", nil).Body()
 
+	if spec.TaskTmp {
+		tmp := "${NOMAD_TASK_DIR}/tmp"
+		envBody.SetAttributeValue("TMPDIR", cty.StringVal(tmp))
+		envBody.SetAttributeValue("TMP", cty.StringVal(tmp))
+		envBody.SetAttributeValue("TEMP", cty.StringVal(tmp))
+	}
+
 	if spec.IncludeHPCCompatEnv {
 		envBody.SetAttributeValue("SLURM_JOB_ID", cty.StringVal("${NOMAD_ALLOC_ID}"))
 		envBody.SetAttributeValue("PBS_JOBID", cty.StringVal("${NOMAD_ALLOC_ID}"))
@@ -402,7 +411,8 @@ func appendEnvBlock(taskBody *hclwrite.Body, spec Spec) {
 }
 
 func hasExplicitRuntimeExposure(spec Spec) bool {
-	return spec.ExposeAllocID ||
+	return spec.TaskTmp ||
+		spec.ExposeAllocID ||
 		spec.ExposeShortAllocID ||
 		spec.ExposeAllocName ||
 		spec.ExposeAllocIndex ||
