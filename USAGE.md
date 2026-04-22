@@ -277,12 +277,18 @@ federated clusters). Leave `nomad_region` unset for typical single-region cluste
 
 ### `config init`
 
-Initialize configuration interactively. Delegates to `abc auth login`.
+Creates `~/.abc/config.yaml` if needed and ensures a placeholder context named **`default`**
+(public API endpoint `https://api.abc-cluster.io`, derived `upload_endpoint` when possible).
+Sets **`active_context`** to **`default`** on first-time setups (no prior contexts). If you
+already have other contexts but none named `default`, that context is added; if **`active_context`**
+was empty and you had multiple contexts, it stays empty until you run **`abc context use`**.
+
+Fill in tokens with **`abc auth login`** or **`abc context add`**.
 
 ```bash
 $ abc config init
-Running 'abc auth login' to set up your first context...
-✓ Config initialized at /Users/name/.abc/config.yaml
+✓ Config ready at /Users/name/.abc/config.yaml
+✓ Active context: default (edit with: abc auth login  or  abc context add ...)
 ```
 
 ### `config set KEY VALUE`
