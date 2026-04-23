@@ -16,3 +16,4 @@ go.work.sum
 
 # Operator-generated Vault bootstrap (root token + unseal keys); never commit
 deployments/abc-nodes/acl/vault-keys.env
+.e2e

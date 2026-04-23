@@ -1,6 +1,7 @@
 namespace "su-mbhg-animaltb" {
   capabilities = [
     "submit-job",
+    "parse-job",
     "dispatch-job",
     "list-jobs",
     "read-job",
@@ -8,6 +9,12 @@ namespace "su-mbhg-animaltb" {
     "read-fs",
     "alloc-lifecycle",
     "alloc-exec",
+  ]
+}
+
+namespace "default" {
+  capabilities = [
+    "parse-job",
   ]
 }
 

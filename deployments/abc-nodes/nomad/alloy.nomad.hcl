@@ -49,7 +49,7 @@ locals {
 }
 
 job "abc-nodes-alloy" {
-  namespace = "services"
+  namespace = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   # One Alloy per node — required so alloc logs on each client are tailed locally.

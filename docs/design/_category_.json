@@ -1,0 +1,9 @@
+{
+  "label": "Design",
+  "position": 20,
+  "link": {
+    "type": "generated-index",
+    "title": "Design discussions",
+    "description": "Historical and current CLI/platform design discussions."
+  }
+}

@@ -5,18 +5,13 @@
 #  Data stored at /opt/nomad/scratch/minio-data (via "scratch" host volume).
 #  Safe across job restarts and Nomad upgrades — data is on the host FS.
 #
-# CREDENTIALS (Nomad Variables, namespace: services)
-# ───────────────────────────────────────────────────
-#  Path: nomad/jobs/abc-nodes-minio
-#  Keys: minio_root_user, minio_root_password
+# CREDENTIALS STRATEGY
+# ────────────────────
+#  Bootstrap/default-first: this job starts using HCL defaults
+#  (minioadmin/minioadmin) so first deployments do not depend on Nomad Variables.
 #
-#  Store / rotate:
-#    abc admin services nomad cli -- var put -namespace services -force \
-#      nomad/jobs/abc-nodes-minio \
-#      minio_root_user=<user> minio_root_password=<password>
-#
-#  If the Variable is not set, falls back to the HCL variable defaults
-#  (minioadmin/minioadmin) — change those defaults before first deploy.
+#  Later hardening: migrate to Nomad Variables or Vault and update this job to
+#  consume secret references once secure token workflows are in place.
 #
 # After rotating credentials:
 #   1. Update the Nomad Variable (command above)
@@ -36,13 +31,13 @@ variable "minio_image" {
 variable "minio_root_user" {
   type        = string
   default     = "minioadmin"
-  description = "Fallback only — override via Nomad Variable nomad/jobs/abc-nodes-minio"
+  description = "Bootstrap default root user"
 }
 
 variable "minio_root_password" {
   type        = string
   default     = "minioadmin"
-  description = "Fallback only — override via Nomad Variable nomad/jobs/abc-nodes-minio"
+  description = "Bootstrap default root password"
 }
 
 job "abc-nodes-minio" {
@@ -94,20 +89,14 @@ job "abc-nodes-minio" {
         read_only   = false
       }
 
-      # Credentials: Nomad Variable takes precedence over HCL variable defaults.
-      # After HCL processing, ${var.minio_root_*} become the HCL default values.
-      # At runtime the template engine uses the Variable if it exists, else falls back.
+      # Bootstrap mode: always use HCL defaults.
+      # Migrate to Nomad/Vault-backed secrets once secure token workflows are enabled.
       template {
         destination = "secrets/minio.env"
         env         = true
         data        = <<EOF
-{{ with nomadVar "nomad/jobs/abc-nodes-minio" -}}
-MINIO_ROOT_USER={{ .minio_root_user }}
-MINIO_ROOT_PASSWORD={{ .minio_root_password }}
-{{- else -}}
 MINIO_ROOT_USER=${var.minio_root_user}
 MINIO_ROOT_PASSWORD=${var.minio_root_password}
-{{- end }}
 # Expose Prometheus metrics endpoint without auth for in-cluster scraping.
 MINIO_PROMETHEUS_AUTH_TYPE=public
 EOF

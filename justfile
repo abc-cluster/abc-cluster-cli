@@ -98,6 +98,18 @@ check: vet mod-verify test
 # Stricter gate: formatting must already match gofmt (`just fmt` if this fails).
 ci: fmt-check check
 
+# Install Docusaurus docs dependencies.
+docs-install:
+    npm --prefix website install
+
+# Run Docusaurus docs locally with hot reload.
+docs-serve:
+    npm --prefix website run start
+
+# Build static docs site output.
+docs-build:
+    npm --prefix website run build
+
 # Remove build artifacts from this repo.
 clean:
     rm -rf dist/ ./abc ./abc.exe

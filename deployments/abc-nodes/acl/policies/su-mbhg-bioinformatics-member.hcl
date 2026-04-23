@@ -14,6 +14,7 @@
 namespace "su-mbhg-bioinformatics" {
   capabilities = [
     "submit-job",
+    "parse-job",
     "dispatch-job",
     "list-jobs",
     "read-job",
@@ -21,6 +22,12 @@ namespace "su-mbhg-bioinformatics" {
     "read-fs",
     "alloc-lifecycle",
     "alloc-exec",
+  ]
+}
+
+namespace "default" {
+  capabilities = [
+    "parse-job",
   ]
 }
 

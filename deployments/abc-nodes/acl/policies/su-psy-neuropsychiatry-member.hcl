@@ -1,6 +1,7 @@
 namespace "su-psy-neuropsychiatry" {
   capabilities = [
     "submit-job",
+    "parse-job",
     "dispatch-job",
     "list-jobs",
     "read-job",
@@ -8,6 +9,12 @@ namespace "su-psy-neuropsychiatry" {
     "read-fs",
     "alloc-lifecycle",
     "alloc-exec",
+  ]
+}
+
+namespace "default" {
+  capabilities = [
+    "parse-job",
   ]
 }
 

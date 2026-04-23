@@ -33,7 +33,7 @@ variable "loki_bucket" {
 }
 
 job "abc-nodes-loki" {
-  namespace = "services"
+  namespace = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -97,8 +97,8 @@ storage_config:
   aws:
     bucketnames: ${var.loki_bucket}
     endpoint: ${var.minio_endpoint}
-    access_key_id: {{ with nomadVar "nomad/jobs/abc-nodes-loki" }}{{ .minio_access_key }}{{ else }}${var.minio_access_key}{{ end }}
-    secret_access_key: {{ with nomadVar "nomad/jobs/abc-nodes-loki" }}{{ .minio_secret_key }}{{ else }}${var.minio_secret_key}{{ end }}
+    access_key_id: ${var.minio_access_key}
+    secret_access_key: ${var.minio_secret_key}
     insecure: true
     s3forcepathstyle: true
     region: us-east-1
