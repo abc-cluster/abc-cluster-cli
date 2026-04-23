@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,7 +38,11 @@ func executeCmdWithABCYAML(t *testing.T, yaml string, args ...string) (string, e
 	root.AddCommand(job.NewCmd())
 	root.SetOut(buf)
 	root.SetErr(buf)
-	root.SetArgs(append([]string{"job", "run"}, args...))
+	runArgs := append([]string(nil), args...)
+	if !slices.Contains(runArgs, "--submit") && !slices.Contains(runArgs, "--dry-run") {
+		runArgs = append(runArgs, "--no-submit")
+	}
+	root.SetArgs(append([]string{"job", "run"}, runArgs...))
 	_, err := root.ExecuteC()
 	return buf.String(), err
 }
@@ -53,7 +58,11 @@ func executeCmdWithConfigPath(t *testing.T, cfgPath string, args ...string) (str
 	root.AddCommand(job.NewCmd())
 	root.SetOut(buf)
 	root.SetErr(buf)
-	root.SetArgs(append([]string{"job", "run"}, args...))
+	runArgs := append([]string(nil), args...)
+	if !slices.Contains(runArgs, "--submit") && !slices.Contains(runArgs, "--dry-run") {
+		runArgs = append(runArgs, "--no-submit")
+	}
+	root.SetArgs(append([]string{"job", "run"}, runArgs...))
 	_, err := root.ExecuteC()
 	return buf.String(), err
 }

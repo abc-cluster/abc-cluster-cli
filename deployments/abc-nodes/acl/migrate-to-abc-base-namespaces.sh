@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 NOMAD_DIR="${REPO_ROOT}/deployments/abc-nodes/nomad"
+EXPERIMENTAL_NOMAD_DIR="${REPO_ROOT}/deployments/abc-nodes/experimental/nomad"
 
 echo "==> Migration: services/applications -> abc-services/abc-applications"
 
@@ -125,8 +126,8 @@ echo "==> Migrating service job specs into abc-services namespace..."
 for file in \
   minio.nomad.hcl loki.nomad.hcl ntfy.nomad.hcl grafana.nomad.hcl job-notifier.nomad.hcl \
   traefik.nomad.hcl abc-nodes-auth.nomad.hcl prometheus.nomad.hcl alloy.nomad.hcl \
-  vault.nomad.hcl tusd.nomad.hcl uppy.nomad.hcl redis.nomad.hcl rustfs.nomad.hcl \
-  docker-registry.nomad.hcl wave.nomad.hcl supabase.nomad.hcl postgres.nomad.hcl; do
+  tusd.nomad.hcl uppy.nomad.hcl redis.nomad.hcl rustfs.nomad.hcl \
+  docker-registry.nomad.hcl postgres.nomad.hcl; do
     src="${NOMAD_DIR}/${file}"
   if [[ -f "${src}" ]]; then
     tmp="$(mktemp)"
@@ -134,6 +135,17 @@ for file in \
     abc admin services nomad cli -- job run "${tmp}" >/dev/null
     rm -f "${tmp}"
     echo "      deployed: ${file} -> abc-services"
+  fi
+done
+
+for file in vault.nomad.hcl wave.nomad.hcl supabase.nomad.hcl; do
+  src="${EXPERIMENTAL_NOMAD_DIR}/${file}"
+  if [[ -f "${src}" ]]; then
+    tmp="$(mktemp)"
+    perl -pe 's/namespace\s*=\s*"services"/namespace = "abc-services"/g' "${src}" > "${tmp}"
+    abc admin services nomad cli -- job run "${tmp}" >/dev/null
+    rm -f "${tmp}"
+    echo "      deployed: experimental/${file} -> abc-services"
   fi
 done
 

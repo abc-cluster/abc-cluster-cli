@@ -15,7 +15,7 @@ variable "nginx_image" {
 variable "tusd_endpoint" {
   type        = string
   description = "TUS upload endpoint (browser-accessible URL, must be reachable from the user's browser)."
-  default     = "http://aither.mb.sun.ac.za/tusd/files/"
+  default     = "http://aither.mb.sun.ac.za/services/tusd/files/"
 }
 
 variable "uppy_max_file_size_mb" {
@@ -24,7 +24,7 @@ variable "uppy_max_file_size_mb" {
 }
 
 job "abc-nodes-uppy" {
-  namespace = "abc-services"
+  namespace = "abc-applications"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"

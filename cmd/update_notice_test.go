@@ -55,6 +55,20 @@ func TestMaybePrintCLIUpdateNotice_DoesNotPrintForDevVersion(t *testing.T) {
 	}
 }
 
+func TestMaybePrintCLIUpdateNotice_DoesNotPrintWhenAlreadyLatest(t *testing.T) {
+	orig := fetchLatestCLITag
+	t.Cleanup(func() { fetchLatestCLITag = orig })
+	fetchLatestCLITag = func(context.Context) (string, error) {
+		return "v1.5.0", nil
+	}
+
+	var b strings.Builder
+	maybePrintCLIUpdateNotice(&b, "v1.5.0", false)
+	if b.Len() != 0 {
+		t.Fatalf("expected no output when already latest, got: %q", b.String())
+	}
+}
+
 func TestNormalizeSemverTag(t *testing.T) {
 	tests := []struct {
 		name  string

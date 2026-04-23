@@ -15,12 +15,12 @@
 #
 # Run:
 #   abc admin services nomad cli -- job run -detach \
-#     deployments/abc-nodes/nomad/tests/vault.nomad.hcl
+#     deployments/abc-nodes/experimental/nomad/tests/vault.nomad.hcl
 #
 # Or with an explicit token:
 #   abc admin services nomad cli -- job run -detach \
 #     -var vault_token=<root-or-rw-token> \
-#     deployments/abc-nodes/nomad/tests/vault.nomad.hcl
+#     deployments/abc-nodes/experimental/nomad/tests/vault.nomad.hcl
 
 variable "datacenters" {
   type    = list(string)
@@ -130,10 +130,10 @@ case "$health_code" in
     ok "Vault /v1/sys/health  →  HTTP 429 (standby)  version=$version"
     ;;
   503)
-    nok "Vault /v1/sys/health  →  HTTP 503 SEALED  (run: bash deployments/abc-nodes/scripts/init-vault.sh)"
+    nok "Vault /v1/sys/health  →  HTTP 503 SEALED  (run: bash deployments/abc-nodes/experimental/scripts/init-vault.sh)"
     ;;
   501)
-    nok "Vault /v1/sys/health  →  HTTP 501 NOT INITIALIZED  (run: bash deployments/abc-nodes/scripts/init-vault.sh)"
+    nok "Vault /v1/sys/health  →  HTTP 501 NOT INITIALIZED  (run: bash deployments/abc-nodes/experimental/scripts/init-vault.sh)"
     ;;
   *)
     nok "Vault /v1/sys/health  →  HTTP $health_code  body=$health_body"

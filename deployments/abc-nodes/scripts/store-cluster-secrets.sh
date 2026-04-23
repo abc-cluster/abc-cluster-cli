@@ -10,12 +10,12 @@
 #   Grafana         nomad/jobs/abc-nodes-grafana
 #   Job Notifier    nomad/jobs/abc-nodes-job-notifier
 #
-# Supabase secrets are handled separately (init-supabase-secrets.sh generates
+# Supabase secrets are handled separately (experimental; init-supabase-secrets.sh generates
 # JWT tokens that cannot be derived here):
-#   bash deployments/abc-nodes/scripts/init-supabase-secrets.sh
+#   bash deployments/abc-nodes/experimental/scripts/init-supabase-secrets.sh
 #
-# Vault init is also separate:
-#   bash deployments/abc-nodes/scripts/init-vault.sh
+# Vault init is also separate (experimental):
+#   bash deployments/abc-nodes/experimental/scripts/init-vault.sh
 #
 # Prerequisites:
 #   NOMAD_TOKEN — Nomad management token (services namespace access)
@@ -93,8 +93,10 @@ echo ""
 echo "=================================================================="
 echo " Done! All Nomad Variables stored."
 echo ""
-echo " Next — run Supabase secrets (generates JWT tokens):"
-echo "   bash deployments/abc-nodes/scripts/init-supabase-secrets.sh"
+echo " Optional (experimental Supabase / Wave) — secrets + jobs:"
+echo "   bash deployments/abc-nodes/experimental/scripts/init-supabase-secrets.sh"
+echo "   abc admin services nomad cli -- job run deployments/abc-nodes/experimental/nomad/supabase.nomad.hcl"
+echo "   abc admin services nomad cli -- job run deployments/abc-nodes/experimental/nomad/wave.nomad.hcl"
 echo ""
 echo " Then redeploy updated services:"
 echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/minio.nomad.hcl"
@@ -102,13 +104,11 @@ echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/gra
 echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/job-notifier.nomad.hcl"
 echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/loki.nomad.hcl"
 echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/ntfy.nomad.hcl"
-echo "   abc admin services nomad cli -- job stop abc-nodes-postgres"
-echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/supabase.nomad.hcl"
-echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/wave.nomad.hcl"
 echo "   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/traefik.nomad.hcl"
 echo ""
-echo " Initialize Vault (if not done):"
-echo "   bash deployments/abc-nodes/scripts/init-vault.sh"
+echo " Optional (experimental Vault):"
+echo "   abc admin services nomad cli -- job run deployments/abc-nodes/experimental/nomad/vault.nomad.hcl"
+echo "   bash deployments/abc-nodes/experimental/scripts/init-vault.sh"
 echo ""
 echo " Rotate mc alias with new MinIO credentials:"
 echo "   mc alias set sunminio http://100.70.185.46:9000 \\"

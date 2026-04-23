@@ -383,7 +383,7 @@ Wave provides container build-and-cache capabilities for Nextflow pipelines.
 **Blocking issue**: `ghcr.io/seqeralabs/wave:v1.33.2` returns 403 when pulled
 without a GitHub PAT from the cluster's containerd runtime. Fix options:
 
-A. Add `auth { username/password }` block with a GitHub PAT to `wave.nomad.hcl`.  
+A. Add `auth { username/password }` block with a GitHub PAT to `experimental/nomad/wave.nomad.hcl`.  
 B. Configure `/etc/containerd/certs.d/ghcr.io/` credentials on `aither`.
 
 Wave runs in `lite` mode: `MICRONAUT_ENVIRONMENTS=lite,rate-limit,redis,postgres,prometheus`.

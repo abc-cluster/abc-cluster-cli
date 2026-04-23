@@ -90,8 +90,9 @@ job "abc-nodes-grafana" {
 
       env {
         GF_SERVER_HTTP_PORT   = "3000"
+        GF_SERVER_DOMAIN      = "aither.mb.sun.ac.za"
         # Required when Grafana is exposed behind a reverse proxy subpath.
-        GF_SERVER_ROOT_URL = "%(protocol)s://%(domain)s/grafana/"
+        GF_SERVER_ROOT_URL = "%(protocol)s://%(domain)s/services/grafana/"
         GF_SERVER_SERVE_FROM_SUB_PATH = "true"
         GF_PATHS_PROVISIONING = "/local/provisioning"
         # Persist Grafana data (SQLite DB, sessions, plugins) to scratch volume

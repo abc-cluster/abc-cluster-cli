@@ -591,7 +591,7 @@ abc submit <target> [flags]
 | Priority | Condition | Dispatches to |
 |----------|-----------|---------------|
 | 1 | `--type pipeline\|job\|module` | forced |
-| 2 | `<target>` is a local file path | `job run --submit` |
+| 2 | `<target>` is a local file path | `job run` |
 | 3 | `<target>` starts with `http://` or `https://` | `pipeline run` |
 | 4 | `<target>` has ≥ 3 path segments (e.g. `nf-core/modules/bwa/mem`) | `module run` |
 | 5 | `<target>` matches `owner/repo` (one `/`) | `pipeline run` |
@@ -937,8 +937,7 @@ still submits a **single** module per Nomad job.
 ## `job run`
 
 Parse `#ABC`/`#NOMAD` preamble directives from an annotated shell script and produce a Nomad HCL
-batch job spec. Without `--submit` the generated HCL is printed to stdout; with `--submit` it is
-registered directly with the Nomad server.
+batch job spec. Jobs are submitted by default. Use `--no-submit` to print generated HCL only.
 
 ```
 abc job run <script> [flags]
@@ -948,9 +947,10 @@ abc job run <script> [flags]
 
 | Flag            | Description                                                  |
 |-----------------|--------------------------------------------------------------|
-| `--submit`      | Submit the job to Nomad instead of printing HCL              |
+| `--submit`      | Submit the job to Nomad (default: true)                      |
+| `--no-submit`   | Generate HCL only (do not submit)                            |
 | `--dry-run`     | Plan the job server-side without submitting                  |
-| `--watch`       | Stream logs immediately after `--submit`                     |
+| `--watch`       | Stream logs immediately after submission                      |
 | `--output-file` | Write generated HCL to a file instead of stdout              |
 | `--ssh`         | Execute the job on a remote host via SSH instead of Nomad    |
 | `--ssh-timeout` | Timeout for SSH job execution (e.g. `30m`, `2h`); `0` = none |
@@ -1137,6 +1137,9 @@ also understood (mapped to their ABC equivalents) for SLURM script compatibility
 ```bash
 # Print generated HCL (no cluster needed)
 abc job run bwa-align.sh
+
+# Built-in sanity workload (no local script required)
+abc job run hello-world
 
 # Pipe to Nomad directly
 abc job run bwa-align.sh | nomad job run -
@@ -1505,7 +1508,7 @@ File decrypted successfully.
 Two modes:
 
 1. **Nextflow / fetchngs** — when `--tool` is `nextflow` (explicit or default overridden), submit an [nf-core/fetchngs](https://github.com/nf-core/fetchngs) pipeline run via the control plane.
-2. **Ad-hoc transfer tools** — when `--tool` is `aria2`, `rclone`, `wget`, or `s5cmd`, the CLI generates a shell script and runs `abc job run --submit` so Nomad executes downloads (and optional follow-up upload) on the cluster.
+2. **Ad-hoc transfer tools** — when `--tool` is `aria2`, `rclone`, `wget`, or `s5cmd`, the CLI generates a shell script and runs `abc job run` so Nomad executes downloads (and optional follow-up upload) on the cluster.
 
 ```
 abc data download [flags]

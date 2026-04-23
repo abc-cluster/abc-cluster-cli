@@ -252,7 +252,7 @@ fi
 
 # Optional: vault (needs Vault unsealed + token)
 if [ "$SKIP_VAULT" -eq 0 ]; then
-  run_test "vault"           "$TESTS_DIR/vault.nomad.hcl"
+  run_test "vault"           "deployments/abc-nodes/experimental/nomad/tests/vault.nomad.hcl"
 else
   printf "\n  ── Skipping: vault (--skip-vault)\n"
   SKIP_JOBS+=("vault")

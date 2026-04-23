@@ -10,7 +10,7 @@
 #
 # Usage:
 #   export NOMAD_TOKEN=<token>
-#   bash deployments/abc-nodes/scripts/init-supabase-secrets.sh
+#   bash deployments/abc-nodes/experimental/scripts/init-supabase-secrets.sh
 #
 # Idempotent: re-running regenerates and overwrites existing Variables.
 # To rotate credentials, just re-run this script + redeploy the job.
@@ -120,11 +120,11 @@ echo "       abc admin services nomad cli -- job stop abc-nodes-postgres"
 echo ""
 echo "    2. Deploy Supabase:"
 echo "       abc admin services nomad cli -- job run \\"
-echo "         deployments/abc-nodes/nomad/supabase.nomad.hcl"
+echo "         deployments/abc-nodes/experimental/nomad/supabase.nomad.hcl"
 echo ""
 echo "    3. Deploy Wave (uses updated DB credentials):"
 echo "       abc admin services nomad cli -- job run \\"
-echo "         deployments/abc-nodes/nomad/wave.nomad.hcl"
+echo "         deployments/abc-nodes/experimental/nomad/wave.nomad.hcl"
 echo ""
 echo "    4. Access Supabase Studio:"
 echo "       open http://supabase-studio.aither"

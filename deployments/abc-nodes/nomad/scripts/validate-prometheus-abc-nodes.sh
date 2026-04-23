@@ -11,7 +11,7 @@
 #   PROMETHEUS_QUERY_BASE  Base URL for Prometheus HTTP API (default below).
 set -euo pipefail
 
-PROMETHEUS_QUERY_BASE="${PROMETHEUS_QUERY_BASE:-http://aither.mb.sun.ac.za/prometheus}"
+PROMETHEUS_QUERY_BASE="${PROMETHEUS_QUERY_BASE:-http://aither.mb.sun.ac.za/services/prometheus}"
 PROMETHEUS_QUERY_BASE="${PROMETHEUS_QUERY_BASE%/}"
 
 echo "==> Prometheus query base: ${PROMETHEUS_QUERY_BASE}"

@@ -26,10 +26,10 @@ import (
 func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run <script>",
-		Short: "Generate (or submit) a Nomad HCL batch job from an annotated script",
+		Short: "Generate and submit a Nomad HCL batch job from an annotated script",
 		Long: `Parse #ABC/#NOMAD preamble directives from a script and produce a Nomad
-HCL job spec. Without --submit the HCL is printed to stdout; with --submit it
-is registered directly with Nomad.
+HCL job spec. By default it is registered directly with Nomad.
+Use --no-submit to print HCL without submission.
 
 DIRECTIVE PRECEDENCE (highest → lowest)
   CLI flags  >  #ABC preamble  >  #NOMAD preamble  >  NOMAD_* env vars  >  params file
@@ -138,6 +138,9 @@ INLINE COMMENTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Built-in sanity workload (no local script file needed)
+  abc job run hello-world
+
   # Print generated HCL (no cluster needed)
   abc job run bwa-align.sh
 
@@ -148,21 +151,22 @@ EXAMPLES
   abc job run bwa-align.sh --dry-run --region za-cpt
 
   # Submit and tail logs immediately
-  abc job run bwa-align.sh --submit --region za-cpt --watch
+  abc job run bwa-align.sh --region za-cpt --watch
 
   # Override preamble directive from CLI
-  abc job run bwa-align.sh --submit --nodes=96 --cores=16
+  abc job run bwa-align.sh --nodes=96 --cores=16
 
-  # Write HCL to file instead of stdout
+  # Write HCL to file (no submit)
   abc job run bwa-align.sh --output-file bwa-align.hcl`,
 		Args: cobra.ExactArgs(1),
 		RunE: runJob,
 	}
 
 	// Submission modes
-	cmd.Flags().Bool("submit", false, "Submit job to Nomad instead of printing HCL")
+	cmd.Flags().Bool("submit", true, "Submit job to Nomad (default true)")
+	cmd.Flags().Bool("no-submit", false, "Generate HCL only (do not submit)")
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
-	cmd.Flags().Bool("watch", false, "Stream logs after --submit")
+	cmd.Flags().Bool("watch", false, "Stream logs after submission")
 	cmd.Flags().Duration("watch-timeout", 0, "Timeout for --watch log streaming (0 = no timeout)")
 	cmd.Flags().Bool("notify", false, "Print ntfy subscription URL after submit (requires capabilities.notifications)")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
@@ -332,25 +336,35 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 
 func runJob(cmd *cobra.Command, args []string) error {
 	scriptPath := args[0]
-
-	f, err := os.Open(scriptPath)
-	if err != nil {
-		return fmt.Errorf("cannot open script %q: %w", scriptPath, err)
-	}
-	defer f.Close()
-
-	scriptBytes, err := io.ReadAll(f)
-	if err != nil {
-		return fmt.Errorf("cannot read script %q: %w", scriptPath, err)
+	isBuiltInHelloWorld := scriptPath == "hello-world"
+	var (
+		scriptBytes []byte
+		scriptBase  string
+		defaultName string
+		err         error
+	)
+	if isBuiltInHelloWorld {
+		scriptBase = helloWorldScriptBase
+		defaultName = "hello-world"
+		scriptBytes = []byte(helloWorldScriptBody)
+	} else {
+		f, openErr := os.Open(scriptPath)
+		if openErr != nil {
+			return fmt.Errorf("cannot open script %q: %w", scriptPath, openErr)
+		}
+		defer f.Close()
+		scriptBytes, err = io.ReadAll(f)
+		if err != nil {
+			return fmt.Errorf("cannot read script %q: %w", scriptPath, err)
+		}
+		scriptBase = filepath.Base(scriptPath)
+		defaultName = strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
 	}
 
 	abcDirs, nomadDirs, slurmDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
 	if err != nil {
 		return fmt.Errorf("failed to parse script preamble: %w", err)
 	}
-
-	scriptBase := filepath.Base(scriptPath)
-	defaultName := strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
 
 	mode := preambleModeAuto
 	if modeStr, _ := cmd.Flags().GetString("preamble-mode"); modeStr != "" {
@@ -373,6 +387,9 @@ func runJob(cmd *cobra.Command, args []string) error {
 
 	// Merge in documented precedence: CLI > preamble > env > params.
 	spec := &jobSpec{}
+	if isBuiltInHelloWorld {
+		spec = mergeSpec(spec, buildHelloWorldSpec())
+	}
 
 	if paramsFile, _ := cmd.Flags().GetString("params-file"); paramsFile != "" {
 		params, err := loadParamsFile(paramsFile)
@@ -398,32 +415,48 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 	applyAbcNodesNomadNamespaceFromConfig(spec)
 
-	// Stamp submission metadata into meta block.
-	if spec.Meta == nil {
-		spec.Meta = map[string]string{}
-	}
-	submissionID := newSubmissionID()
-	spec.Meta["abc_submission_id"] = submissionID
-	spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
-	if spec.Name != "" {
-		base := spec.Name
-		if !strings.HasPrefix(base, "script-job-") {
-			base = "script-job-" + base
+	var scriptBody string
+	if isBuiltInHelloWorld {
+		scriptBody, err = finalizeHelloWorld(spec)
+		if err != nil {
+			return err
 		}
-		spec.Name = fmt.Sprintf("%s-%s", base, submissionID[:8])
-	}
-
-	scriptBody := string(scriptBytes)
-	scriptBody, err = FinalizeJobScript(spec, scriptBase, scriptBody)
-	if err != nil {
-		return err
+	} else {
+		// Stamp submission metadata into meta block.
+		if spec.Meta == nil {
+			spec.Meta = map[string]string{}
+		}
+		submissionID := newSubmissionID()
+		spec.Meta["abc_submission_id"] = submissionID
+		spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
+		if spec.Name != "" {
+			base := spec.Name
+			if !strings.HasPrefix(base, "script-job-") {
+				base = "script-job-" + base
+			}
+			spec.Name = fmt.Sprintf("%s-%s", base, submissionID[:8])
+		}
+		scriptBody = string(scriptBytes)
+		scriptBody, err = FinalizeJobScript(spec, scriptBase, scriptBody)
+		if err != nil {
+			return err
+		}
 	}
 
 	hcl := generateHCL(spec, scriptBase, scriptBody)
 
 	submit, _ := cmd.Flags().GetBool("submit")
+	noSubmit, _ := cmd.Flags().GetBool("no-submit")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	outputFile, _ := cmd.Flags().GetString("output-file")
+	if noSubmit {
+		submit = false
+	}
+	// Keep historical generate-only behavior for --output-file unless caller
+	// explicitly forces submission.
+	if outputFile != "" && !cmd.Flags().Changed("submit") && !cmd.Flags().Changed("no-submit") {
+		submit = false
+	}
 
 	if submit || dryRun {
 		return runWithNomad(cmd.Context(), cmd, spec, hcl, submit, dryRun)
@@ -536,7 +569,7 @@ func printPlan(cmd *cobra.Command, hcl string, plan *NomadPlanResponse) {
 	if plan.Warnings != "" {
 		fmt.Fprintf(out, "  Warnings: %s\n", plan.Warnings)
 	}
-	fmt.Fprintf(out, "\n  ✓ Dry-run complete. Use --submit to register.\n")
+	fmt.Fprintf(out, "\n  ✓ Dry-run complete. Re-run without --dry-run to register.\n")
 }
 
 const (
