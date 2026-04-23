@@ -102,18 +102,18 @@ Stress/hyperfine test scripts use `#ABC --driver=containerd`. Each research name
 Namespace specs live in `deployments/abc-nodes/acl/namespaces/`. Apply all research (`su-*.hcl`) definitions:
 
 ```bash
-export ABC_CONTEXT=abc-cluster-admin   # or any context with namespace apply rights
+export ABC_ACTIVE_CONTEXT=abc-cluster-admin   # or any context with namespace apply rights (see note below)
 bash deployments/abc-nodes/acl/apply-research-namespace-specs.sh
 ```
 
-This skips `abc-*.hcl` files (platform namespaces).
+**Context env:** the `abc` binary reads **`ABC_ACTIVE_CONTEXT`** to override `active_context` in `~/.abc/config.yaml`. The burst script also treats **`ABC_CONTEXT`** as an alias and exports `ABC_ACTIVE_CONTEXT` if the latter is unset. The apply script only touches `acl/namespaces/su-*.hcl` (research groups).
 
 ## Multi-user load for Grafana QA
 
 To submit overlapping `stress-ng` / `hyperfine` jobs across **real** `(namespace, su-<ns>_<user>)` pairs parsed from `setup-minio-namespace-buckets.sh`:
 
 ```bash
-export ABC_CONTEXT=abc-cluster-admin
+export ABC_ACTIVE_CONTEXT=abc-cluster-admin
 bash deployments/abc-nodes/nomad/tests/workloads/run-grafana-multi-user-burst.sh
 ```
 
@@ -121,6 +121,8 @@ Options (environment):
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
+| `ABC_ACTIVE_CONTEXT` | *(unset)* | Selects config context for `abc` (preferred). |
+| `ABC_CONTEXT` | *(unset)* | Burst script only: if set and `ABC_ACTIVE_CONTEXT` is empty, copied to `ABC_ACTIVE_CONTEXT`. |
 | `ABC_BURST_INCLUDE_HYPERFINE` | `1` | Also submit `hyperfine-micro-default.sh` per user |
 | `ABC_BURST_STRESS_TIME` | `00:15:00` | Nomad walltime passed to `abc job run --time` |
 | `ABC_BURST_NAME_TAG` | `grafana-burst` | Fragment in `--name` for job naming |

@@ -7,15 +7,16 @@
 # so Grafana usage dashboards can parse research_user from exported_job.
 #
 # Prerequisites:
-#   - abc in PATH; active context (or ABC_CONTEXT) can register batch jobs in every target namespace
+#   - abc in PATH; a Nomad token that may submit batch jobs in every target namespace
 #   - Each namespace allows containerd-driver (see acl/namespaces/su-*.hcl)
 #
 # Usage (from repo root = analysis/packages/abc-cluster-cli):
-#   export ABC_CONTEXT=abc-cluster-admin
+#   export ABC_ACTIVE_CONTEXT=abc-cluster-admin   # preferred; see internal/config/config.go
 #   bash deployments/abc-nodes/nomad/tests/workloads/run-grafana-multi-user-burst.sh
 #
 # Env:
-#   ABC_CONTEXT                  Passed to abc if set (same as your shell export)
+#   ABC_ACTIVE_CONTEXT           Overrides active_context from ~/.abc/config.yaml (preferred).
+#   ABC_CONTEXT                  Alias: if set and ABC_ACTIVE_CONTEXT is empty, exported as ABC_ACTIVE_CONTEXT.
 #   ABC_BURST_INCLUDE_HYPERFINE  1 (default) or 0
 #   ABC_BURST_STRESS_TIME        Walltime for abc --time (default 00:15:00)
 #   ABC_BURST_NAME_TAG           Middle fragment in job --name (default grafana-burst)
@@ -31,6 +32,18 @@ HF="${HERE}/hyperfine-micro-default.sh"
 INCLUDE_HF="${ABC_BURST_INCLUDE_HYPERFINE:-1}"
 WALLTIME="${ABC_BURST_STRESS_TIME:-00:15:00}"
 TAG="${ABC_BURST_NAME_TAG:-grafana-burst}"
+
+# The Go CLI only reads ABC_ACTIVE_CONTEXT (not ABC_CONTEXT). Accept ABC_CONTEXT here for convenience.
+if [[ -n "${ABC_CONTEXT:-}" && -z "${ABC_ACTIVE_CONTEXT:-}" ]]; then
+  export ABC_ACTIVE_CONTEXT="${ABC_CONTEXT}"
+fi
+
+# Catch common typo "boostrap" (missing "t") in the context name that will actually apply.
+effective_ctx="${ABC_ACTIVE_CONTEXT:-${ABC_CONTEXT:-}}"
+if [[ -n "${effective_ctx}" && "${effective_ctx}" == *boostrap* ]]; then
+  echo "error: context name looks misspelled (${effective_ctx}); did you mean abc-bootstrap (or aither-bootstrap)?" >&2
+  exit 1
+fi
 
 if ! command -v abc >/dev/null 2>&1; then
   echo "error: abc CLI not in PATH" >&2
@@ -53,14 +66,19 @@ while IFS= read -r line; do
   ns="${line%%|*}"
   user="${line#*|}"
   PAIRS+=( "${ns}|${user}" )
-done < <(python3 - <<'PY'
+done < <(python3 - "$SETUP" <<'PY'
 import re
-from pathlib import Path
 import sys
+from pathlib import Path
 
+if len(sys.argv) < 2:
+    raise SystemExit("internal error: setup script path missing (argv too short)")
 setup = Path(sys.argv[1])
-text = setup.read_text()
-pat = re.compile(r'^NS_USERS\["([^"]+)"\]="([^"]*)"$', re.M)
+if not setup.is_file():
+    raise SystemExit(f"setup script not found: {setup}")
+text = setup.read_text(encoding="utf-8")
+# Allow optional leading whitespace (editor / copy differences).
+pat = re.compile(r'^\s*NS_USERS\["([^"]+)"\]="([^"]*)"\s*$', re.M)
 for m in pat.finditer(text):
     ns = m.group(1)
     for u in m.group(2).split(","):
@@ -68,7 +86,7 @@ for m in pat.finditer(text):
         if u:
             print(f"{ns}|{u}")
 PY
-"${SETUP}")
+)
 
 if [[ ${#PAIRS[@]} -eq 0 ]]; then
   echo "error: no NS_USERS entries parsed from ${SETUP}" >&2
