@@ -21,7 +21,7 @@
 #   bash deployments/abc-nodes/scripts/store-test-secrets.sh
 #
 # Optional overrides (all default to auto-discovery or empty):
-#   VAULT_TEST_TOKEN     — Vault root or rw token (from deployments/abc-nodes/acl/vault-keys.env)
+#   VAULT_TEST_TOKEN     — Vault root or rw token (from experimental/acl or legacy acl/vault-keys.env)
 #   NOMAD_TEST_TOKEN     — Nomad ACL token for ForwardAuth tests (defaults to NOMAD_TOKEN)
 
 set -euo pipefail
@@ -59,16 +59,22 @@ printf "    secret_key: %s...\n" "${MINIO_SECRET_KEY:0:6}"
 echo ""
 echo "==> [2/4] Vault token..."
 if [ -z "${VAULT_TEST_TOKEN:-}" ]; then
-  if [ -f "deployments/abc-nodes/acl/vault-keys.env" ]; then
+  _vk=""
+  if [ -f "deployments/abc-nodes/experimental/acl/vault-keys.env" ]; then
+    _vk="deployments/abc-nodes/experimental/acl/vault-keys.env"
+  elif [ -f "deployments/abc-nodes/acl/vault-keys.env" ]; then
+    _vk="deployments/abc-nodes/acl/vault-keys.env"
+  fi
+  if [ -n "${_vk}" ]; then
     # shellcheck disable=SC1091
-    VAULT_TEST_TOKEN=$(grep "VAULT_ROOT_TOKEN=" deployments/abc-nodes/acl/vault-keys.env \
+    VAULT_TEST_TOKEN=$(grep "VAULT_ROOT_TOKEN=" "${_vk}" \
       | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
     [ -n "$VAULT_TEST_TOKEN" ] \
-      && printf "    loaded from deployments/abc-nodes/acl/vault-keys.env\n" \
-      || printf "    deployments/abc-nodes/acl/vault-keys.env exists but VAULT_ROOT_TOKEN not found — leaving empty\n"
+      && printf "    loaded from %s\n" "${_vk}" \
+      || printf "    %s exists but VAULT_ROOT_TOKEN not found — leaving empty\n" "${_vk}"
   else
     VAULT_TEST_TOKEN=""
-    printf "    deployments/abc-nodes/acl/vault-keys.env not found — vault tests will be skipped\n"
+    printf "    vault-keys.env not found (experimental/acl or acl/) — vault tests will be skipped\n"
     printf "    Set VAULT_TEST_TOKEN=<token> to enable them.\n"
   fi
 else

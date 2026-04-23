@@ -164,7 +164,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "tus upload endpoint URL (or set ABC_UPLOAD_ENDPOINT / context upload_endpoint; defaults to <url>/files/ from API --url or context endpoint)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
-	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN / context upload_token; falls back to --access-token)")
+	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN / context upload_token; then ABC_TOKEN/NOMAD_TOKEN / context nomad_token; falls back to --access-token)")
 	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in tus upload metadata")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
 	cmd.Flags().BoolVar(&opts.parallel, "parallel", true, "upload directory files in parallel")

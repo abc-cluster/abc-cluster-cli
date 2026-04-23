@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>abc-cluster gateway</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      background:
+        radial-gradient(circle at 20% 0%, #0c2520 0, #06130f 52%),
+        #060f0c;
+      color: #e8f5f1;
+      min-height: 100vh;
+      padding: 1.25rem;
+    }
+    .shell {
+      width: 100%;
+      max-width: 1040px;
+      margin: 0 auto;
+    }
+    .hero {
+      border: 1px solid #174d42;
+      background: linear-gradient(145deg, #0b201b, #0b1714);
+      border-radius: 16px;
+      padding: 1.35rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
+    }
+    .chip {
+      display: inline-block;
+      background: #0b241f;
+      border: 1px solid #174d42;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.35rem 0.8rem;
+      color: #4cb09d;
+      margin-bottom: 0.8rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(1.4rem, 2.8vw, 2.05rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #f2fffc;
+    }
+    .sub {
+      margin: 0.6rem 0 0;
+      color: #b9dfd6;
+      line-height: 1.55;
+      max-width: 75ch;
+    }
+    h2 {
+      margin: 0 0 0.7rem;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #7eb7ab;
+    }
+    .meta,
+    .cta-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.65rem;
+      margin-top: 1rem;
+    }
+    .meta-item {
+      border: 1px solid #16443b;
+      background: #0b1d18;
+      border-radius: 10px;
+      padding: 0.65rem 0.75rem;
+      color: #c3e7df;
+      font-size: 0.9rem;
+    }
+    .cta {
+      text-decoration: none;
+      border: 1px solid #1b5d4f;
+      background: #0b231d;
+      color: #dcfff7;
+      border-radius: 10px;
+      padding: 0.68rem 0.78rem;
+      font-weight: 600;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .cta:hover {
+      background: #113028;
+      border-color: #2a7e6c;
+    }
+    .section {
+      border: 1px solid #133d34;
+      background: #091713;
+      border-radius: 14px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .install {
+      margin-top: 0.8rem;
+      border: 1px solid #174d42;
+      border-radius: 12px;
+      background: #081712;
+      padding: 0.9rem;
+    }
+    .install h3 {
+      margin: 0 0 0.55rem;
+      font-size: 0.9rem;
+      color: #9fd6cb;
+    }
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      color: #d5fff5;
+      font-size: 0.84rem;
+      line-height: 1.45;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #69b7a8;
+    }
+    .hint {
+      margin-top: 0.8rem;
+      color: #9ccfc4;
+      font-size: 0.86rem;
+      line-height: 1.4;
+    }
+    .ops {
+      border: 1px solid #123931;
+      background: #081411;
+      border-radius: 14px;
+      padding: 1rem;
+    }
+    .ops-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 0.5rem;
+    }
+    .op-link {
+      text-decoration: none;
+      border: 1px solid #17493f;
+      background: #0b1d18;
+      color: #d8f7f0;
+      border-radius: 10px;
+      padding: 0.58rem 0.68rem;
+      font-size: 0.86rem;
+    }
+    .op-link:hover {
+      border-color: #2a7e6c;
+      background: #0f2a23;
+    }
+    .footer {
+      margin-top: 1rem;
+      color: #8bbeb2;
+      font-size: 0.78rem;
+      line-height: 1.4;
+    }
+    @media (max-width: 720px) {
+      body { padding: 0.85rem; }
+      .hero, .section, .ops { padding: 0.85rem; }
+      .chip { font-size: 0.68rem; }
+      .cta { font-size: 0.9rem; }
+      pre { font-size: 0.78rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="chip">open source cluster tooling</div>
+      <h1>ABC Cluster Gateway</h1>
+      <p class="sub">Run pipelines, jobs, data transfer, and cluster automation from one command line workflow. This page highlights the CLI first, with admin operator consoles listed separately below.</p>
+      <div class="meta">
+        <div class="meta-item"><strong>Gateway host</strong><br>aither.mb.sun.ac.za</div>
+        <div class="meta-item"><strong>Primary tool</strong><br><span class="mono">abc</span> CLI</div>
+        <div class="meta-item"><strong>Audience</strong><br>Researchers </div>
+      </div>
+      <div class="cta-row">
+        <a class="cta" href="https://github.com/abc-cluster/abc-cluster-cli" target="_blank" rel="noreferrer">View CLI repository</a>
+        <a class="cta" href="https://github.com/abc-cluster/abc-cluster-cli/releases" target="_blank" rel="noreferrer">Download releases</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Install abc CLI (script)</h2>
+      <p class="hint">Use the official installer script from the repository to fetch the correct binary for your platform.</p>
+      <div class="install">
+        <h3>Install to <span class="mono">/usr/local/bin/abc</span></h3>
+        <pre>curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+  "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh -s -- --sudo</pre>
+      </div>
+      <p class="hint">After install, run <span class="mono">abc auth login</span> and then <span class="mono">abc --help</span>.</p>
+    </section>
+
+    <section class="ops">
+      <h2>User applications</h2>
+      <div class="ops-grid">
+        <a class="op-link" href="/services/nomad/ui/settings/tokens">Nomad portal</a>
+        <a class="op-link" href="/services/uppy/">Uppy uploads</a>
+        <a class="op-link" href="/services/minio/minio-console/">MinIO Console</a>
+      </div>
+      <p class="hint">Main user-facing tools are grouped here. All service routes are under <span class="mono">/services/&lt;slug&gt;/</span> and legacy short paths redirect into this structure.</p>
+    </section>
+
+    <section class="ops">
+      <h2>Platform operators (advanced)</h2>
+      <div class="ops-grid">
+        <a class="op-link" href="/services/grafana/login">Grafana</a>
+        <a class="op-link" href="/services/prometheus/graph">Prometheus</a>
+        <a class="op-link" href="/services/traefik/dashboard/">Traefik</a>
+        <a class="op-link" href="/services/ntfy/">ntfy</a>
+      </div>
+      <p class="hint">Nomad API and UI remain reachable at root <span class="mono">/v1/*</span> and <span class="mono">/ui/*</span> for CLI compatibility. ntfy and MinIO Console still use Referer-based root asset routing where required.</p>
+    </section>
+
+    <section class="section">
+      <h2>Advanced CLI use (abc on PATH)</h2>
+      <p class="hint">For users who already have <span class="mono">abc</span> in <span class="mono">PATH</span> and want direct command-line operations:</p>
+      <div class="install">
+        <h3>Nomad and service operations</h3>
+        <pre>export ABC_ACTIVE_CONTEXT=abc-bootstrap
+abc admin services nomad cli -- status
+abc admin services nomad cli -- job status abc-nodes-grafana
+abc admin services nomad cli -- run -detach deployments/abc-nodes/nomad/uppy.nomad.hcl</pre>
+      </div>
+    </section>
+
+    <p class="footer">Traffic is proxied by Caddy while backend services remain on private or Tailscale addresses.</p>
+  </main>
+</body>
+</html>

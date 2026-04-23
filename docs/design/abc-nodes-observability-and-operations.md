@@ -37,7 +37,7 @@ After deploy or IP changes:
 
 ```bash
 # Optional: URL that serves Prometheus /api/v1 (e.g. via Traefik)
-export PROMETHEUS_QUERY_BASE="http://aither.mb.sun.ac.za/prometheus"
+export PROMETHEUS_QUERY_BASE="http://aither.mb.sun.ac.za/services/prometheus"
 
 bash deployments/abc-nodes/nomad/scripts/validate-prometheus-abc-nodes.sh
 ```

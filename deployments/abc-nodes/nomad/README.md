@@ -24,7 +24,7 @@ The Docker driver is **not** required and is not enabled on this cluster.
 ### 2. Host volumes
 
 Only the `scratch` volume (`/opt/nomad/scratch`) is configured on `aither`.
-PostgreSQL (Wave dependency) writes to `/opt/nomad/scratch/wave-postgres/pgdata`.
+PostgreSQL (optional Wave stack) writes to `/opt/nomad/scratch/wave-postgres/pgdata` when deployed.
 
 For production, add dedicated host volumes to the Nomad client config and update
 the relevant job files:
@@ -60,12 +60,12 @@ Prometheus:     http://100.70.185.46:9090
 Loki:           http://100.70.185.46:3100
 ntfy:           http://100.70.185.46:8088
 faasd:          http://100.70.185.46:8089
-Vault:          http://100.70.185.46:8200
 Traefik HTTP:   http://100.70.185.46:80   (dashboard: :8888)
 tusd:           http://100.70.185.46:8080/files/
-Wave:           http://100.70.185.46:9090  (⚠ WIP — see below)
 Docker Registry:http://100.70.185.46:5000
 ```
+
+Opt-in **Vault**, **Supabase**, and **Wave** jobs (not in this layout by default): see **`../experimental/README.md`**.
 
 ---
 
@@ -74,7 +74,6 @@ Docker Registry:http://100.70.185.46:5000
 | Job file | Job name | Port(s) | Status | Notes |
 |---|---|---|---|---|
 | `traefik.nomad.hcl` | `abc-nodes-traefik` | 80, 8888 | ✅ running | raw_exec, reverse proxy |
-| `vault.nomad.hcl` | `abc-nodes-vault` | 8200, 8201 | ✅ running | raw_exec, Raft storage |
 | `minio.nomad.hcl` | `abc-nodes-minio` | 9000, 9001 | ✅ running | containerd |
 | `rustfs.nomad.hcl` | `abc-nodes-rustfs` | 9900, 9901 | ✅ running | containerd |
 | `loki.nomad.hcl` | `abc-nodes-loki` | 3100 | ✅ running | containerd |
@@ -87,10 +86,11 @@ Docker Registry:http://100.70.185.46:5000
 | `uppy.nomad.hcl` | `abc-nodes-uppy` | 8090 | ✅ running | containerd |
 | `job-notifier.nomad.hcl` | `abc-nodes-job-notifier` | — | ✅ running | raw_exec |
 | `abc-nodes-auth.nomad.hcl` | `abc-nodes-auth` | 9191 | ✅ running | exec, Traefik ForwardAuth |
-| `redis.nomad.hcl` | `abc-nodes-redis` | 6379 | ✅ running | containerd, Wave dep |
-| `postgres.nomad.hcl` | `abc-nodes-postgres` | 5432 | ✅ running | containerd, Wave dep |
+| `redis.nomad.hcl` | `abc-nodes-redis` | 6379 | ✅ running | containerd, optional Wave dep |
+| `postgres.nomad.hcl` | `abc-nodes-postgres` | 5432 | ✅ running | containerd, optional Wave dep |
 | `docker-registry.nomad.hcl` | `abc-nodes-docker-registry` | 5000 | ✅ running | containerd |
-| `wave.nomad.hcl` | `abc-nodes-wave` | 9090, 9091 | ⚠ WIP | needs ghcr.io auth |
+
+Experimental (Vault / Supabase / Wave): **`../experimental/nomad/*.nomad.hcl`** — see **`../experimental/README.md`**.
 
 ---
 
@@ -99,9 +99,8 @@ Docker Registry:http://100.70.185.46:5000
 ```bash
 # From the abc-cluster-cli repo root, with aither context active:
 
-# 1. Reverse proxy + secrets (no deps)
+# 1. Reverse proxy (no deps)
 abc admin services nomad cli -- job run deployments/abc-nodes/nomad/traefik.nomad.hcl
-abc admin services nomad cli -- job run deployments/abc-nodes/nomad/vault.nomad.hcl
 
 # 2. Storage
 abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
@@ -123,11 +122,11 @@ abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/job-
 # 5. Auth (after tusd + traefik)
 abc admin services nomad cli -- job run deployments/abc-nodes/nomad/abc-nodes-auth.nomad.hcl
 
-# 6. Wave stack (see WIP note below)
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/redis.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/postgres.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/docker-registry.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/wave.nomad.hcl
+# Optional: redis + postgres + docker-registry + Wave (experimental — see ../experimental/README.md)
+# abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/redis.nomad.hcl
+# abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/postgres.nomad.hcl
+# abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/docker-registry.nomad.hcl
+# abc admin services nomad cli -- job run -detach deployments/abc-nodes/experimental/nomad/wave.nomad.hcl
 ```
 
 Check all service jobs at once:
@@ -137,9 +136,13 @@ abc admin services nomad cli -- job status -namespace services
 
 ---
 
-## Vault — first-run initialization
+## Experimental: Vault, Supabase, Wave
 
-Vault starts sealed and uninitialized. After the job is running:
+Job specs and scripts live under **`deployments/abc-nodes/experimental/`**. Default Caddy and Traefik configs do **not** expose these services; opt-in deploy and gateway notes are in **`../experimental/README.md`**.
+
+### Vault — first-run initialization
+
+After `job run` on **`../experimental/nomad/vault.nomad.hcl`**, Vault starts sealed and uninitialized:
 
 ```bash
 export VAULT_ADDR=http://100.70.185.46:8200
@@ -185,15 +188,14 @@ curl -si -H "X-Nomad-Token: <token>" http://100.70.185.46:9191/auth
 
 ---
 
-## Wave by Seqera — ⚠ WIP
+### Wave by Seqera — ⚠ WIP
 
-`wave.nomad.hcl` is written and tested locally but **not running** because
-`ghcr.io/seqeralabs/wave:v1.33.2` requires a GitHub PAT to pull, even for
-public packages, from the cluster's containerd runtime.
+`../experimental/nomad/wave.nomad.hcl` is written and tested locally but **not running** by default because
+the Wave image is on a **private** registry (see job header). Older docs referenced `ghcr.io/seqeralabs/wave`; use the image URI from Seqera support.
 
 **To enable:**
 
-Option A — add auth block to `wave.nomad.hcl`:
+Option A — add auth block to `../experimental/nomad/wave.nomad.hcl`:
 ```hcl
 config {
   image = "ghcr.io/seqeralabs/wave:v1.33.2"
@@ -213,7 +215,7 @@ sudo mkdir -p /etc/containerd/certs.d/ghcr.io
 
 Then deploy:
 ```bash
-abc admin services nomad cli -- job run deployments/abc-nodes/nomad/wave.nomad.hcl
+abc admin services nomad cli -- job run deployments/abc-nodes/experimental/nomad/wave.nomad.hcl
 ```
 
 Wave runs in `lite` mode (no Tower/Platform), backed by the already-running
@@ -229,6 +231,7 @@ Local `abc-nodes-docker-registry` on `:5000` is wired in as the image mirror.
 | `nomad/scripts/deploy-observability-stack.sh` | MinIO → Prometheus → Loki → Grafana → Alloy |
 | `nomad/scripts/validate-prometheus-abc-nodes.sh` | HTTP checks: scrape `up`, MinIO bucket metrics, Nomad cores PromQL |
 | `nomad/scripts/redeploy-grafana-dashboards.sh` | `sync-grafana-definitions.sh` + `job run grafana.nomad.hcl` |
+| `nomad/tests/workloads/submit-hello-world.sh` | Minimal `abc job run` smoke test (`--submit --watch`) |
 | `nomad/tests/workloads/run-grafana-multi-user-burst.sh` | Parallel stress/hyperfine across `NS_USERS` namespaces |
 | `../acl/apply-research-namespace-specs.sh` | `nomad namespace apply` for each `acl/namespaces/su-*.hcl` |
 

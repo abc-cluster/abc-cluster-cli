@@ -141,8 +141,8 @@ vault_code=$(curl -s -o /dev/null -w "%%{http_code}" --max-time 5 \
 case "$vault_code" in
   200) ok  "Vault      /v1/sys/health  →  initialized and unsealed" ;;
   429) ok  "Vault      /v1/sys/health  →  standby (initialized, unsealed)" ;;
-  503) nok "Vault      /v1/sys/health  →  SEALED — run: bash deployments/abc-nodes/scripts/init-vault.sh" ;;
-  501) nok "Vault      /v1/sys/health  →  NOT INITIALIZED — run: bash deployments/abc-nodes/scripts/init-vault.sh" ;;
+  503) nok "Vault      /v1/sys/health  →  SEALED — run: bash deployments/abc-nodes/experimental/scripts/init-vault.sh" ;;
+  501) nok "Vault      /v1/sys/health  →  NOT INITIALIZED — run: bash deployments/abc-nodes/experimental/scripts/init-vault.sh" ;;
   *)   nok "Vault      /v1/sys/health  →  unexpected HTTP $vault_code" ;;
 esac
 

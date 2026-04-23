@@ -83,7 +83,7 @@ func newListCmd() *cobra.Command {
 }
 
 func newShowCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show [name]",
 		Short: "Show details for a context",
 		Long: `Show details for the named context. If no name is provided, shows the active context.
@@ -94,25 +94,15 @@ func newShowCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
-
-			name := c.ActiveContext
-			if len(args) == 1 {
-				name = args[0]
-			}
-			if name == "" {
-				return fmt.Errorf("no active context; specify a context name")
-			}
-
-			ctx, ok := c.ContextNamed(name)
-			if !ok {
-				return fmt.Errorf("context %q not found", name)
+			name, canon, ctx, err := resolveContextForShow(c, args)
+			if err != nil {
+				return err
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Name: %s\n", name)
 			if t, ok := c.ContextAliases[name]; ok {
 				fmt.Fprintf(cmd.OutOrStdout(), "Alias of: %s\n", t)
 			}
-			canon := c.ResolveContextName(name)
 			if canon != "" && canon != name {
 				fmt.Fprintf(cmd.OutOrStdout(), "Canonical: %s\n", canon)
 			}
@@ -126,7 +116,7 @@ func newShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Upload endpoint: %s\n", ctx.UploadEndpoint)
 			}
 			if ctx.UploadToken != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Upload token: %s\n", maskToken(ctx.UploadToken))
+				fmt.Fprintf(cmd.OutOrStdout(), "Upload token: %s\n", ctx.UploadToken)
 			}
 			if ctx.OrgID != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Organization: %s\n", ctx.OrgID)
@@ -137,7 +127,7 @@ func newShowCmd() *cobra.Command {
 			if ctx.Region != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Region: %s\n", ctx.Region)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Access token: %s\n", maskToken(ctx.AccessToken))
+			fmt.Fprintf(cmd.OutOrStdout(), "Access token: %s\n", ctx.AccessToken)
 			if c.ActiveContext == name {
 				fmt.Fprintln(cmd.OutOrStdout(), "Active: yes")
 			} else {
@@ -146,6 +136,76 @@ func newShowCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.AddCommand(newShowYAMLCmd())
+	return cmd
+}
+
+func newShowYAMLCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "yaml [name]",
+		Short: "Print a context as shareable YAML",
+		Long: `Print a complete YAML snippet for the selected context.
+This output includes sensitive values (access/upload tokens, secrets if present),
+so share carefully.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := cfg.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			_, canon, ctx, err := resolveContextForShow(c, args)
+			if err != nil {
+				return err
+			}
+
+			aliases := cfg.AliasesResolvingToCanon(c, canon)
+			if len(aliases) > 0 {
+				ctx.Aliases = aliases
+			}
+
+			exportCfg := &cfg.Config{
+				Version:       c.Version,
+				ActiveContext: canon,
+				Contexts: map[string]cfg.Context{
+					canon: ctx,
+				},
+				ContextAliases: map[string]string{},
+				Defaults:       c.Defaults,
+			}
+			for _, alias := range aliases {
+				exportCfg.ContextAliases[alias] = canon
+			}
+
+			out, err := exportCfg.MarshalDocumentYAML()
+			if err != nil {
+				return fmt.Errorf("marshal yaml: %w", err)
+			}
+			fmt.Fprint(cmd.OutOrStdout(), string(out))
+			return nil
+		},
+	}
+}
+
+func resolveContextForShow(c *cfg.Config, args []string) (name string, canon string, ctx cfg.Context, err error) {
+	name = c.ActiveContext
+	if len(args) == 1 {
+		name = args[0]
+	}
+	if name == "" {
+		return "", "", cfg.Context{}, fmt.Errorf("no active context; specify a context name")
+	}
+
+	var ok bool
+	ctx, ok = c.ContextNamed(name)
+	if !ok {
+		return "", "", cfg.Context{}, fmt.Errorf("context %q not found", name)
+	}
+
+	canon = c.ResolveContextName(name)
+	if canon == "" {
+		canon = name
+	}
+	return name, canon, ctx, nil
 }
 
 func newUseCmd() *cobra.Command {

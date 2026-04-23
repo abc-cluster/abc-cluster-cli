@@ -165,7 +165,7 @@ abc cluster capabilities sync    # auto-populates admin.services.* URLs and capa
 abc cluster capabilities show    # view what was detected
 ```
 
-`vault.nomad.hcl` runs HashiCorp Vault with **Raft integrated storage** (data persisted at `/opt/nomad/vault/data`). See the first-run initialization instructions in the file header.
+HashiCorp Vault (opt-in) lives under **`deployments/abc-nodes/experimental/nomad/vault.nomad.hcl`** with **Raft integrated storage** (data at `/opt/nomad/vault/data`). See **`deployments/abc-nodes/experimental/README.md`**.
 
 See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering. Curated **`nomad-pack`** bundles for **base** (MinIO + tusd) vs **enhanced** (+ monitoring stack) are under **`deployments/abc-nodes/nomad-packs/`** (see the same README). Operator guide for Prometheus/Grafana/validation scripts: **`docs/abc-nodes-observability-and-operations.md`**.
 

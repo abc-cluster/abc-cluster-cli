@@ -110,6 +110,31 @@ docs-serve:
 docs-build:
     npm --prefix website run build
 
+# Run upstream `nomad` via abc using the `abc-bootstrap` context (see ~/.abc/config.yaml).
+# Resolves NOMAD_ADDR / token / region from that context’s `admin.services.nomad.*`.
+# Override context: `ABC_ACTIVE_CONTEXT=other just nomad-cli -- job status -short`
+nomad-cli *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ABC_ACTIVE_CONTEXT="${ABC_ACTIVE_CONTEXT:-abc-bootstrap}"
+    if command -v abc >/dev/null 2>&1; then
+      exec abc admin services nomad cli -- "$@"
+    else
+      exec go run . admin services nomad cli -- "$@"
+    fi
+
+# Deploy the abc-nodes Traefik floor job (same Nomad path as `just nomad-cli`).
+nomad-deploy-traefik:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ABC_ACTIVE_CONTEXT="${ABC_ACTIVE_CONTEXT:-abc-bootstrap}"
+    job="deployments/abc-nodes/nomad/traefik.nomad.hcl"
+    if command -v abc >/dev/null 2>&1; then
+      exec abc admin services nomad cli -- job run -detach "$job"
+    else
+      exec go run . admin services nomad cli -- job run -detach "$job"
+    fi
+
 # Remove build artifacts from this repo.
 clean:
     rm -rf dist/ ./abc ./abc.exe

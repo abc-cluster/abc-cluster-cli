@@ -156,6 +156,76 @@ func TestDataUpload_UsesAccessTokenByDefault(t *testing.T) {
 	}
 }
 
+func TestDataUpload_UsesNomadEnvTokenBeforeAccessToken(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+	t.Setenv("ABC_TOKEN", "")
+	t.Setenv("NOMAD_TOKEN", "nomad-env-token")
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/default-token"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "api-token"
+	workspace := ""
+
+	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.accessToken != "nomad-env-token" {
+		t.Fatalf("expected NOMAD_TOKEN fallback, got %q", recorder.accessToken)
+	}
+}
+
+func TestDataUpload_UsesContextNomadTokenBeforeAccessToken(t *testing.T) {
+	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
+	t.Setenv("ABC_UPLOAD_TOKEN", "")
+	t.Setenv("ABC_TOKEN", "")
+	t.Setenv("NOMAD_TOKEN", "")
+	setTestConfigEnv(t)
+	cfgPath := os.Getenv("ABC_CONFIG_FILE")
+	yaml := `version: "1"
+active_context: dev
+contexts:
+  dev:
+    endpoint: https://api.example.com
+    access_token: api-token-in-context
+    admin:
+      services:
+        nomad:
+          nomad_token: nomad-token-from-context
+`
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockUploader{location: "https://uploads.example.com/files/default-token"}
+	recorder := &factoryRecorder{uploader: mock}
+	serverURL := "https://api.example.com"
+	accessToken := "api-token-cli-fallback"
+	workspace := ""
+
+	cmd := data.NewCmd(&serverURL, &accessToken, &workspace, recorder.factory)
+	_, err := executeCmd(t, cmd, "upload", tmpFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recorder.accessToken != "nomad-token-from-context" {
+		t.Fatalf("expected context nomad token fallback, got %q", recorder.accessToken)
+	}
+}
+
 func TestDataUpload_UploadTokenOverridesAccessToken(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
 	if err := os.WriteFile(tmpFile, []byte("hello"), 0600); err != nil {

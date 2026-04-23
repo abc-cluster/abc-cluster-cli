@@ -13,8 +13,8 @@ variable "ntfy_image" {
 
 variable "ntfy_base_url" {
   type        = string
-  description = "Public URL users reach for the ntfy web UI / subscribe."
-  default     = "http://100.70.185.46:8088"
+  description = "Public URL for ntfy (must be host root, no path). UI is proxied at /services/ntfy by Caddy."
+  default     = "http://aither.mb.sun.ac.za"
 }
 
 variable "minio_endpoint" {

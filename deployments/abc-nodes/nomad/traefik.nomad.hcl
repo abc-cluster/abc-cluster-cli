@@ -64,7 +64,8 @@ global:
 
 api:
   dashboard: true
-  insecure: true
+  insecure: false
+  basePath: /traefik
 
 # Enables /ping on the traefik entry point for `traefik healthcheck` (e.g. abc config sync).
 ping: {}
@@ -108,6 +109,11 @@ http:
           - "X-Auth-Namespace"
 
   routers:
+    traefik-dashboard:
+      entryPoints: ["web"]
+      rule: "Host(`aither.mb.sun.ac.za`) && PathPrefix(`/traefik`)"
+      service: api@internal
+      priority: 1
     grafana:
       entryPoints: ["web"]
       rule: "Host(`grafana.aither`)"
@@ -146,31 +152,10 @@ http:
       middlewares:
         - nomad-auth
       service: tusd
-    vault:
-      entryPoints: ["web"]
-      rule: "Host(`vault.aither`)"
-      service: vault
     uppy:
       entryPoints: ["web"]
       rule: "Host(`uppy.aither`)"
       service: uppy
-    wave:
-      entryPoints: ["web"]
-      rule: "Host(`wave.aither`)"
-      service: wave
-    faasd:
-      entryPoints: ["web"]
-      rule: "Host(`faasd.aither`)"
-      service: faasd
-    supabase:
-      entryPoints: ["web"]
-      rule: "Host(`supabase.aither`)"
-      service: supabase
-    supabase-studio:
-      entryPoints: ["web"]
-      rule: "Host(`supabase-studio.aither`)"
-      service: supabase-studio
-
   services:
     # abc-nodes floor uses static host ports for each service.
     # Keep static backends here so Traefik routing does not depend on Nomad
@@ -211,30 +196,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:8080"
-    vault:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:8200"
     uppy:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:8085"
-    wave:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:9091"
-    faasd:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:8089"
-    supabase:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:8000"
-    supabase-studio:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:3002"
 EOF
         destination = "local/routes.yml"
       }

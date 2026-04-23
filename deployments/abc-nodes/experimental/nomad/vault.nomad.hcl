@@ -6,6 +6,8 @@
 #
 # First-run initialization (once, after the job is running):
 #   export VAULT_ADDR=http://<node-ip>:8200
+#   # Optional: when Caddy exposes /services/vault/ (see experimental/README.md):
+#   # export VAULT_ADDR=http://aither.mb.sun.ac.za/services/vault
 #   vault operator init           # prints 5 unseal keys + root token — store securely
 #   vault operator unseal         # run 3× with different key shares
 #   vault operator unseal
@@ -15,8 +17,9 @@
 #   export VAULT_TOKEN=<root-token>
 #   vault secrets enable -path=secret kv-v2
 #
-# Wire into abc config:
+# Wire into abc config (direct to node:8200, or via LAN gateway if you restore Caddy /services/vault/):
 #   abc config set admin.services.vault.http "http://<node-ip>:8200"
+#   abc config set admin.services.vault.http "http://aither.mb.sun.ac.za/services/vault"
 #   abc cluster capabilities sync
 #
 # Admin — store / rotate a secret:

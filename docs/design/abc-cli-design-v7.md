@@ -50,7 +50,7 @@ The following features were implemented after the v7 epoch to support **`cluster
 | `abc secrets backend setup --backend nomad` — create `abc-secrets-alloc-read` ACL policy | ✅ Done | `cmd/secrets/nomad_backend.go` |
 | `abc data upload` abc-nodes tusd fallback: auto-use `admin.services.tusd.http/files/` when `capabilities.uploads == true` | ✅ Done | `cmd/data/upload_resolve.go` |
 | `abc pipeline run` `secret://name` param translation: rewrite to nomadVar/vault template ref before HCL generation | ✅ Done | `cmd/pipeline/run.go` |
-| `vault.nomad.hcl` Raft integrated storage: durable Vault with data at `/opt/nomad/vault/data` | ✅ Done | `deployments/abc-nodes/nomad/vault.nomad.hcl` |
+| `vault.nomad.hcl` Raft integrated storage: durable Vault with data at `/opt/nomad/vault/data` | ✅ Done | `deployments/abc-nodes/experimental/nomad/vault.nomad.hcl` |
 | `nomadClientForCapabilities()`: bypass cloud-gateway env vars (`ABC_ADDR`/`NOMAD_ADDR`) for abc-nodes Nomad access | ✅ Done | `cmd/cluster/capabilities.go` |
 | `cfg.ResolveContextName()` alias fix in capabilities sync: write to canonical context name, not alias, to prevent `Save()` collision | ✅ Done | `cmd/cluster/capabilities.go` |
 

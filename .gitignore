@@ -16,4 +16,6 @@ go.work.sum
 
 # Operator-generated Vault bootstrap (root token + unseal keys); never commit
 deployments/abc-nodes/acl/vault-keys.env
+deployments/abc-nodes/experimental/acl/vault-keys.env
+deployments/abc-nodes/experimental/acl/supabase-secrets.env
 .e2e

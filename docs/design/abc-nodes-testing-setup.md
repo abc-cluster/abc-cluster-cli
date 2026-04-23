@@ -18,6 +18,9 @@ Workload scripts live in:
 
 Included scripts:
 
+- Hello-world smoke test:
+  - `hello-world-default.sh`
+  - `submit-hello-world.sh`
 - Stress workloads:
   - `stress-ng-cpu-default.sh`
   - `stress-ng-cpu-services.sh`
@@ -100,6 +103,20 @@ For stress/hyperfine test jobs in `su-mbhg-*` namespaces, ensure namespace capab
 If a namespace only permits `exec`/`docker` and cluster nodes lack healthy Docker driver, submissions fail.
 
 ## Typical Validation Commands
+
+### Quick CLI submission smoke test (recommended first step)
+
+```bash
+bash deployments/abc-nodes/nomad/tests/workloads/submit-hello-world.sh
+```
+
+Per-user / per-namespace example:
+
+```bash
+ABC_ACTIVE_CONTEXT=su-mbhg-hostgen_dayna \
+ABC_HELLO_NAMESPACE=su-mbhg-hostgen \
+bash deployments/abc-nodes/nomad/tests/workloads/submit-hello-world.sh
+```
 
 ### Submit one user workload to a specific research-group namespace
 

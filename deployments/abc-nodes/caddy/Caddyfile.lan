@@ -1,17 +1,13 @@
 # Caddy LAN entrypoint for abc-nodes services on aither.
-# Mirrors the current Traefik host routing so users on the internal network
-# can access services without Tailscale membership.
+# Single-host routes live under /services/<name>/... (canonical). Legacy bare
+# paths (/grafana/, /ntfy/, …) 308-redirect into /services/...
 #
 # Assumptions:
 # - Caddy runs on the same host as Nomad jobs (sun-aither)
-# - Backends are reachable on aither's Tailscale IP
-# - LAN DNS (or /etc/hosts) maps these names to aither's internal IP
+# - Backends are reachable on aither's Tailscale IP (100.70.185.46 here)
 #
-# Example /etc/hosts on LAN clients:
-#   146.232.174.77 grafana.aither loki.aither minio.aither minio-console.aither \
-#               ntfy.aither prometheus.aither rustfs.aither tusd.aither \
-#               vault.aither uppy.aither wave.aither faasd.aither \
-#               supabase.aither supabase-studio.aither nomad.aither
+# Optional *.aither hostnames (only if your LAN resolves them); path routes on
+# aither.mb.sun.ac.za are the primary pattern and do not require extra DNS.
 #
 # Caddy global options.
 {
@@ -29,246 +25,157 @@
 # Single-host application routes for aither.mb.sun.ac.za.
 (aither_routes) {
 
-	@nomad_noslash path /nomad
-	redir @nomad_noslash /nomad/ 308
-	@nomad_prefixed path_regexp nomad_prefixed ^/nomad/(.*)$
-	redir @nomad_prefixed /{re.nomad_prefixed.1} 308
-	@grafana_noslash path /grafana
-	redir @grafana_noslash /grafana/ 308
-	@prometheus_noslash path /prometheus
-	redir @prometheus_noslash /prometheus/ 308
-	@vault_noslash path /vault
-	redir @vault_noslash /vault/ 308
-	@minio_console_noslash path /minio-console
-	redir @minio_console_noslash /minio-console/ 308
+	# ── Legacy bare paths -> /services/... (canonical) ─────────────────────
+	@legacy_grafana path_regexp legacy_grafana ^/grafana(?:/(.*))?$
+	redir @legacy_grafana /services/grafana/{re.legacy_grafana.1} 308
+	handle /prometheus {
+		redir /services/prometheus/ 308
+	}
+	handle /prometheus/* {
+		uri strip_prefix /prometheus
+		redir http://{http.request.host}/services/prometheus{uri.path}{uri.query} 308
+	}
+	@legacy_traefik path_regexp legacy_traefik ^/traefik(?:/(.*))?$
+	redir @legacy_traefik /services/traefik/{re.legacy_traefik.1} 308
+	handle /ntfy {
+		redir /services/ntfy/ 308
+	}
+	handle /ntfy/* {
+		uri strip_prefix /ntfy
+		redir http://{http.request.host}/services/ntfy{uri.path}{uri.query} 308
+	}
+	handle /minio-console {
+		redir /services/minio/minio-console/ 308
+	}
+	handle /minio-console/* {
+		uri strip_prefix /minio-console
+		redir http://{http.request.host}/services/minio/minio-console{uri.path}{uri.query} 308
+	}
+	@legacy_minio_root path /minio /minio/
+	redir @legacy_minio_root /services/minio/minio-console/ 308
+	handle /minio/minio-console* {
+		redir /services/minio/minio-console/ 308
+	}
+	@legacy_minio path_regexp legacy_minio ^/minio/(.*)$
+	redir @legacy_minio /services/minio/{re.legacy_minio.1} 308
+	handle /loki {
+		redir /services/loki/ 308
+	}
+	handle /loki/* {
+		uri strip_prefix /loki
+		redir http://{http.request.host}/services/loki{uri.path}{uri.query} 308
+	}
+	handle /grafana-alloy {
+		redir /services/grafana-alloy/ 308
+	}
+	handle /grafana-alloy/* {
+		uri strip_prefix /grafana-alloy
+		redir http://{http.request.host}/services/grafana-alloy{uri.path}{uri.query} 308
+	}
+	handle /rustfs {
+		redir /services/rustfs/ 308
+	}
+	handle /rustfs/* {
+		uri strip_prefix /rustfs
+		redir http://{http.request.host}/services/rustfs{uri.path}{uri.query} 308
+	}
+	handle /tusd {
+		redir /services/tusd/ 308
+	}
+	handle /tusd/* {
+		uri strip_prefix /tusd
+		redir http://{http.request.host}/services/tusd{uri.path}{uri.query} 308
+	}
+	handle /uppy {
+		redir /services/uppy/ 308
+	}
+	handle /uppy/* {
+		uri strip_prefix /uppy
+		redir http://{http.request.host}/services/uppy{uri.path}{uri.query} 308
+	}
 	@nomad_root path /nomad/
-	redir @nomad_root /ui/settings/tokens 308
-	@loki_root path /loki/
-	redir @loki_root /loki/ready 308
+	redir @nomad_root /services/nomad/ui/settings/tokens 308
+	@nomad_noslash path /nomad
+	redir @nomad_noslash /services/nomad/ 308
+	@nomad_prefixed path_regexp nomad_prefixed ^/nomad/(.*)$
+	redir @nomad_prefixed /services/nomad/{re.nomad_prefixed.1} 308
+	# Guard against relative redirect leakage from Nomad UI resulting in /ui/services/...
+	@nomad_ui_prefixed path_regexp nomad_ui_prefixed ^/ui/services/nomad(?:-portal)?/(.*)$
+	redir @nomad_ui_prefixed /services/nomad/{re.nomad_ui_prefixed.1} 308
+	@nomad_ui_root path /ui/services/nomad /ui/services/nomad/ /ui/services/nomad-portal /ui/services/nomad-portal/
+	redir @nomad_ui_root /services/nomad/ui/settings/tokens 308
+	@ui_services_prefixed path_regexp ui_services_prefixed ^/ui/services/(.*)$
+	redir @ui_services_prefixed /services/{re.ui_services_prefixed.1} 308
+	@svc_nomad_legacy path_regexp svc_nomad_legacy ^/services/nomad-portal/(.*)$
+	redir @svc_nomad_legacy /services/nomad/{re.svc_nomad_legacy.1} 308
+	@svc_nomad_noslash path /services/nomad
+	redir @svc_nomad_noslash /services/nomad/ 308
+	@svc_nomad_root path /services/nomad/
+	redir @svc_nomad_root /services/nomad/ui/settings/tokens 308
+
+	@services_noslash path /services
+	redir @services_noslash /services/ 308
+
+	@svc_grafana_noslash path /services/grafana
+	redir @svc_grafana_noslash /services/grafana/ 308
+	@svc_prometheus_noslash path /services/prometheus
+	redir @svc_prometheus_noslash /services/prometheus/ 308
+	@svc_traefik_noslash path /services/traefik
+	redir @svc_traefik_noslash /services/traefik/ 308
+	@svc_traefik_root path /services/traefik/
+	redir @svc_traefik_root /services/traefik/dashboard/ 308
+	@svc_ntfy_noslash path /services/ntfy
+	redir @svc_ntfy_noslash /services/ntfy/ 308
+	@svc_minio_noslash path /services/minio
+	redir @svc_minio_noslash /services/minio/ 308
+	@svc_minio_root path /services/minio/
+	redir @svc_minio_root /services/minio/minio-console/ 308
+	@svc_minio_login path /services/minio/login /services/minio/login/
+	redir @svc_minio_login /services/minio/minio-console/login 308
+	@svc_minio_console_nest_noslash path /services/minio/minio-console
+	redir @svc_minio_console_nest_noslash /services/minio/minio-console/ 308
+	@svc_minio_console_old path_regexp svc_minio_console_old ^/services/minio-console/(.*)$
+	redir @svc_minio_console_old /services/minio/minio-console/{re.svc_minio_console_old.1} 308
+	@svc_minio_console_noslash path /services/minio-console
+	redir @svc_minio_console_noslash /services/minio/minio-console/ 308
+	@svc_loki_root path /services/loki/
+	redir @svc_loki_root /services/loki/ready 308
 
 	# Root landing page for LAN users.
 	@root path /
 	handle @root {
-		header Content-Type "text/html; charset=utf-8"
-		respond <<HTML
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ABC Cluster Portal</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 1.5rem;
-    }
-    main {
-      width: 100%;
-      max-width: 840px;
-      background: #111827;
-      border: 1px solid #1f2937;
-      border-radius: 14px;
-      padding: 1.5rem 1.5rem 1.25rem;
-    }
-    .badge {
-      display: inline-block;
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 999px;
-      font-size: 0.72rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      padding: 0.3rem 0.8rem;
-      color: #94a3b8;
-      margin-bottom: 0.9rem;
-    }
-    h1 {
-      font-size: clamp(1.5rem, 2.7vw, 2.1rem);
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      color: #f8fafc;
-      margin-bottom: 0.5rem;
-    }
-    h2 {
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #94a3b8;
-      margin: 1rem 0 0.55rem;
-    }
-    p {
-      color: #94a3b8;
-      margin-bottom: 0.9rem;
-      line-height: 1.5;
-    }
-    .notes {
-      display: grid;
-      gap: 0.55rem;
-      margin-bottom: 1rem;
-    }
-    .note {
-      background: #162133;
-      border: 1px solid #2f405e;
-      border-radius: 0.5rem;
-      padding: 0.65rem 0.8rem;
-      font-size: 0.88rem;
-      color: #cbd5e1;
-      font-family: "SFMono-Regular", Consolas, monospace;
-      line-height: 1.35;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 0.75rem;
-    }
-    .admin-grid {
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    }
-    .endpoint {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.65rem;
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 0.5rem;
-      padding: 0.8rem 0.95rem;
-      color: #e2e8f0;
-      text-decoration: none;
-      transition: border-color 0.15s, background 0.15s;
-    }
-    .endpoint:hover {
-      background: #263348;
-      border-color: #4f6a8f;
-    }
-    .endpoint-label {
-      display: block;
-      font-size: 0.73rem;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: #94a3b8;
-      margin-bottom: 0.15rem;
-    }
-    .endpoint-url {
-      font-size: 0.85rem;
-      color: #7dd3fc;
-      font-family: "SFMono-Regular", Consolas, monospace;
-      line-height: 1.3;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #22c55e;
-      box-shadow: 0 0 6px #22c55e;
-      flex-shrink: 0;
-    }
-    footer {
-      margin-top: 1rem;
-      font-size: 0.75rem;
-      color: #64748b;
-      line-height: 1.4;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <div class="badge">LAN Gateway Active</div>
-    <h1>ABC Cluster Portal</h1>
-    <p>Access core services over LAN via Caddy, while backends stay bound to private/Tailscale addresses.</p>
-
-    <div class="notes">
-      <div class="note">Host: aither.mb.sun.ac.za</div>
-      <div class="note">Nomad sign-in: /ui/settings/tokens</div>
-      <div class="note">If a service does not load, confirm its Nomad job is running in namespace abc-services.</div>
-    </div>
-
-    <h2>Cluster Users</h2>
-    <div class="grid">
-      <a class="endpoint" href="/ui/settings/tokens">
-        <div>
-          <span class="endpoint-label">Nomad</span>
-          <span class="endpoint-url">/ui/settings/tokens</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-      <a class="endpoint" href="/minio-console/">
-        <div>
-          <span class="endpoint-label">MinIO Console</span>
-          <span class="endpoint-url">/minio-console/</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-      <a class="endpoint" href="/uppy/">
-        <div>
-          <span class="endpoint-label">Uppy Uploads</span>
-          <span class="endpoint-url">/uppy/</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-    </div>
-
-    <h2>Cluster Admins</h2>
-    <div class="grid admin-grid">
-      <a class="endpoint" href="/prometheus/graph">
-        <div>
-          <span class="endpoint-label">Prometheus</span>
-          <span class="endpoint-url">/prometheus/graph</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-      <a class="endpoint" href="/loki/ready">
-        <div>
-          <span class="endpoint-label">Loki</span>
-          <span class="endpoint-url">/loki/ready</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-      <a class="endpoint" href="/vault/ui/">
-        <div>
-          <span class="endpoint-label">Vault</span>
-          <span class="endpoint-url">/vault/ui/</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-      <a class="endpoint" href="/ntfy/">
-        <div>
-          <span class="endpoint-label">ntfy</span>
-          <span class="endpoint-url">/ntfy/</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-      <a class="endpoint" href="/grafana/login">
-        <div>
-          <span class="endpoint-label">Grafana</span>
-          <span class="endpoint-url">/grafana/login</span>
-        </div>
-        <span class="dot"></span>
-      </a>
-    </div>
-
-    <footer>Use Nomad and MinIO Console for day-to-day cluster workflows.</footer>
-  </main>
-</body>
-</html>
-HTML 200
+		root * /etc/caddy/landing
+		rewrite * /index.html
+		file_server
 	}
 
-	# MinIO Console uses base href "/" and calls root-level APIs/WebSockets.
-	# Route those root paths to the console backend when using single-host mode.
+	# ntfy HTML is under /services/ntfy/* but loads root paths (/static/*, …).
+	@ntfy_asset_req {
+		path /static/* /config.js /manifest.webmanifest /locales/* /docs /docs/* /sw.js
+		header Referer */services/ntfy*
+	}
+	handle @ntfy_asset_req {
+		reverse_proxy 100.70.185.46:8088
+	}
+
+	# MinIO Console root paths (same host as ntfy static paths).
+	@minio_console_asset_req {
+		path /api/* /ws/* /static/* /images/* /styles/* /favicon* /manifest.json /Loader.svg /apple-icon-180x180.png /safari-pinned-tab.svg
+		header Referer */services/minio/minio-console*
+	}
+	handle @minio_console_asset_req {
+		reverse_proxy 100.70.185.46:9001
+	}
+
+	# Nomad API/UI at site root (CLI, SDKs, bookmarks).
 	handle /ui/* {
 		reverse_proxy 100.70.185.46:4646
 	}
 	handle /v1/* {
 		reverse_proxy 100.70.185.46:4646
 	}
+
+	# MinIO Console (default root paths when Referer did not match ntfy/Vault above).
 	handle /api/* {
 		reverse_proxy 100.70.185.46:9001
 	}
@@ -300,41 +207,77 @@ HTML 200
 		reverse_proxy 100.70.185.46:9001
 	}
 
-	handle /grafana/* {
+	handle /services/grafana/* {
 		reverse_proxy 100.70.185.46:3000
 	}
-	handle_path /grafana-alloy/* {
+	handle_path /services/grafana-alloy/* {
 		reverse_proxy 100.70.185.46:12345
 	}
-	handle_path /loki/* {
+	handle_path /services/loki/* {
 		reverse_proxy 100.70.185.46:3100
 	}
-	handle_path /minio/* {
+	handle_path /services/minio/* {
 		reverse_proxy 100.70.185.46:9000
 	}
-	handle_path /minio-console/* {
+	handle_path /services/minio/minio-console/* {
 		reverse_proxy 100.70.185.46:9001
 	}
-	handle_path /ntfy/* {
+	handle_path /services/ntfy/* {
 		reverse_proxy 100.70.185.46:8088
 	}
-	handle_path /prometheus/* {
+	# Traefik dynamic config matches PathPrefix `/traefik` on this host.
+	handle /services/traefik/* {
+		uri replace /services/traefik /traefik
+		reverse_proxy 100.70.185.46:8081
+	}
+	handle_path /services/prometheus/* {
 		reverse_proxy 100.70.185.46:9090 {
-			header_down Location "^/(.*)$" "/prometheus/$1"
+			header_down Location "^/(.*)$" "/services/prometheus/$1"
 		}
 	}
-	handle_path /rustfs/* {
+	handle_path /services/rustfs/* {
 		reverse_proxy 100.70.185.46:9900
 	}
-	handle_path /tusd/* {
+	# Allow browser preflight to reach tusd without token challenge.
+	@tusd_options {
+		method OPTIONS
+		path /services/tusd/*
+	}
+	handle @tusd_options {
+		uri strip_prefix /services/tusd
+		reverse_proxy 100.70.185.46:8080
+	}
+	# Uppy browser flow: allow uploads without Nomad token challenge.
+	@tusd_uppy_services {
+		path /services/tusd/*
+		header Referer */services/uppy*
+	}
+	handle @tusd_uppy_services {
+		uri strip_prefix /services/tusd
+		reverse_proxy 100.70.185.46:8080
+	}
+	@tusd_uppy_files {
+		path /files/*
+		header Referer */services/uppy*
+	}
+	handle @tusd_uppy_files {
+		reverse_proxy 100.70.185.46:8080
+	}
+	handle_path /services/tusd/* {
 		forward_auth 100.70.185.46:9191 {
 			uri /auth
 			copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
 		}
 		reverse_proxy 100.70.185.46:8080
 	}
-	# tusd returns upload Location under /files/<id>; preserve the /files prefix
-	# (use handle, not handle_path) so PATCH/HEAD resumable calls hit tusd.
+	# tusd upload Location stays /files/<id> at site root (not under /services/).
+	@files_options {
+		method OPTIONS
+		path /files/*
+	}
+	handle @files_options {
+		reverse_proxy 100.70.185.46:8080
+	}
 	handle /files/* {
 		forward_auth 100.70.185.46:9191 {
 			uri /auth
@@ -342,25 +285,14 @@ HTML 200
 		}
 		reverse_proxy 100.70.185.46:8080
 	}
-	handle_path /vault/* {
-		reverse_proxy 100.70.185.46:8200 {
-			header_down Location "^/(.*)$" "/vault/$1"
-		}
-	}
-	handle_path /uppy/* {
+	handle_path /services/uppy/* {
 		reverse_proxy 100.70.185.46:8090
 	}
-	handle_path /wave/* {
-		reverse_proxy 100.70.185.46:9091
-	}
-	handle_path /faasd/* {
-		reverse_proxy 100.70.185.46:8089
-	}
-	handle_path /supabase/* {
-		reverse_proxy 100.70.185.46:8000
-	}
-	handle_path /supabase-studio/* {
-		reverse_proxy 100.70.185.46:3002
+	handle_path /services/nomad/* {
+		reverse_proxy 100.70.185.46:4646 {
+			header_down Location ^https?://[\w.:]+/(.*)$ "/services/nomad/$1"
+			header_down Location ^/(ui|v1)(.*)$ "/services/nomad/$1$2"
+		}
 	}
 
 	handle {
@@ -444,32 +376,8 @@ http://tusd.aither {
 	reverse_proxy 100.70.185.46:8080
 }
 
-http://vault.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:8200
-}
-
 http://uppy.aither {
 	import lan_bind
 	reverse_proxy 100.70.185.46:8090
 }
 
-http://wave.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:9091
-}
-
-http://faasd.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:8089
-}
-
-http://supabase.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:8000
-}
-
-http://supabase-studio.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:3002
-}

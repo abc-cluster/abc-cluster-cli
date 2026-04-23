@@ -9,10 +9,10 @@
 #   python3  — for JSON parsing
 #
 # Usage:
-#   bash deployments/abc-nodes/scripts/init-vault.sh
+#   bash deployments/abc-nodes/experimental/scripts/init-vault.sh
 #
 # Outputs:
-#   deployments/abc-nodes/acl/vault-keys.env  ← KEEP SECRET, never commit
+#   deployments/abc-nodes/experimental/acl/vault-keys.env  ← KEEP SECRET, never commit
 #
 # AUTO-UNSEAL NOTE:
 #   Vault re-seals on every process restart. Re-run this script after

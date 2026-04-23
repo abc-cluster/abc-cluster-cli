@@ -36,7 +36,7 @@
 # Deploy (once you have the image URI from Seqera):
 #   abc admin services nomad cli -- job run \
 #     -var="wave_image=195996028523.dkr.ecr.eu-west-1.amazonaws.com/nf-tower-enterprise/wave:v1.33.2" \
-#     deployments/abc-nodes/nomad/wave.nomad.hcl
+#     deployments/abc-nodes/experimental/nomad/wave.nomad.hcl
 
 variable "wave_image" {
   type        = string
@@ -163,7 +163,7 @@ EOF
         JAVA_OPTS = "-Xms1g -Xmx3g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
       }
 
-      # Wave DB password — read from Nomad Variable (set by init-supabase-secrets.sh).
+      # Wave DB password — read from Nomad Variable (set by experimental/scripts/init-supabase-secrets.sh).
       # Falls back to the old default so existing deployments aren't broken until
       # the Variable is stored and the job is redeployed.
       template {

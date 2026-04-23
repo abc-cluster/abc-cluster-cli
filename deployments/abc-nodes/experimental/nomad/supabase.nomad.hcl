@@ -24,7 +24,7 @@
 #  Path: nomad/jobs/abc-nodes-supabase
 #  Keys: postgres_password, jwt_secret, anon_key, service_role_key, wave_db_password
 #
-#  Generate + store: bash deployments/abc-nodes/scripts/init-supabase-secrets.sh
+#  Generate + store: bash deployments/abc-nodes/experimental/scripts/init-supabase-secrets.sh
 #
 # TRAEFIK
 # ───────
@@ -33,8 +33,8 @@
 #
 # DEPLOY
 # ──────
-#  1. bash deployments/abc-nodes/scripts/init-supabase-secrets.sh
-#  2. abc admin services nomad cli -- job run deployments/abc-nodes/nomad/supabase.nomad.hcl
+#  1. bash deployments/abc-nodes/experimental/scripts/init-supabase-secrets.sh
+#  2. abc admin services nomad cli -- job run deployments/abc-nodes/experimental/nomad/supabase.nomad.hcl
 
 job "abc-nodes-supabase" {
   namespace = "services"
