@@ -252,4 +252,4 @@ bash deployments/abc-nodes/acl/setup-minio-namespace-buckets.sh
 
 Note:
 
-- For Nomad variable sync, use an admin context with write access to **`abc-services`** Nomad variables (for example `ABC_CONTEXT=abc-cluster-admin`).
+- For Nomad variable sync, use an admin context with write access to **`abc-services`** Nomad variables (for example `ABC_ACTIVE_CONTEXT=abc-cluster-admin`).

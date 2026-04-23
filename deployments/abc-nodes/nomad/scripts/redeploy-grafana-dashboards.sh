@@ -5,7 +5,7 @@
 # 2) Redeploy the Grafana Nomad job so provisioning picks up JSON changes.
 #
 # Usage (from repo root = analysis/packages/abc-cluster-cli):
-#   export ABC_CONTEXT=abc-cluster-admin   # or any context with job run rights
+#   export ABC_ACTIVE_CONTEXT=abc-cluster-admin   # or any context with job run rights
 #   bash deployments/abc-nodes/nomad/scripts/redeploy-grafana-dashboards.sh
 #
 # Env:

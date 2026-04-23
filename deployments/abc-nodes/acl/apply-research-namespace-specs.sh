@@ -6,7 +6,7 @@
 # touched by this script.
 #
 # Usage (from repo root = analysis/packages/abc-cluster-cli):
-#   export ABC_CONTEXT=abc-cluster-admin
+#   export ABC_ACTIVE_CONTEXT=abc-cluster-admin
 #   bash deployments/abc-nodes/acl/apply-research-namespace-specs.sh
 #
 # Env:
