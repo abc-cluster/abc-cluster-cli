@@ -46,6 +46,7 @@ const config: Config = {
       {
         docs: {
           path: '../docs',
+          exclude: ['design/**'],
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/abc-cluster/abc-cluster-cli/tree/main/',
         },

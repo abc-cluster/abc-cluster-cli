@@ -5,7 +5,6 @@ This site hosts the documentation for `abc-cluster-cli`.
 Use the top navigation to browse:
 
 - command usage and examples,
-- design discussions under `docs/design/`,
 - operator notes for abc-nodes services.
 
 ## Quick start
