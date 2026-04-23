@@ -12,7 +12,7 @@
 #   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/abc-nodes-auth.nomad.hcl
 
 job "abc-nodes-auth" {
-  namespace   = "services"
+  namespace   = "abc-services"
   type        = "service"
   priority    = 80   # Keep higher than user jobs so auth is always available
 

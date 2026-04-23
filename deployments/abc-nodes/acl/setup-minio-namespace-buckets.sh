@@ -69,7 +69,7 @@ VAULT_IAM_PREFIX="${VAULT_IAM_PREFIX:-abc-nodes/minio-iam}"
 
 declare -A NS_USERS
 NS_USERS["su-mbhg-bioinformatics"]="kim"
-NS_USERS["su-mbhg-hostgen"]="yentl,devon"
+NS_USERS["su-mbhg-hostgen"]="yentl,devon,dayna"
 NS_USERS["su-mbhg-animaltb"]="stacey"
 NS_USERS["su-psy-neuropsychiatry"]="lauren"
 NS_USERS["su-sdsct-ceri"]="tj,eduan"

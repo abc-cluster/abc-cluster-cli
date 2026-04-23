@@ -10,6 +10,7 @@
 namespace "su-mbhg-hostgen" {
   capabilities = [
     "submit-job",
+    "parse-job",
     "dispatch-job",
     "list-jobs",
     "read-job",
@@ -17,6 +18,12 @@ namespace "su-mbhg-hostgen" {
     "read-fs",
     "alloc-lifecycle",
     "alloc-exec",
+  ]
+}
+
+namespace "default" {
+  capabilities = [
+    "parse-job",
   ]
 }
 

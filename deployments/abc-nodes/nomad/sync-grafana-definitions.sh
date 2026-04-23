@@ -68,7 +68,7 @@ research_users = sorted(set(research_users))
 if not namespaces:
     raise SystemExit("no research namespaces discovered")
 
-def make_custom_var(name: str, label: str, values: list[str], include_all: bool = True):
+def make_custom_var(name: str, label: str, values: list[str], include_all: bool = True, all_value: str | None = None):
     query = ",".join(values)
     current = {"selected": True, "text": "All", "value": "$__all"} if include_all else {"selected": True, "text": values[0], "value": values[0]}
     return {
@@ -82,7 +82,7 @@ def make_custom_var(name: str, label: str, values: list[str], include_all: bool 
         "sort": 1,
         "multi": include_all,
         "includeAll": include_all,
-        "allValue": ".*" if include_all else None,
+        "allValue": (all_value if all_value is not None else ".*") if include_all else None,
     }
 
 def upsert_variable(dashboard: dict, new_var: dict):
@@ -103,6 +103,7 @@ upsert_variable(
         "Group / Namespace",
         namespaces,
         include_all=True,
+        all_value="su-.*",
     ),
 )
 if research_users:

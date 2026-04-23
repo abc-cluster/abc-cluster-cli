@@ -1,6 +1,7 @@
 namespace "su-sdsct-ceri" {
   capabilities = [
     "submit-job",
+    "parse-job",
     "dispatch-job",
     "list-jobs",
     "read-job",
@@ -8,6 +9,12 @@ namespace "su-sdsct-ceri" {
     "read-fs",
     "alloc-lifecycle",
     "alloc-exec",
+  ]
+}
+
+namespace "default" {
+  capabilities = [
+    "parse-job",
   ]
 }
 

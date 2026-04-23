@@ -54,7 +54,7 @@ variable "s3_region" {
 }
 
 job "abc-nodes-tusd" {
-  namespace = "services"
+  namespace = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -90,11 +90,7 @@ job "abc-nodes-tusd" {
         destination = "secrets/minio.env"
         env         = true
         data        = <<EOF
-{{ with nomadVar "nomad/jobs/abc-nodes-tusd" -}}
-MC_HOST_tusdstore=http://{{ .minio_access_key }}:{{ .minio_secret_key }}@100.70.185.46:9000
-{{- else -}}
 MC_HOST_tusdstore=http://${var.s3_access_key}:${var.s3_secret_key}@100.70.185.46:9000
-{{- end }}
 EOF
       }
 
@@ -125,13 +121,8 @@ EOF
         destination = "secrets/s3.env"
         env         = true
         data        = <<EOF
-{{ with nomadVar "nomad/jobs/abc-nodes-tusd" -}}
-AWS_ACCESS_KEY_ID={{ .minio_access_key }}
-AWS_SECRET_ACCESS_KEY={{ .minio_secret_key }}
-{{- else -}}
 AWS_ACCESS_KEY_ID=${var.s3_access_key}
 AWS_SECRET_ACCESS_KEY=${var.s3_secret_key}
-{{- end }}
 AWS_REGION=${var.s3_region}
 EOF
       }

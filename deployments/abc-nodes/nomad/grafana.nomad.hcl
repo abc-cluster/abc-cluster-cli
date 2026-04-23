@@ -5,16 +5,13 @@
 #  Grafana home directory at /opt/nomad/scratch/grafana-data (scratch volume).
 #  Dashboards, users, and settings survive restarts.
 #
-# CREDENTIALS (Nomad Variables, namespace: services)
-# ───────────────────────────────────────────────────
-#  Path: nomad/jobs/abc-nodes-grafana
-#  Keys: admin_password
+# CREDENTIALS STRATEGY
+# ────────────────────
+#  Bootstrap/default-first: Grafana admin password comes from HCL defaults so
+#  first deployments do not require Nomad Variables.
 #
-#  Store / rotate:
-#    abc admin services nomad cli -- var put -namespace services -force \
-#      nomad/jobs/abc-nodes-grafana admin_password=<password>
-#
-#  Falls back to the HCL variable default if the Variable is not set.
+#  Later hardening: migrate to Nomad Variables or Vault and update this job to
+#  consume secret references once secure token workflows are in place.
 
 variable "datacenters" {
   type    = list(string)
@@ -29,7 +26,7 @@ variable "grafana_image" {
 variable "grafana_admin_password" {
   type        = string
   default     = "admin"
-  description = "Fallback only — override via Nomad Variable nomad/jobs/abc-nodes-grafana"
+  description = "Bootstrap default admin password"
 }
 
 job "abc-nodes-grafana" {
@@ -105,16 +102,13 @@ job "abc-nodes-grafana" {
         GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH = "/local/provisioning/dashboards/files/nomad-loki-logs.json"
       }
 
-      # Admin password: Nomad Variable takes precedence, HCL variable is fallback.
+      # Bootstrap mode: always use HCL default admin password.
+      # Migrate to Nomad/Vault-backed secrets once secure token workflows are enabled.
       template {
         destination = "secrets/grafana.env"
         env         = true
         data        = <<EOF
-{{ with nomadVar "nomad/jobs/abc-nodes-grafana" -}}
-GF_SECURITY_ADMIN_PASSWORD={{ .admin_password }}
-{{- else -}}
 GF_SECURITY_ADMIN_PASSWORD=${var.grafana_admin_password}
-{{- end }}
 EOF
       }
 
