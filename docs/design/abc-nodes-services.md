@@ -45,13 +45,13 @@
                         Tailscale VPN (100.70.x.x)
                                 │
                     ┌───────────▼────────────┐
-                    │   Traefik  :80 / :8888 │  reverse proxy + ForwardAuth
+                    │ Traefik :8081 / :8888 │  reverse proxy + ForwardAuth
                     └──────┬────────┬────────┘
                            │        │
           ┌────────────────┤        ├─────────────────────┐
           │                │        │                     │
     ┌─────▼──────┐  ┌──────▼───┐  ┌▼──────────┐  ┌──────▼─────┐
-    │  tusd :8080│  │ Uppy:8085│  │Grafana:3000│  │ ntfy :8088 │
+    │  tusd :8080│  │ Uppy:8090│  │Grafana:3000│  │ ntfy :8088 │
     │  (uploads) │  │(web UI)  │  │(dashboards)│  │(push notif)│
     └─────┬──────┘  └──────────┘  └─────┬──────┘  └──────┬─────┘
           │  S3 writes                  │ queries         │ attachments
@@ -71,7 +71,7 @@
 
     ┌─────────────────────────────────────────────────────┐
     │ Supabase (optional — stopped by default)            │
-    │  db:5432  rest:3001  auth:9999  meta:8081           │
+    │  db:5432  rest:3001  auth:9999  meta:8082→8081       │
     │  studio:3002  kong:8000                             │
     └─────────────────────────────────────────────────────┘
 
@@ -82,7 +82,7 @@
     └─────────────────────────────────────────────────────┘
 ```
 
-**Deployment model:** All jobs run inside HashiCorp Nomad on a single node (`aither`, Tailscale IP `100.70.185.46`). Containers use the `containerd-driver` with `mode = "bridge"` networking; host processes use `raw_exec` with `mode = "host"`.
+**Deployment model:** All jobs run inside HashiCorp Nomad on a single node (`aither`, Tailscale IP `100.70.185.46`). Most container workloads use the `containerd-driver` with `mode = "bridge"` and static host-port mappings; `raw_exec` tasks (Traefik, Vault when enabled, etc.) use `mode = "host"`.
 
 ---
 
@@ -92,20 +92,20 @@
 |---|---|---|---|---|
 | `abc-nodes-minio` | service | minio/minio | 9000 (S3), 9001 (console) | always on |
 | `abc-nodes-supabase` | service | supabase/* (6 containers) | 5432, 3001, 9999, 8081, 3002, 8000 | opt-in |
-| `abc-nodes-vault` | service | hashicorp/vault | 8200 | always on |
+| `abc-nodes-vault` | service | hashicorp/vault | 8200 | opt-in (`experimental/`) |
 | `abc-nodes-rustfs` | service | rustfs/rustfs | bridge | always on |
 | `abc-nodes-tusd` | service | tusproject/tusd | 8080 | always on |
-| `abc-nodes-uppy` | service | nginx (static) | 8085 | always on |
+| `abc-nodes-uppy` | service | nginx (static) | 8090 | always on |
 | `abc-nodes-alloy` | system | grafana/alloy | host | always on |
 | `abc-nodes-prometheus` | service | prom/prometheus | 9090 | always on |
 | `abc-nodes-loki` | service | grafana/loki | 3100 | always on |
 | `abc-nodes-grafana` | service | grafana/grafana | 3000 | always on |
 | `abc-nodes-ntfy` | service | binwiederhier/ntfy | 8088 | always on |
 | `abc-nodes-job-notifier` | service | raw_exec (bash+jq) | — | always on |
-| `abc-nodes-traefik` | service | raw_exec (traefik bin) | 80, 8888 | always on |
+| `abc-nodes-traefik` | service | raw_exec (traefik bin) | 8081, 8888 | always on |
 | `abc-nodes-auth` | service | raw_exec (python) | 9191 | always on |
 | `abc-nodes-docker-registry` | service | registry:2 | 5000 | always on |
-| `abc-nodes-wave` | service | seqera/wave | 9091 | opt-in |
+| `abc-nodes-wave` | service | seqera/wave | 9091 | opt-in (`experimental/`) |
 
 ---
 
@@ -167,7 +167,7 @@ Supabase is a PostgreSQL-based backend platform. It replaces the standalone `abc
 | `db` | `supabase/postgres:15.8.1.060` | 5432 | PostgreSQL + Supabase extensions |
 | `rest` | `postgrest/postgrest:v12.2.8` | 3001 | Auto-generated REST API over the DB |
 | `auth` | `supabase/gotrue:v2.170.0` | 9999 | JWT-based authentication (GoTrue) |
-| `meta` | `supabase/postgres-meta:v0.84.2` | 8081 | Schema introspection API |
+| `meta` | `supabase/postgres-meta:v0.84.2` | 8082 (host) → 8081 | Schema introspection API |
 | `studio` | `supabase/studio:20250317-6955350` | 3002 | Supabase Studio web UI |
 | `kong` | `kong:2.8.1` | 8000 | API gateway (routes auth/rest/meta) |
 
@@ -266,7 +266,7 @@ tusd implements the [TUS resumable upload protocol](https://tus.io). It receives
 
 **Job:** `abc-nodes-uppy`  
 **Image:** `nginx:1.27-alpine` (serves static HTML)  
-**Port:** `8085`
+**Port:** `8090`
 
 A pre-built Uppy web UI served via nginx. Users on the Tailscale network can open it in a browser to drag-and-drop files for upload to tusd. No server-side state — purely a static client.
 
@@ -614,7 +614,7 @@ mc alias set sunminio http://100.70.185.46:9000 minio-admin <minio_root_password
 
 | Port | Service | Protocol |
 |------|---------|----------|
-| 80 | Traefik HTTP entry | HTTP |
+| 8081 | Traefik HTTP entry (`web`) | HTTP |
 | 3000 | Grafana | HTTP |
 | 3001 | Supabase PostgREST | HTTP |
 | 3002 | Supabase Studio | HTTP |
@@ -623,8 +623,8 @@ mc alias set sunminio http://100.70.185.46:9000 minio-admin <minio_root_password
 | 5432 | Supabase PostgreSQL | TCP |
 | 8000 | Supabase Kong gateway | HTTP |
 | 8080 | tusd | HTTP (TUS) |
-| 8081 | Supabase postgres-meta | HTTP |
-| 8085 | Uppy Dashboard | HTTP |
+| 8082 | Supabase postgres-meta (host; avoids clash with Traefik :8081) | HTTP |
+| 8090 | Uppy Dashboard | HTTP |
 | 8088 | ntfy | HTTP |
 | 8200 | Vault | HTTP |
 | 8888 | Traefik dashboard | HTTP |
@@ -653,9 +653,9 @@ All routes resolve via `*.aither` hostnames (configured in Tailscale DNS or `/et
 | `prometheus.aither` | abc-nodes-prometheus :9090 | none |
 | `rustfs.aither` | abc-nodes-rustfs | none |
 | `tusd.aither` | abc-nodes-tusd :8080 | **nomad-auth** (Nomad ACL token required) |
-| `uppy.aither` | abc-nodes-uppy :8085 | none |
+| `uppy.aither` | abc-nodes-uppy :8090 | none |
 | `vault.aither` | abc-nodes-vault :8200 | none |
 | `wave.aither` | abc-nodes-wave :9091 | none |
 | `supabase.aither` | Supabase Kong :8000 | none |
 | `supabase-studio.aither` | Supabase Studio :3002 | none |
-| `faasd.aither` | faasd :8089 (on hold) | none |
+| `faasd.aither` | experimental only (route disabled by default) | none |

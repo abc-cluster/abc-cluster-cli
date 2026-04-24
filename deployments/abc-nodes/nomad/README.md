@@ -59,7 +59,6 @@ Grafana:        http://100.70.185.46:3000
 Prometheus:     http://100.70.185.46:9090
 Loki:           http://100.70.185.46:3100
 ntfy:           http://100.70.185.46:8088
-faasd:          http://100.70.185.46:8089
 Traefik HTTP:   http://100.70.185.46:80   (dashboard: :8888)
 tusd:           http://100.70.185.46:8080/files/
 Docker Registry:http://100.70.185.46:5000
@@ -80,7 +79,6 @@ Opt-in **Vault**, **Supabase**, and **Wave** jobs (not in this layout by default
 | `prometheus.nomad.hcl` | `abc-nodes-prometheus` | 9090 | ✅ running | containerd |
 | `grafana.nomad.hcl` | `abc-nodes-grafana` | 3000 | ✅ running | containerd |
 | `ntfy.nomad.hcl` | `abc-nodes-ntfy` | 8088 | ✅ running | containerd |
-| `faasd.nomad.hcl` | `abc-nodes-faasd` | 8089 | ✅ planned | containerd |
 | `alloy.nomad.hcl` | `abc-nodes-alloy` | 12345 | ✅ running | raw_exec, system job |
 | `tusd.nomad.hcl` | `abc-nodes-tusd` | 8080 | ✅ running | containerd |
 | `uppy.nomad.hcl` | `abc-nodes-uppy` | 8090 | ✅ running | containerd |
@@ -90,7 +88,7 @@ Opt-in **Vault**, **Supabase**, and **Wave** jobs (not in this layout by default
 | `postgres.nomad.hcl` | `abc-nodes-postgres` | 5432 | ✅ running | containerd, optional Wave dep |
 | `docker-registry.nomad.hcl` | `abc-nodes-docker-registry` | 5000 | ✅ running | containerd |
 
-Experimental (Vault / Supabase / Wave): **`../experimental/nomad/*.nomad.hcl`** — see **`../experimental/README.md`**.
+Experimental (Vault / Supabase / Wave / faasd): **`../experimental/nomad/*.nomad.hcl`** — see **`../experimental/README.md`**.
 
 ---
 
@@ -114,7 +112,6 @@ abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/allo
 
 # 4. Notifications + upload
 abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/ntfy.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/faasd.nomad.hcl
 abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/tusd.nomad.hcl
 abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/uppy.nomad.hcl
 abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/job-notifier.nomad.hcl
@@ -136,7 +133,7 @@ abc admin services nomad cli -- job status -namespace services
 
 ---
 
-## Experimental: Vault, Supabase, Wave
+## Experimental: Vault, Supabase, Wave, faasd
 
 Job specs and scripts live under **`deployments/abc-nodes/experimental/`**. Default Caddy and Traefik configs do **not** expose these services; opt-in deploy and gateway notes are in **`../experimental/README.md`**.
 

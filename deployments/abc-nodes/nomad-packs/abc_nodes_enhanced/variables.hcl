@@ -6,6 +6,24 @@ variable "datacenters" {
   default     = ["dc1", "default"]
 }
 
+variable "abc_services_namespace" {
+  description = "Namespace used by core abc-nodes services using the abc-services convention"
+  type        = string
+  default     = "abc-services"
+}
+
+variable "services_namespace" {
+  description = "Namespace used by auxiliary service jobs (registry, redis, postgres, notifier, rustfs)"
+  type        = string
+  default     = "services"
+}
+
+variable "applications_namespace" {
+  description = "Namespace used by application-facing jobs like Uppy"
+  type        = string
+  default     = "abc-applications"
+}
+
 variable "minio_image" {
   type    = string
   default = "minio/minio:RELEASE.2024-12-18T13-15-44Z"
@@ -145,4 +163,143 @@ variable "alloy_loki_push_url" {
   description = "Loki push URL; empty = derived from nomad_addr host + :3100/loki/api/v1/push"
   type        = string
   default     = ""
+}
+
+# ── Traefik / ForwardAuth / ntfy / Uppy ─────────────────────────────────────
+
+variable "traefik_version" {
+  type    = string
+  default = "3.3.5"
+}
+
+variable "cluster_public_host" {
+  description = "Public host used for the Traefik dashboard route"
+  type        = string
+  default     = "aither.mb.sun.ac.za"
+}
+
+variable "auth_namespace" {
+  description = "Namespace for abc-nodes-auth"
+  type        = string
+  default     = "abc-services"
+}
+
+variable "auth_nomad_addr" {
+  description = "Nomad API address used by abc-nodes-auth to validate tokens"
+  type        = string
+  default     = "http://100.70.185.46:4646"
+}
+
+variable "ntfy_image" {
+  type    = string
+  default = "binwiederhier/ntfy:v2.11.0"
+}
+
+variable "ntfy_base_url" {
+  type    = string
+  default = "http://aither.mb.sun.ac.za"
+}
+
+variable "ntfy_minio_endpoint" {
+  description = "MinIO host:port without scheme for ntfy attachment storage"
+  type        = string
+  default     = "100.70.185.46:9000"
+}
+
+variable "ntfy_minio_access_key" {
+  type    = string
+  default = "minioadmin"
+}
+
+variable "ntfy_minio_secret_key" {
+  type    = string
+  default = "minioadmin"
+}
+
+variable "ntfy_attachment_bucket" {
+  type    = string
+  default = "ntfy"
+}
+
+variable "nginx_image" {
+  type    = string
+  default = "nginx:1.27-alpine"
+}
+
+variable "tusd_endpoint" {
+  description = "Browser-reachable TUS endpoint for the Uppy dashboard"
+  type        = string
+  default     = "http://aither.mb.sun.ac.za/services/tusd/files/"
+}
+
+variable "uppy_max_file_size_mb" {
+  type    = number
+  default = 5120
+}
+
+# ── RustFS / data services / notifier ───────────────────────────────────────
+
+variable "rustfs_image" {
+  type    = string
+  default = "rustfs/rustfs:latest"
+}
+
+variable "rustfs_access_key" {
+  type    = string
+  default = "rustfsadmin"
+}
+
+variable "rustfs_secret_key" {
+  type    = string
+  default = "rustfsadmin"
+}
+
+variable "docker_registry_image" {
+  type    = string
+  default = "registry:2"
+}
+
+variable "redis_image" {
+  type    = string
+  default = "redis:7-alpine"
+}
+
+variable "postgres_image" {
+  type    = string
+  default = "postgres:15-alpine"
+}
+
+variable "postgres_db" {
+  type    = string
+  default = "wave"
+}
+
+variable "postgres_user" {
+  type    = string
+  default = "wave"
+}
+
+variable "postgres_password" {
+  type    = string
+  default = "wave_db_secret"
+}
+
+variable "postgres_pgdata" {
+  type    = string
+  default = "/scratch/wave-postgres/pgdata"
+}
+
+variable "job_notifier_nomad_addr" {
+  type    = string
+  default = "http://100.70.185.46:4646"
+}
+
+variable "job_notifier_ntfy_url" {
+  type    = string
+  default = "http://100.70.185.46:8088"
+}
+
+variable "job_notifier_ntfy_topic" {
+  type    = string
+  default = "abc-jobs"
 }

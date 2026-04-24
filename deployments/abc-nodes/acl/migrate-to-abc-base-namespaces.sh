@@ -95,6 +95,7 @@ for path in \
   nomad/jobs/abc-nodes-tusd \
   nomad/jobs/abc-nodes-grafana \
   nomad/jobs/abc-nodes-job-notifier \
+  nomad/jobs/abc-nodes-faasd \
   nomad/jobs/abc-nodes-supabase \
   nomad/jobs/abc-nodes-wave \
   nomad/jobs/abc-nodes-minio-iam; do
@@ -138,7 +139,7 @@ for file in \
   fi
 done
 
-for file in vault.nomad.hcl wave.nomad.hcl supabase.nomad.hcl; do
+for file in vault.nomad.hcl wave.nomad.hcl supabase.nomad.hcl faasd.nomad.hcl; do
   src="${EXPERIMENTAL_NOMAD_DIR}/${file}"
   if [[ -f "${src}" ]]; then
     tmp="$(mktemp)"
