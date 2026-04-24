@@ -6,11 +6,14 @@
 package admin
 
 import (
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/grafana"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/loki"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/minio"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nebula"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nomad"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nomadpack"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/ntfy"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/postgres"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/probe"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/prometheus"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rclone"
@@ -33,12 +36,16 @@ func NewCmd() *cobra.Command {
   abc admin health                                    Aggregate health check across all floor services
   abc admin services ping nomad                       Check connectivity to a backend service
   abc admin services nomad cli -- job status -short   Run the preconfigured Nomad CLI
+	abc admin services nomad-pack cli -- plan ./packs/hello-world   Run the local nomad-pack CLI
   abc admin services minio cli ls local               Run the local MinIO client CLI
+	abc admin services postgres cli -- -h 127.0.0.1 -U postgres     Run the local PostgreSQL client CLI
+	abc admin services grafana cli -- plugins ls        Run the local Grafana CLI
   abc admin services vault cli status                 Run the local Vault or OpenBao (bao) CLI
   abc admin services loki query '{task="minio"}'      Query Loki logs directly
   abc admin services loki cli -- query '{job="nomad"}'  Run logcli passthrough
   abc admin services prometheus query 'nomad_client_allocated_cpu'  Instant PromQL query
   abc admin services ntfy send abc-jobs "Maintenance at 22:00"      Send push notification
+	abc admin services ntfy cli -- pub abc-jobs "hello"  Run the local ntfy CLI
   abc admin services ntfy list abc-jobs               List recent ntfy messages
   abc admin services traefik cli version              Run the local Traefik CLI
   abc admin services config sync                      Sync ~/.abc admin.services.* from Nomad (abc-nodes)`,
@@ -51,9 +58,11 @@ func NewCmd() *cobra.Command {
 
 	// Add service sub-commands.
 	svcCmd.AddCommand(nomad.NewCmd())
+	svcCmd.AddCommand(nomadpack.NewCmd())
 	svcCmd.AddCommand(probe.NewCmd())
 	svcCmd.AddCommand(tailscale.NewCmd())
 	svcCmd.AddCommand(minio.NewCmd())
+	svcCmd.AddCommand(postgres.NewCmd())
 	svcCmd.AddCommand(nebula.NewCmd())
 	svcCmd.AddCommand(rustfs.NewCmd())
 	svcCmd.AddCommand(vault.NewCmd())
@@ -63,6 +72,7 @@ func NewCmd() *cobra.Command {
 	// Floor observability & notifications.
 	svcCmd.AddCommand(loki.NewCmd())
 	svcCmd.AddCommand(prometheus.NewCmd())
+	svcCmd.AddCommand(grafana.NewCmd())
 	svcCmd.AddCommand(ntfy.NewCmd())
 	cmd.AddCommand(svcCmd)
 

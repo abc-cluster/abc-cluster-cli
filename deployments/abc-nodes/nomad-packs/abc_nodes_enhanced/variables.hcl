@@ -13,7 +13,7 @@ variable "abc_services_namespace" {
 }
 
 variable "services_namespace" {
-  description = "Namespace used by auxiliary service jobs (registry, redis, postgres, notifier, rustfs)"
+  description = "Namespace used by auxiliary service jobs (registry, notifier, rustfs)"
   type        = string
   default     = "services"
 }
@@ -237,7 +237,7 @@ variable "uppy_max_file_size_mb" {
   default = 5120
 }
 
-# ── RustFS / data services / notifier ───────────────────────────────────────
+# ── RustFS / support services / notifier ────────────────────────────────────
 
 variable "rustfs_image" {
   type    = string
@@ -257,36 +257,6 @@ variable "rustfs_secret_key" {
 variable "docker_registry_image" {
   type    = string
   default = "registry:2"
-}
-
-variable "redis_image" {
-  type    = string
-  default = "redis:7-alpine"
-}
-
-variable "postgres_image" {
-  type    = string
-  default = "postgres:15-alpine"
-}
-
-variable "postgres_db" {
-  type    = string
-  default = "wave"
-}
-
-variable "postgres_user" {
-  type    = string
-  default = "wave"
-}
-
-variable "postgres_password" {
-  type    = string
-  default = "wave_db_secret"
-}
-
-variable "postgres_pgdata" {
-  type    = string
-  default = "/scratch/wave-postgres/pgdata"
 }
 
 variable "job_notifier_nomad_addr" {

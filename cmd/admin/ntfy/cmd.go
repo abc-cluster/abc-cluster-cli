@@ -19,11 +19,13 @@ func NewCmd() *cobra.Command {
 
   abc admin services ntfy send abc-jobs "Maintenance window at 22:00" --title "Cluster Notice"
   abc admin services ntfy list abc-jobs --since 2h
-  abc admin services ntfy topics`,
+  abc admin services ntfy topics
+  abc admin services ntfy cli -- pub abc-jobs "hello"`,
 	}
 	cmd.AddCommand(newSendCmd())
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newTopicsCmd())
+	cmd.AddCommand(newCLICmd())
 	return cmd
 }
 
