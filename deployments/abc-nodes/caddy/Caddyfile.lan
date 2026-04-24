@@ -175,37 +175,19 @@
 		reverse_proxy 100.70.185.46:4646
 	}
 
-	# MinIO Console (default root paths when Referer did not match ntfy/Vault above).
+	# MinIO Console API/websocket fallback.
+	# Keep only /api/* and /ws/* here (no /static/* catch-all) so the console can
+	# authenticate even if the browser omits Referer on API requests.
 	handle /api/* {
 		reverse_proxy 100.70.185.46:9001
 	}
 	handle /ws/* {
 		reverse_proxy 100.70.185.46:9001
 	}
-	handle /static/* {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /images/* {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /styles/* {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /favicon* {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /manifest.json {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /Loader.svg {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /apple-icon-180x180.png {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /safari-pinned-tab.svg {
-		reverse_proxy 100.70.185.46:9001
-	}
+
+	# Do NOT globally proxy root asset paths (/static/*, /images/*, ...).
+	# Keep them scoped via explicit Referer matchers above to avoid hijacking
+	# unrelated routes (e.g. Nomad UI relative assets when Referer is absent).
 
 	handle /services/grafana/* {
 		reverse_proxy 100.70.185.46:3000

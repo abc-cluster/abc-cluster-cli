@@ -12,12 +12,12 @@
 # Prerequisites:
 #   • mc (MinIO client) at ~/.abc/binaries/mc
 #   • sunminio alias already configured (done by apply-su-mbhg.sh)
-#   • faasd gateway reachable at FAASD_URL (port 8080)
+#   • faasd gateway reachable at FAASD_URL (port 8089)
 #   • Function already deployed to faasd (faas-cli deploy)
 #
 # Usage:
 #   FUNCTION=my-processor BUCKET=su-mbhg-bioinformatics \
-#     bash deployments/abc-nodes/scripts/setup-minio-faasd-events.sh
+#     bash deployments/abc-nodes/experimental/scripts/setup-minio-faasd-events.sh
 #
 # To add multiple functions/buckets, call multiple times with different args,
 # or edit the EVENTS array below.
@@ -28,7 +28,7 @@ set -euo pipefail
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 MINIO_ALIAS="${MINIO_ALIAS:-sunminio}"
-FAASD_URL="${FAASD_URL:-http://100.70.185.46:8080}"
+FAASD_URL="${FAASD_URL:-http://100.70.185.46:8089}"
 MCLI="${HOME}/.abc/binaries/mc"
 
 # Function → bucket event mappings.

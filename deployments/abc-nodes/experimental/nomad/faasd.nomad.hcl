@@ -51,7 +51,7 @@
 #   MinIO bucket PUT event → webhook POST → faasd gateway :8089 →
 #   /function/<name> → user function container
 #
-#   Setup script: deployments/abc-nodes/scripts/setup-minio-faasd-events.sh
+#   Setup script: deployments/abc-nodes/experimental/scripts/setup-minio-faasd-events.sh
 #
 # GHCR PRE-PULL (do this on aither before deploying)
 # ───────────────────────────────────────────────────
@@ -82,7 +82,7 @@
 #
 # DEPLOY (once blockers are cleared)
 # ────────────────────────────────────
-#   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/faasd.nomad.hcl
+#   abc admin services nomad cli -- job run deployments/abc-nodes/experimental/nomad/faasd.nomad.hcl
 
 job "abc-nodes-faasd" {
   namespace   = "services"

@@ -4,6 +4,6 @@ app {
 
 pack {
   name        = "abc_nodes_enhanced"
-  description = "abc-nodes floor: MinIO + tusd + Prometheus + Loki + Grafana + Alloy (monitoring stack)."
+  description = "abc-nodes combined enhanced floor: reverse proxy/auth, storage, uploads, observability, notifications, and optional support services."
   version     = "0.1.0"
 }

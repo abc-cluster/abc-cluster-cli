@@ -5,7 +5,7 @@
 # │  db      supabase/postgres:15.8.1.060      :5432   PostgreSQL + extensions  │
 # │  rest    postgrest/postgrest:v12.2.8        :3001   REST API over PostgreSQL │
 # │  auth    supabase/gotrue:v2.170.0           :9999   Auth (GoTrue)            │
-# │  meta    supabase/postgres-meta:v0.84.2     :8081   Schema introspection     │
+# │  meta    supabase/postgres-meta:v0.84.2     :8082→8081  Schema introspection   │
 # │  studio  supabase/studio:20250317-6955350   :3002   Supabase Studio web UI   │
 # │  kong    kong:2.8.1                         :8000   API gateway              │
 # └──────────────────────────────────────────────────────────────────────────────┘
@@ -286,7 +286,8 @@ EOF
     network {
       mode = "bridge"
       port "meta" {
-        static = 8081
+        # Host :8082 avoids clashing with abc-nodes-traefik web entry (:8081).
+        static = 8082
         to     = 8081
       }
     }
@@ -359,7 +360,7 @@ EOF
         destination = "secrets/studio.env"
         env         = true
         data        = <<EOF
-STUDIO_PG_META_URL=http://100.70.185.46:8081
+STUDIO_PG_META_URL=http://100.70.185.46:8082
 DEFAULT_ORGANIZATION_NAME=abc-nodes
 DEFAULT_PROJECT_NAME=aither
 SUPABASE_URL=http://100.70.185.46:8000
@@ -479,7 +480,7 @@ services:
             - service_role
 
   - name: meta-v1
-    url: http://100.70.185.46:8081/
+    url: http://100.70.185.46:8082/
     routes:
       - name: meta-v1-route
         strip_path: true

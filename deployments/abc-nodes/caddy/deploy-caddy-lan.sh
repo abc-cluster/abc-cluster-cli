@@ -86,4 +86,11 @@ if [[ "${ct}" != image/* ]]; then
   exit 1
 fi
 
+echo "==> Smoke: root /static/* without Referer is not globally hijacked"
+code_static=$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --resolve "${DOMAIN}:80:${DOMAIN_IP}" "http://${DOMAIN}/static/images/favicon.ico")
+if [[ "${code_static}" != "404" ]]; then
+  echo "ERROR: expected 404 for /static/... without Referer, got ${code_static}" >&2
+  exit 1
+fi
+
 echo "==> Done."

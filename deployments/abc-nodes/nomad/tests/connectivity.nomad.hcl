@@ -130,8 +130,8 @@ body_check  "ntfy       /v1/health"       "http://$HOST:8088/v1/health"   "true"
 # ─── Networking ───────────────────────────────────────────────────────────────
 echo ""
 echo "  ── Networking ───────────────────────────────────────"
-http_check  "Traefik    /ping (dashboard)" "http://$HOST:8888/ping"        "200"
-tcp_check   "Traefik    HTTP entry :80"   "$HOST" "80"
+tcp_check   "Traefik    TCP web :8081"     "$HOST" "8081"
+http_check  "Traefik    /ping (:8888)"     "http://$HOST:8888/ping"       "200"
 
 # ─── Secrets ──────────────────────────────────────────────────────────────────
 echo ""
