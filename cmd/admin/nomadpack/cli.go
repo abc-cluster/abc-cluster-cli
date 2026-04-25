@@ -22,13 +22,5 @@ func runNomadPackCLI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if binaryLocation == "" {
-		binaryLocation = utils.EnvOrDefault(
-			"ABC_NOMAD_PACK_CLI_BINARY",
-			"NOMAD_PACK_CLI_BINARY",
-			"NOMAD_PACK_BINARY",
-		)
-	}
-
-	return utils.RunExternalCLI(cmd.Context(), passthroughArgs, binaryLocation, []string{"nomad-pack"}, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return utils.RunNomadPackCLI(cmd.Context(), passthroughArgs, binaryLocation, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

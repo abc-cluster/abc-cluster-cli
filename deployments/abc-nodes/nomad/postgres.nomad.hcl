@@ -13,9 +13,23 @@ job "abc-nodes-postgres" {
   group "postgres" {
     count = 1
 
+    # Pin to aither: PostgreSQL data lives on aither's scratch host volume.
+    # Must not be rescheduled to a new node — that would start with an empty DB.
+    # Verify with: nomad node status -self  (check "Name" field on aither)
+    constraint {
+      attribute = "${attr.unique.hostname}"
+      value     = "aither"
+    }
+
     network {
-      mode = "host"
-      port "pg" { static = 5432 }
+      # bridge mode with static port mapping publishes 5432 on the host.
+      # containerd-driver does not support network_mode="host" config option;
+      # bridge + static port is the correct way to expose a specific port.
+      mode = "bridge"
+      port "pg" {
+        static = 5432
+        to     = 5432
+      }
     }
 
     restart {

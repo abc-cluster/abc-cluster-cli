@@ -31,8 +31,8 @@ variable "nomad_token" {
 
 variable "ntfy_url" {
   type        = string
-  description = "ntfy base URL (no trailing slash)"
-  default     = "http://100.70.185.46:8088"
+  description = "ntfy base URL (no trailing slash). Resolves via Consul DNS on the host."
+  default     = "http://abc-nodes-ntfy.service.consul:8088"
 }
 
 variable "ntfy_topic" {
@@ -170,9 +170,11 @@ EOF
         memory = 64
       }
 
+      # Consul registration for visibility only — job-notifier is a pure outbound
+      # daemon (no listening port), so no health check is attached.
       service {
         name     = "abc-nodes-job-notifier"
-        provider = "nomad"
+        provider = "consul"
         tags     = ["abc-nodes", "notifier", "ntfy"]
       }
     }

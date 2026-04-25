@@ -169,6 +169,12 @@ HashiCorp Vault (opt-in) lives under **`deployments/abc-nodes/experimental/nomad
 
 See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overrides, and ordering. Curated **`nomad-pack`** bundles for **base** (MinIO + tusd) vs **enhanced** (+ monitoring stack) are under **`deployments/abc-nodes/nomad-packs/`** (see the same README). Operator guide for Prometheus/Grafana/validation scripts: **`docs/abc-nodes-observability-and-operations.md`**.
 
+Deploy the enhanced pack through the abc CLI passthrough so the active bootstrap context supplies the Nomad connection details:
+
+```bash
+abc admin services nomad-pack cli -- run deployments/abc-nodes/nomad-packs/abc_nodes_enhanced
+```
+
 ## Development
 
 ```bash

@@ -1,12 +1,15 @@
 # abc-nodes-auth.nomad.hcl
 # Lightweight HTTP service that validates Nomad ACL tokens.
-# Traefik calls this as a ForwardAuth middleware before proxying to tusd.
+# Caddy calls this as a forward_auth backend before proxying to tusd.
 #
 # The service:
 #   1. Reads the X-Nomad-Token header (or Authorization: Bearer <token>)
 #   2. Calls the local Nomad API to validate the token
-#   3. Returns 200 with X-Auth-User / X-Auth-Group headers on success
+#   3. Returns 200 with X-Auth-User / X-Auth-Group / X-Auth-Namespace headers on success
 #   4. Returns 401 on invalid/missing token
+#
+# Registered in Consul as "abc-nodes-auth" so Caddy resolves it via
+# abc-nodes-auth.service.consul:9191.
 #
 # Deploy:
 #   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/abc-nodes-auth.nomad.hcl
@@ -23,9 +26,6 @@ job "abc-nodes-auth" {
       mode = "host"
       port "http" { static = 9191 }
     }
-
-    # No Consul service registration — cluster does not run Consul.
-    # Traefik discovers this service via static config (port 9191).
 
     task "server" {
       driver = "exec"
@@ -176,6 +176,22 @@ EOF
       resources {
         cpu    = 50
         memory = 64
+      }
+
+      service {
+        name     = "abc-nodes-auth"
+        port     = "http"
+        provider = "consul"
+        tags     = ["abc-nodes", "auth", "forwardauth"]
+
+        # TCP check: the auth server has no dedicated health endpoint;
+        # a successful TCP connection confirms it is accepting requests.
+        check {
+          name     = "auth-tcp"
+          type     = "tcp"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

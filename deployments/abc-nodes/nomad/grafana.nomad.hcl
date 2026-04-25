@@ -43,6 +43,17 @@ job "abc-nodes-grafana" {
   group "grafana" {
     count = 1
 
+    # Pin to aither: Grafana data lives on aither's scratch host volume.
+    # Nomad's built-in host-volume placement (volume "scratch") already prevents
+    # scheduling on nodes that don't declare the volume, but this constraint
+    # makes the intent explicit and guards against accidentally declaring the
+    # volume on a new node.
+    # Verify with: nomad node status -self  (check "Name" field on aither)
+    constraint {
+      attribute = "${attr.unique.hostname}"
+      value     = "aither"
+    }
+
     network {
       mode = "bridge"
       port "http" {
@@ -90,10 +101,9 @@ job "abc-nodes-grafana" {
 
       env {
         GF_SERVER_HTTP_PORT   = "3000"
-        GF_SERVER_DOMAIN      = "aither.mb.sun.ac.za"
-        # Required when Grafana is exposed behind a reverse proxy subpath.
-        GF_SERVER_ROOT_URL = "%(protocol)s://%(domain)s/services/grafana/"
-        GF_SERVER_SERVE_FROM_SUB_PATH = "true"
+        # Grafana runs at its own vhost — no subpath prefix needed.
+        GF_SERVER_DOMAIN  = "grafana.aither"
+        GF_SERVER_ROOT_URL = "http://grafana.aither/"
         GF_PATHS_PROVISIONING = "/local/provisioning"
         # Persist Grafana data (SQLite DB, sessions, plugins) to scratch volume
         GF_PATHS_DATA         = "/scratch/grafana-data"
@@ -355,13 +365,23 @@ EOF
       service {
         name     = "abc-nodes-grafana"
         port     = "http"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "grafana", "ui",
+          # Traefik Consul catalog tags — Traefik reads these and builds the route.
           "traefik.enable=true",
           "traefik.http.routers.grafana.rule=Host(`grafana.aither`)",
+          "traefik.http.routers.grafana.entrypoints=web",
           "traefik.http.services.grafana.loadbalancer.server.port=3000",
         ]
+
+        check {
+          name     = "grafana-health"
+          type     = "http"
+          path     = "/api/health"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

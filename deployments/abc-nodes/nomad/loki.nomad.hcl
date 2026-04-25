@@ -118,13 +118,22 @@ EOF
       service {
         name     = "abc-nodes-loki"
         port     = "http"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "loki", "logs",
           "traefik.enable=true",
           "traefik.http.routers.loki.rule=Host(`loki.aither`)",
+          "traefik.http.routers.loki.entrypoints=web",
           "traefik.http.services.loki.loadbalancer.server.port=3100",
         ]
+
+        check {
+          name     = "loki-ready"
+          type     = "http"
+          path     = "/ready"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

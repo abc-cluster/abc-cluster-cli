@@ -22,6 +22,14 @@ namespace "abc-services" {
     "scale-job",
     "submit-job",
   ]
+
+  variables {
+    # Full variable access in abc-services — needed to write job-scoped secrets
+    # (e.g. nomad/jobs/abc-nodes-boundary-worker for the worker KMS auth key).
+    path "*" {
+      capabilities = ["create", "read", "update", "delete", "list", "destroy"]
+    }
+  }
 }
 
 # cluster-admin tokens also need to see nodes and agent info.

@@ -54,6 +54,17 @@ job "abc-nodes-minio" {
   group "minio" {
     count = 1
 
+    # Pin to aither: MinIO data lives on aither's scratch host volume.
+    # Nomad's built-in host-volume placement (volume "scratch") already prevents
+    # scheduling on nodes that don't declare the volume, but this constraint
+    # makes the intent explicit and guards against accidentally declaring the
+    # volume on a new node.
+    # Verify with: nomad node status -self  (check "Name" field on aither)
+    constraint {
+      attribute = "${attr.unique.hostname}"
+      value     = "aither"
+    }
+
     network {
       mode = "bridge"
       port "api" {
@@ -110,27 +121,43 @@ EOF
       service {
         name     = "abc-nodes-minio-s3"
         port     = "api"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "minio", "s3",
           "traefik.enable=true",
           "traefik.http.routers.minio-s3.rule=Host(`minio.aither`)",
-          "traefik.http.routers.minio-s3.service=minio-s3",
+          "traefik.http.routers.minio-s3.entrypoints=web",
           "traefik.http.services.minio-s3.loadbalancer.server.port=9000",
         ]
+
+        check {
+          name     = "minio-s3-health"
+          type     = "http"
+          path     = "/minio/health/live"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
 
       service {
         name     = "abc-nodes-minio-console"
         port     = "console"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "minio", "console",
           "traefik.enable=true",
           "traefik.http.routers.minio-console.rule=Host(`minio-console.aither`)",
-          "traefik.http.routers.minio-console.service=minio-console",
+          "traefik.http.routers.minio-console.entrypoints=web",
           "traefik.http.services.minio-console.loadbalancer.server.port=9001",
         ]
+
+        # TCP check: the console (port 9001) doesn't expose a dedicated health path.
+        check {
+          name     = "minio-console-tcp"
+          type     = "tcp"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

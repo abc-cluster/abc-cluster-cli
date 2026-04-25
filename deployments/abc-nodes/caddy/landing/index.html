@@ -127,11 +127,13 @@
       font-size: 0.86rem;
       line-height: 1.4;
     }
+    .hint:first-child { margin-top: 0; }
     .ops {
       border: 1px solid #123931;
       background: #081411;
       border-radius: 14px;
       padding: 1rem;
+      margin-bottom: 1rem;
     }
     .ops-grid {
       display: grid;
@@ -139,17 +141,34 @@
       gap: 0.5rem;
     }
     .op-link {
+      display: flex;
+      flex-direction: column;
       text-decoration: none;
       border: 1px solid #17493f;
       background: #0b1d18;
       color: #d8f7f0;
       border-radius: 10px;
-      padding: 0.58rem 0.68rem;
+      padding: 0.62rem 0.72rem;
       font-size: 0.86rem;
+      transition: border-color 0.15s ease, background 0.15s ease;
     }
     .op-link:hover {
       border-color: #2a7e6c;
       background: #0f2a23;
+    }
+    .op-link .label {
+      font-weight: 600;
+      margin-bottom: 0.15rem;
+    }
+    .op-link .desc {
+      font-size: 0.76rem;
+      color: #6db09f;
+    }
+    .stack-note {
+      margin-top: 0.75rem;
+      font-size: 0.78rem;
+      color: #5d9e8e;
+      line-height: 1.4;
     }
     .footer {
       margin-top: 1rem;
@@ -168,14 +187,16 @@
 </head>
 <body>
   <main class="shell">
+
+    <!-- ── Hero ──────────────────────────────────────────────────────────── -->
     <section class="hero">
       <div class="chip">open source cluster tooling</div>
       <h1>ABC Cluster Gateway</h1>
-      <p class="sub">Run pipelines, jobs, data transfer, and cluster automation from one command line workflow. This page highlights the CLI first, with admin operator consoles listed separately below.</p>
+      <p class="sub">Run pipelines, jobs, data transfer, and cluster automation from one command-line workflow. Install the <span class="mono">abc</span> CLI to get started; service consoles are linked below for operators and researchers.</p>
       <div class="meta">
         <div class="meta-item"><strong>Gateway host</strong><br>aither.mb.sun.ac.za</div>
         <div class="meta-item"><strong>Primary tool</strong><br><span class="mono">abc</span> CLI</div>
-        <div class="meta-item"><strong>Audience</strong><br>Researchers </div>
+        <div class="meta-item"><strong>Audience</strong><br>Researchers &amp; operators</div>
       </div>
       <div class="cta-row">
         <a class="cta" href="https://github.com/abc-cluster/abc-cluster-cli" target="_blank" rel="noreferrer">View CLI repository</a>
@@ -183,51 +204,127 @@
       </div>
     </section>
 
+    <!-- ── Install ────────────────────────────────────────────────────────── -->
     <section class="section">
-      <h2>Install abc CLI (script)</h2>
-      <p class="hint">Use the official installer script from the repository to fetch the correct binary for your platform.</p>
+      <h2>Install abc CLI</h2>
+      <p class="hint">Use the official installer to fetch the correct binary for your platform (Linux / macOS / Windows).</p>
+
       <div class="install">
-        <h3>Install to <span class="mono">/usr/local/bin/abc</span></h3>
+        <h3>System-wide install (<span class="mono">/usr/local/bin/abc</span>)</h3>
         <pre>curl -fsSL -H "Accept: application/vnd.github.raw+json" \
-  "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" | sh -s -- --sudo</pre>
+  "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" \
+  | sh -s -- --sudo</pre>
       </div>
-      <p class="hint">After install, run <span class="mono">abc auth login</span> and then <span class="mono">abc --help</span>.</p>
+
+      <div class="install">
+        <h3>User-local install (<span class="mono">~/bin/abc</span>, no sudo)</h3>
+        <pre>curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+  "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" \
+  | sh -s --</pre>
+      </div>
+
+      <p class="hint">After install: <span class="mono">abc auth login</span> → <span class="mono">abc --help</span></p>
     </section>
 
+    <!-- ── Researcher apps ────────────────────────────────────────────────── -->
     <section class="ops">
-      <h2>User applications</h2>
+      <h2>Researcher applications</h2>
       <div class="ops-grid">
-        <a class="op-link" href="/services/nomad/ui/settings/tokens">Nomad portal</a>
-        <a class="op-link" href="/services/uppy/">Uppy uploads</a>
-        <a class="op-link" href="/services/minio/minio-console/">MinIO Console</a>
+        <a class="op-link" href="http://nomad.aither/ui/settings/tokens" target="_blank" rel="noreferrer">
+          <span class="label">Nomad portal</span>
+          <span class="desc">Job scheduler UI &amp; token management</span>
+        </a>
+        <a class="op-link" href="http://uppy.aither/" target="_blank" rel="noreferrer">
+          <span class="label">Uppy uploads</span>
+          <span class="desc">Browser-based file upload (tusd backend)</span>
+        </a>
+        <a class="op-link" href="http://minio-console.aither/" target="_blank" rel="noreferrer">
+          <span class="label">MinIO Console</span>
+          <span class="desc">S3 object storage — buckets &amp; files</span>
+        </a>
+        <a class="op-link" href="http://ntfy.aither/" target="_blank" rel="noreferrer">
+          <span class="label">ntfy</span>
+          <span class="desc">Job event notifications</span>
+        </a>
       </div>
-      <p class="hint">Main user-facing tools are grouped here. All service routes are under <span class="mono">/services/&lt;slug&gt;/</span> and legacy short paths redirect into this structure.</p>
+      <p class="hint">All links resolve via <span class="mono">*.aither</span> — requires Tailscale DNS or local dnsmasq to be configured. Contact an operator if a link does not resolve.</p>
     </section>
 
+    <!-- ── Operator consoles ──────────────────────────────────────────────── -->
     <section class="ops">
-      <h2>Platform operators (advanced)</h2>
+      <h2>Platform operators</h2>
       <div class="ops-grid">
-        <a class="op-link" href="/services/grafana/login">Grafana</a>
-        <a class="op-link" href="/services/prometheus/graph">Prometheus</a>
-        <a class="op-link" href="/services/traefik/dashboard/">Traefik</a>
-        <a class="op-link" href="/services/ntfy/">ntfy</a>
+        <a class="op-link" href="http://grafana.aither/" target="_blank" rel="noreferrer">
+          <span class="label">Grafana</span>
+          <span class="desc">Dashboards — metrics &amp; logs</span>
+        </a>
+        <a class="op-link" href="http://prometheus.aither/" target="_blank" rel="noreferrer">
+          <span class="label">Prometheus</span>
+          <span class="desc">Metrics store &amp; query</span>
+        </a>
+        <a class="op-link" href="http://loki.aither/ready" target="_blank" rel="noreferrer">
+          <span class="label">Loki</span>
+          <span class="desc">Log aggregation (API)</span>
+        </a>
+        <a class="op-link" href="http://alloy.aither/" target="_blank" rel="noreferrer">
+          <span class="label">Grafana Alloy</span>
+          <span class="desc">Telemetry collector UI</span>
+        </a>
+        <a class="op-link" href="http://traefik.aither/dashboard/" target="_blank" rel="noreferrer">
+          <span class="label">Traefik</span>
+          <span class="desc">Load balancer &amp; service catalog</span>
+        </a>
+        <a class="op-link" href="http://consul.aither/ui/" target="_blank" rel="noreferrer">
+          <span class="label">Consul</span>
+          <span class="desc">Service discovery &amp; health</span>
+        </a>
+        <a class="op-link" href="http://nomad.aither/ui/" target="_blank" rel="noreferrer">
+          <span class="label">Nomad UI</span>
+          <span class="desc">Job scheduler — full view</span>
+        </a>
+        <a class="op-link" href="http://minio.aither/" target="_blank" rel="noreferrer">
+          <span class="label">MinIO S3 API</span>
+          <span class="desc">S3-compatible endpoint (mc / SDK)</span>
+        </a>
+        <a class="op-link" href="http://rustfs.aither/" target="_blank" rel="noreferrer">
+          <span class="label">RustFS</span>
+          <span class="desc">Alternate S3-compatible store</span>
+        </a>
+        <a class="op-link" href="http://vault.aither/ui/" target="_blank" rel="noreferrer">
+          <span class="label">Vault</span>
+          <span class="desc">Secrets &amp; SSH certificate authority</span>
+        </a>
+        <a class="op-link" href="http://boundary.aither/" target="_blank" rel="noreferrer">
+          <span class="label">Boundary</span>
+          <span class="desc">SSH session broker — access any node</span>
+        </a>
       </div>
-      <p class="hint">Nomad API and UI remain reachable at root <span class="mono">/v1/*</span> and <span class="mono">/ui/*</span> for CLI compatibility. ntfy and MinIO Console still use Referer-based root asset routing where required.</p>
+      <div class="stack-note">
+        Stack: <strong>Tailscale</strong> (overlay network) →
+        <strong>Caddy</strong> (vhost routing / TLS) →
+        <strong>Traefik</strong> (Consul-catalog load balancer) →
+        <strong>Nomad</strong> services · Service discovery via <strong>Consul</strong> ·
+        Secrets &amp; SSH CA via <strong>Vault</strong> · SSH sessions brokered by <strong>Boundary</strong>
+      </div>
     </section>
 
+    <!-- ── CLI quick-start ────────────────────────────────────────────────── -->
     <section class="section">
-      <h2>Advanced CLI use (abc on PATH)</h2>
-      <p class="hint">For users who already have <span class="mono">abc</span> in <span class="mono">PATH</span> and want direct command-line operations:</p>
+      <h2>CLI quick-start (abc on PATH)</h2>
       <div class="install">
         <h3>Nomad and service operations</h3>
         <pre>export ABC_ACTIVE_CONTEXT=abc-bootstrap
-abc admin services nomad cli -- status
+abc admin services nomad cli -- job status
 abc admin services nomad cli -- job status abc-nodes-grafana
-abc admin services nomad cli -- run -detach deployments/abc-nodes/nomad/uppy.nomad.hcl</pre>
+abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/uppy.nomad.hcl</pre>
       </div>
     </section>
 
-    <p class="footer">Traffic is proxied by Caddy while backend services remain on private or Tailscale addresses.</p>
+    <p class="footer">
+      Traffic enters via <strong>aither.mb.sun.ac.za</strong> (LAN) and is proxied by Caddy through Traefik to backend services on private / Tailscale addresses.
+      Service vhosts are at <span class="mono">*.aither</span> — add <span class="mono">100.70.185.46</span> as a split-DNS nameserver for <span class="mono">.aither</span> in the Tailscale admin console to resolve them on any tailnet device.
+    </p>
+
   </main>
 </body>
 </html>

@@ -6,7 +6,11 @@
 package admin
 
 import (
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/boundary"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/consul"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/eget"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/grafana"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/hashiup"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/loki"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/minio"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/nebula"
@@ -20,6 +24,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rustfs"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/serviceconfig"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tailscale"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/terraform"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/traefik"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/vault"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
@@ -40,6 +45,11 @@ func NewCmd() *cobra.Command {
   abc admin services minio cli ls local               Run the local MinIO client CLI
 	abc admin services postgres cli -- -h 127.0.0.1 -U postgres     Run the local PostgreSQL client CLI
 	abc admin services grafana cli -- plugins ls        Run the local Grafana CLI
+	abc admin services hashi-up cli -- --help           Run the local hashi-up CLI
+	abc admin services terraform cli -- plan             Run the local Terraform CLI
+	abc admin services boundary cli -- --version         Run the local Boundary CLI
+	abc admin services consul cli -- members             Run the local Consul CLI
+	abc admin services eget cli -- --help                Run the local eget CLI
   abc admin services vault cli status                 Run the local Vault or OpenBao (bao) CLI
   abc admin services loki query '{task="minio"}'      Query Loki logs directly
   abc admin services loki cli -- query '{job="nomad"}'  Run logcli passthrough
@@ -63,6 +73,11 @@ func NewCmd() *cobra.Command {
 	svcCmd.AddCommand(tailscale.NewCmd())
 	svcCmd.AddCommand(minio.NewCmd())
 	svcCmd.AddCommand(postgres.NewCmd())
+	svcCmd.AddCommand(hashiup.NewCmd())
+	svcCmd.AddCommand(terraform.NewCmd())
+	svcCmd.AddCommand(boundary.NewCmd())
+	svcCmd.AddCommand(consul.NewCmd())
+	svcCmd.AddCommand(eget.NewCmd())
 	svcCmd.AddCommand(nebula.NewCmd())
 	svcCmd.AddCommand(rustfs.NewCmd())
 	svcCmd.AddCommand(vault.NewCmd())

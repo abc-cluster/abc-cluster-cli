@@ -1,0 +1,38 @@
+[Unit]
+Description=HashiCorp Vault — Secrets Management
+Documentation=https://developer.hashicorp.com/vault
+After=network-online.target consul.service
+Wants=network-online.target
+# Consul must be healthy first — Vault registers itself as a Consul service.
+Requires=consul.service
+# Vault must be ready before Nomad so Nomad job templates (vault {}) can fetch secrets.
+Before=nomad.service
+
+[Service]
+Type=simple
+User=vault
+Group=vault
+ExecStart=/usr/local/bin/vault server -config=/etc/vault.d/vault.hcl
+
+# Unseal keys are stored in vault.env (chmod 600, root:root).
+# systemd reads this file as root and injects the vars into all Exec* processes,
+# so vault (running as the vault user) receives the vars without file-read access.
+EnvironmentFile=/etc/vault.d/vault.env
+
+# Auto-unseal: runs after the server process starts.
+# The script polls the API until ready, then submits the 3 key shares.
+# Vars VAULT_UNSEAL_KEY_1/2/3 come from EnvironmentFile above.
+ExecStartPost=/etc/vault.d/unseal.sh
+
+KillSignal=SIGINT
+KillMode=process
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vault
+
+[Install]
+WantedBy=multi-user.target

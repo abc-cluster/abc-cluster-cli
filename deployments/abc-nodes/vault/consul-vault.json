@@ -1,0 +1,24 @@
+{
+  "service": {
+    "id":   "abc-nodes-vault",
+    "name": "abc-nodes-vault",
+    "port": 8200,
+    "tags": [
+      "abc-nodes",
+      "vault",
+      "secrets",
+      "traefik.enable=true",
+      "traefik.http.routers.vault.rule=Host(`vault.aither`)",
+      "traefik.http.routers.vault.entrypoints=web",
+      "traefik.http.services.vault.loadbalancer.server.port=8200"
+    ],
+    "check": {
+      "id":       "vault-health",
+      "name":     "Vault HTTP health",
+      "http":     "http://127.0.0.1:8200/v1/sys/health?standbyok=true&uninitcode=200&sealedcode=200",
+      "interval": "15s",
+      "timeout":  "3s",
+      "deregister_critical_service_after": "2m"
+    }
+  }
+}

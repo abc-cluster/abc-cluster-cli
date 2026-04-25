@@ -135,13 +135,23 @@ EOF
       service {
         name     = "abc-nodes-tusd"
         port     = "http"
-        provider = "nomad"
+        provider = "consul"
         tags = [
-          "abc-nodes", "tusd", "http",
+          "abc-nodes", "tusd", "uploads",
           "traefik.enable=true",
+          # ForwardAuth is applied by Caddy before reaching Traefik — no middleware here.
           "traefik.http.routers.tusd.rule=Host(`tusd.aither`)",
+          "traefik.http.routers.tusd.entrypoints=web",
           "traefik.http.services.tusd.loadbalancer.server.port=8080",
         ]
+
+        check {
+          name     = "tusd-health"
+          type     = "http"
+          path     = "/health"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

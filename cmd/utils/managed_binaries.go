@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,9 +80,150 @@ func SetupTailscaleBinary(w io.Writer) (BinarySetupResult, error) {
 	return setupGitHubArchiveBinary(w, "tailscale", "tailscale", "tailscale", []string{".tgz", ".tar.gz"}, "tar.gz")
 }
 
+func SetupEgetBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "eget", "zyedidia", "eget", []string{".tar.gz", ".tgz"}, "tar.gz")
+}
+
+func SetupHashiUpBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupHashiUpBinary(w)
+}
+
+func SetupTerraformBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupHashicorpBinaryViaHashiUp(w, "terraform", "terraform")
+}
+
+func SetupConsulBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupHashicorpBinaryViaHashiUp(w, "consul", "consul")
+}
+
+func SetupBoundaryBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupHashicorpBinaryViaHashiUp(w, "boundary", "boundary")
+}
+
+func SetupNomadPackBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupHashicorpBinaryViaHashiUp(w, "nomad-pack", "nomad-pack")
+}
+
 // SetupRcloneBinary downloads the latest rclone release from GitHub into the managed binary dir.
 func SetupRcloneBinary(w io.Writer) (BinarySetupResult, error) {
 	return setupGitHubArchiveBinary(w, "rclone", "rclone", "rclone", []string{".zip"}, "zip")
+}
+
+func SetupVaultBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupHashicorpBinaryViaHashiUp(w, "vault", "vault")
+}
+
+func SetupGrafanaBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGrafanaBinary(w)
+}
+
+func setupGrafanaBinary(w io.Writer) (BinarySetupResult, error) {
+	name := "grafana-cli"
+	if existing := findBinaryInPath(name); existing != "" {
+		fmt.Fprintf(w, "  - %s: found in PATH at %s (skip download)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "path"}, nil
+	}
+	if existing, ok := findManagedBinary(name); ok {
+		fmt.Fprintf(w, "  - %s: found in managed dir at %s (skip download)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "managed"}, nil
+	}
+
+	release, err := FetchLatestReleaseAllowPrereleases("grafana", "grafana")
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("fetch %s release metadata: %w", name, err)
+	}
+	version := strings.TrimPrefix(release.TagName, "v")
+
+	goos := normalizeGOOS(runtime.GOOS)
+	goarch := normalizeGOARCH(runtime.GOARCH)
+	assetName := fmt.Sprintf("grafana-%s.%s-%s.tar.gz", version, goos, goarch)
+	if runtime.GOOS == "windows" {
+		assetName = fmt.Sprintf("grafana-%s.windows-%s.zip", version, goarch)
+	}
+	downloadURL := fmt.Sprintf("https://dl.grafana.com/oss/release/%s", assetName)
+
+	dest, err := ManagedBinaryPath(name)
+	if err != nil {
+		return BinarySetupResult{}, err
+	}
+
+	if runtime.GOOS == "windows" {
+		if err := downloadAndExtractAsset(downloadURL, assetName, "zip", name, dest); err != nil {
+			return BinarySetupResult{}, fmt.Errorf("install %s: %w", name, err)
+		}
+	} else {
+		if err := downloadAndExtractAsset(downloadURL, assetName, "tar.gz", name, dest); err != nil {
+			return BinarySetupResult{}, fmt.Errorf("install %s: %w", name, err)
+		}
+	}
+
+	fmt.Fprintf(w, "  - %s: installed %s at %s\n", name, version, dest)
+	return BinarySetupResult{Name: name, Path: dest, Version: version}, nil
+}
+
+func SetupNtfyBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "ntfy", "binwiederhier", "ntfy", []string{".tar.gz", ".zip"}, "tar.gz")
+}
+
+func SetupNebulaBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "nebula", "slackhq", "nebula", []string{".tar.gz", ".zip"}, "tar.gz")
+}
+
+func SetupRustFSBinary(w io.Writer) (BinarySetupResult, error) {
+	name := "rustfs"
+	if existing := findBinaryInPath(name); existing != "" {
+		fmt.Fprintf(w, "  - %s: found in PATH at %s (skip install)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "path"}, nil
+	}
+	if existing, ok := findManagedBinary(name); ok {
+		fmt.Fprintf(w, "  - %s: found in managed dir at %s (skip install)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "managed"}, nil
+	}
+
+	release, err := FetchLatestReleaseAllowPrereleases("rustfs", "rustfs")
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("fetch %s release metadata: %w", name, err)
+	}
+	version := strings.TrimPrefix(release.TagName, "v")
+
+	dest, err := ManagedBinaryPath(name)
+	if err != nil {
+		return BinarySetupResult{}, err
+	}
+
+	if UseEgetForGitHubDownloads() {
+		if err := tryEgetInstallGitHubTool(context.Background(), "rustfs", "rustfs", name, dest); err == nil {
+			fmt.Fprintf(w, "  - %s: installed %s at %s (eget)\n", name, version, dest)
+			return BinarySetupResult{Name: name, Path: dest, Version: version}, nil
+		}
+	}
+
+	asset, err := findArchiveAssetForPlatform(release, []string{".zip"})
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("resolve %s asset for %s/%s: %w", name, runtime.GOOS, runtime.GOARCH, err)
+	}
+	if err := downloadAndExtractAsset(asset.DownloadURL, asset.Name, "zip", name, dest); err != nil {
+		return BinarySetupResult{}, fmt.Errorf("install %s: %w", name, err)
+	}
+
+	fmt.Fprintf(w, "  - %s: installed %s at %s\n", name, version, dest)
+	return BinarySetupResult{Name: name, Path: dest, Version: version}, nil
+}
+
+func SetupMinioBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "mc", "minio", "mc", []string{".tar.gz", ".zip"}, "tar.gz")
+}
+
+func SetupLokiBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "logcli", "grafana", "loki", []string{".zip"}, "zip")
+}
+
+func SetupPromtoolBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "promtool", "prometheus", "prometheus", []string{".tar.gz", ".zip"}, "tar.gz")
+}
+
+func SetupTraefikBinary(w io.Writer) (BinarySetupResult, error) {
+	return setupGitHubArchiveBinary(w, "traefik", "traefik", "traefik", []string{".tar.gz", ".zip"}, "tar.gz")
 }
 
 func setupNomadBinary(w io.Writer) (BinarySetupResult, error) {
@@ -151,6 +293,264 @@ func setupGitHubArchiveBinary(w io.Writer, name, owner, repo string, assetSuffix
 	return BinarySetupResult{Name: name, Path: dest, Version: version}, nil
 }
 
+func setupHashiUpBinary(w io.Writer) (BinarySetupResult, error) {
+	name := "hashi-up"
+	if existing := findBinaryInPath(name); existing != "" {
+		fmt.Fprintf(w, "  - %s: found in PATH at %s (skip download)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "path"}, nil
+	}
+
+	if existing, ok := findManagedBinary(name); ok {
+		fmt.Fprintf(w, "  - %s: found in managed dir at %s (skip download)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "managed"}, nil
+	}
+
+	if existing, ok := findManagedBinary(name); ok {
+		fmt.Fprintf(w, "  - %s: found in managed dir at %s (skip download)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "managed"}, nil
+	}
+
+	release, err := FetchLatestRelease("jsiebens", "hashi-up")
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("fetch %s release metadata: %w", name, err)
+	}
+	version := strings.TrimPrefix(release.TagName, "v")
+
+	asset, err := findHashiUpAssetForPlatform(release)
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("resolve %s asset for %s/%s: %w", name, runtime.GOOS, runtime.GOARCH, err)
+	}
+
+	dest, err := ManagedBinaryPath(name)
+	if err != nil {
+		return BinarySetupResult{}, err
+	}
+
+	if err := downloadAndCopyAsset(asset.DownloadURL, asset.Name, dest); err != nil {
+		return BinarySetupResult{}, fmt.Errorf("install %s: %w", name, err)
+	}
+	fmt.Fprintf(w, "  - %s: installed %s at %s\n", name, version, dest)
+	return BinarySetupResult{Name: name, Path: dest, Version: version}, nil
+}
+
+func setupHashicorpBinaryViaHashiUp(w io.Writer, name, product string) (BinarySetupResult, error) {
+	if existing := findBinaryInPath(name); existing != "" {
+		fmt.Fprintf(w, "  - %s: found in PATH at %s (skip download)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "path"}, nil
+	}
+
+	if existing, ok := findManagedBinary(name); ok {
+		fmt.Fprintf(w, "  - %s: found in managed dir at %s (skip download)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "managed"}, nil
+	}
+
+	hashiUpBinary := resolveHashiUpBinary()
+	if hashiUpBinary == "" {
+		if _, err := setupHashiUpBinary(w); err != nil {
+			return BinarySetupResult{}, fmt.Errorf("install hashi-up for %s: %w", name, err)
+		}
+		hashiUpBinary = resolveHashiUpBinary()
+		if hashiUpBinary == "" {
+			return BinarySetupResult{}, fmt.Errorf("hashi-up binary not found after install")
+		}
+	}
+
+	tmpDir, err := os.MkdirTemp("", "abc-hashiup-*")
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	args := []string{product, "get", "--dest", tmpDir}
+	if err := RunExternalCLI(context.Background(), args, hashiUpBinary, []string{"hashi-up", "hashiup"}, nil, w, w); err != nil {
+		return BinarySetupResult{}, fmt.Errorf("hashi-up get %s: %w", product, err)
+	}
+
+	picked, err := findExtractedBinary(tmpDir, name)
+	if err != nil {
+		return BinarySetupResult{}, err
+	}
+
+	dest, err := ManagedBinaryPath(name)
+	if err != nil {
+		return BinarySetupResult{}, err
+	}
+	if err := copyExecutable(picked, dest); err != nil {
+		return BinarySetupResult{}, err
+	}
+
+	fmt.Fprintf(w, "  - %s: installed via hashi-up at %s\n", name, dest)
+	return BinarySetupResult{Name: name, Path: dest}, nil
+}
+
+func resolveHashiUpBinary() string {
+	if p := findBinaryInPath("hashi-up"); p != "" {
+		return p
+	}
+	if p := findBinaryInPath("hashiup"); p != "" {
+		return p
+	}
+	if p, ok := findManagedBinary("hashi-up"); ok {
+		return p
+	}
+	return ""
+}
+
+func findManagedBinary(name string) (string, bool) {
+	p, err := ManagedBinaryPath(name)
+	if err != nil {
+		return "", false
+	}
+	info, err := os.Stat(p)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+	return p, true
+}
+
+func setupCargoInstalledBinary(w io.Writer, name, repoURL, bin string) (BinarySetupResult, error) {
+	if existing := findBinaryInPath(name); existing != "" {
+		fmt.Fprintf(w, "  - %s: found in PATH at %s (skip install)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "path"}, nil
+	}
+
+	if existing, ok := findManagedBinary(name); ok {
+		fmt.Fprintf(w, "  - %s: found in managed dir at %s (skip install)\n", name, existing)
+		return BinarySetupResult{Name: name, Path: existing, Skipped: true, SkipCause: "managed"}, nil
+	}
+
+	cargoPath, err := exec.LookPath("cargo")
+	if err != nil {
+		return BinarySetupResult{}, fmt.Errorf("cargo not found: %w", err)
+	}
+
+	cmd := exec.Command(cargoPath, "install", "--git", repoURL, "--bin", bin, "--locked")
+	cmd.Env = os.Environ()
+	cmd.Stdout = w
+	cmd.Stderr = w
+	if err := cmd.Run(); err != nil {
+		return BinarySetupResult{}, fmt.Errorf("cargo install %s: %w", repoURL, err)
+	}
+
+	binPath, err := resolveCargoBinPath(name)
+	if err != nil {
+		return BinarySetupResult{}, err
+	}
+
+	dest, err := ManagedBinaryPath(name)
+	if err != nil {
+		return BinarySetupResult{}, err
+	}
+	if err := copyExecutable(binPath, dest); err != nil {
+		return BinarySetupResult{}, err
+	}
+	fmt.Fprintf(w, "  - %s: installed via cargo install at %s\n", name, dest)
+	return BinarySetupResult{Name: name, Path: dest}, nil
+}
+
+func resolveCargoBinPath(name string) (string, error) {
+	cargoHome := os.Getenv("CARGO_HOME")
+	if cargoHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		cargoHome = filepath.Join(home, ".cargo")
+	}
+	binary := filepath.Join(cargoHome, "bin", name)
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	if _, err := os.Stat(binary); err != nil {
+		return "", fmt.Errorf("cargo binary not found at %s: %w", binary, err)
+	}
+	return binary, nil
+}
+
+func findExtractedBinary(root, name string) (string, error) {
+	want := name
+	if runtime.GOOS == "windows" {
+		want = name + ".exe"
+	}
+
+	var picked string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if filepath.Base(path) == want {
+			picked = path
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if picked == "" {
+		return "", fmt.Errorf("binary %q not found under %s", want, root)
+	}
+	return picked, nil
+}
+
+func findHashiUpAssetForPlatform(release *GitHubRelease) (*GitHubReleaseAsset, error) {
+	name := "hashi-up"
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH == "arm64" {
+			name = "hashi-up-arm64"
+		} else {
+			name = "hashi-up-darwin"
+		}
+	case "linux":
+		switch runtime.GOARCH {
+		case "arm64":
+			name = "hashi-up-arm64"
+		case "arm":
+			name = "hashi-up-armhf"
+		default:
+			name = "hashi-up"
+		}
+	case "windows":
+		name = "hashi-up.exe"
+	}
+	for i := range release.Assets {
+		if release.Assets[i].Name == name {
+			return &release.Assets[i], nil
+		}
+	}
+	return nil, fmt.Errorf("matching asset not found")
+}
+
+func downloadAndCopyAsset(downloadURL, assetName, dest string) error {
+	req, err := newGETRequest(downloadURL)
+	if err != nil {
+		return fmt.Errorf("build download request: %w", err)
+	}
+	resp, err := doRequestWithRetry(req)
+	if err != nil {
+		return fmt.Errorf("download asset: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download asset: HTTP %d", resp.StatusCode)
+	}
+
+	tmpFile, err := os.CreateTemp("", "abc-binary-*"+filepath.Ext(assetName))
+	if err != nil {
+		return fmt.Errorf("create temp asset: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write temp asset: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp asset: %w", err)
+	}
+
+	return copyExecutable(tmpPath, dest)
+}
+
 func findArchiveAssetForPlatform(release *GitHubRelease, archiveExts []string) (*GitHubReleaseAsset, error) {
 	goos := normalizeGOOS(runtime.GOOS)
 	goarch := normalizeGOARCH(runtime.GOARCH)
@@ -161,6 +561,9 @@ func findArchiveAssetForPlatform(release *GitHubRelease, archiveExts []string) (
 		archAliases = append(archAliases, "x86_64")
 	case "arm64":
 		archAliases = append(archAliases, "aarch64")
+	}
+	if goos == "darwin" {
+		archAliases = append(archAliases, "all")
 	}
 	osAliases := []string{goos}
 	if goos == "darwin" {
@@ -187,13 +590,33 @@ func findArchiveAssetForPlatform(release *GitHubRelease, archiveExts []string) (
 		}
 		for _, osAlias := range osAliases {
 			for _, archAlias := range archAliases {
-				re := regexp.MustCompile(fmt.Sprintf(`(^|[_-])%s([_-])%s([_.-]|$).*(%s)$`, regexp.QuoteMeta(osAlias), regexp.QuoteMeta(archAlias), ext))
+				re := regexp.MustCompile(fmt.Sprintf(`(^|[._-])%s([._-])%s([_.-]|$).*(%s)$`, regexp.QuoteMeta(osAlias), regexp.QuoteMeta(archAlias), ext))
 				if re.MatchString(n) {
 					return &release.Assets[i], nil
 				}
 			}
 		}
 	}
+
+	for i := range release.Assets {
+		n := strings.ToLower(release.Assets[i].Name)
+		matchesExt := false
+		for _, candidateExt := range archiveExts {
+			if strings.HasSuffix(n, strings.ToLower(candidateExt)) {
+				matchesExt = true
+				break
+			}
+		}
+		if !matchesExt {
+			continue
+		}
+		for _, osAlias := range osAliases {
+			if strings.Contains(n, osAlias) {
+				return &release.Assets[i], nil
+			}
+		}
+	}
+
 	return nil, fmt.Errorf("matching asset not found")
 }
 

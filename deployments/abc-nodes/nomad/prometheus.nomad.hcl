@@ -81,13 +81,22 @@ EOF
       service {
         name     = "abc-nodes-prometheus"
         port     = "http"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "prometheus", "metrics",
           "traefik.enable=true",
           "traefik.http.routers.prometheus.rule=Host(`prometheus.aither`)",
+          "traefik.http.routers.prometheus.entrypoints=web",
           "traefik.http.services.prometheus.loadbalancer.server.port=9090",
         ]
+
+        check {
+          name     = "prometheus-health"
+          type     = "http"
+          path     = "/-/healthy"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

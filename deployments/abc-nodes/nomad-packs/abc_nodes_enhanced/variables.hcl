@@ -12,11 +12,6 @@ variable "abc_services_namespace" {
   default     = "abc-services"
 }
 
-variable "services_namespace" {
-  description = "Namespace used by auxiliary service jobs (registry, notifier, rustfs)"
-  type        = string
-  default     = "services"
-}
 
 variable "applications_namespace" {
   description = "Namespace used by application-facing jobs like Uppy"
