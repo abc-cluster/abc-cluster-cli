@@ -171,8 +171,22 @@ EOF
       service {
         name     = "abc-nodes-alloy"
         port     = "ui"
-        provider = "nomad"
-        tags     = ["abc-nodes", "alloy", "observability"]
+        provider = "consul"
+        tags = [
+          "abc-nodes", "alloy", "observability",
+          "traefik.enable=true",
+          "traefik.http.routers.alloy.rule=Host(`alloy.aither`)",
+          "traefik.http.routers.alloy.entrypoints=web",
+          "traefik.http.services.alloy.loadbalancer.server.port=12345",
+        ]
+
+        check {
+          name     = "alloy-health"
+          type     = "http"
+          path     = "/-/healthy"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

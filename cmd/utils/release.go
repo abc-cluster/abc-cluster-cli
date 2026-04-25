@@ -76,6 +76,12 @@ func FetchLatestRelease(owner, repo string) (*GitHubRelease, error) {
 	return FetchLatestReleaseWithContext(context.Background(), owner, repo)
 }
 
+// FetchLatestReleaseAllowPrereleases fetches the latest release information from GitHub,
+// allowing prereleases if a stable release is not available.
+func FetchLatestReleaseAllowPrereleases(owner, repo string) (*GitHubRelease, error) {
+	return FetchLatestReleaseAllowPrereleasesWithContext(context.Background(), owner, repo)
+}
+
 // FetchLatestReleaseWithContext fetches the latest release information from GitHub
 // using the provided context.
 func FetchLatestReleaseWithContext(ctx context.Context, owner, repo string) (*GitHubRelease, error) {
@@ -104,6 +110,40 @@ func FetchLatestReleaseWithContext(ctx context.Context, owner, repo string) (*Gi
 	}
 
 	return &release, nil
+}
+
+// FetchLatestReleaseAllowPrereleasesWithContext fetches the newest GitHub release
+// including prereleases by querying the release list when the /latest endpoint
+// does not return a stable release.
+func FetchLatestReleaseAllowPrereleasesWithContext(ctx context.Context, owner, repo string) (*GitHubRelease, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=1", GitHubAPIURL, owner, repo)
+
+	req, err := newGETRequest(url)
+	if err != nil {
+		return nil, fmt.Errorf("building release list request: %w", err)
+	}
+	req = req.WithContext(ctx)
+
+	resp, err := doRequestWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching release list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var releases []GitHubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("decoding releases: %w", err)
+	}
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("no releases found for %s/%s", owner, repo)
+	}
+
+	return &releases[0], nil
 }
 
 // getPlatformBinaryName returns the expected binary name for the current platform.

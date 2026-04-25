@@ -1,7 +1,7 @@
 # RustFS S3-compatible storage
 
 job "abc-nodes-rustfs" {
-  namespace   = [[ var "services_namespace" . | quote ]]
+  namespace   = [[ var "abc_services_namespace" . | quote ]]
   region      = "global"
   datacenters = [[ var "datacenters" . | toStringList ]]
   type        = "service"

@@ -13,9 +13,40 @@ import (
 // RunNomadCLI runs the local nomad CLI with NOMAD_* values sourced from the
 // active abc config context when available.
 func RunNomadCLI(ctx context.Context, args []string, binaryLocation, addr, token, region string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return runConfiguredNomadToolCLI(ctx, "nomad", args, binaryLocation, addr, token, region, stdin, stdout, stderr)
+}
+
+// RunNomadCLIFromConfig runs the local nomad CLI using only the active abc
+// config context for connection defaults.
+func RunNomadCLIFromConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return RunNomadCLI(ctx, args, "", "", "", "", stdin, stdout, stderr)
+}
+
+// RunNomadPackCLI runs the local nomad-pack CLI with NOMAD_* values sourced
+// from the active abc config context when available.
+func RunNomadPackCLI(ctx context.Context, args []string, binaryLocation string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if binaryLocation == "" {
+		binaryLocation = EnvOrDefault(
+			"ABC_NOMAD_PACK_CLI_BINARY",
+			"NOMAD_PACK_CLI_BINARY",
+			"NOMAD_PACK_BINARY",
+		)
+		if binaryLocation == "" {
+			if managedPath, mErr := ManagedBinaryPath("nomad-pack"); mErr == nil {
+				if info, sErr := os.Stat(managedPath); sErr == nil && !info.IsDir() {
+					binaryLocation = managedPath
+				}
+			}
+		}
+	}
+
+	return runConfiguredNomadToolCLI(ctx, "nomad-pack", args, binaryLocation, "", "", "", stdin, stdout, stderr)
+}
+
+func runConfiguredNomadToolCLI(ctx context.Context, binaryName string, args []string, binaryLocation, addr, token, region string, stdin io.Reader, stdout, stderr io.Writer) error {
 	binary := binaryLocation
 	if binary == "" {
-		binary = "nomad"
+		binary = binaryName
 	}
 
 	cmd := exec.CommandContext(ctx, binary, args...)
@@ -56,10 +87,4 @@ func RunNomadCLI(ctx context.Context, args []string, binaryLocation, addr, token
 		return fmt.Errorf("run %s %v: %w", binary, args, err)
 	}
 	return nil
-}
-
-// RunNomadCLIFromConfig runs the local nomad CLI using only the active abc
-// config context for connection defaults.
-func RunNomadCLIFromConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	return RunNomadCLI(ctx, args, "", "", "", "", stdin, stdout, stderr)
 }

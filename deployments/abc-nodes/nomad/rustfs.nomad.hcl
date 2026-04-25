@@ -69,20 +69,36 @@ job "abc-nodes-rustfs" {
       service {
         name     = "abc-nodes-rustfs-s3"
         port     = "s3"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "rustfs", "s3",
           "traefik.enable=true",
           "traefik.http.routers.rustfs.rule=Host(`rustfs.aither`)",
+          "traefik.http.routers.rustfs.entrypoints=web",
           "traefik.http.services.rustfs.loadbalancer.server.port=9900",
         ]
+
+        # TCP check: RustFS doesn't expose /minio/health/live (MinIO-specific).
+        check {
+          name     = "rustfs-s3-tcp"
+          type     = "tcp"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
 
       service {
         name     = "abc-nodes-rustfs-console"
         port     = "console"
-        provider = "nomad"
+        provider = "consul"
         tags     = ["abc-nodes", "rustfs", "console"]
+
+        check {
+          name     = "rustfs-console-tcp"
+          type     = "tcp"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

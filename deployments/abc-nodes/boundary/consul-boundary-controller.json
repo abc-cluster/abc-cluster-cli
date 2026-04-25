@@ -1,0 +1,40 @@
+{
+  "services": [
+    {
+      "id":   "abc-nodes-boundary-controller",
+      "name": "abc-nodes-boundary-controller",
+      "port": 9200,
+      "tags": [
+        "abc-nodes",
+        "boundary",
+        "controller",
+        "traefik.enable=true",
+        "traefik.http.routers.boundary.rule=Host(`boundary.aither`)",
+        "traefik.http.routers.boundary.entrypoints=web",
+        "traefik.http.services.boundary.loadbalancer.server.port=9200"
+      ],
+      "check": {
+        "id":       "boundary-controller-health",
+        "name":     "Boundary controller HTTP health",
+        "http":     "http://127.0.0.1:9200/health",
+        "interval": "15s",
+        "timeout":  "3s",
+        "deregister_critical_service_after": "2m"
+      }
+    },
+    {
+      "id":   "abc-nodes-boundary-cluster",
+      "name": "abc-nodes-boundary-cluster",
+      "port": 9201,
+      "tags": ["abc-nodes", "boundary", "cluster"],
+      "check": {
+        "id":       "boundary-cluster-tcp",
+        "name":     "Boundary cluster port TCP",
+        "tcp":      "127.0.0.1:9201",
+        "interval": "15s",
+        "timeout":  "3s",
+        "deregister_critical_service_after": "2m"
+      }
+    }
+  ]
+}

@@ -15,7 +15,7 @@ variable "nginx_image" {
 variable "tusd_endpoint" {
   type        = string
   description = "TUS upload endpoint (browser-accessible URL, must be reachable from the user's browser)."
-  default     = "http://aither.mb.sun.ac.za/services/tusd/files/"
+  default     = "http://tusd.aither/files/"
 }
 
 variable "uppy_max_file_size_mb" {
@@ -248,13 +248,22 @@ EOF
       service {
         name     = "abc-nodes-uppy"
         port     = "http"
-        provider = "nomad"
+        provider = "consul"
         tags = [
-          "abc-nodes", "uppy", "upload",
+          "abc-nodes", "uppy", "uploads",
           "traefik.enable=true",
           "traefik.http.routers.uppy.rule=Host(`uppy.aither`)",
+          "traefik.http.routers.uppy.entrypoints=web",
           "traefik.http.services.uppy.loadbalancer.server.port=8090",
         ]
+
+        check {
+          name     = "uppy-http"
+          type     = "http"
+          path     = "/"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

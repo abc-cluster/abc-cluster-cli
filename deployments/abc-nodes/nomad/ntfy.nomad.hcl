@@ -13,8 +13,8 @@ variable "ntfy_image" {
 
 variable "ntfy_base_url" {
   type        = string
-  description = "Public URL for ntfy (must be host root, no path). UI is proxied at /services/ntfy by Caddy."
-  default     = "http://aither.mb.sun.ac.za"
+  description = "Public URL for ntfy (must be host root, no path). Served at its own vhost ntfy.aither."
+  default     = "http://ntfy.aither"
 }
 
 variable "minio_endpoint" {
@@ -98,13 +98,22 @@ EOF
       service {
         name     = "abc-nodes-ntfy"
         port     = "http"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "ntfy", "notifications",
           "traefik.enable=true",
           "traefik.http.routers.ntfy.rule=Host(`ntfy.aither`)",
+          "traefik.http.routers.ntfy.entrypoints=web",
           "traefik.http.services.ntfy.loadbalancer.server.port=8088",
         ]
+
+        check {
+          name     = "ntfy-health"
+          type     = "http"
+          path     = "/v1/health"
+          interval = "15s"
+          timeout  = "3s"
+        }
       }
     }
   }

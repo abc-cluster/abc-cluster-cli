@@ -3,6 +3,8 @@ package service
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -183,10 +185,89 @@ func newCLICmd() *cobra.Command {
 		Short: "Porcelain wrappers for local service CLIs",
 		Long: `Convenience wrappers for setting up local service CLIs used by abc wrappers.
 
-  abc admin services cli setup`,
+  abc admin services cli setup
+  abc admin services cli status`,
 	}
 	cmd.AddCommand(newCLISetupCmd())
+	cmd.AddCommand(newCLIStatusCmd())
 	return cmd
+}
+
+func newCLIStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Check which wrapped CLI binaries are installed",
+		Long: `Check which wrapped CLI binaries are available on PATH or in the managed ~/.abc/binaries directory.
+
+This command reports the install status of the managed wrapper binaries that are used by abc admin services cli wrappers.`,
+		RunE: runCLIStatus,
+	}
+}
+
+func runCLIStatus(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
+	tools := []struct {
+		label      string
+		candidates []string
+	}{
+		{"nomad", []string{"nomad"}},
+		{"abc-node-probe", []string{"abc-node-probe"}},
+		{"tailscale", []string{"tailscale"}},
+		{"rclone", []string{"rclone"}},
+		{"eget", []string{"eget"}},
+		{"hashi-up", []string{"hashi-up", "hashiup"}},
+		{"terraform", []string{"terraform"}},
+		{"consul", []string{"consul"}},
+		{"boundary", []string{"boundary"}},
+		{"nomad-pack", []string{"nomad-pack"}},
+		{"minio", []string{"mcli", "mc"}},
+		{"postgres", []string{"psql"}},
+		{"vault", []string{"vault", "bao", "openbao"}},
+		{"grafana", []string{"grafana-cli", "grafana"}},
+		{"ntfy", []string{"ntfy"}},
+		{"traefik", []string{"traefik"}},
+		{"nebula", []string{"nebula"}},
+		{"rustfs", []string{"rustfs"}},
+		{"loki", []string{"logcli"}},
+		{"prometheus", []string{"promtool"}},
+	}
+
+	fmt.Fprintf(out, "Checking local CLI tools...\n")
+	fmt.Fprintf(out, "  %-14s %-10s %s\n", "TOOL", "STATUS", "LOCATION")
+	fmt.Fprintf(out, "  %s\n", strings.Repeat("-", 60))
+
+	missing := 0
+	for _, tool := range tools {
+		status, location := cliToolStatus(tool.candidates)
+		if status == "missing" {
+			missing++
+		}
+		fmt.Fprintf(out, "  %-14s %-10s %s\n", tool.label, status, location)
+	}
+
+	if missing > 0 {
+		fmt.Fprintf(out, "\n%d CLI tool(s) are missing. Use `abc admin services cli setup` to install managed wrappers.\n", missing)
+		return fmt.Errorf("%d CLI tool(s) missing", missing)
+	}
+	fmt.Fprintln(out, "\nAll checked CLI tools are installed.")
+	return nil
+}
+
+func cliToolStatus(candidates []string) (string, string) {
+	for _, name := range candidates {
+		if path, err := exec.LookPath(name); err == nil {
+			return "installed", path
+		}
+	}
+
+	for _, name := range candidates {
+		if managedPath, err := utils.ManagedBinaryPath(name); err == nil {
+			if info, statErr := os.Stat(managedPath); statErr == nil && !info.IsDir() {
+				return "installed", managedPath
+			}
+		}
+	}
+	return "missing", ""
 }
 
 func newCLISetupCmd() *cobra.Command {
@@ -201,6 +282,11 @@ Current managed binaries:
   - abc-node-probe
   - tailscale
   - rclone
+  - eget
+  - terraform
+  - consul
+  - boundary
+  - nomad-pack
 
 Passthrough-only CLIs (minio, nebula, rustfs, vault, traefik) are not downloaded here; install them separately or point --binary-location / env at your binary.`,
 		RunE: runCLISetup,
@@ -216,17 +302,66 @@ func runCLISetup(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(out, "Setting up wrapped binaries in %s\n", dir)
 	fmt.Fprintln(out, "Checking PATH first, then downloading missing binaries...")
 
+	errs := make([]error, 0)
 	if _, err := utils.SetupNomadAndProbeBinaries(out); err != nil {
-		return err
+		errs = append(errs, err)
 	}
 	if _, err := utils.SetupTailscaleBinary(out); err != nil {
-		return err
+		errs = append(errs, err)
 	}
 	if _, err := utils.SetupRcloneBinary(out); err != nil {
-		return err
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupEgetBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupHashiUpBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupTerraformBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupConsulBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupBoundaryBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupNomadPackBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupVaultBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupGrafanaBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupNtfyBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupNebulaBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupRustFSBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupMinioBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupLokiBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupPromtoolBinary(out); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := utils.SetupTraefikBinary(out); err != nil {
+		errs = append(errs, err)
 	}
 
 	fmt.Fprintln(out, "Setup complete.")
 	fmt.Fprintf(out, "Tip: prepend %s to PATH to prefer managed binaries.\n", dir)
+	if len(errs) > 0 {
+		return fmt.Errorf("completed with %d setup errors; first: %w", len(errs), errs[0])
+	}
 	return nil
 }

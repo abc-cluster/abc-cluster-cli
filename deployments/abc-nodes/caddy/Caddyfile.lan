@@ -1,147 +1,185 @@
-# Caddy LAN entrypoint for abc-nodes services on aither.
-# Single-host routes live under /services/<name>/... (canonical). Legacy bare
-# paths (/grafana/, /ntfy/, …) 308-redirect into /services/...
+# Caddy — abc-nodes entry point for sun-aither
 #
-# Assumptions:
-# - Caddy runs on the same host as Nomad jobs (sun-aither)
-# - Backends are reachable on aither's Tailscale IP (100.70.185.46 here)
+# Architecture
+# ────────────
+#  Two entry surfaces:
+#    *.aither            — per-service vhosts, bind on BOTH IPs (LAN + Tailscale).
+#                          DNS: dnsmasq on aither resolves *.aither → 146.232.174.77.
+#                          Tailscale: add 100.70.185.46 as nameserver for ".aither"
+#                          in the Tailscale admin console for tailnet-wide resolution.
+#    aither.mb.sun.ac.za — institutional LAN face, binds on LAN IP only. Mostly
+#                          redirects to *.aither; Nomad UI stays here (/ui/*).
 #
-# Optional *.aither hostnames (only if your LAN resolves them); path routes on
-# aither.mb.sun.ac.za are the primary pattern and do not require extra DNS.
+#  Backends: resolved via Consul DNS (<service>.service.consul → Tailscale IP of
+#  the node running the service). No Traefik hop — Caddy proxies directly.
 #
-# Caddy global options.
+#  Traefik: internal load balancer, Consul-catalog-aware. Caddy forwards all
+#           service vhosts to Traefik:8081; Traefik resolves live backends from
+#           Consul and load-balances across instances. Dashboard at traefik.aither.
+#
+# Global options.
 {
-	# Contact email for ACME certificate operations.
 	email abhinavsharma@sun.ac.za
-	# Keep HTTP available until public cert issuance is complete.
+	# Keep HTTP active; HTTPS via Let's Encrypt enabled once public DNS resolves.
 	auto_https disable_redirects
 }
 
-# Shared LAN bind to avoid accidental listen on wrong interface.
+# ── Snippets ───────────────────────────────────────────────────────────────────
+
+# Institutional LAN face only.
 (lan_bind) {
 	bind 146.232.174.77
 }
 
-# Single-host application routes for aither.mb.sun.ac.za.
-(aither_routes) {
+# Both LAN IP and Tailscale IP — used by all *.aither vhosts.
+(any_bind) {
+	bind 146.232.174.77 100.70.185.46
+}
 
-	# ── Legacy bare paths -> /services/... (canonical) ─────────────────────
-	@legacy_grafana path_regexp legacy_grafana ^/grafana(?:/(.*))?$
-	redir @legacy_grafana /services/grafana/{re.legacy_grafana.1} 308
-	handle /prometheus {
-		redir /services/prometheus/ 308
-	}
-	handle /prometheus/* {
-		uri strip_prefix /prometheus
-		redir http://{http.request.host}/services/prometheus{uri.path}{uri.query} 308
-	}
-	@legacy_traefik path_regexp legacy_traefik ^/traefik(?:/(.*))?$
-	redir @legacy_traefik /services/traefik/{re.legacy_traefik.1} 308
-	handle /ntfy {
-		redir /services/ntfy/ 308
-	}
-	handle /ntfy/* {
-		uri strip_prefix /ntfy
-		redir http://{http.request.host}/services/ntfy{uri.path}{uri.query} 308
-	}
-	handle /minio-console {
-		redir /services/minio/minio-console/ 308
-	}
-	handle /minio-console/* {
-		uri strip_prefix /minio-console
-		redir http://{http.request.host}/services/minio/minio-console{uri.path}{uri.query} 308
-	}
-	@legacy_minio_root path /minio /minio/
-	redir @legacy_minio_root /services/minio/minio-console/ 308
-	handle /minio/minio-console* {
-		redir /services/minio/minio-console/ 308
-	}
-	@legacy_minio path_regexp legacy_minio ^/minio/(.*)$
-	redir @legacy_minio /services/minio/{re.legacy_minio.1} 308
-	handle /loki {
-		redir /services/loki/ 308
-	}
-	handle /loki/* {
-		uri strip_prefix /loki
-		redir http://{http.request.host}/services/loki{uri.path}{uri.query} 308
-	}
-	handle /grafana-alloy {
-		redir /services/grafana-alloy/ 308
-	}
-	handle /grafana-alloy/* {
-		uri strip_prefix /grafana-alloy
-		redir http://{http.request.host}/services/grafana-alloy{uri.path}{uri.query} 308
-	}
-	handle /rustfs {
-		redir /services/rustfs/ 308
-	}
-	handle /rustfs/* {
-		uri strip_prefix /rustfs
-		redir http://{http.request.host}/services/rustfs{uri.path}{uri.query} 308
-	}
-	handle /tusd {
-		redir /services/tusd/ 308
-	}
-	handle /tusd/* {
-		uri strip_prefix /tusd
-		redir http://{http.request.host}/services/tusd{uri.path}{uri.query} 308
-	}
-	handle /uppy {
-		redir /services/uppy/ 308
-	}
-	handle /uppy/* {
-		uri strip_prefix /uppy
-		redir http://{http.request.host}/services/uppy{uri.path}{uri.query} 308
-	}
-	@nomad_root path /nomad/
-	redir @nomad_root /services/nomad/ui/settings/tokens 308
-	@nomad_noslash path /nomad
-	redir @nomad_noslash /services/nomad/ 308
-	@nomad_prefixed path_regexp nomad_prefixed ^/nomad/(.*)$
-	redir @nomad_prefixed /services/nomad/{re.nomad_prefixed.1} 308
-	# Guard against relative redirect leakage from Nomad UI resulting in /ui/services/...
-	@nomad_ui_prefixed path_regexp nomad_ui_prefixed ^/ui/services/nomad(?:-portal)?/(.*)$
-	redir @nomad_ui_prefixed /services/nomad/{re.nomad_ui_prefixed.1} 308
-	@nomad_ui_root path /ui/services/nomad /ui/services/nomad/ /ui/services/nomad-portal /ui/services/nomad-portal/
-	redir @nomad_ui_root /services/nomad/ui/settings/tokens 308
-	@ui_services_prefixed path_regexp ui_services_prefixed ^/ui/services/(.*)$
-	redir @ui_services_prefixed /services/{re.ui_services_prefixed.1} 308
-	@svc_nomad_legacy path_regexp svc_nomad_legacy ^/services/nomad-portal/(.*)$
-	redir @svc_nomad_legacy /services/nomad/{re.svc_nomad_legacy.1} 308
-	@svc_nomad_noslash path /services/nomad
-	redir @svc_nomad_noslash /services/nomad/ 308
-	@svc_nomad_root path /services/nomad/
-	redir @svc_nomad_root /services/nomad/ui/settings/tokens 308
+# ══ VHOST ROUTES (*.aither) ═══════════════════════════════════════════════════
+# Each service lives at its own hostname. Caddy handles vhost matching, TLS
+# termination (future), and special auth logic; then forwards to Traefik which
+# resolves the live backend set from the Consul catalog.
+#
+# Routing chain: Caddy → Traefik:8081 (consulCatalog LB) → service instances
+# Caddy preserves the Host header; Traefik matches it to the right backend.
+# When a service scales to multiple instances (multi-node), Traefik load-balances
+# across all healthy Consul-registered instances automatically.
+#
+# Exceptions that bypass Traefik (direct proxy):
+#   • consul.aither — Consul UI (single node, no catalog entry needed)
+#   • nomad.aither  — Nomad UI (single node, hardcoded SPA rootURL)
+#   • traefik.aither — Traefik dashboard itself (bootstrapping concern)
 
-	@services_noslash path /services
-	redir @services_noslash /services/ 308
+http://grafana.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
 
-	@svc_grafana_noslash path /services/grafana
-	redir @svc_grafana_noslash /services/grafana/ 308
-	@svc_prometheus_noslash path /services/prometheus
-	redir @svc_prometheus_noslash /services/prometheus/ 308
-	@svc_traefik_noslash path /services/traefik
-	redir @svc_traefik_noslash /services/traefik/ 308
-	@svc_traefik_root path /services/traefik/
-	redir @svc_traefik_root /services/traefik/dashboard/ 308
-	@svc_ntfy_noslash path /services/ntfy
-	redir @svc_ntfy_noslash /services/ntfy/ 308
-	@svc_minio_noslash path /services/minio
-	redir @svc_minio_noslash /services/minio/ 308
-	@svc_minio_root path /services/minio/
-	redir @svc_minio_root /services/minio/minio-console/ 308
-	@svc_minio_login path /services/minio/login /services/minio/login/
-	redir @svc_minio_login /services/minio/minio-console/login 308
-	@svc_minio_console_nest_noslash path /services/minio/minio-console
-	redir @svc_minio_console_nest_noslash /services/minio/minio-console/ 308
-	@svc_minio_console_old path_regexp svc_minio_console_old ^/services/minio-console/(.*)$
-	redir @svc_minio_console_old /services/minio/minio-console/{re.svc_minio_console_old.1} 308
-	@svc_minio_console_noslash path /services/minio-console
-	redir @svc_minio_console_noslash /services/minio/minio-console/ 308
-	@svc_loki_root path /services/loki/
-	redir @svc_loki_root /services/loki/ready 308
+http://loki.aither {
+	import any_bind
+	# Loki has no index page; redirect root to /ready for a useful landing.
+	@loki_root path /
+	redir @loki_root /ready 308
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
 
-	# Root landing page for LAN users.
+http://prometheus.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+# MinIO S3 API (mc, SDK, boto3 — not the browser console).
+http://minio.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+# MinIO browser console — its own hostname so the SPA boots cleanly at root.
+http://minio-console.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+http://ntfy.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+http://alloy.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+http://rustfs.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+# tusd — ForwardAuth applied by Caddy before forwarding to Traefik.
+# OPTIONS (CORS preflight) and Uppy-Referer requests bypass auth so the upload
+# flow works from the browser UI without extra token plumbing.
+# Traefik routes by Host: tusd.aither → tusd instances (no middleware on its router).
+http://tusd.aither {
+	import any_bind
+
+	@preflight method OPTIONS
+	handle @preflight {
+		reverse_proxy abc-nodes-traefik.service.consul:8081
+	}
+
+	@from_uppy header Referer *uppy.aither*
+	handle @from_uppy {
+		reverse_proxy abc-nodes-traefik.service.consul:8081
+	}
+
+	handle {
+		forward_auth abc-nodes-auth.service.consul:9191 {
+			uri /auth
+			copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
+		}
+		reverse_proxy abc-nodes-traefik.service.consul:8081
+	}
+}
+
+http://uppy.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+# Vault secrets manager UI.
+# Note: vault.aither/ui/ is the main UI path.
+http://vault.aither {
+	import any_bind
+	@vault_root path /
+	redir @vault_root /ui/ 308
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+# Boundary session broker UI + API.
+http://boundary.aither {
+	import any_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+# Traefik dashboard — direct proxy (bypasses Traefik's own web entry point).
+# Accessible at http://traefik.aither/dashboard/ (Traefik requires trailing slash).
+http://traefik.aither {
+	import any_bind
+	@traefik_root path /
+	redir @traefik_root /dashboard/ 308
+	reverse_proxy abc-nodes-traefik-dashboard.service.consul:8888
+}
+
+# Consul UI — reverse-proxied from its native port 8500.
+# Consul UI is read-only when ACLs are disabled; useful for inspecting the
+# service catalog, health checks, and key-value store during Phase-1/2.
+http://consul.aither {
+	import any_bind
+	@consul_root path /
+	redir @consul_root /ui/ 308
+	reverse_proxy 100.70.185.46:8500
+}
+
+# Nomad UI — still at its native /ui/ path (Ember SPA rootURL is hardcoded).
+http://nomad.aither {
+	import any_bind
+	@nomad_root path /
+	redir @nomad_root /ui/settings/tokens 308
+	reverse_proxy 100.70.185.46:4646
+}
+
+# ══ INSTITUTIONAL HOST (aither.mb.sun.ac.za) ══════════════════════════════════
+# Primary roles:
+#   • Landing page at /
+#   • Nomad UI at /ui/* and /v1/* (cannot be moved — hardcoded SPA rootURL)
+#   • tusd /files/* endpoint (Location header returns /files/<id> at site root)
+#   • 308 redirects → *.aither vhosts for everything else
+
+http://aither.mb.sun.ac.za {
+	import lan_bind
+
+	# ── Root landing page ─────────────────────────────────────────────────────
 	@root path /
 	handle @root {
 		root * /etc/caddy/landing
@@ -149,25 +187,7 @@
 		file_server
 	}
 
-	# ntfy HTML is under /services/ntfy/* but loads root paths (/static/*, …).
-	@ntfy_asset_req {
-		path /static/* /config.js /manifest.webmanifest /locales/* /docs /docs/* /sw.js
-		header Referer */services/ntfy*
-	}
-	handle @ntfy_asset_req {
-		reverse_proxy 100.70.185.46:8088
-	}
-
-	# MinIO Console root paths (same host as ntfy static paths).
-	@minio_console_asset_req {
-		path /api/* /ws/* /static/* /images/* /styles/* /favicon* /manifest.json /Loader.svg /apple-icon-180x180.png /safari-pinned-tab.svg
-		header Referer */services/minio/minio-console*
-	}
-	handle @minio_console_asset_req {
-		reverse_proxy 100.70.185.46:9001
-	}
-
-	# Nomad API/UI at site root (CLI, SDKs, bookmarks).
+	# ── Nomad UI — must stay at /ui/* (Ember SPA rootURL hardcoded to /ui) ───
 	handle /ui/* {
 		reverse_proxy 100.70.185.46:4646
 	}
@@ -175,191 +195,118 @@
 		reverse_proxy 100.70.185.46:4646
 	}
 
-	# MinIO Console API/websocket fallback.
-	# Keep only /api/* and /ws/* here (no /static/* catch-all) so the console can
-	# authenticate even if the browser omits Referer on API requests.
-	handle /api/* {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle /ws/* {
-		reverse_proxy 100.70.185.46:9001
-	}
-
-	# Do NOT globally proxy root asset paths (/static/*, /images/*, ...).
-	# Keep them scoped via explicit Referer matchers above to avoid hijacking
-	# unrelated routes (e.g. Nomad UI relative assets when Referer is absent).
-
-	handle /services/grafana/* {
-		reverse_proxy 100.70.185.46:3000
-	}
-	handle_path /services/grafana-alloy/* {
-		reverse_proxy 100.70.185.46:12345
-	}
-	handle_path /services/loki/* {
-		reverse_proxy 100.70.185.46:3100
-	}
-	handle_path /services/minio/* {
-		reverse_proxy 100.70.185.46:9000
-	}
-	handle_path /services/minio/minio-console/* {
-		reverse_proxy 100.70.185.46:9001
-	}
-	handle_path /services/ntfy/* {
-		reverse_proxy 100.70.185.46:8088
-	}
-	# Traefik dynamic config matches PathPrefix `/traefik` on this host.
-	handle /services/traefik/* {
-		uri replace /services/traefik /traefik
-		reverse_proxy 100.70.185.46:8081
-	}
-	handle_path /services/prometheus/* {
-		reverse_proxy 100.70.185.46:9090 {
-			header_down Location "^/(.*)$" "/services/prometheus/$1"
-		}
-	}
-	handle_path /services/rustfs/* {
-		reverse_proxy 100.70.185.46:9900
-	}
-	# Allow browser preflight to reach tusd without token challenge.
-	@tusd_options {
-		method OPTIONS
-		path /services/tusd/*
-	}
-	handle @tusd_options {
-		uri strip_prefix /services/tusd
-		reverse_proxy 100.70.185.46:8080
-	}
-	# Uppy browser flow: allow uploads without Nomad token challenge.
-	@tusd_uppy_services {
-		path /services/tusd/*
-		header Referer */services/uppy*
-	}
-	handle @tusd_uppy_services {
-		uri strip_prefix /services/tusd
-		reverse_proxy 100.70.185.46:8080
-	}
-	@tusd_uppy_files {
-		path /files/*
-		header Referer */services/uppy*
-	}
-	handle @tusd_uppy_files {
-		reverse_proxy 100.70.185.46:8080
-	}
-	handle_path /services/tusd/* {
-		forward_auth 100.70.185.46:9191 {
-			uri /auth
-			copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
-		}
-		reverse_proxy 100.70.185.46:8080
-	}
-	# tusd upload Location stays /files/<id> at site root (not under /services/).
-	@files_options {
+	# ── tusd /files/* — Location header returns absolute /files/<id> ─────────
+	# tusd creates uploads at /files/<id>; browsers follow that Location header
+	# back to this site root. OPTIONS bypass + Uppy-Referer bypass mirror the
+	# tusd.aither vhost logic.
+	@files_preflight {
 		method OPTIONS
 		path /files/*
 	}
-	handle @files_options {
-		reverse_proxy 100.70.185.46:8080
+	handle @files_preflight {
+		reverse_proxy abc-nodes-tusd.service.consul:8080
+	}
+	@files_from_uppy {
+		path /files/*
+		header Referer *uppy.aither*
+	}
+	handle @files_from_uppy {
+		reverse_proxy abc-nodes-tusd.service.consul:8080
 	}
 	handle /files/* {
-		forward_auth 100.70.185.46:9191 {
+		forward_auth abc-nodes-auth.service.consul:9191 {
 			uri /auth
 			copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
 		}
-		reverse_proxy 100.70.185.46:8080
-	}
-	handle_path /services/uppy/* {
-		reverse_proxy 100.70.185.46:8090
-	}
-	handle_path /services/nomad/* {
-		reverse_proxy 100.70.185.46:4646 {
-			header_down Location ^https?://[\w.:]+/(.*)$ "/services/nomad/$1"
-			header_down Location ^/(ui|v1)(.*)$ "/services/nomad/$1$2"
-		}
+		reverse_proxy abc-nodes-tusd.service.consul:8080
 	}
 
+	# ── /services/... → *.aither redirects ───────────────────────────────────
+	# Strips the /services/<name> prefix so the browser lands at the correct
+	# path on the vhost (e.g. /services/grafana/d/foo → grafana.aither/d/foo).
+	# minio-console must precede the more-general minio rule.
+
+	@svc_grafana path_regexp svc_grafana ^/services/grafana(/.*)?$
+	redir @svc_grafana http://grafana.aither{re.svc_grafana.1} 308
+
+	@svc_loki path_regexp svc_loki ^/services/loki(/.*)?$
+	redir @svc_loki http://loki.aither{re.svc_loki.1} 308
+
+	@svc_prometheus path_regexp svc_prometheus ^/services/prometheus(/.*)?$
+	redir @svc_prometheus http://prometheus.aither{re.svc_prometheus.1} 308
+
+	@svc_minio_console path_regexp svc_minio_console ^/services/minio/minio-console(/.*)?$
+	redir @svc_minio_console http://minio-console.aither{re.svc_minio_console.1} 308
+
+	@svc_minio path_regexp svc_minio ^/services/minio(/.*)?$
+	redir @svc_minio http://minio.aither{re.svc_minio.1} 308
+
+	@svc_ntfy path_regexp svc_ntfy ^/services/ntfy(/.*)?$
+	redir @svc_ntfy http://ntfy.aither{re.svc_ntfy.1} 308
+
+	@svc_tusd path_regexp svc_tusd ^/services/tusd(/.*)?$
+	redir @svc_tusd http://tusd.aither{re.svc_tusd.1} 308
+
+	@svc_uppy path_regexp svc_uppy ^/services/uppy(/.*)?$
+	redir @svc_uppy http://uppy.aither{re.svc_uppy.1} 308
+
+	@svc_alloy path_regexp svc_alloy ^/services/grafana-alloy(/.*)?$
+	redir @svc_alloy http://alloy.aither{re.svc_alloy.1} 308
+
+	@svc_rustfs path_regexp svc_rustfs ^/services/rustfs(/.*)?$
+	redir @svc_rustfs http://rustfs.aither{re.svc_rustfs.1} 308
+
+	@svc_vault path_regexp svc_vault ^/services/vault(/.*)?$
+	redir @svc_vault http://vault.aither{re.svc_vault.1} 308
+
+	@svc_boundary path_regexp svc_boundary ^/services/boundary(/.*)?$
+	redir @svc_boundary http://boundary.aither{re.svc_boundary.1} 308
+
+	@svc_consul path_regexp svc_consul ^/services/consul(/.*)?$
+	redir @svc_consul http://consul.aither{re.svc_consul.1} 308
+
+	@svc_traefik path_regexp svc_traefik ^/services/traefik(/.*)?$
+	redir @svc_traefik http://traefik.aither{re.svc_traefik.1} 308
+
+	# Nomad: /services/nomad/* → nomad.aither (strip prefix, keep subpath for /ui/...)
+	@svc_nomad_subpath path_regexp svc_nomad_subpath ^/services/nomad(/ui/.*|/v1/.*)?$
+	redir @svc_nomad_subpath http://nomad.aither{re.svc_nomad_subpath.1} 308
+	@svc_nomad_root path /services/nomad /services/nomad/
+	redir @svc_nomad_root http://nomad.aither 308
+
+	# ── Legacy bare paths (pre-vhost era) → *.aither ─────────────────────────
+	@legacy_grafana path_regexp legacy_grafana ^/grafana(/.*)?$
+	redir @legacy_grafana http://grafana.aither{re.legacy_grafana.1} 308
+
+	@legacy_ntfy path_regexp legacy_ntfy ^/ntfy(/.*)?$
+	redir @legacy_ntfy http://ntfy.aither{re.legacy_ntfy.1} 308
+
+	@legacy_prometheus path_regexp legacy_prometheus ^/prometheus(/.*)?$
+	redir @legacy_prometheus http://prometheus.aither{re.legacy_prometheus.1} 308
+
+	@legacy_loki path_regexp legacy_loki ^/loki(/.*)?$
+	redir @legacy_loki http://loki.aither{re.legacy_loki.1} 308
+
+	@legacy_minio_console path_regexp legacy_minio_console ^/minio-console(/.*)?$
+	redir @legacy_minio_console http://minio-console.aither{re.legacy_minio_console.1} 308
+
+	@legacy_minio path_regexp legacy_minio ^/minio(/.*)?$
+	redir @legacy_minio http://minio.aither{re.legacy_minio.1} 308
+
+	@legacy_rustfs path_regexp legacy_rustfs ^/rustfs(/.*)?$
+	redir @legacy_rustfs http://rustfs.aither{re.legacy_rustfs.1} 308
+
+	@legacy_alloy path_regexp legacy_alloy ^/grafana-alloy(/.*)?$
+	redir @legacy_alloy http://alloy.aither{re.legacy_alloy.1} 308
+
+	@legacy_nomad path_regexp legacy_nomad ^/nomad(/.*)?$
+	redir @legacy_nomad http://nomad.aither 308
+
+	@legacy_traefik path_regexp legacy_traefik ^/traefik(/.*)?$
+	redir @legacy_traefik http://traefik.aither{re.legacy_traefik.1} 308
+
+	# ── Fallback ──────────────────────────────────────────────────────────────
 	handle {
 		respond "Not Found" 404
 	}
 }
-
-# HTTPS endpoint with publicly trusted ACME certificate.
-# Temporarily disabled until public DNS for aither.mb.sun.ac.za resolves
-# correctly and LE issuance succeeds (current challenge errors show NXDOMAIN).
-#
-# https://aither.mb.sun.ac.za {
-# 	import lan_bind
-# 	tls {
-# 		issuer acme
-# 	}
-# 	import aither_routes
-# }
-
-# Keep HTTP active until public DNS/ACME issuance is completed.
-http://aither.mb.sun.ac.za {
-	import lan_bind
-	import aither_routes
-}
-
-# Nomad API/UI
-http://nomad.aither {
-	import lan_bind
-	# Current Nomad API bind on aither is Tailscale-only.
-	# Switch this to 146.232.174.77:4646 once Nomad is redeployed on LAN IP.
-	reverse_proxy 100.70.185.46:4646
-}
-
-http://grafana.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:3000
-}
-
-http://grafana-alloy.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:12345
-}
-
-http://loki.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:3100
-}
-
-http://minio.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:9000
-}
-
-http://minio-console.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:9001
-}
-
-http://ntfy.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:8088
-}
-
-http://prometheus.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:9090
-}
-
-http://rustfs.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:9900
-}
-
-http://tusd.aither {
-	import lan_bind
-	# Preserve current behavior: validate Nomad ACL token before proxying to tusd.
-	forward_auth 100.70.185.46:9191 {
-		uri /auth
-		copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
-	}
-	reverse_proxy 100.70.185.46:8080
-}
-
-http://uppy.aither {
-	import lan_bind
-	reverse_proxy 100.70.185.46:8090
-}
-

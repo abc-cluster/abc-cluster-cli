@@ -54,3 +54,19 @@ variable "s3_region" {
   type    = string
   default = "us-east-1"
 }
+
+variable "nginx_image" {
+  type    = string
+  default = "nginx:1.27-alpine"
+}
+
+variable "tusd_endpoint" {
+  description = "Browser-reachable TUS endpoint for the Uppy dashboard"
+  type        = string
+  default     = "http://127.0.0.1:8080/files/"
+}
+
+variable "uppy_max_file_size_mb" {
+  type    = number
+  default = 5120
+}

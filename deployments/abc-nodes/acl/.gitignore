@@ -1,3 +1,8 @@
 # Nomad ACL token secrets — never commit
 tokens.env
 minio-credentials.env
+boundary-credentials.env
+
+# HashiCorp secrets — never commit
+vault-keys.env
+boundary-controller.env

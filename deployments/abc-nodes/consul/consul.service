@@ -1,0 +1,27 @@
+[Unit]
+Description=HashiCorp Consul — Service Discovery & Configuration
+Documentation=https://developer.hashicorp.com/consul
+After=network-online.target tailscaled.service
+Wants=network-online.target
+# Nomad can start without Consul but benefits from it being up first.
+Before=nomad.service
+
+[Service]
+Type=simple
+User=consul
+Group=consul
+ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Give the Tailscale interface time to be assigned before binding.
+RestartSec=5
+Restart=on-failure
+LimitNOFILE=65536
+
+# Write to journald; use `journalctl -u consul -f` to tail.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=consul
+
+[Install]
+WantedBy=multi-user.target

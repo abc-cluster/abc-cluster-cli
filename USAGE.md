@@ -1850,6 +1850,14 @@ abc admin services nomad cli setup
 
 Use this command for Nomad operations that abc does not yet implement natively.
 
+### `admin services nomad-pack cli [--] [nomad-pack-args...]`
+
+Run the upstream `nomad-pack` binary as a passthrough alias while still inheriting the active abc context for Nomad connection details.
+
+```bash
+abc admin services nomad-pack cli -- run deployments/abc-nodes/nomad-packs/abc_nodes_enhanced
+```
+
 ## `admin services cli setup`
 
 Download managed CLI binaries into `~/.abc/binaries` (or `ABC_BINARIES_DIR`).
