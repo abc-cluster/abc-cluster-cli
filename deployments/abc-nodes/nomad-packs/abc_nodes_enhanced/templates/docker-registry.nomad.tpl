@@ -1,7 +1,7 @@
 # Docker Registry v2 — local OCI image store
 
 job "abc-nodes-docker-registry" {
-  namespace = [[ var "services_namespace" . | quote ]]
+  namespace = [[ var "abc_services_namespace" . | quote ]]
   type      = "service"
   priority  = 80
 

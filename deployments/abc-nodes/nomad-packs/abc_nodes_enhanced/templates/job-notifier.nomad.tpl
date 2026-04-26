@@ -1,7 +1,7 @@
 # Nomad job event notifier — abc-nodes floor
 
 job "abc-nodes-job-notifier" {
-  namespace   = [[ var "services_namespace" . | quote ]]
+  namespace   = [[ var "abc_services_namespace" . | quote ]]
   region      = "global"
   datacenters = [[ var "datacenters" . | toStringList ]]
   type        = "service"
@@ -110,11 +110,7 @@ EOF
         destination = "secrets/token.env"
         env         = true
         data        = <<EOF
-{{ with nomadVar "nomad/jobs/abc-nodes-job-notifier" -}}
-NOMAD_TOKEN={{ .nomad_token }}
-{{- else -}}
-NOMAD_TOKEN=
-{{- end }}
+    NOMAD_TOKEN=[[ var "job_notifier_nomad_token" . | quote ]]
 EOF
       }
 

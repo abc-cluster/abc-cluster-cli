@@ -33,7 +33,7 @@
 
 variable "datacenters" {
   type    = list(string)
-  default = ["dc1", "default"]
+  default = ["dc1", "default", "sun-nomadlab", "oci-nomadlab"]
 }
 
 variable "boundary_version" {
@@ -92,12 +92,19 @@ listener "tcp" {
 }
 
 worker {
-  # Unique name per node using the Nomad node ID.
+  # Unique name per node using the Nomad node unique name.
   name = "abc-nodes-worker-{{ env "node.unique.name" }}"
 
-  # Controller address resolved via Consul DNS — automatically updates
-  # if the controller is rescheduled to a different node.
-  initial_upstreams = ["abc-nodes-boundary-cluster.service.consul:9201"]
+  # public_addr: the address Boundary tells clients to proxy SSH sessions through.
+  # CRITICAL: must be a real routable IP, not 0.0.0.0 — otherwise boundary connect ssh hangs.
+  # All cluster nodes are on Tailscale (100.x.y.z range); use that IP.
+  # attr.unique.advertise.address contains "IP:port" — split on ":" and take first segment.
+  public_addr = "{{ env "attr.unique.advertise.address" | regexReplaceAll ":.*$" "" }}:9203"
+
+  # Controller address: direct Tailscale IP of aither (where boundary-controller runs).
+  # Using direct IP because sun-nomadlab nodes do not run Consul clients;
+  # Consul DNS (abc-nodes-boundary-cluster.service.consul) is only resolvable on aither.
+  initial_upstreams = ["100.70.185.46:9201"]
 
   # NOTE: auth_storage_path is for PKI (file-based) worker auth only.
   # When using KMS-based auth (worker-auth kms block below), auth_storage_path
@@ -105,16 +112,17 @@ worker {
 
   tags {
     type   = ["abc-nodes-worker"]
-    region = ["aither"]
+    region = ["{{ env "node.datacenter" }}"]
   }
 }
 
-# Worker-auth KMS — must match the controller's worker-auth key.
+# Worker-auth KMS — must match the controller's worker-auth key
+# (same key in /etc/boundary.d/controller.hcl on aither).
 # KMS auth is mutually exclusive with auth_storage_path (PKI auth).
 kms "aead" {
   purpose   = "worker-auth"
   aead_type = "aes-gcm"
-  key       = "{{ with nomadVar "nomad/jobs/abc-nodes-boundary-worker" }}{{ .worker_auth_key }}{{ end }}"
+  key       = "5EIEUcrJlrPauiiDWMUX7qiH53e6CTcSKcQo5iSDJ/c="
   key_id    = "global_worker_auth"
 }
 EOF
@@ -129,7 +137,11 @@ EOF
       service {
         name     = "abc-nodes-boundary-worker"
         port     = "proxy"
-        provider = "consul"
+        # Use Nomad's built-in service discovery so this job can run on nodes
+        # that do NOT have a Consul client (e.g. sun-nomadlab nodes).
+        # Consul provider auto-injects a "${attr.consul.version} >= 1.8.0" constraint
+        # which prevents placement on non-Consul nodes.
+        provider = "nomad"
         tags     = ["abc-nodes", "boundary", "worker"]
 
         check {

@@ -16,6 +16,7 @@ func TestRunNomadPackCLI_InjectsNomadEnvFromActiveContext(t *testing.T) {
 active_context: dev
 contexts:
   dev:
+    cluster_type: abc-nodes
     endpoint: https://api.example.com
     access_token: api-token
     admin:
