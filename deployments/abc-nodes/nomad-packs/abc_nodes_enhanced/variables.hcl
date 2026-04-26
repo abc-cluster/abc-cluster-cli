@@ -268,3 +268,8 @@ variable "job_notifier_ntfy_topic" {
   type    = string
   default = "abc-jobs"
 }
+
+variable "job_notifier_nomad_token" {
+  type    = string
+  default = ""
+}

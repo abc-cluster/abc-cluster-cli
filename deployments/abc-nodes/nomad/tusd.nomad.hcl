@@ -68,37 +68,16 @@ job "abc-nodes-tusd" {
     count = 1
 
     network {
-      mode = "bridge"
+      mode = "host"
       port "http" {
         static = 8080
         to     = 8080
       }
     }
 
-    task "ensure-s3-bucket" {
-      lifecycle {
-        hook = "prestart"
-      }
-      driver = "containerd-driver"
-
-      config {
-        image = "minio/mc:RELEASE.2025-04-16T18-13-26Z"
-        args  = ["mb", "--ignore-existing", "tusdstore/${var.s3_bucket}"]
-      }
-
-      template {
-        destination = "secrets/minio.env"
-        env         = true
-        data        = <<EOF
-MC_HOST_tusdstore=http://${var.s3_access_key}:${var.s3_secret_key}@100.70.185.46:9000
-EOF
-      }
-
-      resources {
-        cpu    = 64
-        memory = 128
-      }
-    }
+    # Note: ensure-s3-bucket prestart task removed — bucket is pre-created at cluster bootstrap.
+    # If the tusd bucket is missing, create it manually via:
+    #   mc mb --ignore-existing minio/tusd  (using MC_HOST_minio=http://minioadmin:minioadmin@100.70.185.46:9000)
 
     task "tusd" {
       driver = "containerd-driver"
@@ -135,7 +114,7 @@ EOF
       service {
         name     = "abc-nodes-tusd"
         port     = "http"
-        provider = "consul"
+        provider = "nomad"
         tags = [
           "abc-nodes", "tusd", "uploads",
           "traefik.enable=true",
