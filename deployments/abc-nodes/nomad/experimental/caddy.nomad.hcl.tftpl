@@ -1,0 +1,182 @@
+# Caddy — reverse proxy / ingress (abc-experimental namespace)
+# Managed by Terraform — do not edit directly; modify variables.tf instead.
+#
+# Role in the stack:
+#   • Automatic HTTPS via ACME (Let's Encrypt / ZeroSSL) for public routes
+#   • Acts as TLS terminator in front of Traefik for services that need certs
+#   • Tailscale-aware: can bind to the Tailscale interface directly so that
+#     internal services get HTTPS over the Tailscale network (via Tailscale's
+#     ACME integration or a self-signed cert)
+#   • Consul service-discovery: upstream blocks can use Consul DNS
+#     (service-name.service.consul) so Caddy follows live Nomad allocations
+#   • Traefik interop: Caddy can sit in front of or alongside Traefik —
+#     e.g. Caddy handles ACME + Tailscale while Traefik handles host-routing
+#
+# Caddyfile is injected as a Nomad template; edit this file to add routes.
+# The Admin API (port 2019) is exposed on localhost only for `caddy reload`.
+#
+# Enable via Terraform:
+#   terraform apply -var enable_caddy=true
+#
+# Ports:
+#   80   HTTP (redirects to HTTPS or serves Let's Encrypt HTTP challenge)
+#   443  HTTPS (public)
+#   2015 Plain HTTP for internal / Tailscale-only routes
+#   2019 Caddy Admin API (localhost only)
+
+job "abc-experimental-caddy" {
+  namespace = "abc-experimental"
+  type      = "service"
+  priority  = 60
+
+  group "caddy" {
+    count = 1
+
+    # Pin to aither: static ports + ACME state stored on scratch volume.
+    constraint {
+      attribute = "$${attr.unique.hostname}"
+      value     = "aither"
+    }
+
+    network {
+      mode = "host"
+      port "http"       { static = 80 }
+      port "https"      { static = 443 }
+      port "internal"   { static = 2015 }
+      port "admin_api"  { static = 2019 }
+    }
+
+    restart {
+      attempts = 3
+      delay    = "15s"
+      interval = "2m"
+      mode     = "delay"
+    }
+
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
+    # ── Caddyfile ────────────────────────────────────────────────────────────
+    # Rendered into /local/Caddyfile by Nomad's template stanza.
+    # Uses Consul DNS for upstream resolution (requires Nomad client configured
+    # with consul.address; Consul must be accessible at 127.0.0.1:8500).
+    #
+    # Route layout:
+    #   :80          → redirect all to HTTPS
+    #   :443         → TLS routes served by Caddy (ACME auto-cert)
+    #   :2015        → plain-HTTP internal routes (Tailscale-only, no ACME)
+    #
+    # Traefik integration options (choose one):
+    #   A) Caddy in front  — Caddy terminates TLS, proxies to Traefik :80
+    #   B) Traefik in front — Traefik handles routing, Caddy handles specific
+    #      services that need ACME certs Traefik can't manage
+    #
+    # The default config below uses option A for the cluster public host
+    # and exposes selected services directly on the Tailscale interface.
+
+    task "caddy" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${caddy_image}"
+        args  = ["caddy", "run", "--config", "/local/Caddyfile", "--adapter", "caddyfile"]
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/data"   # ACME certs + Caddy state persisted here
+        read_only   = false
+      }
+
+      # ── Caddyfile template ─────────────────────────────────────────────────
+      template {
+        destination = "/local/Caddyfile"
+        change_mode = "signal"
+        change_signal = "SIGUSR1"   # Caddy reloads config on SIGUSR1
+
+        data = <<CADDYFILE
+# ── Global options ──────────────────────────────────────────────────────────
+{
+  # Admin API — localhost only; use `caddy reload` or curl to push new config
+  admin 127.0.0.1:2019
+
+  # ACME issuer — Let's Encrypt staging for testing; switch to production when ready
+  # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+  # Tailscale integration: uncomment to use Tailscale's built-in ACME for
+  # *.ts.net certs (requires caddy-tailscale plugin — not included in stock image;
+  # build a custom image or use xcaddy to add it).
+  # tailscale_auth_key  $${TAILSCALE_AUTH_KEY}
+}
+
+# ── HTTP → HTTPS redirect ────────────────────────────────────────────────────
+:80 {
+  redir https://{host}{uri} permanent
+}
+
+# ── Public HTTPS termination ─────────────────────────────────────────────────
+# Caddy auto-provisions a Let's Encrypt certificate for the public hostname.
+# All traffic is proxied to Traefik which handles host-based routing.
+${caddy_public_host} {
+  tls {
+    # Let's Encrypt will issue a cert for this hostname.
+    # Ensure port 80 + 443 are reachable from the internet for ACME HTTP challenge.
+  }
+
+%{ if traefik_addr != "" ~}
+  # Option A: Caddy terminates TLS, Traefik handles routing
+  reverse_proxy ${traefik_addr} {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+%{ else ~}
+  # Traefik not enabled — serve a status page
+  respond "abc-nodes cluster — enable Traefik for service routing" 200
+%{ endif ~}
+}
+
+# ── Tailscale / internal plain-HTTP routes ────────────────────────────────────
+# Bind to port 2015 for services that should only be accessible over Tailscale.
+# No ACME cert required — Tailscale MagicDNS handles name resolution.
+:2015 {
+  @grafana    host grafana.aither
+  @prometheus host prometheus.aither
+  @loki       host loki.aither
+  @ntfy       host ntfy.aither
+  @supabase   host supabase.aither
+  @restic     host restic.aither
+
+  # Route to Consul-resolved upstreams (requires local Consul agent on :8500)
+  # Consul DNS format: <job-name>-<task>.service.consul  or  <service-name>.service.consul
+  handle @grafana    { reverse_proxy grafana.service.consul:3000 }
+  handle @prometheus { reverse_proxy prometheus.service.consul:9090 }
+  handle @loki       { reverse_proxy loki.service.consul:3100 }
+  handle @ntfy       { reverse_proxy ntfy.service.consul:8088 }
+  handle @supabase   { reverse_proxy 127.0.0.1:3001 }
+  handle @restic     { reverse_proxy 127.0.0.1:8000 }
+
+  # Fallback — list available internal routes
+  handle {
+    respond "abc-nodes internal gateway — use a recognised *.aither hostname" 200
+  }
+}
+CADDYFILE
+      }
+
+      env {
+        # XDG_DATA_HOME — Caddy uses this for ACME cert storage when /data is mounted.
+        XDG_DATA_HOME = "/data"
+      }
+
+      resources {
+        cpu    = 300
+        memory = 256
+      }
+    }
+  }
+}

@@ -2,12 +2,12 @@
 # CPU stress in namespace "default" using prebuilt OCI (shell + stress-ng in image).
 # Image: community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8 (shell + stress-ng; Nomad containerd-driver).
 #
-# Dry-run: abc job run deployments/abc-nodes/nomad/tests/workloads/stress-ng-cpu-default.sh
-# Submit:  abc job run deployments/abc-nodes/nomad/tests/workloads/stress-ng-cpu-default.sh --submit
+# Preview HCL: abc job run deployments/abc-nodes/nomad/tests/workloads/stress-ng-cpu-default.sh --no-submit
+# Submit:       abc job run deployments/abc-nodes/nomad/tests/workloads/stress-ng-cpu-default.sh
 #
 #ABC --name=wl-stress-cpu-default
 #ABC --namespace=default
-#ABC --driver=containerd
+#ABC --driver=auto-container
 #ABC --driver.config.image=community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8
 #ABC --cores=2
 #ABC --mem=512M

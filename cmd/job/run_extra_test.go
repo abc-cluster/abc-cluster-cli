@@ -987,9 +987,33 @@ func committedWorkloadScript(t *testing.T, name string) string {
 	return p
 }
 
+// abcNodesConfigWithContainerd returns a minimal abc-nodes config YAML whose
+// capabilities.nodes list includes one node with containerd-driver.
+// Used by tests that exercise auto-container driver resolution.
+const abcNodesConfigWithContainerd = `version: 1.0
+active_context: abc-nodes-test
+contexts:
+  abc-nodes-test:
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+    capabilities:
+      nodes:
+        - id: "aaaa0000-0000-0000-0000-000000000001"
+          hostname: "test-node-containerd"
+          drivers:
+            - containerd-driver
+            - exec
+            - raw_exec
+`
+
 func TestJobRun_WorkloadStressNgCpuDefaultHCL(t *testing.T) {
 	p := committedWorkloadScript(t, "stress-ng-cpu-default.sh")
-	out, err := executeCmd(t, p)
+	// Use a config with capabilities.nodes so auto-container can resolve to containerd-driver.
+	out, err := executeCmdWithABCYAML(t, abcNodesConfigWithContainerd, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -997,7 +1021,11 @@ func TestJobRun_WorkloadStressNgCpuDefaultHCL(t *testing.T) {
 		t.Errorf("expected namespace default in HCL, got:\n%s", out)
 	}
 	if !strings.Contains(out, `driver = "containerd-driver"`) {
-		t.Errorf("expected containerd-driver, got:\n%s", out)
+		t.Errorf("expected containerd-driver resolved from auto-container, got:\n%s", out)
+	}
+	// auto-container injects a node.unique.id regexp constraint.
+	if !strings.Contains(out, `node.unique.id`) {
+		t.Errorf("expected node.unique.id constraint injected by auto-container, got:\n%s", out)
 	}
 	if !strings.Contains(out, `community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8`) {
 		t.Errorf("expected hyperfine_stress-ng Wave OCI image in HCL, got:\n%s", out)

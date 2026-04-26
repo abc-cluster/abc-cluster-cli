@@ -14,5 +14,16 @@ type Capabilities struct {
 	Notifications bool      `yaml:"notifications,omitempty"` // ntfy running
 	Secrets       string    `yaml:"secrets,omitempty"`       // nomad | vault | vault+sealed | none
 	Proxy         bool      `yaml:"proxy,omitempty"`         // traefik running
-	LastSynced    time.Time `yaml:"last_synced,omitempty"`
+	// Nodes lists per-node driver capabilities. Updated by "abc cluster capabilities sync".
+	Nodes      []NodeCapability `yaml:"nodes,omitempty"`
+	LastSynced time.Time        `yaml:"last_synced,omitempty"`
+}
+
+// NodeCapability records the driver capabilities of a single Nomad client node,
+// as reported by GET /v1/node/<id>. Populated by "abc cluster capabilities sync".
+type NodeCapability struct {
+	ID       string   `yaml:"id"`
+	Hostname string   `yaml:"hostname"`
+	Drivers  []string `yaml:"drivers,omitempty"` // healthy+detected drivers only
+	Volumes  []string `yaml:"volumes,omitempty"` // reserved for Phase 2
 }

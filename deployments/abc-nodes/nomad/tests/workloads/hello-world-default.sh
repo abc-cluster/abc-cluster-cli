@@ -2,10 +2,10 @@
 # Minimal hello-world smoke job for abc CLI submission testing.
 # Use this first to validate context token, namespace ACL, and containerd execution.
 #
-# Dry-run:
-#   abc job run deployments/abc-nodes/nomad/tests/workloads/hello-world-default.sh
-# Submit:
-#   abc job run deployments/abc-nodes/nomad/tests/workloads/hello-world-default.sh --submit --watch
+# Preview HCL:
+#   abc job run deployments/abc-nodes/nomad/tests/workloads/hello-world-default.sh --no-submit
+# Submit (default) and stream logs:
+#   abc job run deployments/abc-nodes/nomad/tests/workloads/hello-world-default.sh --watch
 #
 #ABC --name=wl-hello-world-default
 #ABC --namespace=default

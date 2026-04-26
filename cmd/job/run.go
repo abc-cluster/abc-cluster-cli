@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
+	"github.com/abc-cluster/abc-cluster-cli/internal/jurist"
 	"github.com/spf13/cobra"
 )
 
@@ -141,22 +143,22 @@ EXAMPLES
   # Built-in sanity workload (no local script file needed)
   abc job run hello-world
 
-  # Print generated HCL (no cluster needed)
-  abc job run bwa-align.sh
+  # Preview generated HCL without submitting
+  abc job run bwa-align.sh --no-submit
 
-  # Pipe to nomad directly
-  abc job run bwa-align.sh | nomad job run -
+  # Pipe generated HCL to nomad directly
+  abc job run bwa-align.sh --no-submit | nomad job run -
+
+  # Submit (default) and tail logs immediately
+  abc job run bwa-align.sh --region za-cpt --watch
 
   # Dry-run: plan server-side, show placement feasibility
   abc job run bwa-align.sh --dry-run --region za-cpt
 
-  # Submit and tail logs immediately
-  abc job run bwa-align.sh --region za-cpt --watch
-
-  # Override preamble directive from CLI
+  # Submit with preamble directive overridden from CLI
   abc job run bwa-align.sh --nodes=96 --cores=16
 
-  # Write HCL to file (no submit)
+  # Write HCL to file without submitting
   abc job run bwa-align.sh --output-file bwa-align.hcl`,
 		Args: cobra.ExactArgs(1),
 		RunE: runJob,
@@ -215,6 +217,9 @@ EXAMPLES
 	// SSH execution mode
 	cmd.Flags().Bool("ssh", false, "Execute the job on a remote host via SSH instead of submitting to Nomad")
 	cmd.Flags().Duration("ssh-timeout", 0, "Timeout for SSH job execution (e.g. 30m, 2h); 0 means no timeout")
+
+	// Input format
+	cmd.Flags().String("format", "", "Input format: shell (default, #ABC preamble script) or hcl (native Nomad HCL job definition). Auto-detected from file extension when omitted.")
 
 	return cmd
 }
@@ -334,8 +339,37 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	return nil
 }
 
+// detectJobFormat returns "hcl" for files whose extension unambiguously identifies
+// them as native Nomad HCL job definitions (.hcl, .nomad.hcl), and "shell" otherwise.
+func detectJobFormat(path string) string {
+	base := filepath.Base(path)
+	if strings.HasSuffix(base, ".nomad.hcl") || strings.ToLower(filepath.Ext(base)) == ".hcl" {
+		return "hcl"
+	}
+	return "shell"
+}
+
 func runJob(cmd *cobra.Command, args []string) error {
 	scriptPath := args[0]
+
+	// Resolve --format (shell | hcl); auto-detect from extension when omitted.
+	format, _ := cmd.Flags().GetString("format")
+	if format == "" {
+		if scriptPath != "hello-world" {
+			format = detectJobFormat(scriptPath)
+		} else {
+			format = "shell"
+		}
+	}
+	switch format {
+	case "hcl":
+		return runJobNativeHCL(cmd, scriptPath)
+	case "shell":
+		// fall through to existing path
+	default:
+		return fmt.Errorf("unknown --format %q: must be shell or hcl", format)
+	}
+
 	isBuiltInHelloWorld := scriptPath == "hello-world"
 	var (
 		scriptBytes []byte
@@ -415,6 +449,10 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 	applyAbcNodesNomadNamespaceFromConfig(spec)
 
+	if err := resolveAutoDriver(cmd, spec); err != nil {
+		return err
+	}
+
 	var scriptBody string
 	if isBuiltInHelloWorld {
 		scriptBody, err = finalizeHelloWorld(spec)
@@ -466,6 +504,151 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprint(cmd.OutOrStdout(), hcl)
 	return nil
+}
+
+// resolveAutoDriver resolves an "auto-container" or "auto-exec" driver hint
+// to a concrete Nomad driver using capabilities.nodes from the active context config.
+// It mutates spec.Driver to the resolved driver and appends a placement constraint.
+// If the driver is not an auto-* value, it returns immediately (no-op).
+// Warnings (e.g. raw_exec fallback) are printed to stderr.
+func resolveAutoDriver(cmd *cobra.Command, spec *jobSpec) error {
+	if !jurist.IsAutoDriver(spec.Driver) {
+		return nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config for driver resolution: %w", err)
+	}
+	ctx := cfg.ActiveCtx()
+	if ctx.Capabilities == nil || len(ctx.Capabilities.Nodes) == 0 {
+		return fmt.Errorf(
+			"driver %q requires node capability data\n"+
+				"  Run: abc cluster capabilities sync",
+			spec.Driver,
+		)
+	}
+	priority := ctx.JobDriverPriority()
+	res, err := jurist.ResolveLocally(spec.Driver, ctx.Capabilities.Nodes, priority)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"  [jurist] %s → %s  (%s)\n",
+		res.OriginalDriver, res.ResolvedDriver, res.Reason,
+	)
+	if res.Warning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  [jurist] Warning: %s\n", res.Warning)
+	}
+	spec.Driver = res.ResolvedDriver
+	// Constraint: restrict placement to nodes that have the resolved driver.
+	// We use a regexp on ${node.unique.id} rather than ${driver.NAME} because
+	// Nomad rejects hyphenated driver names (e.g. "containerd-driver") in the
+	// ${driver.X} attribute path syntax.
+	if len(res.EligibleNodeIDs) > 0 {
+		nodeIDPattern := "^(" + strings.Join(res.EligibleNodeIDs, "|") + ")$"
+		spec.Constraints = append(spec.Constraints, nomadConstraint{
+			Attribute: "${node.unique.id}",
+			Operator:  "regexp",
+			Value:     nodeIDPattern,
+		})
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"  [jurist] constraint: node.unique.id =~ %d eligible node(s)\n",
+			len(res.EligibleNodeIDs),
+		)
+	}
+	return nil
+}
+
+// runJobNativeHCL handles --format=hcl: the input file is a native Nomad HCL job
+// definition. It is passed through directly without preamble parsing or HCL generation.
+// Submission flags (--submit, --no-submit, --dry-run, --output-file) behave identically
+// to the shell path. Most scheduler override flags (--cores, --mem, etc.) are silently
+// ignored; the HCL file is the authoritative spec.
+func runJobNativeHCL(cmd *cobra.Command, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read HCL file %q: %w", path, err)
+	}
+	hclStr := string(data)
+
+	submit, _ := cmd.Flags().GetBool("submit")
+	noSubmit, _ := cmd.Flags().GetBool("no-submit")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	outputFile, _ := cmd.Flags().GetString("output-file")
+	if noSubmit {
+		submit = false
+	}
+	if outputFile != "" && !cmd.Flags().Changed("submit") && !cmd.Flags().Changed("no-submit") {
+		submit = false
+	}
+
+	if !submit && !dryRun {
+		if outputFile != "" {
+			return os.WriteFile(outputFile, data, 0644)
+		}
+		fmt.Fprint(cmd.OutOrStdout(), hclStr)
+		return nil
+	}
+
+	ctx := cmd.Context()
+	nc := nomadClientFromCmd(cmd)
+
+	fmt.Fprintf(cmd.ErrOrStderr(), "  Parsing HCL via Nomad (%s)...\n", nomadAddrFromCmd(cmd))
+	jobJSON, err := nc.ParseHCL(ctx, hclStr)
+	if err != nil {
+		return fmt.Errorf("nomad HCL parse: %w", err)
+	}
+
+	jobID := extractJobIDFromJSON(jobJSON)
+
+	if err := nc.PreflightJobTaskDrivers(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
+		return err
+	}
+
+	if dryRun {
+		plan, err := nc.PlanJob(ctx, jobID, jobJSON)
+		if err != nil {
+			return fmt.Errorf("nomad plan: %w", err)
+		}
+		printPlan(cmd, hclStr, plan)
+		return nil
+	}
+
+	fmt.Fprintln(cmd.ErrOrStderr(), "  Submitting to Nomad...")
+	resp, err := nc.RegisterJob(ctx, jobJSON)
+	if err != nil {
+		return fmt.Errorf("nomad register: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "\n  ✓ Job submitted\n")
+	fmt.Fprintf(out, "  Nomad job ID   %s\n", jobID)
+	fmt.Fprintf(out, "  Evaluation ID  %s\n", resp.EvalID)
+	if resp.Warnings != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ Warnings: %s\n", resp.Warnings)
+	}
+	fmt.Fprintf(out, "\n  Track progress:\n")
+	fmt.Fprintf(out, "    abc job logs %s --follow\n", jobID)
+	fmt.Fprintf(out, "    abc job show %s\n", jobID)
+
+	if watch, _ := cmd.Flags().GetBool("watch"); watch {
+		watchTimeout, _ := cmd.Flags().GetDuration("watch-timeout")
+		fmt.Fprintln(cmd.ErrOrStderr(), "\n  Waiting for allocation...")
+		return watchJobLogs(ctx, nc, jobID, "", out, watchDelay, watchTimeout)
+	}
+	return nil
+}
+
+// extractJobIDFromJSON extracts the job ID from a Nomad job JSON blob (returned by ParseHCL).
+// Falls back to an empty string if the field is absent or malformed.
+func extractJobIDFromJSON(jobJSON json.RawMessage) string {
+	var obj struct {
+		ID string `json:"ID"`
+	}
+	if err := json.Unmarshal(jobJSON, &obj); err == nil && obj.ID != "" {
+		return obj.ID
+	}
+	return ""
 }
 
 func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl string, submit, dryRun bool) error {

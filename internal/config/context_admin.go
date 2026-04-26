@@ -60,9 +60,33 @@ func isCredSourceEmpty(cs *AdminFloorCredSource) bool {
 	return len(cs.Local) == 0 && len(cs.Nomad) == 0 && len(cs.Vault) == 0
 }
 
+// TerraformService holds Terraform deployment settings for one context.
+// Nomad credentials are inherited from admin.services.nomad and do not need
+// to be duplicated here; only Terraform-specific knobs belong in this struct.
+type TerraformService struct {
+	// DeployDir is the path (absolute or relative to CWD) of the Terraform
+	// working directory for this context's abc-nodes deployment.
+	// e.g. "deployments/abc-nodes/terraform"
+	DeployDir string `yaml:"deploy_dir,omitempty"`
+
+	// Workspace is the Terraform workspace to select before running commands.
+	// Defaults to "default" when empty.
+	Workspace string `yaml:"workspace,omitempty"`
+
+	// Vars holds additional TF_VAR_* overrides injected at runtime alongside
+	// the auto-injected Nomad credentials.  Keys are Terraform variable names
+	// (without the TF_VAR_ prefix); values are plain strings.
+	// Example:
+	//   vars:
+	//     cluster_public_host: aither.mb.sun.ac.za
+	//     deploy_observability_stack: "true"
+	Vars map[string]string `yaml:"vars,omitempty"`
+}
+
 // AdminServices holds operator-facing integrations under contexts.<name>.admin.services.
 type AdminServices struct {
 	Nomad        *NomadService      `yaml:"nomad,omitempty"`
+	Terraform    *TerraformService  `yaml:"terraform,omitempty"`
 	MinIO        *AdminFloorService `yaml:"minio,omitempty"`
 	Tusd         *AdminFloorService `yaml:"tusd,omitempty"`
 	Faasd        *AdminFloorService `yaml:"faasd,omitempty"`
@@ -132,6 +156,37 @@ func (c Context) NomadRegion() string {
 		return ""
 	}
 	return strings.TrimSpace(c.Admin.Services.Nomad.Region)
+}
+
+// TerraformDeployDir returns contexts.<name>.admin.services.terraform.deploy_dir.
+// Returns "" when unset; callers fall back to CWD or a flag value.
+func (c Context) TerraformDeployDir() string {
+	if c.Admin.Services.Terraform == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Terraform.DeployDir)
+}
+
+// TerraformWorkspace returns contexts.<name>.admin.services.terraform.workspace.
+// Returns "" when unset (callers treat "" as "default").
+func (c Context) TerraformWorkspace() string {
+	if c.Admin.Services.Terraform == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Terraform.Workspace)
+}
+
+// TerraformVars returns the extra TF_VAR_* map from
+// contexts.<name>.admin.services.terraform.vars.  Never nil.
+func (c Context) TerraformVars() map[string]string {
+	if c.Admin.Services.Terraform == nil || len(c.Admin.Services.Terraform.Vars) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(c.Admin.Services.Terraform.Vars))
+	for k, v := range c.Admin.Services.Terraform.Vars {
+		out[k] = v
+	}
+	return out
 }
 
 // normalizeContextNomad folds deprecated YAML (top-level nomad_*, services.nomad)

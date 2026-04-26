@@ -3,7 +3,7 @@
 # hyperfine_stress-ng Wave image (containerd-driver).
 #
 #   abc context use <tenant-context>
-#   abc job run .../stress-ng-cpu-abc-context.sh --submit
+#   abc job run .../stress-ng-cpu-abc-context.sh
 #
 #ABC --name=wl-stress-cpu-abc-context
 #ABC --driver=containerd

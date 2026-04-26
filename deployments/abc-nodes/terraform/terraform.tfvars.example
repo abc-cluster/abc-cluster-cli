@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Example Terraform Variables
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Copy this file to terraform.tfvars and customize for your environment.
+# WARNING: terraform.tfvars is gitignored - do not commit sensitive data!
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # Edit terraform.tfvars with your values
+#   terraform plan
+#
+
+# ───────────────────────────────────────────────────────────────────────────
+# Nomad Connection (prefer using NOMAD_TOKEN and NOMAD_ADDR env vars)
+# ───────────────────────────────────────────────────────────────────────────
+
+# nomad_address = "http://100.77.21.36:4646"
+# nomad_token   = "your-nomad-token-here"  # Better: export NOMAD_TOKEN=xxx
+# nomad_region  = "global"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Cluster Configuration
+# ───────────────────────────────────────────────────────────────────────────
+
+# datacenters         = ["dc1", "default"]
+# cluster_public_host = "aither.mb.sun.ac.za"
+# cluster_tailscale_ip = "100.70.185.46"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Deployment Control
+# ───────────────────────────────────────────────────────────────────────────
+
+deploy_observability_stack = true
+deploy_optional_services   = false
+deploy_boundary_worker     = true
+
+# ───────────────────────────────────────────────────────────────────────────
+# Service Images (override defaults for specific versions)
+# ───────────────────────────────────────────────────────────────────────────
+
+# minio_image      = "minio/minio:RELEASE.2024-12-18T13-15-44Z"
+# grafana_image    = "grafana/grafana:11.4.0"
+# prometheus_image = "prom/prometheus:v2.54.1"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Secrets (STRONGLY recommend using environment variables instead)
+# ───────────────────────────────────────────────────────────────────────────
+
+# minio_root_user     = "minioadmin"
+# minio_root_password = "CHANGE_ME_IN_PRODUCTION"
+# grafana_admin_password = "CHANGE_ME_IN_PRODUCTION"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Storage Configuration
+# ───────────────────────────────────────────────────────────────────────────
+
+# s3_bucket = "tusd"
+# loki_bucket = "loki"
+# ntfy_attachment_bucket = "ntfy"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Application Configuration
+# ───────────────────────────────────────────────────────────────────────────
+
+# uppy_max_file_size_mb = 5120
+# tusd_endpoint = "http://aither.mb.sun.ac.za/services/tusd/files/"

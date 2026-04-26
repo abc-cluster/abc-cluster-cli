@@ -150,19 +150,13 @@ EOF
         NTFY_TOPIC = var.ntfy_topic
       }
 
-      # NOMAD_TOKEN read from Nomad Variable at runtime — never hardcoded.
-      # Store: abc admin services nomad cli -- var put -namespace abc-services -force \
-      #          nomad/jobs/abc-nodes-job-notifier nomad_token=<token>
+      # NOMAD_TOKEN injected by Terraform at deploy time.
+      # Workload-identity-based nomadVar reads fail on this cluster (server returns
+      # 500 on WI JWT verification). Token is passed via Terraform templatefile().
       template {
         destination = "secrets/token.env"
         env         = true
-        data        = <<EOF
-{{ with nomadVar "nomad/jobs/abc-nodes-job-notifier" -}}
-NOMAD_TOKEN={{ .nomad_token }}
-{{- else -}}
-NOMAD_TOKEN=
-{{- end }}
-EOF
+        data        = "NOMAD_TOKEN=${nomad_token}\n"
       }
 
       resources {

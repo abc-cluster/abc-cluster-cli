@@ -58,6 +58,186 @@ The following features were implemented after the v7 epoch to support **`cluster
 
 ACL and operations docs describe a future **`applications`** Nomad namespace for **cross-group platform jobs** (e.g. **GVDS**, **BRIMS**) — separate from **`services`** (abc-nodes floor) and from **`su-mbhg-*`** research namespaces. Rollout steps, policy sketch, and priority notes live in **`deployments/abc-nodes/acl/ACCESS_POLICY_PLAN.md`** (*Planned: `applications` namespace*). The CLI already supports arbitrary `nomad_namespace` / `admin.whoami` derivation per context; no code change is required to *use* the namespace once it exists in Nomad.
 
+---
+
+### 0.7 abc-jurist: Job Rewriting Service
+
+#### Overview
+
+**abc-jurist** is a cluster-side HTTP service whose first responsibility is **job spec rewriting**: it receives a Nomad job HCL, applies transformation rules derived from live node capabilities and the active context's policy configuration, and returns a concrete, submission-ready job spec. The CLI submits *that* concrete spec to Nomad — Nomad never sees abstract directives.
+
+Jurist is the right home for this logic because:
+
+- It runs **inside the cluster** and has direct, real-time access to the Nomad API; no driver fingerprint caching is needed in the CLI.
+- It is a **shared service**: CLI, future web UI, and CI integrations all get identical rewriting behaviour without each embedding resolution logic.
+- It establishes a **general-purpose rewriting pipeline**: future rules (volume placement, resource cap enforcement, image allow-listing, namespace defaulting) are added here, not in the CLI.
+
+**Deployment:** Nomad job in `abc-services`, pinned to aither, registered in Consul as `abc-nodes-jurist`. Reachable at `abc-nodes-jurist.service.consul:<port>` from any cluster node.
+
+#### Driver auto-resolution — first use case
+
+`abc job run` gains two new virtual driver values for `--driver` and for the `driver` field in job HCL:
+
+| Value | Meaning |
+|---|---|
+| `auto-container` | Run as an OCI image; pick the best available container runtime on eligible nodes |
+| `auto-exec` | Run as a host process; pick the most isolated exec driver available on eligible nodes |
+
+These values are intercepted by the CLI **before** submission. If any task in the job spec carries `driver = "auto-container"` or `driver = "auto-exec"`, the CLI routes through jurist. If no `auto-*` drivers are present, the existing submission path is unchanged.
+
+**Flow:**
+
+```
+abc job run job.hcl
+  └─ detect auto-* drivers in spec
+       └─ POST /v1/rewrite  {job_hcl, context_name, driver_priority}
+            │  abc-jurist:
+            │    1. parse job HCL
+            │    2. GET /v1/nodes from Nomad → live driver fingerprints per node
+            │    3. apply context driver priority (received in request body)
+            │    4. resolve each auto-* task → concrete driver
+            │    5. rewrite driver field + config block
+            │    6. inject placement constraint (union — see below)
+            │    7. return {job_hcl, transformations[]}
+            └─ print transformation log to stderr
+       └─ submit concrete job HCL to Nomad
+```
+
+#### Union placement
+
+Rather than requiring the resolved driver to exist on *all* eligible nodes (intersection), jurist injects a **Nomad constraint** that restricts each allocation to nodes where the resolved driver is present. Nomad's scheduler then handles placement across the qualifying subset.
+
+```
+resolved driver = "containerd-driver"
+  → inject: constraint { attribute = "${driver.containerd-driver}" value = "1" }
+
+resolved driver = "raw_exec"
+  → inject: constraint { attribute = "${driver.raw_exec}" value = "1" }
+```
+
+If `count > 1` and only a subset of nodes have the driver, Nomad places what it can and holds the rest as pending — standard Nomad behaviour, visible in the UI. As new nodes gain the driver, pending allocations are placed automatically.
+
+When two or more drivers from the priority list are present across the node pool, jurist also injects a **soft affinity** for the highest-priority driver so Nomad prefers it but does not exclusively place there.
+
+#### abc-jurist API (Phase 1)
+
+```
+POST /v1/rewrite
+  Request:  { job_hcl: string, context: string, driver_priority: DriverPriority }
+  Response: { job_hcl: string, transformations: []TransformationEntry }
+
+GET  /v1/health
+  Response: { status: "ok", nomad_reachable: bool }
+```
+
+`TransformationEntry` records what was changed and why (driver resolved, constraints injected, config fields remapped) — the CLI prints this to stderr so the operator sees exactly what jurist did before Nomad runs anything.
+
+#### Config block normalization
+
+Each `auto-*` task is authored with a **normalised config** that jurist maps to the concrete driver's native schema.
+
+**`auto-container` normalised config:**
+
+```hcl
+config {
+  image      = "grafana/grafana:11.0.0"   # required
+  command    = ""                           # optional entrypoint override
+  args       = []
+  volumes    = []                           # "host:container[:ro]"
+  privileged = false
+}
+```
+
+| Resolved driver | Mapping notes |
+|---|---|
+| `docker` | Direct 1:1 |
+| `containerd-driver` | `command` prepended to `args` (not natively supported) |
+| `podman` | Direct; `privileged` dropped with warning |
+| `singularity` | `image` → `"docker://<image>"`; `args` → `extra_arguments` |
+
+**`auto-exec` normalised config:**
+
+```hcl
+config {
+  command = "/usr/bin/caddy"
+  args    = ["run", "--config", "$NOMAD_TASK_DIR/Caddyfile"]
+}
+```
+
+Mapped unchanged to `exec2`, `exec`, and `raw_exec`. A warning is emitted when `raw_exec` wins (no sandbox available).
+
+Fields with no mapping for the resolved driver produce a **warning**, not a hard error.
+
+#### `capabilities sync` extension — node driver data
+
+`abc cluster capabilities sync` is extended to also query `GET /v1/nodes` and populate a `nodes` list under `capabilities` in the config. This gives the CLI **local, config-file-driven reasoning** about available drivers and volumes without needing a live Nomad connection.
+
+Extended `Capabilities` struct fields (additions only — existing fields unchanged):
+
+```yaml
+capabilities:
+  # … existing fields (storage, uploads, logging, …) …
+  nodes:
+    - id: 49675c32
+      hostname: aither
+      drivers: [containerd-driver, raw_exec, exec]
+      volumes: [scratch, data]
+  nodes_synced: "2026-04-26T17:30:00Z"
+```
+
+The `nodes` list is:
+- Written by `capabilities sync`, read by the CLI for local pre-flight warnings (e.g. "no node in the cluster has `docker`; `auto-container` will resolve to `containerd-driver`").
+- **Not** used by jurist itself — jurist always queries Nomad live for driver resolution.
+- Updated on every `capabilities sync` invocation; the existing `last_synced` timestamp on the capabilities block covers the whole block.
+
+#### Context-level driver priority config
+
+Each context gains a `job.driver` block (user-configured preference, not auto-populated):
+
+```yaml
+contexts:
+  abc-bootstrap:
+    nomad_address: http://100.70.185.46:4646
+    # … other fields …
+    job:
+      driver:
+        container_priority: [containerd-driver, docker, podman, singularity]
+        exec_priority: [exec2, exec, raw_exec]
+
+  abc-hpc:
+    job:
+      driver:
+        container_priority: [singularity, podman, docker, containerd-driver]
+        exec_priority: [exec, raw_exec]
+```
+
+The priority list is an **ordered preference**, not a hard filter. Jurist walks the list and selects the first driver present on at least one eligible node. If no driver in the list is found anywhere in the cluster, it is a hard error (jurist returns 422 with a diagnostic listing nodes and their available drivers).
+
+The CLI passes these lists to jurist in the `/v1/rewrite` request body — jurist is **stateless** with respect to config. This keeps jurist simple to deploy and makes priority changes effective immediately without redeploying the service.
+
+#### Phasing
+
+**Phase 1 — `abc job run` + jurist rewrite (driver resolution only)**
+
+- Deploy abc-jurist as a Nomad job (`abc-services` namespace)
+- `POST /v1/rewrite` resolves `auto-container` / `auto-exec`, injects constraints (union), returns rewritten HCL + transformation log
+- `abc job run` detects `auto-*` drivers, calls jurist, submits concrete spec
+- `capabilities sync` extended to populate `capabilities.nodes[]` with driver + volume data
+- `Context.Job.Driver` config block added to schema; `abc config` can set/get it
+- Phase 1 scope: `abc job run` only (not pipeline, module, or submit commands)
+
+**Phase 2 — full config normalisation**
+
+- Complete config block mapping for all four container runtimes (singularity URL scheme, containerd command-to-args, podman rootless volumes)
+- Volume-aware placement: `auto-volume: scratch` in a task → jurist injects the constraint that places the allocation only on nodes with that host volume
+- Soft affinity injection for driver preference (not just hard constraints)
+
+**Phase 3 — general rewriting pipeline**
+
+- Jurist gains a pluggable rule chain: driver resolution, volume placement, resource cap enforcement, image allow-listing, namespace defaulting — each rule is an ordered step
+- `abc job run --dry-run` extended to print the full rule-by-rule transformation log from jurist without submitting
+- Pipeline and module submission paths opt in to jurist rewriting
+
 ### 0.2 Structural decisions
 
 - **Aliases:** `abc accounting` is canonical for cloud spend / namespace caps; `abc cost` and `abc budget` remain **aliases**. Other old names (`abc node`, `abc namespace`, `abc service`) have been removed cleanly without backward-compat shims.
@@ -964,16 +1144,19 @@ Save a pipeline configuration.
 ### `abc job run <script>`
 
 Parses `#ABC`/`#NOMAD` preamble directives from an annotated shell script and produces a Nomad
-HCL batch job spec. Without `--submit` the HCL is printed to stdout.
+HCL batch job spec. Submits to Nomad by default. Use `--no-submit` to print HCL without submitting.
+For native Nomad HCL job files (`.hcl` / `.nomad.hcl`), use `--format=hcl` (or rely on auto-detection
+from the file extension) to bypass preamble parsing and pass the file through directly.
 
 **Submission flags:**
 
 | Flag | Description |
 |------|-------------|
-| `--submit` | Submit to Nomad instead of printing HCL |
+| `--no-submit` | Print generated HCL to stdout without submitting |
 | `--dry-run` | Plan server-side without submitting |
-| `--watch` | Stream logs after `--submit` |
-| `--output-file` | Write HCL to file instead of stdout |
+| `--watch` | Stream logs immediately after submission |
+| `--output-file` | Write HCL to file (suppresses submission unless `--submit` is also passed) |
+| `--format` | `shell` (default, `#ABC` preamble) or `hcl` (native Nomad HCL pass-through) |
 | `--ssh` | Execute on a remote host via SSH *(stub)* |
 | `--ssh-timeout` | Timeout for SSH execution, e.g. `30m` *(stub)* |
 
@@ -992,7 +1175,7 @@ HCL batch job spec. Without `--submit` the HCL is printed to stdout.
 | `--gpus` | `--gpus=<int>` | GPU count |
 | `--time` | `--time=<HH:MM:SS>` | Walltime limit |
 | `--chdir` | `--chdir=<path>` | Working directory |
-| `--driver` | `--driver=<string>` | Task driver: `exec`, `hpc-bridge`, `docker` |
+| `--driver` | `--driver=<string>` | Task driver: `exec`, `hpc-bridge`, `docker`; also `auto-container` (resolves to best available OCI runtime via abc-jurist) and `auto-exec` (resolves to most isolated exec driver) |
 | `--depend` | `--depend=<complete:job-id>` | Block on another job |
 | `--output` | `--output=<filename>` | Tee stdout to `$NOMAD_TASK_DIR/<filename>` |
 | `--error` | `--error=<filename>` | Tee stderr to `$NOMAD_TASK_DIR/<filename>` |
@@ -1020,7 +1203,7 @@ HCL batch job spec. Without `--submit` the HCL is printed to stdout.
 CLI flags  >  #ABC preamble  >  #NOMAD preamble  >  NOMAD_* env vars  >  params file
 ```
 
-**Expected output (without --submit):**
+**Generated HCL (`--no-submit`):**
 ```hcl
 job "bwa-align" {
   type      = "batch"
@@ -1037,11 +1220,18 @@ job "bwa-align" {
 }
 ```
 
-**Expected output (with --submit):**
+**Submission output (default):**
 ```
   Parsing HCL via Nomad...
-  Submitting job to Nomad...
-  Job submitted: script-job-bwa-align-a1b2c3d4
+  Submitting to Nomad (default)...
+
+  ✓ Job submitted
+  Nomad job ID   script-job-bwa-align-a1b2c3d4
+  Evaluation ID  <eval-uuid>
+
+  Track progress:
+    abc job logs script-job-bwa-align-a1b2c3d4 --follow
+    abc job show script-job-bwa-align-a1b2c3d4
 ```
 
 ### `abc job trace <job-id>` *(stub)*
@@ -1751,6 +1941,8 @@ a "not yet implemented" message at runtime.
 | `service` | `cmd/service/` | `abc admin services *` + `abc status` |
 | `namespace` | `cmd/namespace/` | `abc admin services nomad namespace *` |
 | `cluster` | `cmd/cluster/` | `abc cluster *` |
+| `jurist` | `internal/jurist/` | Client for abc-jurist `/v1/rewrite`; called by `abc job run` when `auto-*` drivers detected |
+| `driver` | `internal/driver/` | Config schema types (`DriverPriority`, `NodeCapability`); `capabilities sync` node-fingerprint extension |
 | `accounting` | `cmd/accounting/` | `abc accounting *` (aliases: `cost`, `budget`; optional `--budget`) |
 | `utils` | `cmd/utils/` | NomadClient, utility helpers |
 | `debuglog` | `internal/debuglog/` | Debug logging subsystem |
@@ -1774,6 +1966,12 @@ a "not yet implemented" message at runtime.
 | `abc policy *` | §1 | Low — compliance policy validation |
 | `abc job template` (replaces dispatch) | §0.15 | Low — rename + parameterize |
 | `abc admin services jurist *` | §0.4 | Low — compliance subcommands under admin |
+| `abc job run` — `auto-container` / `auto-exec` driver resolution via abc-jurist | §0.7 | High — first jurist use case; Phase 1 targets `job run` only |
+| `abc cluster capabilities sync` — extend to populate `capabilities.nodes[]` (drivers + volumes per node) | §0.7 | High — provides CLI-native reasoning about cluster drivers |
+| `Context.Job.Driver` config block (`container_priority`, `exec_priority` lists) | §0.7 | High — context-level driver preference, passed to jurist at rewrite time |
+| abc-jurist Nomad job (`abc-services` namespace) — `POST /v1/rewrite`, `GET /v1/health` | §0.7 | High — prerequisite for all `auto-*` driver usage |
+| Volume-aware placement (`auto-volume` in task config → node constraint) | §0.7 Phase 2 | Medium — extends jurist after driver resolution is stable |
+| Pluggable jurist rule chain (resource caps, image allow-list, namespace defaulting) | §0.7 Phase 3 | Low — long-term generalisation |
 | `abc admin users list/create` | §2 tree | Medium — user management |
 | `abc admin app workspace/organization` | §0.13 new | Medium — entity management |
 | `#ABC --green` preamble | §0.6 phase 3 | Low — deferred to green energy window |

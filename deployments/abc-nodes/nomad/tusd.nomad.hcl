@@ -54,7 +54,7 @@ variable "s3_region" {
 }
 
 job "abc-nodes-tusd" {
-  namespace = "abc-services"
+  namespace   = "abc-services"
   region      = "global"
   datacenters = var.datacenters
   type        = "service"
@@ -68,7 +68,7 @@ job "abc-nodes-tusd" {
     count = 1
 
     network {
-      mode = "host"
+      mode = "bridge"
       port "http" {
         static = 8080
         to     = 8080
