@@ -218,6 +218,15 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// ── Step 5: Sync node driver capabilities ─────────────────────────────────
+	nodes, nodeErr := syncNodeCapabilities(bg, nc)
+	if nodeErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: could not sync node capabilities: %v\n", nodeErr)
+	} else {
+		caps.Nodes = nodes
+		fmt.Fprintf(cmd.OutOrStdout(), "Synced driver capabilities for %d node(s).\n", len(nodes))
+	}
+
 	ctx.Capabilities = caps
 	if label, err := utils.NomadTokenWhoamiLabel(bg, nc); err == nil && label != "" {
 		ctx.SetAuthWhoami(label)
@@ -403,6 +412,50 @@ func runCapabilitiesShow(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// syncNodeCapabilities queries all ready, eligible Nomad client nodes and
+// returns a NodeCapability entry for each, listing healthy+detected drivers.
+func syncNodeCapabilities(ctx context.Context, nc *utils.NomadClient) ([]config.NodeCapability, error) {
+	stubs, err := nc.ListNodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+
+	var eligible []utils.NomadNodeStub
+	for _, s := range stubs {
+		if !strings.EqualFold(s.Status, "ready") {
+			continue
+		}
+		if strings.EqualFold(s.SchedulingEligibility, "ineligible") {
+			continue
+		}
+		if s.Drain {
+			continue
+		}
+		eligible = append(eligible, s)
+	}
+
+	var result []config.NodeCapability
+	for _, stub := range eligible {
+		node, err := nc.GetNode(ctx, stub.ID)
+		if err != nil {
+			return nil, fmt.Errorf("get node %s: %w", stub.ID, err)
+		}
+		var drivers []string
+		for name, info := range node.Drivers {
+			if info.Detected && info.Healthy {
+				drivers = append(drivers, name)
+			}
+		}
+		result = append(result, config.NodeCapability{
+			ID:       node.ID,
+			Hostname: node.Name,
+			Drivers:  drivers,
+			Volumes:  nil, // Phase 2
+		})
+	}
+	return result, nil
+}
+
 func printCapabilities(cmd *cobra.Command, caps *config.Capabilities) {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "  storage:       %s\n", orNone(caps.Storage))
@@ -422,6 +475,12 @@ func printCapabilities(cmd *cobra.Command, caps *config.Capabilities) {
 		ctx := cfg.ActiveCtx()
 		if dash, ok := config.GetAdminFloorField(&ctx.Admin.Services, "grafana", "dashboard"); ok && dash != "" {
 			fmt.Fprintf(w, "  dashboard:     %s\n", dash)
+		}
+	}
+	if len(caps.Nodes) > 0 {
+		fmt.Fprintf(w, "  nodes:\n")
+		for _, n := range caps.Nodes {
+			fmt.Fprintf(w, "    - %s (%s): %s\n", n.Hostname, n.ID[:8], strings.Join(n.Drivers, ", "))
 		}
 	}
 }

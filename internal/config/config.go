@@ -102,6 +102,8 @@ type Context struct {
 	ClusterType  string        `yaml:"cluster_type,omitempty"`
 	Admin        Admin         `yaml:"admin,omitempty"`
 	Capabilities *Capabilities `yaml:"capabilities,omitempty"`
+	// Job holds context-level job submission policy (driver priority, etc.).
+	Job *ContextJob `yaml:"job,omitempty"`
 
 	// Per-context encrypted secrets (abc secrets) and local crypt key material (rclone crypt / secrets).
 	Secrets map[string]string `yaml:"secrets,omitempty"`

@@ -1,0 +1,87 @@
+# Restic REST server — backup target (abc-experimental namespace)
+# Managed by Terraform — do not edit directly; modify variables.tf instead.
+# Data stored on the scratch host volume at /scratch/restic-repo.
+#
+# Enable via Terraform:
+#   terraform apply -var enable_restic_server=true
+#
+# restic_server_htpasswd must be a valid htpasswd entry.
+# Generate with: htpasswd -nB abc   (bcrypt, recommended)
+#           or:  htpasswd -nb abc <password>  (MD5, quick dev setup)
+# Default corresponds to user=abc, password=restic_secret.
+#
+# Usage after deploy:
+#   export RESTIC_REPOSITORY=rest:http://abc:<password>@aither.mb.sun.ac.za:8000
+#   export RESTIC_PASSWORD=<your-repo-encryption-passphrase>
+#   restic init && restic backup /path/to/data
+
+job "abc-experimental-restic-server" {
+  namespace = "abc-experimental"
+  type      = "service"
+  priority  = 50
+
+  group "restic-server" {
+    count = 1
+
+    # Pin to aither: backup data lives on aither's scratch host volume.
+    # Rescheduling loses access to existing backup repo — do not remove this constraint.
+    constraint {
+      attribute = "$${attr.unique.hostname}"
+      value     = "aither"
+    }
+
+    network {
+      mode = "bridge"
+      port "http" {
+        static = 8000
+        to     = 8000
+      }
+    }
+
+    restart {
+      attempts = 3
+      delay    = "15s"
+      interval = "2m"
+      mode     = "delay"
+    }
+
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
+    task "restic-server" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${restic_server_image}"
+        args  = [
+          "--listen", "0.0.0.0:8000",
+          "--path", "/data",
+          "--htpasswd-file", "/run/secrets/htpasswd",
+          "--log-level", "info",
+        ]
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/data"
+        read_only   = false
+      }
+
+      # htpasswd injected from Terraform variable restic_server_htpasswd.
+      # To rotate credentials: update restic_server_htpasswd in tfvars then re-apply.
+      template {
+        data        = "${restic_server_htpasswd}\n"
+        destination = "/run/secrets/htpasswd"
+        change_mode = "restart"
+      }
+
+      resources {
+        cpu    = 200
+        memory = 256
+      }
+    }
+  }
+}

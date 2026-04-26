@@ -1,0 +1,63 @@
+# Wave — container-build orchestrator (abc-experimental namespace)
+# Managed by Terraform — do not edit directly; modify variables.tf instead.
+# WIP: resumes when Wave release channel publishes a stable image.
+#
+# Dependencies: abc-experimental-postgres + abc-experimental-redis must be running.
+# Enable via Terraform (after postgres + redis are up):
+#   terraform apply -var enable_postgres=true -var enable_redis=true -var enable_wave=true \
+#                   -var wave_image=<image>
+#
+# Set wave_image in your tfvars or TF_VAR_wave_image before enabling.
+
+job "abc-experimental-wave" {
+  namespace = "abc-experimental"
+  type      = "service"
+  priority  = 50
+
+  group "wave" {
+    count = 1
+
+    constraint {
+      attribute = "$${attr.unique.hostname}"
+      value     = "aither"
+    }
+
+    network {
+      mode = "bridge"
+      port "http" {
+        static = 8765
+        to     = 8765
+      }
+    }
+
+    restart {
+      attempts = 3
+      delay    = "30s"
+      interval = "5m"
+      mode     = "delay"
+    }
+
+    task "wave" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${wave_image}"
+      }
+
+      env {
+        # PostgreSQL — matches abc-experimental-postgres configuration
+        WAVE_DATABASE_URL = "postgresql://${postgres_user}:${postgres_password}@127.0.0.1:5432/${postgres_db}"
+
+        # Redis — matches abc-experimental-redis configuration
+        WAVE_REDIS_URL = "redis://127.0.0.1:6379/0"
+
+        WAVE_PORT = "8765"
+      }
+
+      resources {
+        cpu    = 500
+        memory = 512
+      }
+    }
+  }
+}

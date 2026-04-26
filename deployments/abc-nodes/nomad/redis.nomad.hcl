@@ -6,7 +6,7 @@
 #   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/redis.nomad.hcl
 
 job "abc-nodes-redis" {
-  namespace   = "services"
+  namespace   = "abc-services"
   type        = "service"
   priority    = 80
 

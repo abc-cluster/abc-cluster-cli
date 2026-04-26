@@ -31,10 +31,11 @@
 	bind 146.232.174.77
 }
 
-# Both LAN IP and Tailscale IP — used by all *.aither vhosts.
-(any_bind) {
-	bind 146.232.174.77 100.70.185.46
-}
+# Both LAN IP and Tailscale IP — kept for reference; no longer used.
+# Tailscale surface is now owned by the abc-experimental-caddy-tailscale Nomad job.
+# (any_bind) {
+# 	bind 146.232.174.77 100.70.185.46
+# }
 
 # ══ VHOST ROUTES (*.aither) ═══════════════════════════════════════════════════
 # Each service lives at its own hostname. Caddy handles vhost matching, TLS
@@ -52,12 +53,12 @@
 #   • traefik.aither — Traefik dashboard itself (bootstrapping concern)
 
 http://grafana.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 http://loki.aither {
-	import any_bind
+	import lan_bind
 	# Loki has no index page; redirect root to /ready for a useful landing.
 	@loki_root path /
 	redir @loki_root /ready 308
@@ -65,34 +66,34 @@ http://loki.aither {
 }
 
 http://prometheus.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 # MinIO S3 API (mc, SDK, boto3 — not the browser console).
 http://minio.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 # MinIO browser console — its own hostname so the SPA boots cleanly at root.
 http://minio-console.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 http://ntfy.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 http://alloy.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 http://rustfs.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
@@ -101,7 +102,7 @@ http://rustfs.aither {
 # flow works from the browser UI without extra token plumbing.
 # Traefik routes by Host: tusd.aither → tusd instances (no middleware on its router).
 http://tusd.aither {
-	import any_bind
+	import lan_bind
 
 	@preflight method OPTIONS
 	handle @preflight {
@@ -123,14 +124,14 @@ http://tusd.aither {
 }
 
 http://uppy.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 # Vault secrets manager UI.
 # Note: vault.aither/ui/ is the main UI path.
 http://vault.aither {
-	import any_bind
+	import lan_bind
 	@vault_root path /
 	redir @vault_root /ui/ 308
 	reverse_proxy abc-nodes-traefik.service.consul:8081
@@ -138,14 +139,14 @@ http://vault.aither {
 
 # Boundary session broker UI + API.
 http://boundary.aither {
-	import any_bind
+	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 # Traefik dashboard — direct proxy (bypasses Traefik's own web entry point).
 # Accessible at http://traefik.aither/dashboard/ (Traefik requires trailing slash).
 http://traefik.aither {
-	import any_bind
+	import lan_bind
 	@traefik_root path /
 	redir @traefik_root /dashboard/ 308
 	reverse_proxy abc-nodes-traefik-dashboard.service.consul:8888
@@ -155,7 +156,7 @@ http://traefik.aither {
 # Consul UI is read-only when ACLs are disabled; useful for inspecting the
 # service catalog, health checks, and key-value store during Phase-1/2.
 http://consul.aither {
-	import any_bind
+	import lan_bind
 	@consul_root path /
 	redir @consul_root /ui/ 308
 	reverse_proxy 100.70.185.46:8500
@@ -163,7 +164,7 @@ http://consul.aither {
 
 # Nomad UI — still at its native /ui/ path (Ember SPA rootURL is hardcoded).
 http://nomad.aither {
-	import any_bind
+	import lan_bind
 	@nomad_root path /
 	redir @nomad_root /ui/settings/tokens 308
 	reverse_proxy 100.70.185.46:4646

@@ -9,7 +9,7 @@
 #   abc admin services nomad cli -- job run deployments/abc-nodes/nomad/docker-registry.nomad.hcl
 
 job "abc-nodes-docker-registry" {
-  namespace   = "services"
+  namespace   = "abc-services"
   type        = "service"
   priority    = 80
 

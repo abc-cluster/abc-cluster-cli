@@ -1,0 +1,73 @@
+# Supabase Studio — BaaS platform UI (abc-experimental namespace)
+# Managed by Terraform — do not edit directly; modify variables.tf instead.
+# Backed by the shared abc-experimental postgres instance.
+#
+# Dependencies: abc-experimental-postgres must be running.
+# Enable via Terraform:
+#   terraform apply -var enable_postgres=true -var enable_supabase=true
+#
+# Access: http://<cluster_public_host>:3001
+# Traefik host-header route: http://supabase.aither  (uncomment service block below)
+
+job "abc-experimental-supabase" {
+  namespace = "abc-experimental"
+  type      = "service"
+  priority  = 50
+
+  group "supabase" {
+    count = 1
+
+    constraint {
+      attribute = "$${attr.unique.hostname}"
+      value     = "aither"
+    }
+
+    network {
+      mode = "bridge"
+      port "studio" {
+        static = 3001
+        to     = 3000
+      }
+    }
+
+    restart {
+      attempts = 3
+      delay    = "30s"
+      interval = "5m"
+      mode     = "delay"
+    }
+
+    task "studio" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${supabase_image}"
+      }
+
+      env {
+        # Postgres connection — matches abc-experimental-postgres configuration
+        POSTGRES_PASSWORD       = "${postgres_password}"
+        SUPABASE_URL            = "http://supabase.aither"
+        STUDIO_PG_META_URL      = "http://127.0.0.1:8080"
+        NEXT_PUBLIC_ENABLE_LOGS = "true"
+        NODE_ENV                = "production"
+      }
+
+      resources {
+        cpu    = 500
+        memory = 768
+      }
+
+      # Uncomment once Traefik host-header routing is confirmed for *.aither
+      # service {
+      #   name = "supabase-studio"
+      #   port = "studio"
+      #   tags = [
+      #     "traefik.enable=true",
+      #     "traefik.http.routers.supabase.rule=Host(`supabase.aither`)",
+      #     "traefik.http.routers.supabase.entrypoints=web",
+      #   ]
+      # }
+    }
+  }
+}
