@@ -1,10 +1,27 @@
 # tusd (resumable uploads) backed by S3-compatible storage — abc-nodes floor
 #
-# Endpoint must be the MinIO *S3 API* base URL (task port "api" / in-container :9000),
-# reachable from this allocation's network namespace — not the console port (:9001).
-# Omit a trailing slash (e.g. use http://host:21400 not http://host:21400/) so the
-# AWS SDK does not build malformed URLs. If uploads fail with the node's Tailscale
-# IP, try the LAN IP or another route that avoids hairpin/NAT back to the same host.
+# BACKEND
+# ───────
+#  Default backend is RustFS (abc-nodes-rustfs) on port 9900. RustFS is preferred
+#  over MinIO for the dual-network (LAN + Tailscale) deploy because MinIO Console
+#  has hard-coded base-path issues across surfaces. The S3 API itself is
+#  S3-compatible across both backends; switching is just an endpoint + credential
+#  change.
+#
+#  To switch back to MinIO temporarily, override at deploy time:
+#    -var='s3_endpoint=http://100.70.185.46:9000' \
+#    -var='s3_access_key=minioadmin' -var='s3_secret_key=minioadmin'
+#
+# ENDPOINT FORMAT
+# ───────────────
+#  Endpoint must be the S3 *API* base URL — no path, no trailing slash. The AWS
+#  SDK appends bucket/object segments. If uploads fail with the node's Tailscale
+#  IP, try the LAN IP or another route that avoids hairpin/NAT.
+#
+# BUCKET BOOTSTRAP
+# ────────────────
+#  The prestart task creates the configured S3 bucket idempotently using awscli.
+#  No manual setup required on first deploy.
 
 variable "datacenters" {
   type    = list(string)
@@ -16,21 +33,21 @@ variable "tusd_image" {
   default = "tusproject/tusd:v2.4.0"
 }
 
-variable "minio_s3_endpoint" {
+variable "s3_endpoint" {
   type        = string
-  description = "MinIO S3 API base URL (no path, no trailing slash), reachable from the tusd container network namespace."
-  default     = "http://100.70.185.46:9000"
+  description = "S3 API base URL (no path, no trailing slash) reachable from this allocation. Default = RustFS S3 port on aither."
+  default     = "http://100.70.185.46:9900"
 }
 
 variable "s3_disable_content_hashes" {
   type        = bool
-  description = "Pass -s3-disable-content-hashes (recommended for MinIO to avoid multipart/hash quirks)"
+  description = "Pass -s3-disable-content-hashes (recommended for MinIO/RustFS to avoid multipart/hash quirks)"
   default     = true
 }
 
 locals {
   # tusd forwards this to AWS SDK BaseEndpoint; a trailing slash can produce bad requests.
-  minio_s3_endpoint_clean = trimsuffix(trimspace(var.minio_s3_endpoint), "/")
+  s3_endpoint_clean = trimsuffix(trimspace(var.s3_endpoint), "/")
 }
 
 variable "s3_bucket" {
@@ -40,12 +57,12 @@ variable "s3_bucket" {
 
 variable "s3_access_key" {
   type    = string
-  default = "minioadmin"
+  default = "rustfsadmin"
 }
 
 variable "s3_secret_key" {
   type    = string
-  default = "minioadmin"
+  default = "rustfsadmin"
 }
 
 variable "s3_region" {
@@ -86,9 +103,54 @@ job "abc-nodes-tusd" {
       }
     }
 
-    # Note: ensure-s3-bucket prestart task removed — bucket is pre-created at cluster bootstrap.
-    # If the tusd bucket is missing, create it manually via:
-    #   mc mb --ignore-existing minio/tusd  (using MC_HOST_minio=http://minioadmin:minioadmin@100.70.185.46:9000)
+    # ── Bucket bootstrap ───────────────────────────────────────────────────
+    # Idempotently create the tusd bucket on the configured S3 backend before
+    # tusd starts.  Uses awscli (`s3api create-bucket` is idempotent — already-exists
+    # is treated as success).  Works against any S3-compatible endpoint (RustFS, MinIO).
+    task "ensure-bucket" {
+      driver = "containerd-driver"
+
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
+
+      config {
+        image      = "amazon/aws-cli:2.15.30"
+        entrypoint = ["/bin/sh", "-c"]
+        args = [<<-CMD
+          set -e
+          BUCKET="${var.s3_bucket}"
+          ENDPOINT="${local.s3_endpoint_clean}"
+          echo "[ensure-bucket] checking $BUCKET on $ENDPOINT"
+          if aws --endpoint-url "$ENDPOINT" s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "[ensure-bucket] $BUCKET already exists"
+            exit 0
+          fi
+          echo "[ensure-bucket] creating $BUCKET"
+          aws --endpoint-url "$ENDPOINT" s3api create-bucket --bucket "$BUCKET" \
+            || aws --endpoint-url "$ENDPOINT" s3 mb "s3://$BUCKET"
+          echo "[ensure-bucket] done"
+        CMD
+        ]
+      }
+
+      template {
+        destination = "secrets/aws.env"
+        env         = true
+        data        = <<EOF
+AWS_ACCESS_KEY_ID=${var.s3_access_key}
+AWS_SECRET_ACCESS_KEY=${var.s3_secret_key}
+AWS_DEFAULT_REGION=${var.s3_region}
+AWS_REGION=${var.s3_region}
+EOF
+      }
+
+      resources {
+        cpu    = 100
+        memory = 128
+      }
+    }
 
     task "tusd" {
       driver = "containerd-driver"
@@ -98,7 +160,7 @@ job "abc-nodes-tusd" {
         args = concat(
           [
             "-s3-bucket", var.s3_bucket,
-            "-s3-endpoint", local.minio_s3_endpoint_clean,
+            "-s3-endpoint", local.s3_endpoint_clean,
             "-s3-disable-ssl",
             "-port", "8080",
             "-base-path", "/files/",

@@ -6,15 +6,23 @@ version: v1
 # This file is the single source of truth for workspace lifecycle management.
 # Running `pulumi up` applies any diff against live Nomad + MinIO state.
 #
-# Naming conventions (match existing acl/ bootstrap scripts):
+# Naming conventions:
 #   Nomad namespace:  <org>-<workspace>          e.g. su-mbhg-bioinformatics
 #   MinIO bucket:     <org>-<workspace>          (same as namespace)
-#   MinIO user:       <namespace>_<username>     (underscore separator)
-#   MinIO admin user: <namespace>_admin
-#   MinIO submit user: <namespace>_submit
-#   Nomad ACL token:  same Name as MinIO user; SecretID = MinIO password
-#   Nomad policy:     <namespace>-{group-admin|member|submit}
-#   MinIO IAM policy: ns-<namespace>-group-admin  |  ns-<namespace>-user-<username>
+#
+# Roles & principals (one Nomad token + one MinIO user per principal):
+#   role: group-member       → <namespace>_<name>           (default)
+#   role: group-admin        → <namespace>_<name>-admin
+#   role: group-collaborator → <namespace>_collab-<name>
+#   submitAccount            → <namespace>_submit
+#
+# A member may declare multiple roles (e.g. role: [group-member, group-admin]).
+# They get ONE token + ONE MinIO user PER role. The default token is the
+# group-member one; `abc --sudo` selects the group-admin token via abc-jurist.
+#
+#   Nomad ACL token name: same as MinIO user; SecretID = MinIO password
+#   Nomad policy:         <namespace>-{group-admin|member|submit}
+#   MinIO IAM policy:     ns-<namespace>-group-admin  |  ns-<namespace>-user-<name>
 #
 # Bucket layout per workspace:
 #   <bucket>/users/<member>/            — member private workspace  (member r/w)
@@ -45,6 +53,16 @@ version: v1
 # To remove a member:    delete the entry, run `pulumi up` (token + MinIO user destroyed).
 # To suspend:            set state: suspended, run `pulumi up` (tokens revoked, data preserved).
 #
+# Destroying a stack:
+#   `pulumi destroy` is gated on the project config flag `allowDestroy`.
+#   Without it, IAM users and buckets refuse to delete while non-empty,
+#   protecting against accidental data loss. To wipe a stack end-to-end:
+#     pulumi config set allowDestroy true
+#     pulumi up        # propagates forceDestroy=true onto live resources
+#     pulumi destroy
+#   This deletes all Nomad ACL tokens/policies/namespaces, MinIO IAM users +
+#   policies, and S3 buckets including every object version + delete marker.
+#
 # Note: all workspaces share one Pulumi stack. `pulumi up` re-evaluates the
 # entire spec but only applies diffs — unchanged resources are not touched.
 # If you want blast-radius isolation (e.g. a bad new workspace can't stall
@@ -65,7 +83,7 @@ organizations:
         description: "SU-MBHG Bioinformatics — pipelines and ad-hoc batch jobs (high priority)"
         state: active
         priority: high        # job_priority=70; preempts normal-priority groups
-        contact: bioinformatics-pi@su-mbhg.example.edu
+        contact: bioinformatics-pi@sun.ac.za
         ntfyTopic: su-mbhg-bioinformatics-jobs
         members:
           # group-admin: full namespace write; creates <ns>_admin MinIO user
@@ -73,8 +91,12 @@ organizations:
             role: group-admin
           # regular members: <ns>_kim MinIO user, member Nomad policy
           - name: kim
-            role: member
-            email: kim@su-mbhg.example.edu
+            role: group-member
+            email: kim@sun.ac.za
+          # multi-role: abhi gets <ns>_abhi (default) AND <ns>_abhi-admin (sudo)
+          - name: abhi
+            role: [group-member, group-admin]
+            email: abhinavdsharma@sun.ac.za
         submitAccount:
           description: "nf-nomad Nextflow plugin service account"
         collaborators:
@@ -84,25 +106,26 @@ organizations:
           - name: dave-uct
             expiresAt: "2026-12-31"
             email: dave@partner-uct.ac.za
+            role: group-collaborator
 
       - name: hostgen
         description: "SU-MBHG Host Genetics — pipelines and ad-hoc batch jobs (normal priority)"
         state: active
         priority: normal
-        contact: hostgen-pi@su-mbhg.example.edu
+        contact: hostgen-pi@sun.ac.za
         ntfyTopic: su-mbhg-hostgen-jobs
         members:
           - name: admin
             role: group-admin
           - name: yentl
-            role: member
-            email: yentl@su-mbhg.example.edu
+            role: group-member
+            email: yentl@sun.ac.za
           - name: devon
-            role: member
-            email: devon@su-mbhg.example.edu
+            role: group-member
+            email: devon@sun.ac.za
           - name: dayna
-            role: member
-            email: dayna@su-mbhg.example.edu
+            role: group-member
+            email: dayna@sun.ac.za
         submitAccount:
           description: "nf-nomad Nextflow plugin service account"
 
@@ -110,28 +133,28 @@ organizations:
         description: "SU-MBHG Animal TB — pipelines and ad-hoc batch jobs (normal priority)"
         state: active
         priority: normal
-        contact: animaltb-pi@su-mbhg.example.edu
+        contact: animaltb-pi@sun.ac.za
         ntfyTopic: su-mbhg-animaltb-jobs
         members:
           - name: admin
             role: group-admin
           - name: stacey
-            role: member
-            email: stacey@su-mbhg.example.edu
+            role: group-member
+            email: stacey@sun.ac.za
         # No submitAccount: animaltb does not use nf-nomad automated pipeline submission
 
       - name: tbgenomics
         description: "SU-MBHG TB Genomics — pipelines and ad-hoc batch jobs (normal priority)"
         state: active
         priority: normal
-        contact: tbgenomics-pi@su-mbhg.example.edu
+        contact: tbgenomics-pi@sun.ac.za
         ntfyTopic: su-mbhg-tbgenomics-jobs
         members:
           - name: admin
             role: group-admin
           - name: hanno
-            role: member
-            email: hanno@su-mbhg.example.edu
+            role: group-member
+            email: hanno@sun.ac.za
         # No submitAccount: tbgenomics does not use nf-nomad automated submission
 
   # =========================================================================
@@ -150,8 +173,8 @@ organizations:
           - name: admin
             role: group-admin
           - name: lauren
-            role: member
-            email: lauren@su-psy.example.edu
+            role: group-member
+            email: lauren@sun.ac.za
         # No submitAccount configured
 
   # =========================================================================
@@ -170,9 +193,9 @@ organizations:
           - name: admin
             role: group-admin
           - name: tj
-            role: member
-            email: tj@su-sdsct.example.edu
+            role: group-member
+            email: tj@sun.ac.za
           - name: eduan
-            role: member
-            email: eduan@su-sdsct.example.edu
+            role: group-member
+            email: eduan@sun.ac.za
         # No submitAccount configured

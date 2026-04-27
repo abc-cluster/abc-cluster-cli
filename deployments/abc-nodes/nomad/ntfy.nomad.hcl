@@ -13,7 +13,13 @@ variable "ntfy_image" {
 
 variable "ntfy_base_url" {
   type        = string
-  description = "Public URL for ntfy (must be host root, no path). Served at its own vhost ntfy.aither."
+  description = "Public URL for ntfy (must be host root, no path)."
+  # ntfy must be served at a HOST ROOT (it cannot live under a subpath because
+  # generated absolute URLs — attachment links, sharing links, web push registration —
+  # need a clean origin). On the LAN surface ntfy is reachable at
+  # http://aither.mb.sun.ac.za/ntfy/ via Caddy's Referer-based routing for the
+  # web UI and API calls, but base-url must be the Tailscale-side hostname so
+  # that those generated absolute URLs resolve correctly on the primary surface.
   default     = "http://ntfy.aither"
 }
 

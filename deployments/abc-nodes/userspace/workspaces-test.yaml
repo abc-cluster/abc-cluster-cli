@@ -20,7 +20,7 @@ organizations:
           - name: admin
             role: group-admin
           - name: alice
-            role: member
+            role: group-member
             email: alice@su-test.example
         submitAccount:
           description: "nf-nomad test runner"
@@ -28,3 +28,23 @@ organizations:
           - name: ext-bob
             expiresAt: "2027-12-31"
             email: bob@external.example
+
+      - name: otherlab
+        description: "Second test workspace — verifies cross-namespace isolation"
+        state: active
+        priority: normal
+        contact: admin@su-test.example
+        ntfyTopic: su-test-otherlab-jobs
+        members:
+          - name: admin
+            role: group-admin
+          - name: bob
+            role: group-member
+            email: bob@su-test.example
+          - name: carol
+            role: group-member
+            email: carol@su-test.example
+          # multi-role: eve gets <ns>_eve (default) AND <ns>_eve-admin (sudo)
+          - name: eve
+            role: [group-member, group-admin]
+            email: eve@su-test.example

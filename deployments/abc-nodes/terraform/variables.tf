@@ -490,10 +490,16 @@ variable "xtdb_node" {
   default     = "aither"
 }
 
-variable "xtdb_http_port" {
-  description = "Static host port for XTDB HTTP API (container always listens on 3000)"
+variable "xtdb_healthz_port" {
+  description = "Static host port for XTDB healthz endpoint (minimal HTTP liveness probe — the only HTTP interface in the standalone image)"
   type        = number
   default     = 5555
+}
+
+variable "xtdb_pgwire_port" {
+  description = "Static host port for XTDB Postgres wire protocol (pgwire) — primary query interface; connect with psql or any JDBC driver"
+  type        = number
+  default     = 15432
 }
 
 variable "xtdb_postgres_url" {

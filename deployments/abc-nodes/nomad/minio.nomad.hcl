@@ -5,6 +5,16 @@
 #  Data stored at /opt/nomad/scratch/minio-data (via "scratch" host volume).
 #  Safe across job restarts and Nomad upgrades — data is on the host FS.
 #
+#  An `ensure-data-dir` prestart task pre-creates the directory with mode 0777
+#  before MinIO starts. This is required because:
+#   • Buckets and object data live under <data-dir>/<bucket-name>/, which MinIO
+#     creates on first use, no special perms needed.
+#   • IAM users + policies + access keys live under <data-dir>/.minio.sys/iam/
+#     — if the data dir was created by Nomad with restrictive perms (or by a
+#     different UID than the running container), MinIO silently falls back to
+#     in-memory IAM and every dynamically-created user is lost on restart.
+#  Mirror of the rustfs.nomad.hcl `ensure-data-dir` pattern.
+#
 # CREDENTIALS STRATEGY
 # ────────────────────
 #  Bootstrap/default-first: this job starts using HCL defaults
@@ -83,6 +93,39 @@ job "abc-nodes-minio" {
       source    = "scratch"
     }
 
+    # ── Ensure data dir exists with permissive perms ──────────────────────
+    # MinIO persists IAM (users, policies, access keys) under
+    # <data-dir>/.minio.sys/iam/.  If the data dir is missing or owned by a
+    # different UID than the container's runtime user, MinIO silently falls
+    # back to in-memory IAM and loses everything on restart.  Pre-create the
+    # directory with 0777 so MinIO can write IAM regardless of its internal
+    # UID.  Mirrors the rustfs `ensure-data-dir` task.
+    task "ensure-data-dir" {
+      driver = "containerd-driver"
+
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
+
+      config {
+        image      = "alpine:3.19"
+        entrypoint = ["/bin/sh", "-c"]
+        args       = ["mkdir -p /scratch/minio-data && chmod 0777 /scratch/minio-data"]
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
+      }
+
+      resources {
+        cpu    = 50
+        memory = 32
+      }
+    }
+
     task "minio" {
       driver = "containerd-driver"
 
@@ -110,6 +153,11 @@ MINIO_ROOT_USER=${var.minio_root_user}
 MINIO_ROOT_PASSWORD=${var.minio_root_password}
 # Expose Prometheus metrics endpoint without auth for in-cluster scraping.
 MINIO_PROMETHEUS_AUTH_TYPE=public
+# Tell the embedded console where it is publicly reachable so internal API
+# calls and redirects use the correct origin.
+# LAN subpath mode (Tailscale off): http://aither.mb.sun.ac.za/minio-console
+# Tailscale mode: http://minio-console.aither
+MINIO_BROWSER_REDIRECT_URL=http://aither.mb.sun.ac.za/minio-console
 EOF
       }
 

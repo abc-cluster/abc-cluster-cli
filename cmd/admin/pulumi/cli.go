@@ -1,6 +1,7 @@
 package pulumi
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,16 +31,23 @@ variables so Pulumi providers (Nomad, MinIO) authenticate automatically:
 The working directory is changed to admin.services.pulumi.deploy_dir (if set)
 before running the command.
 
-Override credentials via persistent flags on the parent command:
-  --nomad-addr, --nomad-token
+Flag handling: this subcommand has DisableFlagParsing=true so abc-level flags
+must be placed BEFORE the "cli" subcommand on the parent group, never on this
+command itself. Anything after "cli" is forwarded to the pulumi binary verbatim
+(except a leading "--binary-location <path>" pair, which is consumed here).
 
-Use -- to pass argv verbatim to pulumi:
+Override Nomad credentials via persistent flags on the parent command:
+  abc admin services pulumi --nomad-addr ... --nomad-token ... cli -- up --yes
+
+Use -- to pass argv verbatim to pulumi (recommended):
   abc admin services pulumi cli -- up --yes
   abc admin services pulumi cli -- destroy --yes
   abc admin services pulumi cli -- stack output --json
 
 Optional leading --binary-location <path> before --:
-  abc admin services pulumi cli --binary-location /usr/local/bin/pulumi -- up --yes`,
+  abc admin services pulumi cli --binary-location /usr/local/bin/pulumi -- up --yes
+
+Set ABC_DEBUG=1 to log which MinIO credential source is being injected.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE:               runPulumiCLI,
@@ -143,6 +151,16 @@ func pulumiNomadDefaultsFromConfig() (addr, token string) {
 
 // minioCredsFromConfig extracts MinIO credentials from the active context's
 // minio service config for injection into Pulumi provider env vars.
+//
+// Source precedence:
+//  1. admin.services.minio.cred_source.local.{endpoint|http,user,password} —
+//     preferred; matches the schema used by `abc admin services minio` for
+//     local-cred sourcing.
+//  2. admin.services.minio.{endpoint|http,user,password} — top-level fields,
+//     kept as a fallback for older config files that predate cred_source.
+//
+// Returned strings are passed to the @pulumi/minio provider as MINIO_SERVER
+// (host:port, scheme stripped), MINIO_USER, and MINIO_PASSWORD.
 func minioCredsFromConfig() (server, user, password string) {
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
@@ -154,7 +172,7 @@ func minioCredsFromConfig() (server, user, password string) {
 		return "", "", ""
 	}
 
-	// Prefer cred_source.local values; fall back to top-level fields.
+	source := "cred_source.local"
 	if svc.CredSource != nil && len(svc.CredSource.Local) > 0 {
 		local := svc.CredSource.Local
 		endpoint := local["endpoint"]
@@ -165,12 +183,17 @@ func minioCredsFromConfig() (server, user, password string) {
 		user = local["user"]
 		password = local["password"]
 	} else {
+		source = "top-level"
 		server = stripScheme(svc.Endpoint)
 		if server == "" {
 			server = stripScheme(svc.HTTP)
 		}
 		user = svc.User
 		password = svc.Password
+	}
+
+	if os.Getenv("ABC_DEBUG") != "" && server != "" {
+		fmt.Fprintf(os.Stderr, "[abc pulumi] injecting MinIO creds from %s (server=%s, user=%s)\n", source, server, user)
 	}
 	return server, user, password
 }

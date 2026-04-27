@@ -10,3 +10,6 @@ config:
   minio:minioUser: minioadmin
   minio:minioServer: 100.70.185.46:9000
   minio:minioSsl: "false"
+  abc-userspace:collabPassword_su-test-sandbox_collab-ext-bob:
+    secure: AAABANyigLzwyk2DLDduEw3R4bC52SoxmZoPGV6Y+yZBytppUQvIKXgporp0LCdBZFFylYKJBm5c9MGL4beh
+  abc-userspace:allowDestroy: "true"

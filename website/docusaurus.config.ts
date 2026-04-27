@@ -5,7 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'abc CLI',
   tagline: 'African Bioinformatics Computing — command-line tool',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.svg',
 
   future: {
     v4: true,
@@ -60,6 +60,8 @@ const config: Config = {
         src: 'img/logo.svg',
         srcDark: 'img/logo-dark.svg',
         style: { width: '22px', height: '22px' },
+        href: 'http://aither.mb.sun.ac.za/',
+        target: '_self',
       },
       items: [
         {

@@ -1,6 +1,7 @@
 # Uppy file-upload dashboard — abc-nodes floor
 # Serves a static Uppy Dashboard page backed by the existing tusd TUS server.
-# Users must be on the Tailscale network to resolve *.aither hostnames.
+# LAN mode  (Tailscale off): tusd_endpoint = http://aither.mb.sun.ac.za/files/
+# Tailscale mode:            tusd_endpoint = http://tusd.aither/files/
 
 variable "datacenters" {
   type    = list(string)
@@ -15,7 +16,9 @@ variable "nginx_image" {
 variable "tusd_endpoint" {
   type        = string
   description = "TUS upload endpoint (browser-accessible URL, must be reachable from the user's browser)."
-  default     = "http://tusd.aither/files/"
+  # LAN (no split-DNS): http://aither.mb.sun.ac.za/files/
+  # Tailscale:          http://tusd.aither/files/
+  default     = "http://aither.mb.sun.ac.za/files/"
 }
 
 variable "uppy_max_file_size_mb" {
@@ -76,165 +79,239 @@ EOF
         destination = "local/html/index.html"
         data        = <<EOF
 <!DOCTYPE html>
-<html lang="en">
+<html data-theme="dark" lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ABC Cluster Uploads</title>
+  <title>Upload · abc-cluster</title>
+  <meta name="description" content="Resumable file uploads to the abc-cluster object store.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cline x1='3' y1='11' x2='19' y2='11' stroke='%23c8a84c' stroke-width='1.3' opacity='.5'/%3E%3Ccircle cx='5' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='11' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='17' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://releases.transloadit.com/uppy/v4.13.3/uppy.min.css">
   <style>
-    :root {
-      --bg:        #0e0e16;
-      --surface:   #16161f;
-      --border:    #2a2a3d;
-      --accent:    #7c6af7;
-      --accent-hi: #a08fff;
-      --text:      #e2e2f0;
-      --muted:     #7878a0;
-    }
-
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --bg:        #070f0c;
+      --bg-1:      #0b1a15;
+      --bg-2:      #0f2219;
+      --text:      #c5e5dc;
+      --text-dim:  #7db8a8;
+      --text-mute: #4a7d6f;
+      --ink:       #e8f9f4;
+      --ink-dim:   #c8a84c;
+      --accent:    #c8a84c;
+      --primary:   #4ab89a;
+      --rule:      #163d32;
+      --rule-soft: #0e2a22;
+      --selection: rgba(200,168,76,0.22);
+    }
+
     html, body {
-      height: 100%;
+      min-height: 100vh;
       background: var(--bg);
       color: var(--text);
-      font-family: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.55;
+      font-feature-settings: 'ss02','ss03';
+      -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: var(--selection); color: var(--ink); }
+
+    /* ── Topbar ──────────────────────────────────────────── */
+    .topbar {
+      border-bottom: 1px solid var(--rule);
+      background: var(--bg);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .topbar-inner {
+      max-width: 1180px; margin: 0 auto;
+      padding: 14px 32px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 600; font-size: 15px;
+      color: var(--ink); text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+    .brand-mark { width: 22px; height: 22px; color: var(--ink); }
+    .brand-dim  { color: var(--text-dim); }
+    .top-spacer { flex: 1; }
+    .top-link {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 7px 12px; border-radius: 4px;
+      border: 1px solid var(--rule); background: var(--bg-1);
+      color: var(--text); font-size: 13px; font-weight: 500;
+      font-family: inherit; letter-spacing: -0.01em;
+      text-decoration: none;
+      transition: color .12s, border-color .12s, background .12s;
+    }
+    .top-link:hover { color: var(--ink); border-color: var(--ink-dim); background: var(--bg-2); }
+
+    /* ── Main layout ─────────────────────────────────────── */
+    main {
+      max-width: 960px; margin: 0 auto;
+      padding: 56px 32px 80px;
     }
 
-    body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 2rem 1rem;
-      gap: 2rem;
+    .eyebrow {
+      font-size: 11px; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--text-mute);
+      margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
     }
-
-    header {
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: .5rem;
-    }
-
-    .wordmark {
-      display: flex;
-      align-items: center;
-      gap: .6rem;
-      font-size: .8rem;
-      font-weight: 600;
-      letter-spacing: .14em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    .wordmark svg {
-      width: 18px; height: 18px;
-      fill: var(--accent);
-      flex-shrink: 0;
-    }
+    .eyebrow .num { color: var(--accent); font-weight: 600; }
 
     h1 {
-      font-size: clamp(1.6rem, 4vw, 2.2rem);
-      font-weight: 700;
-      letter-spacing: -.03em;
-      background: linear-gradient(135deg, var(--text) 30%, var(--accent-hi));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      font-size: clamp(1.4rem, 3vw, 1.9rem);
+      font-weight: 600; letter-spacing: -0.02em;
+      color: var(--ink); margin-bottom: 8px;
     }
+    h1 .dim { color: var(--text-dim); }
 
     .subtitle {
-      font-size: .875rem;
-      color: var(--muted);
-    }
-    .help {
-      max-width: 860px;
-      background: #141423;
-      border: 1px solid #2a2a3d;
-      border-radius: 10px;
-      padding: 0.8rem 1rem;
-      font-size: 0.82rem;
-      color: #b3b3cc;
-      line-height: 1.45;
+      font-size: 13px; color: var(--text-dim);
+      margin-bottom: 32px; max-width: 620px; line-height: 1.6;
     }
 
-    /* Uppy dark-mode overrides */
+    .info-bar {
+      background: var(--bg-1); border: 1px solid var(--rule);
+      border-radius: 4px; padding: 10px 16px;
+      font-size: 12.5px; color: var(--text-dim);
+      margin-bottom: 28px; line-height: 1.6;
+    }
+    .info-bar code {
+      background: var(--bg-2); border: 1px solid var(--rule);
+      border-radius: 3px; padding: 1px 5px;
+      font-family: inherit; font-size: 12px; color: var(--text);
+    }
+
+    .uppy-wrap { display: flex; justify-content: center; }
+
+    /* ── Uppy widget overrides (abc-cluster theme) ───────── */
     .uppy-Dashboard-inner {
-      background: var(--surface) !important;
-      border-color: var(--border) !important;
-      border-radius: 14px !important;
+      background: var(--bg-1) !important;
+      border-color: var(--rule) !important;
+      border-radius: 6px !important;
+      font-family: 'JetBrains Mono', monospace !important;
     }
     .uppy-Dashboard-AddFiles {
-      border-color: var(--border) !important;
+      border-color: var(--rule-soft) !important;
     }
-    .uppy-Dashboard-AddFiles-title {
-      color: var(--text) !important;
+    .uppy-Dashboard-AddFiles-title,
+    .uppy-DashboardContent-title {
+      color: var(--ink) !important;
+      font-family: 'JetBrains Mono', monospace !important;
     }
-    .uppy-Dashboard-browse {
-      color: var(--accent-hi) !important;
-    }
+    .uppy-Dashboard-AddFiles-title button,
+    .uppy-Dashboard-browse { color: var(--primary) !important; }
+    .uppy-Dashboard-note  { color: var(--text-mute) !important; }
     .uppy-StatusBar {
-      background: var(--surface) !important;
-      border-top-color: var(--border) !important;
-      border-radius: 0 0 14px 14px !important;
+      background: var(--bg-2) !important;
+      border-top-color: var(--rule) !important;
+      border-radius: 0 0 6px 6px !important;
+      font-family: 'JetBrains Mono', monospace !important;
     }
+    .uppy-StatusBar-statusPrimary { color: var(--text) !important; }
+    .uppy-StatusBar-actionCircleBtn { color: var(--ink) !important; }
+    .uppy-DashboardContent-bar {
+      background: var(--bg-1) !important;
+      border-bottom-color: var(--rule) !important;
+    }
+    .uppy-Dashboard-Item-preview   { background: var(--bg-2) !important; }
+    .uppy-Dashboard-Item-name      { color: var(--ink) !important; font-family: 'JetBrains Mono', monospace !important; }
+    .uppy-Dashboard-Item-status    { color: var(--text-dim) !important; }
+    .uppy-c-btn-primary {
+      background: var(--primary) !important;
+      color: var(--bg) !important;
+      border-color: var(--primary) !important;
+      font-family: 'JetBrains Mono', monospace !important;
+    }
+    .uppy-c-btn-primary:hover {
+      background: #38a887 !important;
+      border-color: #38a887 !important;
+    }
+    .uppy-Dashboard-dropFilesHereHint { color: var(--text-dim) !important; }
 
-    footer {
-      font-size: .72rem;
-      color: var(--muted);
-      opacity: .6;
+    /* ── Footer ──────────────────────────────────────────── */
+    .foot {
+      border-top: 1px solid var(--rule);
+      padding: 20px 32px;
+      font-size: 11.5px; color: var(--text-mute);
+      max-width: 1180px; margin: 0 auto;
     }
   </style>
 </head>
 <body>
-  <header>
-    <div class="wordmark">
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-      </svg>
-      abc cluster
-    </div>
-    <h1>Upload Files</h1>
-    <p class="subtitle">Resumable uploads for cluster users · up to 5 GB per file</p>
-  </header>
 
-  <div class="help">
-    Uploads are sent to tusd at <code>${var.tusd_endpoint}</code>. If uploads are rejected,
-    sign in via Nomad and provide a valid ACL token in your browser session or uploader client.
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="http://aither.mb.sun.ac.za/">
+      <svg class="brand-mark" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <line x1="3" y1="11" x2="19" y2="11" stroke="currentColor" stroke-width="1.3" opacity=".5"/>
+        <circle cx="5"  cy="11" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="11" cy="11" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="17" cy="11" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+      </svg>
+      abc<span class="brand-dim">-cluster</span>
+    </a>
+    <span class="top-spacer"></span>
+    <a class="top-link" href="/">← Dashboard</a>
+  </div>
+</div>
+
+<main>
+  <div class="eyebrow"><span class="num">01</span>Upload</div>
+  <h1>Upload Files <span class="dim">→ cluster storage</span></h1>
+  <p class="subtitle">
+    Resumable TUS uploads · up to ${var.uppy_max_file_size_mb} MB per file ·
+    authentication required for protected namespaces.
+  </p>
+
+  <div class="info-bar">
+    TUS endpoint: <code>${var.tusd_endpoint}</code>
+    · Uploads resume automatically after network interruptions.
+    · If uploads are rejected, provide a valid token via the Nomad UI.
   </div>
 
-  <div id="uppy"></div>
+  <div class="uppy-wrap">
+    <div id="uppy"></div>
+  </div>
+</main>
 
-  <footer>Files are stored securely in the cluster object store.</footer>
+<div class="foot">
+  abc-cluster · African Bioinformatics Computing · files are stored in the cluster object store
+</div>
 
-  <script type="module">
-    import { Uppy, Dashboard, Tus } from "https://releases.transloadit.com/uppy/v4.13.3/uppy.min.mjs";
+<script type="module">
+  import { Uppy, Dashboard, Tus } from "https://releases.transloadit.com/uppy/v4.13.3/uppy.min.mjs";
 
-    new Uppy({
-      restrictions: {
-        maxFileSize: ${var.uppy_max_file_size_mb} * 1024 * 1024,
-      },
+  new Uppy({
+    restrictions: {
+      maxFileSize: ${var.uppy_max_file_size_mb} * 1024 * 1024,
+    },
+  })
+    .use(Dashboard, {
+      inline:                      true,
+      target:                      "#uppy",
+      width:                       880,
+      height:                      460,
+      theme:                       "dark",
+      showProgressDetails:         true,
+      proudlyDisplayPoweredByUppy: false,
+      note:                        "Max ${var.uppy_max_file_size_mb} MB · resumable · all file types accepted",
     })
-      .use(Dashboard, {
-        inline:                      true,
-        target:                      "#uppy",
-        width:                       780,
-        height:                      480,
-        theme:                       "dark",
-        showProgressDetails:         true,
-        proudlyDisplayPoweredByUppy: false,
-        note:                        "Max 5 GB · resumable · all file types accepted",
-      })
-      .use(Tus, {
-        endpoint:    "${var.tusd_endpoint}",
-        retryDelays: [0, 1000, 3000, 5000],
-        chunkSize:   5 * 1024 * 1024,
-      });
-  </script>
+    .use(Tus, {
+      endpoint:    "${var.tusd_endpoint}",
+      retryDelays: [0, 1000, 3000, 5000],
+      chunkSize:   5 * 1024 * 1024,
+    });
+</script>
+
 </body>
 </html>
 EOF
