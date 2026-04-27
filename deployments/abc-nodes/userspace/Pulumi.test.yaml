@@ -1,0 +1,12 @@
+config:
+  abc-userspace:specFile: workspaces-test.yaml
+  abc-userspace:nomadAddress: http://100.70.185.46:4646
+  abc-userspace:minioEndpoint: 100.70.185.46:9000
+  nomad:secretId:
+    secure: AAABAABGr53OZnV+cRXUGvGmZZk/B2qZ5dpDupVqOwGFlTVuBv22jzz5iO10DLLzCmBGOQNieG7hynSUzVx+QLlUzrk=
+  nomad:address: http://100.70.185.46:4646
+  minio:minioPassword:
+    secure: AAABANJUfbNPJf85CrDoqaQYZ7fr/ZUzN+XcmpWTutlGTshPYJsj1Zfp
+  minio:minioUser: minioadmin
+  minio:minioServer: 100.70.185.46:9000
+  minio:minioSsl: "false"

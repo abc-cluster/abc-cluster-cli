@@ -142,11 +142,17 @@ abc pipeline run rnaseq --params-file params.yaml
 abc secrets init --unsafe-local
 abc secrets set aws-key "AKIA..." --unsafe-local
 
-# Run open-source service CLIs through abc wrappers
-abc admin services nebula cli -version
-abc admin services rustfs cli status
+# Run open-source service CLIs through the unified abc wrapper
+abc admin services cli nebula -- -version
+abc admin services cli rustfs -- ls
+abc admin services cli vault -- status
+abc admin services cli traefik -- version
+abc admin services cli pulumi -- stack ls
+abc admin services cli terraform -- plan
+
+# Per-service form (equivalent, still fully supported)
+abc admin services pulumi cli -- stack ls
 abc admin services vault cli status
-abc admin services traefik cli version
 ```
 
 ### Nomad floor jobs (`abc-nodes`)
@@ -154,8 +160,16 @@ abc admin services traefik cli version
 Example **Nomad** service specs for MinIO, RustFS, tusd, Prometheus, Grafana, Loki, ntfy, Vault, and Traefik live under **`deployments/abc-nodes/nomad/`**. Validate or run them with the Nomad CLI passthrough (uses your active abc context for `NOMAD_ADDR` / token):
 
 ```bash
-abc admin services nomad cli -- job validate deployments/abc-nodes/nomad/minio.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services cli nomad -- job validate deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services cli nomad -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
+```
+
+Deploy Pulumi-managed userspace resources (working directory and stack resolved from `admin.services.pulumi` in the active context):
+
+```bash
+abc admin services cli pulumi -- stack ls
+abc admin services cli pulumi -- up --yes
+abc admin services cli pulumi -- destroy --yes
 ```
 
 After services are running, sync discovered endpoints and capabilities to your config:
@@ -172,7 +186,7 @@ See **`deployments/abc-nodes/nomad/README.md`** for host volumes, variable overr
 Deploy the enhanced pack through the abc CLI passthrough so the active bootstrap context supplies the Nomad connection details:
 
 ```bash
-abc admin services nomad-pack cli -- run deployments/abc-nodes/nomad-packs/abc_nodes_enhanced
+abc admin services cli nomad-pack -- run deployments/abc-nodes/nomad-packs/abc_nodes_enhanced
 ```
 
 ## Development

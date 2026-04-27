@@ -1,0 +1,17 @@
+name: abc-userspace
+runtime: nodejs
+description: >
+  Workspace lifecycle management for abc-nodes: provisions Nomad namespaces,
+  ACL policies/tokens, Nomad variables, and MinIO buckets/IAM resources from a
+  declarative YAML spec.
+
+config:
+  # Path to the workspace spec file (default: workspaces.yaml in this dir)
+  specFile:
+    default: workspaces.yaml
+  # Nomad address (falls back to NOMAD_ADDR env var)
+  nomadAddress:
+    default: ""
+  # MinIO endpoint (falls back to MINIO_ENDPOINT env var)
+  minioEndpoint:
+    default: ""

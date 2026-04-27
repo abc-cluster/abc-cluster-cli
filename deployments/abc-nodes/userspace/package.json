@@ -1,0 +1,21 @@
+{
+  "name": "abc-userspace",
+  "version": "0.1.0",
+  "description": "Pulumi project for abc-nodes workspace lifecycle management",
+  "main": "bin/index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3.0.0",
+    "@pulumi/nomad": "^2.0.0",
+    "@pulumi/minio": "^0.16.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}

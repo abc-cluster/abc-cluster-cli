@@ -1,7 +1,7 @@
 # Consul / Vault / Boundary on Nomad Server Nodes — Status & Resumption Guide
 
 **Last updated:** 2026-04-26  
-**Status:** PAUSED — partial deployment, cleaned up to stable state
+**Status:** PAUSED — partial deployment, cleaned up to stable state; Tailscale split-DNS working
 
 ---
 
@@ -21,6 +21,61 @@ The goal of this work was to deploy Consul clients + Vault binary on the **Nomad
 1. Consul service discovery works cluster-wide (not just on aither)
 2. Boundary workers can resolve `*.service.consul` DNS names
 3. Boundary SSH targets can be registered for all cluster nodes
+
+---
+
+## Tailscale Split-DNS Setup (2026-04-26) ✅
+
+### Problem
+After the Tailscale Caddy job (`abc-experimental-caddy-tailscale`) was deployed to serve `*.aither` on `100.70.185.46`, clicking links in the landing page failed to resolve — even after configuring Tailscale split-DNS.
+
+### Root cause
+Two bugs in the original `deploy-consul.sh` dnsmasq config:
+
+1. **Wrong listen address** — `/etc/dnsmasq.d/00-listen.conf` bound dnsmasq to `127.0.0.1` only (`listen-address=127.0.0.1`, `bind-interfaces`). Tailscale split-DNS clients send UDP/53 queries to `100.70.185.46`, which received no response (connection timeout).
+
+2. **Wrong resolution target** — `/etc/dnsmasq.d/20-aither.conf` resolved `*.aither` to `146.232.174.77` (the LAN IP). The Tailscale Caddy job binds on `100.70.185.46`, not the LAN IP, so even if DNS had resolved, Caddy would not have answered on that IP.
+
+### Fix applied (2026-04-26)
+Applied via a Nomad raw_exec batch job (`fix-dnsmasq-listen`) since passwordless sudo is not available:
+
+```bash
+# Written to /etc/dnsmasq.d/00-listen.conf on aither:
+listen-address=127.0.0.1,100.70.185.46
+bind-interfaces
+
+# /etc/dnsmasq.d/20-aither.conf was already correct:
+address=/.aither/100.70.185.46
+```
+
+`systemctl restart dnsmasq` applied the change. Verified:
+```bash
+dig @100.70.185.46 nomad.aither +short   # → 100.70.185.46
+curl --resolve "grafana.aither:80:100.70.185.46" http://grafana.aither/  # → 302
+```
+
+### Tailscale admin console config
+DNS → Add nameserver → `100.70.185.46`, restrict to domain: **`aither`** (no leading dot).  
+All tailnet devices now resolve `*.aither` via dnsmasq on aither and reach the Tailscale Caddy.
+
+### Scripts updated
+- `consul/deploy-consul.sh` — `00-listen.conf` now includes `${AITHER_TS_IP}`; `20-aither.conf` uses `${AITHER_TS_IP}`; smoke test verifies the Tailscale listener
+- `consul/install-consul-via-nomad.nomad.hcl` — added `var.aither_ts_ip`; all three task groups use it for `20-aither.conf`
+- `consul/deploy-consul-to-server-nodes.sh` — `20-aither.conf` uses TS IP (server nodes are on Tailscale)
+- `caddy/Caddyfile.lan` — updated architecture comment
+
+### Client-side DNS flush (if resolution seems stale)
+```bash
+# macOS
+sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+
+# Linux / systemd-resolved
+resolvectl flush-caches
+
+# Verify split-DNS is hitting the right nameserver
+scutil --dns | grep -A5 "aither"     # macOS
+resolvectl query nomad.aither         # Linux
+```
 
 ---
 
@@ -252,8 +307,10 @@ deployments/abc-nodes/
 │   └── install-consul-via-nomad.nomad.hcl     # Nomad batch job approach (works, ran on nomad00/01)
 ├── vault/
 │   └── deploy-vault-to-server-nodes.sh        # SSH/hashi-up deploy script (never ran, same sudo issue)
-└── nomad/
-    └── boundary-worker.nomad.hcl              # MODIFIED — provider=nomad, direct IP, public_addr fix
+├── nomad/
+│   └── boundary-worker.nomad.hcl              # MODIFIED — provider=nomad, direct IP, public_addr fix
+└── dns/
+    └── flush-dns-cache.sh                     # Client-side DNS flush + split-DNS verification
 
 cmd/utils/
 └── nomad_pack_cli_test.go                     # FIXED — added cluster_type: abc-nodes to test config

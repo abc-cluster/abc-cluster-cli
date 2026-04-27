@@ -184,6 +184,12 @@ variable "enable_caddy" {
   default     = false
 }
 
+variable "enable_xtdb" {
+  description = "Deploy XTDB v2 bitemporal database (abc-experimental)"
+  type        = bool
+  default     = false
+}
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Service Images — Enhanced Tier
 # ═══════════════════════════════════════════════════════════════════════════
@@ -281,6 +287,14 @@ variable "caddy_image" {
   description = "Caddy container image (abc-experimental)"
   type        = string
   default     = "caddy:2-alpine"
+}
+
+# Pin to a specific release tag in production; 'latest' tracks the most recent
+# 2.x release from ghcr.io/xtdb/xtdb.
+variable "xtdb_image" {
+  description = "XTDB v2 container image (abc-experimental)"
+  type        = string
+  default     = "ghcr.io/xtdb/xtdb:latest"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -464,4 +478,108 @@ variable "caddy_tailscale_ip" {
   description = "Tailscale IP Caddy listens on (defaults to cluster_tailscale_ip)"
   type        = string
   default     = ""
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Experimental Service Configuration (continued) — XTDB v2
+# ═══════════════════════════════════════════════════════════════════════════
+
+variable "xtdb_node" {
+  description = "Hostname of the cluster node to schedule XTDB on"
+  type        = string
+  default     = "aither"
+}
+
+variable "xtdb_http_port" {
+  description = "Static host port for XTDB HTTP API (container always listens on 3000)"
+  type        = number
+  default     = 5555
+}
+
+variable "xtdb_postgres_url" {
+  description = <<-EOT
+    JDBC URL for XTDB's transaction log backend (optional).
+    When empty (default), XTDB uses a local-disk txLog under /scratch/xtdb/txlog.
+    When set, XTDB uses the Postgres module — the referenced database must exist
+    before first startup and the user must have CREATE TABLE privileges.
+    Example: "jdbc:postgresql://127.0.0.1:5432/xtdb?user=abc&password=abc_db_secret"
+    (Requires enable_postgres=true; create the 'xtdb' db first via psql.)
+  EOT
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Automations Tier — fx event-driven hook enable flags and configuration
+#
+# fx jobs run in abc-automations namespace.  Both default to true — they
+# are core infrastructure for file lifecycle management (MinIO events and
+# tusd post-finish rename).
+# ═══════════════════════════════════════════════════════════════════════════
+
+variable "enable_fx_notify" {
+  description = "Deploy fx-notify (MinIO webhook → ntfy notification bridge)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_fx_tusd_hook" {
+  description = "Deploy fx-tusd-hook (tusd post-finish hook: rename S3 object + ntfy notification)"
+  type        = bool
+  default     = true
+}
+
+# ── fx-notify configuration ───────────────────────────────────────────────
+
+variable "fx_notify_node" {
+  description = "Hostname of the cluster node to schedule fx-notify on"
+  type        = string
+  default     = "aither"
+}
+
+variable "fx_notify_ntfy_url" {
+  description = "ntfy topic URL that receives MinIO event notifications"
+  type        = string
+  default     = "http://ntfy.aither/minio-events"
+}
+
+# ── fx-tusd-hook configuration ────────────────────────────────────────────
+
+variable "fx_tusd_hook_node" {
+  description = "Hostname of the cluster node to schedule fx-tusd-hook on"
+  type        = string
+  default     = "nomad01"
+}
+
+variable "fx_tusd_hook_ntfy_url" {
+  description = "ntfy topic URL for tusd upload-complete notifications"
+  type        = string
+  default     = "http://ntfy.aither/tusd-uploads"
+}
+
+variable "fx_tusd_hook_minio_endpoint" {
+  description = "MinIO S3 API base URL for the hook to call (no trailing slash)"
+  type        = string
+  default     = "http://100.70.185.46:9000"
+}
+
+variable "fx_tusd_hook_minio_bucket" {
+  description = "MinIO bucket where tusd stores in-progress uploads"
+  type        = string
+  default     = "tusd"
+}
+
+variable "fx_tusd_hook_s3_access_key" {
+  description = "S3 / MinIO access key used by fx-tusd-hook for object rename operations"
+  type        = string
+  default     = "minioadmin"
+  sensitive   = true
+}
+
+variable "fx_tusd_hook_s3_secret_key" {
+  description = "S3 / MinIO secret key used by fx-tusd-hook for object rename operations"
+  type        = string
+  default     = "minioadmin"
+  sensitive   = true
 }

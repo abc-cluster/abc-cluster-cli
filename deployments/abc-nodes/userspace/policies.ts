@@ -1,0 +1,416 @@
+// ---------------------------------------------------------------------------
+// policies.ts — Nomad ACL policy HCL and MinIO IAM JSON generators.
+//
+// All policy content mirrors the exact capabilities and structure of the
+// hand-authored files in acl/policies/ and acl/minio-policies/.
+//
+// Naming conventions (must match existing resources):
+//   Nomad policy:      <namespace>-group-admin  |  <namespace>-member  |  <namespace>-submit
+//   MinIO IAM policy:  ns-<namespace>-group-admin  |  ns-<namespace>-user-<username>
+// ---------------------------------------------------------------------------
+
+// ============================================================
+// Nomad ACL policies (HCL)
+// Mirrors: acl/policies/su-mbhg-bioinformatics-{group-admin,member,submit}.hcl
+// ============================================================
+
+/**
+ * group-admin: full write to namespace, can cancel/scale any job, exec into allocs.
+ * Cannot touch other namespaces or cluster operator/agent config.
+ *
+ * Mirrors: su-mbhg-bioinformatics-group-admin.hcl
+ */
+export function nomadGroupAdminPolicy(namespace: string): string {
+  return `
+# group-admin: full control in ${namespace}
+# Can do everything in the group namespace including cancelling other members' jobs,
+# reading all allocations, and submitting raw_exec tasks for debugging.
+# Cannot touch other namespaces or cluster-level operator/agent config.
+namespace "${namespace}" {
+  policy = "write"
+  capabilities = [
+    "alloc-exec",
+    "alloc-lifecycle",
+    "alloc-node-exec",
+    "dispatch-job",
+    "list-jobs",
+    "parse-job",
+    "read-fs",
+    "read-job",
+    "read-logs",
+    "scale-job",
+    "submit-job",
+  ]
+}
+
+# parse-job in default namespace allows abc CLI HCL validation step.
+namespace "default" {
+  capabilities = [
+    "parse-job",
+  ]
+}
+
+# Group admin can see nodes to diagnose placement failures.
+node  { policy = "read" }
+agent { policy = "read" }
+`.trim();
+}
+
+/**
+ * member: submit and inspect jobs; cannot cancel others' jobs (honour system).
+ * Also gets parse-job in default namespace so abc CLI HCL validation works.
+ *
+ * Mirrors: su-mbhg-bioinformatics-member.hcl
+ */
+export function nomadMemberPolicy(namespace: string): string {
+  return `
+# member: standard researcher token for ${namespace}
+# Can submit and manage their OWN jobs; cannot see or cancel others' jobs
+# (Nomad OSS does not enforce per-user job ownership — honour system + group-admin oversight).
+# Can read logs and alloc filesystem for any job in the namespace.
+namespace "${namespace}" {
+  capabilities = [
+    "submit-job",
+    "parse-job",
+    "dispatch-job",
+    "list-jobs",
+    "read-job",
+    "read-logs",
+    "read-fs",
+    "alloc-lifecycle",
+    "alloc-exec",
+  ]
+}
+
+# parse-job in default namespace allows abc CLI to validate HCL without submitting.
+namespace "default" {
+  capabilities = [
+    "parse-job",
+  ]
+}
+
+node  { policy = "read" }
+agent { policy = "read" }
+`.trim();
+}
+
+/**
+ * submit: service-account policy for the nf-nomad Nextflow plugin.
+ * One shared token per group; embedded in the group's nextflow config.
+ * DO NOT issue this token to individual users.
+ *
+ * Mirrors: su-mbhg-bioinformatics-submit.hcl
+ */
+export function nomadSubmitPolicy(namespace: string): string {
+  return `
+# submit: service-account policy for nf-nomad Nextflow plugin in ${namespace}
+# One shared token per group; embedded in the group's nextflow config.
+# DO NOT issue this token to individual users.
+namespace "${namespace}" {
+  capabilities = [
+    "submit-job",
+    "dispatch-job",
+    "read-job",
+    "list-jobs",
+    "alloc-lifecycle",
+    "read-logs",
+    "read-fs",
+    "alloc-exec",
+  ]
+}
+
+node  { policy = "read" }
+agent { policy = "read" }
+`.trim();
+}
+
+// ============================================================
+// MinIO IAM policies (JSON)
+//
+// Bucket layout:
+//   users/<username>/            — member private workspace
+//   shared/                      — read-only for everyone (references, datasets)
+//   shared/users/<username>/     — member's own contribution to the shared area
+//   collab/<name>/               — collaborator scoped r/w
+//   samplesheets/                — read by members + submit; managed by group-admin
+//   pipelines/                   — written by submit SA; read by members + group-admin
+//
+// Policy name convention:
+//   ns-<namespace>-group-admin
+//   ns-<namespace>-user-<username>
+//   ns-<namespace>-collab-<name>
+//   ns-<namespace>-pipeline-submit
+// ============================================================
+
+/** MinIO policy name for the group admin role. */
+export function minioGroupAdminPolicyName(namespace: string): string {
+  return `ns-${namespace}-group-admin`;
+}
+
+/** MinIO policy name for a regular member. */
+export function minioUserPolicyName(namespace: string, username: string): string {
+  return `ns-${namespace}-user-${username}`;
+}
+
+/** MinIO policy name for a time-bounded collaborator. */
+export function minioCollaboratorPolicyName(namespace: string, collabName: string): string {
+  return `ns-${namespace}-collab-${collabName}`;
+}
+
+// ---- helpers ---------------------------------------------------------------
+
+const rw = [
+  "s3:GetObject",
+  "s3:PutObject",
+  "s3:DeleteObject",
+  "s3:AbortMultipartUpload",
+  "s3:ListMultipartUploadParts",
+] as const;
+
+const ro = ["s3:GetObject"] as const;
+
+function arn(bucket: string, prefix: string): string {
+  return `arn:aws:s3:::${bucket}/${prefix}*`;
+}
+function bucketArn(bucket: string): string {
+  return `arn:aws:s3:::${bucket}`;
+}
+
+// ---- group-admin -----------------------------------------------------------
+
+/**
+ * group-admin: unrestricted access to the entire namespace bucket + tusd staging.
+ *
+ * Mirrors: acl/minio-policies/su-mbhg-bioinformatics-group-admin.json
+ */
+export function minioGroupAdminPolicy(bucket: string): string {
+  return JSON.stringify(
+    {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "GroupAdminFullBucketAccess",
+          Effect: "Allow",
+          Action: ["s3:*"],
+          Resource: [bucketArn(bucket), `${bucketArn(bucket)}/*`],
+        },
+        {
+          Sid: "TusdUploadAreaReadAll",
+          Effect: "Allow",
+          Action: ["s3:GetObject", "s3:ListBucket", "s3:DeleteObject"],
+          Resource: ["arn:aws:s3:::tusd", "arn:aws:s3:::tusd/uploads/*"],
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+// ---- member ----------------------------------------------------------------
+
+/**
+ * member: scoped access reflecting the bucket layout.
+ *
+ * Read/write:
+ *   users/<username>/          — private workspace
+ *   shared/users/<username>/   — member's own shared contribution area
+ *
+ * Read-only:
+ *   shared/                    — all shared content (references, datasets, others' outputs)
+ *   samplesheets/              — input samplesheets
+ *   pipelines/                 — pipeline run outputs (inspect results)
+ *
+ * Also: own tusd upload staging (put + get).
+ */
+export function minioMemberPolicy(bucket: string, username: string): string {
+  const privatePrefix    = `users/${username}/`;
+  const sharedUserPrefix = `shared/users/${username}/`;
+
+  return JSON.stringify(
+    {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "GetBucketLocation",
+          Effect: "Allow",
+          Action: ["s3:GetBucketLocation"],
+          Resource: [bucketArn(bucket)],
+        },
+        {
+          Sid: "ListBucket",
+          Effect: "Allow",
+          Action: ["s3:ListBucket"],
+          Resource: [bucketArn(bucket)],
+          Condition: {
+            StringLike: {
+              "s3:prefix": [
+                // own prefixes (full access)
+                privatePrefix,
+                `${privatePrefix}*`,
+                sharedUserPrefix,
+                `${sharedUserPrefix}*`,
+                // read-only prefixes (listing)
+                "shared/",
+                "shared/*",
+                "samplesheets/",
+                "samplesheets/*",
+                "pipelines/",
+                "pipelines/*",
+              ],
+            },
+          },
+        },
+        {
+          Sid: "OwnPrefixReadWrite",
+          Effect: "Allow",
+          Action: [...rw],
+          Resource: [
+            arn(bucket, privatePrefix),
+            arn(bucket, sharedUserPrefix),
+          ],
+        },
+        {
+          Sid: "SharedSamplesheetsAndPipelinesReadOnly",
+          Effect: "Allow",
+          Action: [...ro],
+          Resource: [
+            arn(bucket, "shared/"),
+            arn(bucket, "samplesheets/"),
+            arn(bucket, "pipelines/"),
+          ],
+        },
+        {
+          Sid: "TusdUploadOwnFiles",
+          Effect: "Allow",
+          Action: ["s3:PutObject", "s3:GetObject"],
+          Resource: [`arn:aws:s3:::tusd/uploads/${username}/*`],
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+// ---- collaborator ----------------------------------------------------------
+
+/**
+ * collaborator: time-bounded external access.
+ *
+ * Read/write:
+ *   collab/<name>/   — private collaboration area
+ *
+ * Read-only:
+ *   shared/          — shared references and datasets
+ */
+export function minioCollaboratorPolicy(bucket: string, collabName: string): string {
+  const collabPrefix = `collab/${collabName}/`;
+
+  return JSON.stringify(
+    {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "GetBucketLocation",
+          Effect: "Allow",
+          Action: ["s3:GetBucketLocation"],
+          Resource: [bucketArn(bucket)],
+        },
+        {
+          Sid: "ListBucket",
+          Effect: "Allow",
+          Action: ["s3:ListBucket"],
+          Resource: [bucketArn(bucket)],
+          Condition: {
+            StringLike: {
+              "s3:prefix": [
+                collabPrefix,
+                `${collabPrefix}*`,
+                "shared/",
+                "shared/*",
+              ],
+            },
+          },
+        },
+        {
+          Sid: "CollabPrefixReadWrite",
+          Effect: "Allow",
+          Action: [...rw],
+          Resource: [arn(bucket, collabPrefix)],
+        },
+        {
+          Sid: "SharedReadOnly",
+          Effect: "Allow",
+          Action: [...ro],
+          Resource: [arn(bucket, "shared/")],
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+// ---- pipeline submit -------------------------------------------------------
+
+/**
+ * pipeline/submit SA: writes pipeline outputs; reads samplesheets and shared refs.
+ *
+ * Read/write:
+ *   pipelines/       — pipeline run outputs
+ *
+ * Read-only:
+ *   samplesheets/    — input samplesheets
+ *   shared/          — shared reference data
+ */
+export function minioPipelinePolicy(bucket: string): string {
+  return JSON.stringify(
+    {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "GetBucketLocation",
+          Effect: "Allow",
+          Action: ["s3:GetBucketLocation"],
+          Resource: [bucketArn(bucket)],
+        },
+        {
+          Sid: "ListBucket",
+          Effect: "Allow",
+          Action: ["s3:ListBucket"],
+          Resource: [bucketArn(bucket)],
+          Condition: {
+            StringLike: {
+              "s3:prefix": [
+                "pipelines/",
+                "pipelines/*",
+                "samplesheets/",
+                "samplesheets/*",
+                "shared/",
+                "shared/*",
+              ],
+            },
+          },
+        },
+        {
+          Sid: "PipelinesReadWrite",
+          Effect: "Allow",
+          Action: [...rw],
+          Resource: [arn(bucket, "pipelines/")],
+        },
+        {
+          Sid: "SamplesheetsAndSharedReadOnly",
+          Effect: "Allow",
+          Action: [...ro],
+          Resource: [
+            arn(bucket, "samplesheets/"),
+            arn(bucket, "shared/"),
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}

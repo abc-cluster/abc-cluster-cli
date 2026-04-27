@@ -60,6 +60,31 @@ func isCredSourceEmpty(cs *AdminFloorCredSource) bool {
 	return len(cs.Local) == 0 && len(cs.Nomad) == 0 && len(cs.Vault) == 0
 }
 
+// PulumiService holds Pulumi deployment settings for one context.
+// Nomad and MinIO credentials are inherited from admin.services.nomad /
+// admin.services.minio and injected as env vars at runtime; only
+// Pulumi-specific knobs belong in this struct.
+type PulumiService struct {
+	// DeployDir is the path (absolute or relative to CWD) of the Pulumi
+	// project directory for this context's abc-nodes deployment.
+	// e.g. "deployments/abc-nodes/userspace"
+	DeployDir string `yaml:"deploy_dir,omitempty"`
+
+	// Stack is the Pulumi stack name to select when running commands.
+	// e.g. "prod"
+	Stack string `yaml:"stack,omitempty"`
+
+	// AccessToken is the Pulumi Cloud access token injected as
+	// PULUMI_ACCESS_TOKEN.  Required when using the Pulumi Cloud state
+	// backend.  Leave empty when using a self-managed (local / S3) backend.
+	AccessToken string `yaml:"access_token,omitempty"`
+
+	// ConfigPassphrase is the passphrase used by Pulumi to decrypt encrypted
+	// stack config secrets, injected as PULUMI_CONFIG_PASSPHRASE.
+	// Required when using the default passphrase secrets provider.
+	ConfigPassphrase string `yaml:"config_passphrase,omitempty"`
+}
+
 // TerraformService holds Terraform deployment settings for one context.
 // Nomad credentials are inherited from admin.services.nomad and do not need
 // to be duplicated here; only Terraform-specific knobs belong in this struct.
@@ -87,6 +112,7 @@ type TerraformService struct {
 type AdminServices struct {
 	Nomad        *NomadService      `yaml:"nomad,omitempty"`
 	Terraform    *TerraformService  `yaml:"terraform,omitempty"`
+	Pulumi       *PulumiService     `yaml:"pulumi,omitempty"`
 	MinIO        *AdminFloorService `yaml:"minio,omitempty"`
 	Tusd         *AdminFloorService `yaml:"tusd,omitempty"`
 	Faasd        *AdminFloorService `yaml:"faasd,omitempty"`
@@ -187,6 +213,42 @@ func (c Context) TerraformVars() map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// PulumiDeployDir returns contexts.<name>.admin.services.pulumi.deploy_dir.
+// Returns "" when unset; callers fall back to CWD or a flag value.
+func (c Context) PulumiDeployDir() string {
+	if c.Admin.Services.Pulumi == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Pulumi.DeployDir)
+}
+
+// PulumiStack returns contexts.<name>.admin.services.pulumi.stack.
+// Returns "" when unset (callers treat "" as "selecting no stack override").
+func (c Context) PulumiStack() string {
+	if c.Admin.Services.Pulumi == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Pulumi.Stack)
+}
+
+// PulumiAccessToken returns contexts.<name>.admin.services.pulumi.access_token.
+// Injected as PULUMI_ACCESS_TOKEN for the Pulumi Cloud state backend.
+func (c Context) PulumiAccessToken() string {
+	if c.Admin.Services.Pulumi == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Pulumi.AccessToken)
+}
+
+// PulumiConfigPassphrase returns contexts.<name>.admin.services.pulumi.config_passphrase.
+// Injected as PULUMI_CONFIG_PASSPHRASE to decrypt encrypted stack config secrets.
+func (c Context) PulumiConfigPassphrase() string {
+	if c.Admin.Services.Pulumi == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Pulumi.ConfigPassphrase)
 }
 
 // normalizeContextNomad folds deprecated YAML (top-level nomad_*, services.nomad)

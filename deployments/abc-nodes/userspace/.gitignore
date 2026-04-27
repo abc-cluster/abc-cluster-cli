@@ -1,0 +1,8 @@
+node_modules/
+bin/
+*.js.map
+# Pulumi state files with secrets — never commit stack state
+.pulumi/
+# Per-environment stack configs (may contain encrypted secrets, but gitignore
+# the plaintext backups that some editors create)
+*.bak

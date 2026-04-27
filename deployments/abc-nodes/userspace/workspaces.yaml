@@ -1,0 +1,178 @@
+version: v1
+
+# ---------------------------------------------------------------------------
+# abc-nodes workspace specification
+#
+# This file is the single source of truth for workspace lifecycle management.
+# Running `pulumi up` applies any diff against live Nomad + MinIO state.
+#
+# Naming conventions (match existing acl/ bootstrap scripts):
+#   Nomad namespace:  <org>-<workspace>          e.g. su-mbhg-bioinformatics
+#   MinIO bucket:     <org>-<workspace>          (same as namespace)
+#   MinIO user:       <namespace>_<username>     (underscore separator)
+#   MinIO admin user: <namespace>_admin
+#   MinIO submit user: <namespace>_submit
+#   Nomad ACL token:  same Name as MinIO user; SecretID = MinIO password
+#   Nomad policy:     <namespace>-{group-admin|member|submit}
+#   MinIO IAM policy: ns-<namespace>-group-admin  |  ns-<namespace>-user-<username>
+#
+# Bucket layout per workspace:
+#   <bucket>/users/<member>/            — member private workspace  (member r/w)
+#   <bucket>/collab/<name>/             — collaborator area         (collab r/w)
+#   <bucket>/shared/                    — read-only for all (references, datasets)
+#   <bucket>/shared/users/<member>/     — member's shared contribution  (member r/w)
+#   <bucket>/samplesheets/              — input samplesheets  (members + submit read)
+#   <bucket>/pipelines/                 — pipeline outputs  (submit write; members read)
+#
+# Credential variables (Nomad, abc-services namespace):
+#   nomad/jobs/abc-nodes-minio-iam/<principal>
+#   Fields: access_key, secret_key, role, scope, bucket
+#
+# States:
+#   active     — fully operational (default)
+#   suspended  — ACL tokens revoked; data preserved
+#   archived   — bucket versioning suspended; read-only intent
+#   deleted    — tombstone only; remove entry after `pulumi destroy` confirms
+#
+# Priority tiers:
+#   high   → job_priority=70  (preempts normal-priority batch jobs)
+#   normal → job_priority=50  (default; can be preempted by high-priority groups)
+#
+# To add a workspace:    add an entry here, run `pulumi up`.
+# To add a member:       add an entry under members:, run `pulumi up`.
+# To add a collaborator: add an entry under collaborators: with expiresAt, run `pulumi up`.
+# To remove a workspace: delete the entry (or set state: deleted), run `pulumi up`.
+# To remove a member:    delete the entry, run `pulumi up` (token + MinIO user destroyed).
+# To suspend:            set state: suspended, run `pulumi up` (tokens revoked, data preserved).
+#
+# Note: all workspaces share one Pulumi stack. `pulumi up` re-evaluates the
+# entire spec but only applies diffs — unchanged resources are not touched.
+# If you want blast-radius isolation (e.g. a bad new workspace can't stall
+# updates for others), use one stack per workspace with `pulumi stack init <ns>`
+# and `pulumi config set specFile workspaces/<ns>.yaml`.
+# ---------------------------------------------------------------------------
+
+organizations:
+
+  # =========================================================================
+  # SU-MBHG — Molecular Biology and Human Genetics
+  # =========================================================================
+  - name: su-mbhg
+    displayName: "SU-MBHG — Molecular Biology and Human Genetics"
+    workspaces:
+
+      - name: bioinformatics
+        description: "SU-MBHG Bioinformatics — pipelines and ad-hoc batch jobs (high priority)"
+        state: active
+        priority: high        # job_priority=70; preempts normal-priority groups
+        contact: bioinformatics-pi@su-mbhg.example.edu
+        ntfyTopic: su-mbhg-bioinformatics-jobs
+        members:
+          # group-admin: full namespace write; creates <ns>_admin MinIO user
+          - name: admin
+            role: group-admin
+          # regular members: <ns>_kim MinIO user, member Nomad policy
+          - name: kim
+            role: member
+            email: kim@su-mbhg.example.edu
+        submitAccount:
+          description: "nf-nomad Nextflow plugin service account"
+        collaborators:
+          # External collaborator from UCT — access expires 2026-12-31.
+          # MinIO user: su-mbhg-bioinformatics_collab-dave-uct
+          # Scope: collab/dave-uct/ r/w + shared/ read-only
+          - name: dave-uct
+            expiresAt: "2026-12-31"
+            email: dave@partner-uct.ac.za
+
+      - name: hostgen
+        description: "SU-MBHG Host Genetics — pipelines and ad-hoc batch jobs (normal priority)"
+        state: active
+        priority: normal
+        contact: hostgen-pi@su-mbhg.example.edu
+        ntfyTopic: su-mbhg-hostgen-jobs
+        members:
+          - name: admin
+            role: group-admin
+          - name: yentl
+            role: member
+            email: yentl@su-mbhg.example.edu
+          - name: devon
+            role: member
+            email: devon@su-mbhg.example.edu
+          - name: dayna
+            role: member
+            email: dayna@su-mbhg.example.edu
+        submitAccount:
+          description: "nf-nomad Nextflow plugin service account"
+
+      - name: animaltb
+        description: "SU-MBHG Animal TB — pipelines and ad-hoc batch jobs (normal priority)"
+        state: active
+        priority: normal
+        contact: animaltb-pi@su-mbhg.example.edu
+        ntfyTopic: su-mbhg-animaltb-jobs
+        members:
+          - name: admin
+            role: group-admin
+          - name: stacey
+            role: member
+            email: stacey@su-mbhg.example.edu
+        # No submitAccount: animaltb does not use nf-nomad automated pipeline submission
+
+      - name: tbgenomics
+        description: "SU-MBHG TB Genomics — pipelines and ad-hoc batch jobs (normal priority)"
+        state: active
+        priority: normal
+        contact: tbgenomics-pi@su-mbhg.example.edu
+        ntfyTopic: su-mbhg-tbgenomics-jobs
+        members:
+          - name: admin
+            role: group-admin
+          - name: hanno
+            role: member
+            email: hanno@su-mbhg.example.edu
+        # No submitAccount: tbgenomics does not use nf-nomad automated submission
+
+  # =========================================================================
+  # SU-PSY — Psychiatry
+  # =========================================================================
+  - name: su-psy
+    displayName: "SU-PSY — Psychiatry"
+    workspaces:
+
+      - name: neuropsychiatry
+        description: "SU-PSY Neuropsychiatry — pipelines and ad-hoc batch jobs"
+        state: active
+        priority: normal
+        ntfyTopic: su-psy-neuropsychiatry-jobs
+        members:
+          - name: admin
+            role: group-admin
+          - name: lauren
+            role: member
+            email: lauren@su-psy.example.edu
+        # No submitAccount configured
+
+  # =========================================================================
+  # SU-SDSCT — School of Data Science and Computational Thinking
+  # =========================================================================
+  - name: su-sdsct
+    displayName: "SU-SDSCT — School of Data Science and Computational Thinking"
+    workspaces:
+
+      - name: ceri
+        description: "SU-SDSCT CERI — pipelines and ad-hoc batch jobs"
+        state: active
+        priority: normal
+        ntfyTopic: su-sdsct-ceri-jobs
+        members:
+          - name: admin
+            role: group-admin
+          - name: tj
+            role: member
+            email: tj@su-sdsct.example.edu
+          - name: eduan
+            role: member
+            email: eduan@su-sdsct.example.edu
+        # No submitAccount configured

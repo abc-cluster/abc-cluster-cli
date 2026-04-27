@@ -26,6 +26,13 @@ variable "aither_lan_ip" {
   default = "146.232.174.77"
 }
 
+# Tailscale IP of aither — used for *.aither DNS resolution on server nodes.
+# Server nodes (nomad00/01/oci) connect to services over Tailscale, not the LAN.
+variable "aither_ts_ip" {
+  type    = string
+  default = "100.70.185.46"
+}
+
 job "install-consul-on-server-nodes" {
   namespace   = "default"
   region      = "global"
@@ -57,6 +64,7 @@ NODE_IP="{{ env "attr.unique.network.ip-address" }}"
 CONSUL_VERSION="${var.consul_version}"
 CONSUL_SERVER="${var.consul_server_ip}"
 AITHER_LAN_IP="${var.aither_lan_ip}"
+AITHER_TS_IP="${var.aither_ts_ip}"
 
 echo "==> Installing Consul ${CONSUL_VERSION} on $(hostname) (${NODE_IP})"
 
@@ -144,9 +152,11 @@ server=/consul/127.0.0.1#8600
 no-negcache
 DNS
 cat > /etc/dnsmasq.d/20-aither.conf << DNS
-address=/.aither/${AITHER_LAN_IP}
+# Resolve *.aither to aither's Tailscale IP — server nodes connect via Tailscale.
+address=/.aither/${AITHER_TS_IP}
 DNS
 cat > /etc/dnsmasq.d/00-listen.conf << 'DNS'
+# Server nodes are not split-DNS nameservers; listen on loopback only.
 listen-address=127.0.0.1
 bind-interfaces
 DNS
@@ -218,6 +228,7 @@ NODE_IP="{{ env "attr.unique.network.ip-address" }}"
 CONSUL_VERSION="${var.consul_version}"
 CONSUL_SERVER="${var.consul_server_ip}"
 AITHER_LAN_IP="${var.aither_lan_ip}"
+AITHER_TS_IP="${var.aither_ts_ip}"
 
 echo "==> Installing Consul ${CONSUL_VERSION} on $(hostname) (${NODE_IP})"
 
@@ -296,9 +307,11 @@ server=/consul/127.0.0.1#8600
 no-negcache
 DNS
 cat > /etc/dnsmasq.d/20-aither.conf << DNS
-address=/.aither/${AITHER_LAN_IP}
+# Resolve *.aither to aither's Tailscale IP — server nodes connect via Tailscale.
+address=/.aither/${AITHER_TS_IP}
 DNS
 cat > /etc/dnsmasq.d/00-listen.conf << 'DNS'
+# Server nodes are not split-DNS nameservers; listen on loopback only.
 listen-address=127.0.0.1
 bind-interfaces
 DNS
@@ -363,6 +376,7 @@ NODE_IP="{{ env "attr.unique.network.ip-address" }}"
 CONSUL_VERSION="${var.consul_version}"
 CONSUL_SERVER="${var.consul_server_ip}"
 AITHER_LAN_IP="${var.aither_lan_ip}"
+AITHER_TS_IP="${var.aither_ts_ip}"
 
 echo "==> Installing Consul ${CONSUL_VERSION} on $(hostname) (${NODE_IP})"
 
@@ -442,9 +456,11 @@ server=/consul/127.0.0.1#8600
 no-negcache
 DNS
 cat > /etc/dnsmasq.d/20-aither.conf << DNS
-address=/.aither/${AITHER_LAN_IP}
+# Resolve *.aither to aither's Tailscale IP — server nodes connect via Tailscale.
+address=/.aither/${AITHER_TS_IP}
 DNS
 cat > /etc/dnsmasq.d/00-listen.conf << 'DNS'
+# Server nodes are not split-DNS nameservers; listen on loopback only.
 listen-address=127.0.0.1
 bind-interfaces
 DNS

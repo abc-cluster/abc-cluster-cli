@@ -1,0 +1,16 @@
+config:
+  abc-userspace:specFile: workspaces.yaml
+  # abc-userspace:nomadAddress uses the direct Nomad server (not Traefik) so
+  # ACL API endpoints (create/delete tokens, policies, namespaces) are reachable.
+  # The abc-bootstrap context nomad_addr (100.77.21.36:4646) is the canonical
+  # address for operator/admin operations.
+  abc-userspace:nomadAddress: http://100.77.21.36:4646
+  abc-userspace:minioEndpoint: 100.70.185.46:9000
+  nomad:address: http://100.77.21.36:4646
+  minio:minioServer: 100.70.185.46:9000
+  minio:minioSsl: "false"
+  minio:minioUser: minioadmin
+  nomad:secretId:
+    secure: AAABAI0Twjkuq1C3eFTIHs98/MwtwMBzSFhdAs0Bn/LqbyFfc7vQt0z1H0kCqWA8Y89cn5uddAXQp+n+9u2/v+9qVkA=
+  minio:minioPassword:
+    secure: AAABAGoIsVdy0VpU9ozkEontI/jLKDd1yjPRaH6Rl/kU5zNnlgBOpK1s

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	admincli "github.com/abc-cluster/abc-cluster-cli/cmd/admin/cli"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -182,14 +183,32 @@ func runAllStatus(cmd *cobra.Command, _ []string) error {
 func newCLICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cli",
-		Short: "Porcelain wrappers for local service CLIs",
-		Long: `Convenience wrappers for setting up local service CLIs used by abc wrappers.
+		Short: "Run any service CLI with abc credentials, or manage wrapped binaries",
+		Long: `Unified CLI passthrough: run any service binary with credentials from the
+active abc config context, or manage the wrapped binary installations.
 
-  abc admin services cli setup
-  abc admin services cli status`,
+  abc admin services cli <tool> [--] [tool-args...]   Run a service CLI
+  abc admin services cli setup                        Install wrapped binaries
+  abc admin services cli status                       Check binary installations
+
+Override Nomad credentials for a single run:
+  abc admin services cli --nomad-addr http://... <tool> [args...]`,
 	}
+
+	// Persistent Nomad credential flags for service subcommands that need them.
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
+		"Nomad API address (overrides config; or set ABC_ADDR/NOMAD_ADDR)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
+		"Nomad ACL token (overrides config; or set ABC_TOKEN/NOMAD_TOKEN)")
+
 	cmd.AddCommand(newCLISetupCmd())
 	cmd.AddCommand(newCLIStatusCmd())
+
+	// Register all per-service passthrough subcommands (pulumi, terraform,
+	// nomad, minio, vault, loki, …) so they are available as:
+	//   abc admin services cli <tool> [--] [args...]
+	admincli.RegisterServices(cmd)
+
 	return cmd
 }
 

@@ -79,11 +79,13 @@ for NODE_DEF in "${NODES[@]}"; do
   rm -f "${PATCHED_HCL}"
 
   echo "==> Configuring dnsmasq + resolv.conf on ${SSH_ADDR}..."
-  AITHER_LAN_IP="${AITHER_LAN_IP:-146.232.174.77}"
+  # Server nodes (nomad00/01/oci) reach services over Tailscale, not the LAN.
+  # *.aither must resolve to the Tailscale IP (100.70.185.46) where Caddy listens.
+  AITHER_TS_IP="${CONSUL_SERVER_TS_IP}"
 
   ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
       -i "${SSH_KEY}" "${SSH_USER}@${SSH_ADDR}" \
-      "AITHER_LAN_IP='${AITHER_LAN_IP}' CONSUL_SERVER_TS_IP='${CONSUL_SERVER_TS_IP}' bash -s" << 'REMOTE'
+      "AITHER_TS_IP='${AITHER_TS_IP}' bash -s" << 'REMOTE'
 set -euo pipefail
 echo "  Installing dnsmasq..."
 apt-get install -y -qq dnsmasq 2>/dev/null || true
@@ -94,10 +96,12 @@ no-negcache
 DNS
 
 cat > /etc/dnsmasq.d/20-aither.conf << DNS
-address=/.aither/${AITHER_LAN_IP}
+# Resolve *.aither to aither's Tailscale IP — server nodes connect via Tailscale.
+address=/.aither/${AITHER_TS_IP}
 DNS
 
 cat > /etc/dnsmasq.d/00-listen.conf << 'DNS'
+# Server nodes are not split-DNS nameservers; listen on loopback only.
 listen-address=127.0.0.1
 bind-interfaces
 DNS
