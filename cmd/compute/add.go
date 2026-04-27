@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
 	appconfig "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
@@ -151,6 +152,33 @@ Examples:
 	// ── Script generation ────────────────────────────────────────────────────
 	cmd.Flags().Bool("print-commands", false, "Print a self-contained shell script covering all install steps (no execution)")
 	cmd.Flags().String("target-os", "", "Target OS/arch for --print-commands with --remote (e.g. linux/amd64, darwin/arm64; default: linux/amd64)")
+
+	advhelp.Register(cmd, []string{
+		// SSH transport advanced bits (essential ones --remote/--user kept visible)
+		"ssh-key", "ssh-port", "skip-host-key-check", "password",
+		"jump-host", "jump-user", "jump-port", "jump-key",
+		// Nomad cluster tunables
+		"nomad-version", "node-class", "network-interface",
+		"host-volume", "scratch-host-volume", "scratch-host-volume-path",
+		"cni-plugins", "cni-plugins-version",
+		"community-driver", "containerd-nerdctl-version", "containerd-driver-version",
+		"exec2-version", "local-driver",
+		"java-driver", "jdk-version", "jdk-default-version",
+		"encrypt",
+		// Network bind / TLS
+		"address", "advertise",
+		"ca-file", "cert-file", "key-file",
+		// Service control
+		"skip-enable", "skip-start", "skip-preflight",
+		// Tailscale advanced (--tailscale itself kept visible)
+		"tailscale-auth-key", "tailscale-hostname",
+		"tailscale-create-auth-key", "tailscale-key-ephemeral", "tailscale-key-reusable",
+		"tailscale-key-expiry", "tailscale-key-preauthorized", "tailscale-key-description",
+		"nomad-use-tailscale-ip", "nomad-advertise-ip", "nomad-http-api-port",
+		"package-install-method",
+		// Script generation / debugging
+		"print-commands", "target-os",
+	})
 
 	return cmd
 }

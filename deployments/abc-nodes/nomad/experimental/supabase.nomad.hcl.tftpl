@@ -1,13 +1,47 @@
-# Supabase Studio — BaaS platform UI (abc-experimental namespace)
-# Managed by Terraform — do not edit directly; modify variables.tf instead.
-# Backed by the shared abc-experimental postgres instance.
+# supabase.nomad.hcl.tftpl
 #
-# Dependencies: abc-experimental-postgres must be running.
-# Enable via Terraform:
-#   terraform apply -var enable_postgres=true -var enable_supabase=true
+# Self-hosted Supabase stack — port of the upstream docker-compose
+# (https://github.com/supabase/supabase/blob/master/docker/docker-compose.yml).
 #
-# Access: http://<cluster_public_host>:3001
-# Traefik host-header route: http://supabase.aither  (uncomment service block below)
+# MVP-1 scope (this file): db + meta + auth + rest + studio + kong.
+# This is enough for Studio's Table Editor / SQL Editor / Auth user
+# management to work end-to-end. Storage, realtime, imgproxy, edge
+# functions, analytics, and supavisor are intentionally NOT included
+# yet — add them as additional tasks in this group when needed.
+#
+# Architecture
+# ────────────
+#   All tasks share one Nomad bridge network namespace (group-level network).
+#   Tasks reach each other on `localhost:<container-port>`.
+#   Only Kong (host :${kong_http_port}) is exposed externally; everything
+#   else is routed through Kong.
+#
+#   ┌──────────────── group "supabase" ────────────────┐
+#   │                                                   │
+#   │  db:5432 ◀──┐  ┌── meta:8080                      │
+#   │             │  │                                   │
+#   │             ├──┼── auth:9999 ──┐                   │
+#   │             │  │                ├── kong:8000  ────┼──▶ host :${kong_http_port}
+#   │             ├──┼── rest:3001 ──┤                   │
+#   │             │  │                │                   │
+#   │             │  └── studio:3000 ┘                   │
+#   │             │                                      │
+#   │  db-init (poststart, runs custom SQL once)         │
+#   └────────────────────────────────────────────────────┘
+#
+# Init SQL
+# ────────
+#   The supabase/postgres image runs its own bundled migrations from
+#   /docker-entrypoint-initdb.d on first start. The deployment-specific
+#   SQL (custom roles, JWT secret, _supabase database, _realtime schema,
+#   webhook helpers) is applied by the `db-init` poststart task using
+#   psql. The same image (which ships with psql) is reused for that task.
+#
+# Secrets
+# ───────
+#   Defaults below are the well-known INSECURE values from the upstream
+#   .env.example. They work out of the box for demos / experimental tier
+#   but MUST be replaced before any data goes in.  See README.
 
 job "abc-experimental-supabase" {
   namespace = "abc-experimental"
@@ -19,55 +53,777 @@ job "abc-experimental-supabase" {
 
     constraint {
       attribute = "$${attr.unique.hostname}"
-      value     = "aither"
+      value     = "${supabase_node}"
     }
 
+    # All tasks share this network namespace; intra-group traffic is on
+    # localhost, only the Kong HTTP port is mapped to the host.
     network {
       mode = "bridge"
-      port "studio" {
-        static = 3001
-        to     = 3000
+      port "kong" {
+        static = ${kong_http_port}
+        to     = 8000
       }
     }
 
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
     restart {
-      attempts = 3
+      attempts = 5
       delay    = "30s"
-      interval = "5m"
+      interval = "10m"
       mode     = "delay"
     }
 
+    update {
+      max_parallel      = 1
+      min_healthy_time  = "30s"
+      healthy_deadline  = "9m"
+      progress_deadline = "12m"
+      auto_revert       = false
+    }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 1. db — supabase/postgres (the only image that ships with the
+    #         pgsodium / pgjwt / pg_graphql / pg_net / pg_cron extensions
+    #         and the auth/storage/_supabase migration scripts that the
+    #         rest of the stack depends on)
+    # ─────────────────────────────────────────────────────────────────
+    task "db" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${supabase_db_image}"
+        # supabase/postgres' default CMD is the postgres entrypoint
+        # which auto-runs /docker-entrypoint-initdb.d on first boot.
+        # The image ships with /etc/postgresql/postgresql.conf which
+        # hard-codes data_directory='/var/lib/postgresql/data' — we must
+        # override that to point at our scratch-volume PGDATA, otherwise
+        # the bootstrap writes data to one path and the server then tries
+        # to read from another.
+        args = [
+          "postgres",
+          "-c", "config_file=/etc/postgresql/postgresql.conf",
+          "-c", "data_directory=/scratch/abc-supabase/pgdata",
+          "-c", "log_min_messages=fatal",
+        ]
+      }
+
+      # Persistent pgdata on the scratch host volume — survives task
+      # restarts and host reboots. Distinct from abc-experimental-postgres'
+      # scratch path so the two postgres jobs do not collide.
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
+      }
+
+      env {
+        POSTGRES_HOST     = "/var/run/postgresql"
+        POSTGRES_PORT     = "5432"
+        PGPORT            = "5432"
+        POSTGRES_DB       = "${supabase_postgres_db}"
+        PGDATABASE        = "${supabase_postgres_db}"
+        POSTGRES_PASSWORD = "${supabase_postgres_password}"
+        PGPASSWORD        = "${supabase_postgres_password}"
+        PGDATA            = "/scratch/abc-supabase/pgdata"
+        JWT_SECRET        = "${supabase_jwt_secret}"
+        JWT_EXP           = "${supabase_jwt_exp}"
+      }
+
+      resources {
+        cpu    = 600
+        memory = 1024
+      }
+
+      service {
+        name     = "abc-supabase-db"
+        port     = "kong" # only group-level port; service is internal
+        provider = "consul"
+
+        check {
+          type     = "script"
+          command  = "pg_isready"
+          args     = ["-U", "supabase_admin", "-h", "127.0.0.1", "-p", "5432"]
+          interval = "30s"
+          timeout  = "5s"
+          task     = "db"
+        }
+
+        check_restart {
+          limit           = 3
+          grace           = "60s"
+          ignore_warnings = false
+        }
+      }
+    }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 2. db-init — applies the deployment-specific SQL (roles, JWT
+    #              secret, _supabase database, _realtime schema, webhook
+    #              helpers) once after `db` becomes ready. Reuses the
+    #              same supabase/postgres image because it ships psql.
+    # ─────────────────────────────────────────────────────────────────
+    task "db-init" {
+      driver = "containerd-driver"
+
+      lifecycle {
+        hook    = "poststart"
+        sidecar = false
+      }
+
+      config {
+        image      = "${supabase_db_image}"
+        entrypoint = ["/bin/bash"]
+        args       = ["/local/init.sh"]
+      }
+
+      env {
+        POSTGRES_USER     = "supabase_admin"
+        POSTGRES_PASSWORD = "${supabase_postgres_password}"
+        PGPASSWORD        = "${supabase_postgres_password}"
+        POSTGRES_DB       = "${supabase_postgres_db}"
+        JWT_SECRET        = "${supabase_jwt_secret}"
+        JWT_EXP           = "${supabase_jwt_exp}"
+      }
+
+      template {
+        destination = "local/init.sh"
+        change_mode = "noop"
+        perms       = "0755"
+        data        = <<-INITSH
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          # Wait for the db task to accept connections (up to ~5 min).
+          for i in $(seq 1 60); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U "$${POSTGRES_USER}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "[db-init] waiting for postgres ($${i}/60)…"
+            sleep 5
+          done
+
+          export PSQL="psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER}"
+
+          echo "[db-init] applying _supabase.sql"
+          $${PSQL} -d "$${POSTGRES_DB}" -f /local/_supabase.sql || true
+
+          echo "[db-init] applying realtime.sql"
+          $${PSQL} -d "$${POSTGRES_DB}" -f /local/realtime.sql || true
+
+          echo "[db-init] applying roles.sql"
+          $${PSQL} -d "$${POSTGRES_DB}" -f /local/roles.sql || true
+
+          echo "[db-init] applying jwt.sql"
+          $${PSQL} -d "$${POSTGRES_DB}" -f /local/jwt.sql || true
+
+          # Optional integrations (pg_cron / pgmq / pg_net / vector / …) —
+          # gated by the supabase_enable_optional_integrations Terraform var.
+          # extensions.sql is always rendered but skipped when var is false.
+          if [ "${supabase_enable_optional_integrations}" = "true" ]; then
+            echo "[db-init] applying extensions.sql (optional integrations)"
+            $${PSQL} -d "$${POSTGRES_DB}" -f /local/extensions.sql || true
+          else
+            echo "[db-init] skipping extensions.sql (supabase_enable_optional_integrations=false)"
+          fi
+
+          # webhooks.sql relies on pg_net so it MUST run after extensions.sql
+          # (the upstream version of this script does CREATE EXTENSION pg_net
+          # itself; we leave that in place but it's a no-op if already created).
+          echo "[db-init] applying webhooks.sql"
+          $${PSQL} -d "$${POSTGRES_DB}" -f /local/webhooks.sql || true
+
+          echo "[db-init] done"
+        INITSH
+      }
+
+      template {
+        destination = "local/_supabase.sql"
+        change_mode = "noop"
+        data        = <<-SQL
+          \set pguser `echo "$POSTGRES_USER"`
+          CREATE DATABASE _supabase WITH OWNER :pguser;
+        SQL
+      }
+
+      template {
+        destination = "local/realtime.sql"
+        change_mode = "noop"
+        data        = <<-SQL
+          \set pguser `echo "$POSTGRES_USER"`
+          create schema if not exists _realtime;
+          alter schema _realtime owner to :pguser;
+        SQL
+      }
+
+      template {
+        destination = "local/roles.sql"
+        change_mode = "noop"
+        data        = <<-SQL
+          \set pgpass `echo "$POSTGRES_PASSWORD"`
+          ALTER USER authenticator           WITH PASSWORD :'pgpass';
+          ALTER USER pgbouncer               WITH PASSWORD :'pgpass';
+          ALTER USER supabase_auth_admin     WITH PASSWORD :'pgpass';
+          ALTER USER supabase_functions_admin WITH PASSWORD :'pgpass';
+          ALTER USER supabase_storage_admin  WITH PASSWORD :'pgpass';
+        SQL
+      }
+
+      template {
+        destination = "local/jwt.sql"
+        change_mode = "noop"
+        data        = <<-SQL
+          \set jwt_secret `echo "$JWT_SECRET"`
+          \set jwt_exp    `echo "$JWT_EXP"`
+          ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
+          ALTER DATABASE postgres SET "app.settings.jwt_exp"    TO :'jwt_exp';
+        SQL
+      }
+
+      # Optional integrations — Studio surfaces the matching admin panels
+      # (Database / Cron, Queues, Webhooks, Vector, …) when the underlying
+      # extensions are present.  The supabase/postgres image preloads them
+      # in shared_preload_libraries; we just have to issue CREATE EXTENSION.
+      template {
+        destination = "local/extensions.sql"
+        change_mode = "noop"
+        data        = <<-SQL
+          -- pg_cron — scheduled jobs (Studio: Database / Cron Jobs)
+          CREATE EXTENSION IF NOT EXISTS pg_cron;
+          GRANT USAGE ON SCHEMA cron TO postgres;
+          GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
+
+          -- pgmq — message queues (Studio: Database / Queues)
+          CREATE EXTENSION IF NOT EXISTS pgmq;
+          GRANT USAGE ON SCHEMA pgmq TO postgres, anon, authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA pgmq GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA pgmq GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+
+          -- pg_net — async HTTP from postgres (Studio: Database / Webhooks)
+          CREATE EXTENSION IF NOT EXISTS pg_net SCHEMA extensions;
+
+          -- pgvector — vector embeddings (Studio: AI / Vector)
+          CREATE EXTENSION IF NOT EXISTS vector;
+
+          -- pg_jsonschema — JSON schema validation in CHECK constraints
+          CREATE EXTENSION IF NOT EXISTS pg_jsonschema;
+
+          -- hstore / citext — useful for many app schemas; cheap to enable
+          CREATE EXTENSION IF NOT EXISTS hstore;
+          CREATE EXTENSION IF NOT EXISTS citext;
+        SQL
+      }
+
+      # Webhook helpers — full upstream webhooks.sql (creates the
+      # supabase_functions.http_request trigger function + pg_net grants
+      # so the Database / Webhooks panel in Studio can register triggers).
+      template {
+        destination = "local/webhooks.sql"
+        change_mode = "noop"
+        data        = <<-SQL
+          BEGIN;
+            -- Create pg_net extension (idempotent — extensions.sql may have run first)
+            CREATE EXTENSION IF NOT EXISTS pg_net SCHEMA extensions;
+            -- Create supabase_functions schema
+            CREATE SCHEMA IF NOT EXISTS supabase_functions AUTHORIZATION supabase_admin;
+            GRANT USAGE ON SCHEMA supabase_functions TO postgres, anon, authenticated, service_role;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA supabase_functions GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS TO postgres, anon, authenticated, service_role;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+            -- Migration tracking
+            CREATE TABLE IF NOT EXISTS supabase_functions.migrations (
+              version text PRIMARY KEY,
+              inserted_at timestamptz NOT NULL DEFAULT NOW()
+            );
+            INSERT INTO supabase_functions.migrations (version)
+              VALUES ('initial') ON CONFLICT DO NOTHING;
+            -- Hooks audit table
+            CREATE TABLE IF NOT EXISTS supabase_functions.hooks (
+              id bigserial PRIMARY KEY,
+              hook_table_id integer NOT NULL,
+              hook_name text NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT NOW(),
+              request_id bigint
+            );
+            CREATE INDEX IF NOT EXISTS supabase_functions_hooks_request_id_idx
+              ON supabase_functions.hooks USING btree (request_id);
+            CREATE INDEX IF NOT EXISTS supabase_functions_hooks_h_table_id_h_name_idx
+              ON supabase_functions.hooks USING btree (hook_table_id, hook_name);
+            COMMENT ON TABLE supabase_functions.hooks IS 'Supabase Functions Hooks: Audit trail for triggered hooks.';
+            -- The http_request trigger function — this is what Studio's
+            -- Database / Webhooks panel attaches to user tables.
+            CREATE OR REPLACE FUNCTION supabase_functions.http_request()
+              RETURNS trigger
+              LANGUAGE plpgsql
+              AS $function$
+              DECLARE
+                request_id bigint;
+                payload jsonb;
+                url text := TG_ARGV[0]::text;
+                method text := TG_ARGV[1]::text;
+                headers jsonb DEFAULT '{}'::jsonb;
+                params jsonb DEFAULT '{}'::jsonb;
+                timeout_ms integer DEFAULT 1000;
+              BEGIN
+                IF url IS NULL OR url = 'null' THEN
+                  RAISE EXCEPTION 'url argument is missing';
+                END IF;
+                IF method IS NULL OR method = 'null' THEN
+                  RAISE EXCEPTION 'method argument is missing';
+                END IF;
+                IF TG_ARGV[2] IS NULL OR TG_ARGV[2] = 'null' THEN
+                  headers = '{"Content-Type": "application/json"}'::jsonb;
+                ELSE
+                  headers = TG_ARGV[2]::jsonb;
+                END IF;
+                IF TG_ARGV[3] IS NULL OR TG_ARGV[3] = 'null' THEN
+                  params = '{}'::jsonb;
+                ELSE
+                  params = TG_ARGV[3]::jsonb;
+                END IF;
+                IF TG_ARGV[4] IS NULL OR TG_ARGV[4] = 'null' THEN
+                  timeout_ms = 1000;
+                ELSE
+                  timeout_ms = TG_ARGV[4]::integer;
+                END IF;
+                CASE
+                  WHEN method = 'GET' THEN
+                    SELECT http_get INTO request_id FROM net.http_get(url, params, headers, timeout_ms);
+                  WHEN method = 'POST' THEN
+                    payload = jsonb_build_object('old_record', OLD, 'record', NEW, 'type', TG_OP, 'table', TG_TABLE_NAME, 'schema', TG_TABLE_SCHEMA);
+                    SELECT http_post INTO request_id FROM net.http_post(url, payload, params, headers, timeout_ms);
+                  ELSE
+                    RAISE EXCEPTION 'method argument % is invalid', method;
+                END CASE;
+                INSERT INTO supabase_functions.hooks (hook_table_id, hook_name, request_id)
+                VALUES (TG_RELID, TG_NAME, request_id);
+                RETURN NEW;
+              END
+            $function$;
+            -- supabase_functions_admin role + grants
+            DO $$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_functions_admin') THEN
+                CREATE USER supabase_functions_admin NOINHERIT CREATEROLE LOGIN NOREPLICATION;
+              END IF;
+            END $$;
+            GRANT ALL PRIVILEGES ON SCHEMA supabase_functions TO supabase_functions_admin;
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA supabase_functions TO supabase_functions_admin;
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA supabase_functions TO supabase_functions_admin;
+            ALTER USER supabase_functions_admin SET search_path = "supabase_functions";
+            ALTER table "supabase_functions".migrations OWNER TO supabase_functions_admin;
+            ALTER table "supabase_functions".hooks      OWNER TO supabase_functions_admin;
+            ALTER function "supabase_functions".http_request() OWNER TO supabase_functions_admin;
+            GRANT supabase_functions_admin TO postgres;
+            -- pg_net grants (when extension is present)
+            DO $$
+            BEGIN
+              IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
+                GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+                ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+                ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+                ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+                ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+                REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+                REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+                GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer)
+                  TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+                GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer)
+                  TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+              END IF;
+            END $$;
+            -- Wrap up
+            ALTER function supabase_functions.http_request() SECURITY DEFINER;
+            ALTER function supabase_functions.http_request() SET search_path = supabase_functions;
+            REVOKE ALL ON FUNCTION supabase_functions.http_request() FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION supabase_functions.http_request()
+              TO postgres, anon, authenticated, service_role;
+            INSERT INTO supabase_functions.migrations (version)
+              VALUES ('20210809183423_update_grants') ON CONFLICT DO NOTHING;
+          COMMIT;
+        SQL
+      }
+
+      resources {
+        cpu    = 100
+        memory = 128
+      }
+    }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 3. meta — postgres-meta: REST API for schema/role/extension
+    #           introspection, used by Studio's Table Editor and
+    #           Database panes. Reaches db on 127.0.0.1:5432.
+    # ─────────────────────────────────────────────────────────────────
+    task "meta" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${supabase_meta_image}"
+      }
+
+      env {
+        PG_META_PORT        = "8080"
+        PG_META_DB_HOST     = "127.0.0.1"
+        PG_META_DB_PORT     = "5432"
+        PG_META_DB_NAME     = "${supabase_postgres_db}"
+        PG_META_DB_USER     = "supabase_admin"
+        PG_META_DB_PASSWORD = "${supabase_postgres_password}"
+        CRYPTO_KEY          = "${supabase_pg_meta_crypto_key}"
+      }
+
+      resources {
+        cpu    = 100
+        memory = 256
+      }
+    }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 4. auth — GoTrue: signup/login/JWT issuance. Stores users in the
+    #           `auth` schema that supabase/postgres' baked-in migrations
+    #           created. Reaches db on 127.0.0.1:5432.
+    # ─────────────────────────────────────────────────────────────────
+    task "auth" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${supabase_auth_image}"
+      }
+
+      env {
+        GOTRUE_API_HOST                = "0.0.0.0"
+        GOTRUE_API_PORT                = "9999"
+        API_EXTERNAL_URL               = "${supabase_public_url}"
+        GOTRUE_DB_DRIVER               = "postgres"
+        GOTRUE_DB_DATABASE_URL         = "postgres://supabase_auth_admin:${supabase_postgres_password}@127.0.0.1:5432/${supabase_postgres_db}"
+        GOTRUE_SITE_URL                = "${supabase_site_url}"
+        GOTRUE_URI_ALLOW_LIST          = "${supabase_site_url}"
+        GOTRUE_DISABLE_SIGNUP          = "${supabase_disable_signup}"
+        GOTRUE_JWT_ADMIN_ROLES         = "service_role"
+        GOTRUE_JWT_AUD                 = "authenticated"
+        GOTRUE_JWT_DEFAULT_GROUP_NAME  = "authenticated"
+        GOTRUE_JWT_EXP                 = "${supabase_jwt_exp}"
+        GOTRUE_JWT_SECRET              = "${supabase_jwt_secret}"
+        GOTRUE_EXTERNAL_EMAIL_ENABLED  = "true"
+        GOTRUE_EXTERNAL_PHONE_ENABLED  = "false"
+        GOTRUE_MAILER_AUTOCONFIRM      = "true"
+        GOTRUE_SMS_AUTOCONFIRM         = "true"
+        GOTRUE_SMTP_ADMIN_EMAIL        = "admin@example.com"
+        GOTRUE_SMTP_HOST               = "supabase-mail"
+        GOTRUE_SMTP_PORT               = "2500"
+        GOTRUE_SMTP_USER               = "fake"
+        GOTRUE_SMTP_PASS               = "fake"
+        GOTRUE_SMTP_SENDER_NAME        = "fake"
+        GOTRUE_MAILER_URLPATHS_INVITE       = "/auth/v1/verify"
+        GOTRUE_MAILER_URLPATHS_CONFIRMATION = "/auth/v1/verify"
+        GOTRUE_MAILER_URLPATHS_RECOVERY     = "/auth/v1/verify"
+        GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE = "/auth/v1/verify"
+        GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED = "false"
+      }
+
+      resources {
+        cpu    = 200
+        memory = 256
+      }
+    }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 5. rest — PostgREST: auto-generated REST API over the postgres
+    #           public + storage schemas, with RLS enforced via JWT.
+    # ─────────────────────────────────────────────────────────────────
+    task "rest" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${supabase_rest_image}"
+        args  = ["postgrest"]
+      }
+
+      env {
+        PGRST_DB_URI                  = "postgres://authenticator:${supabase_postgres_password}@127.0.0.1:5432/${supabase_postgres_db}"
+        PGRST_DB_SCHEMAS              = "${supabase_pgrst_schemas}"
+        PGRST_DB_ANON_ROLE            = "anon"
+        PGRST_JWT_SECRET              = "${supabase_jwt_secret}"
+        PGRST_DB_USE_LEGACY_GUCS      = "false"
+        PGRST_APP_SETTINGS_JWT_SECRET = "${supabase_jwt_secret}"
+        PGRST_APP_SETTINGS_JWT_EXP    = "${supabase_jwt_exp}"
+        PGRST_DB_MAX_ROWS             = "1000"
+        PGRST_DB_EXTRA_SEARCH_PATH    = "public"
+        PGRST_SERVER_PORT             = "3001" # 3000 is taken by studio
+      }
+
+      resources {
+        cpu    = 200
+        memory = 256
+      }
+    }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 6. studio — Supabase Dashboard UI. Talks to meta (table editor),
+    #             rest (API explorer), auth (users), kong (everything
+    #             else).
+    # ─────────────────────────────────────────────────────────────────
     task "studio" {
       driver = "containerd-driver"
 
       config {
-        image = "${supabase_image}"
+        image = "${supabase_studio_image}"
       }
 
       env {
-        # Postgres connection — matches abc-experimental-postgres configuration
-        POSTGRES_PASSWORD       = "${postgres_password}"
-        SUPABASE_URL            = "http://supabase.aither"
-        STUDIO_PG_META_URL      = "http://127.0.0.1:8080"
-        NEXT_PUBLIC_ENABLE_LOGS = "true"
-        NODE_ENV                = "production"
+        STUDIO_PG_META_URL  = "http://127.0.0.1:8080"
+        POSTGRES_HOST       = "127.0.0.1"
+        POSTGRES_PORT       = "5432"
+        POSTGRES_DB         = "${supabase_postgres_db}"
+        POSTGRES_PASSWORD   = "${supabase_postgres_password}"
+        PG_META_CRYPTO_KEY  = "${supabase_pg_meta_crypto_key}"
+
+        DEFAULT_ORGANIZATION_NAME = "${supabase_default_org_name}"
+        DEFAULT_PROJECT_NAME      = "${supabase_default_project_name}"
+
+        SUPABASE_URL          = "http://127.0.0.1:8000" # in-cluster Kong
+        SUPABASE_PUBLIC_URL   = "${supabase_public_url}"
+        SUPABASE_ANON_KEY     = "${supabase_anon_key}"
+        SUPABASE_SERVICE_KEY  = "${supabase_service_role_key}"
+        AUTH_JWT_SECRET       = "${supabase_jwt_secret}"
+
+        # Skip logflare/analytics — not deployed in this MVP.
+        NEXT_PUBLIC_ENABLE_LOGS         = "false"
+        NEXT_ANALYTICS_BACKEND_PROVIDER = "postgres"
+
+        PGRST_DB_SCHEMAS           = "${supabase_pgrst_schemas}"
+        PGRST_DB_MAX_ROWS          = "1000"
+        PGRST_DB_EXTRA_SEARCH_PATH = "public"
+
+        HOSTNAME = "0.0.0.0"
       }
 
       resources {
-        cpu    = 500
-        memory = 768
+        cpu    = 300
+        memory = 512
+      }
+    }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 7. kong — API gateway. Single host-exposed port; everything
+    #           internal goes through here (auth, rest, meta, studio).
+    # ─────────────────────────────────────────────────────────────────
+    task "kong" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${supabase_kong_image}"
+        # The Nomad template block below renders kong.yml directly with
+        # the consumer keys / dashboard creds substituted in (no envsubst
+        # pass needed at runtime).  KONG_DECLARATIVE_CONFIG points at the
+        # rendered file via the alloc's NOMAD_TASK_DIR.
       }
 
-      # Uncomment once Traefik host-header routing is confirmed for *.aither
-      # service {
-      #   name = "supabase-studio"
-      #   port = "studio"
-      #   tags = [
-      #     "traefik.enable=true",
-      #     "traefik.http.routers.supabase.rule=Host(`supabase.aither`)",
-      #     "traefik.http.routers.supabase.entrypoints=web",
-      #   ]
-      # }
+      env {
+        KONG_DATABASE          = "off"
+        KONG_DECLARATIVE_CONFIG = "/local/kong.yml"
+        KONG_DNS_ORDER         = "LAST,A,CNAME"
+        KONG_PLUGINS           = "request-transformer,cors,key-auth,acl,basic-auth,request-termination"
+        KONG_NGINX_PROXY_PROXY_BUFFER_SIZE = "160k"
+        KONG_NGINX_PROXY_PROXY_BUFFERS     = "64 160k"
+        KONG_PROXY_LISTEN      = "0.0.0.0:8000"
+        KONG_ADMIN_LISTEN      = "off"
+
+        SUPABASE_ANON_KEY     = "${supabase_anon_key}"
+        SUPABASE_SERVICE_KEY  = "${supabase_service_role_key}"
+        DASHBOARD_USERNAME    = "${supabase_dashboard_username}"
+        DASHBOARD_PASSWORD    = "${supabase_dashboard_password}"
+      }
+
+      # Kong declarative config — ported from upstream kong.yml with
+      # service URLs rewritten from container_name (auth, rest, meta,
+      # studio) to localhost:<port> because all tasks share one netns.
+      # Storage / realtime / functions routes are commented out — restore
+      # them when those tasks are added to this group.
+      template {
+        destination = "local/kong.yml"
+        change_mode = "restart"
+        data        = <<-KONGYAML
+          _format_version: '2.1'
+          _transform: true
+
+          consumers:
+            - username: DASHBOARD
+            - username: anon
+              keyauth_credentials:
+                - key: ${supabase_anon_key}
+            - username: service_role
+              keyauth_credentials:
+                - key: ${supabase_service_role_key}
+
+          acls:
+            - consumer: anon
+              group: anon
+            - consumer: service_role
+              group: admin
+
+          basicauth_credentials:
+            - consumer: DASHBOARD
+              username: '${supabase_dashboard_username}'
+              password: '${supabase_dashboard_password}'
+
+          services:
+            ## Open Auth routes
+            - name: auth-v1-open
+              url: http://127.0.0.1:9999/verify
+              routes:
+                - name: auth-v1-open
+                  strip_path: true
+                  paths:
+                    - /auth/v1/verify
+              plugins:
+                - name: cors
+            - name: auth-v1-open-callback
+              url: http://127.0.0.1:9999/callback
+              routes:
+                - name: auth-v1-open-callback
+                  strip_path: true
+                  paths:
+                    - /auth/v1/callback
+              plugins:
+                - name: cors
+            - name: auth-v1-open-authorize
+              url: http://127.0.0.1:9999/authorize
+              routes:
+                - name: auth-v1-open-authorize
+                  strip_path: true
+                  paths:
+                    - /auth/v1/authorize
+              plugins:
+                - name: cors
+
+            ## Secure Auth routes (require apikey header)
+            - name: auth-v1
+              url: http://127.0.0.1:9999/
+              routes:
+                - name: auth-v1-all
+                  strip_path: true
+                  paths:
+                    - /auth/v1/
+              plugins:
+                - name: cors
+                - name: key-auth
+                  config:
+                    hide_credentials: false
+                - name: acl
+                  config:
+                    hide_groups_header: true
+                    allow:
+                      - admin
+                      - anon
+
+            ## Secure REST routes
+            - name: rest-v1
+              url: http://127.0.0.1:3001/
+              routes:
+                - name: rest-v1-all
+                  strip_path: true
+                  paths:
+                    - /rest/v1/
+              plugins:
+                - name: cors
+                - name: key-auth
+                  config:
+                    hide_credentials: true
+                - name: acl
+                  config:
+                    hide_groups_header: true
+                    allow:
+                      - admin
+                      - anon
+
+            ## postgres-meta (admin only)
+            - name: meta
+              url: http://127.0.0.1:8080/
+              routes:
+                - name: meta-all
+                  strip_path: true
+                  paths:
+                    - /pg/
+              plugins:
+                - name: key-auth
+                  config:
+                    hide_credentials: false
+                - name: acl
+                  config:
+                    hide_groups_header: true
+                    allow:
+                      - admin
+
+            ## Block direct MCP access
+            - name: mcp-blocker
+              url: http://127.0.0.1:3000/api/mcp
+              routes:
+                - name: mcp-blocker-route
+                  strip_path: true
+                  paths:
+                    - /api/mcp
+              plugins:
+                - name: request-termination
+                  config:
+                    status_code: 403
+                    message: "Access is forbidden."
+
+            ## Catch-all → Studio (basic-auth protected)
+            - name: dashboard
+              url: http://127.0.0.1:3000/
+              routes:
+                - name: dashboard-all
+                  strip_path: true
+                  paths:
+                    - /
+              plugins:
+                - name: cors
+                - name: basic-auth
+                  config:
+                    hide_credentials: true
+        KONGYAML
+      }
+
+      resources {
+        cpu    = 200
+        memory = 256
+      }
+
+      service {
+        name     = "abc-supabase-kong"
+        port     = "kong"
+        provider = "consul"
+
+        tags = [
+          "traefik.enable=true",
+          "traefik.http.routers.supabase.rule=Host(`supabase.aither`)",
+          "traefik.http.routers.supabase.entrypoints=web",
+        ]
+
+        # TCP check: Kong's catch-all dashboard route returns 401 (basic-auth
+        # required), which Nomad's HTTP check would interpret as unhealthy.
+        # A TCP connect proves the proxy port is bound and serving — sufficient
+        # for liveness.  Kong's own admin /status would be the proper HTTP
+        # check, but that requires KONG_ADMIN_LISTEN to be enabled (we keep
+        # it off so the admin API isn't reachable on the host).
+        check {
+          type     = "tcp"
+          interval = "30s"
+          timeout  = "10s"
+        }
+
+        check_restart {
+          limit           = 3
+          grace           = "120s"
+          ignore_warnings = false
+        }
+      }
     }
   }
 }

@@ -6,6 +6,12 @@ terraform {
       source  = "hashicorp/nomad"
       version = "~> 2.3"
     }
+    # Used for stable secrets (Garage rpc_secret, admin_token, restic password,
+    # Garage S3 access keys) — generated once on first apply, persisted in state.
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 
   # Local backend - for production, consider remote backend (Consul, S3, etc.)

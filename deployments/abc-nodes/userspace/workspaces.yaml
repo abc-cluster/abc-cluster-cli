@@ -1,75 +1,124 @@
-version: v1
+version: v2
 
 # ---------------------------------------------------------------------------
-# abc-nodes workspace specification
+# abc-nodes workspace specification (v2 — per-person credential model)
 #
 # This file is the single source of truth for workspace lifecycle management.
-# Running `pulumi up` applies any diff against live Nomad + MinIO state.
+# Running `pulumi up` applies any diff against live Nomad + RustFS state.
 #
-# Naming conventions:
-#   Nomad namespace:  <org>-<workspace>          e.g. su-mbhg-bioinformatics
-#   MinIO bucket:     <org>-<workspace>          (same as namespace)
+# CREDENTIAL MODEL
+# ────────────────
+#   • Top-level users[] lists every human / service account once.
+#   • Each user gets ONE Nomad ACL token + ONE RustFS IAM user, named after
+#     their global `name` (not per-namespace).
+#   • Per-(workspace, role) IAM groups + Nomad policies are still created;
+#     the user joins the relevant groups and her Nomad token carries the
+#     union of all attached policies.
+#   • `role: group-admin` auto-implies `group-member` (admin's bucket scope
+#     is a superset). Declare a single role per (user, workspace).
+#   • A user may appear in multiple workspaces — her one token works for all
+#     of them. No token swapping needed.
+#   • `abc --sudo` is a client-side UX confirmation prompt only. Future
+#     short-lived elevation tokens are documented at internal/jurist/types.go.
 #
-# Roles & principals (one Nomad token + one MinIO user per principal):
-#   role: group-member       → <namespace>_<name>           (default)
-#   role: group-admin        → <namespace>_<name>-admin
-#   role: group-collaborator → <namespace>_collab-<name>
-#   submitAccount            → <namespace>_submit
+# RESOURCE NAMING
+# ───────────────
+#   Nomad namespace:        <org>-<workspace>
+#   RustFS bucket:          <org>-<workspace>
+#   Nomad ACL token name:   <user>                          (e.g. abhi)
+#   RustFS IAM user:        <user>                          (e.g. abhi)
+#   Nomad policy:           <ns>-{group-admin|member|submit}
+#   RustFS IAM policy:      ns-<ns>-group-admin
+#                           ns-<ns>-member       (uses ${aws:username})
+#                           ns-<ns>-collab-<user>
+#                           ns-<ns>-pipeline-submit
+#   RustFS IAM group:       g-<ns>-group-admin | g-<ns>-member
 #
-# A member may declare multiple roles (e.g. role: [group-member, group-admin]).
-# They get ONE token + ONE MinIO user PER role. The default token is the
-# group-member one; `abc --sudo` selects the group-admin token via abc-jurist.
+# BUCKET LAYOUT (per workspace)
+# ─────────────────────────────
+#   <bucket>/users/<user>/            — user private prefix         (rw)
+#   <bucket>/collab/<user>/           — collaborator area           (collab rw)
+#   <bucket>/shared/                  — read-only references
+#   <bucket>/shared/users/<user>/     — user shared contribution    (rw)
+#   <bucket>/samplesheets/            — input samplesheets          (read)
+#   <bucket>/pipelines/               — pipeline outputs            (read; submit writes)
 #
-#   Nomad ACL token name: same as MinIO user; SecretID = MinIO password
-#   Nomad policy:         <namespace>-{group-admin|member|submit}
-#   MinIO IAM policy:     ns-<namespace>-group-admin  |  ns-<namespace>-user-<name>
+# CREDENTIAL VARIABLES (Nomad, abc-services namespace)
+# ────────────────────────────────────────────────────
+#   nomad/jobs/abc-nodes-minio-iam/<user>
+#   Fields: access_key, secret_key, scope, buckets[]
 #
-# Bucket layout per workspace:
-#   <bucket>/users/<member>/            — member private workspace  (member r/w)
-#   <bucket>/collab/<name>/             — collaborator area         (collab r/w)
-#   <bucket>/shared/                    — read-only for all (references, datasets)
-#   <bucket>/shared/users/<member>/     — member's shared contribution  (member r/w)
-#   <bucket>/samplesheets/              — input samplesheets  (members + submit read)
-#   <bucket>/pipelines/                 — pipeline outputs  (submit write; members read)
-#
-# Credential variables (Nomad, abc-services namespace):
-#   nomad/jobs/abc-nodes-minio-iam/<principal>
-#   Fields: access_key, secret_key, role, scope, bucket
-#
-# States:
+# STATES
+# ──────
 #   active     — fully operational (default)
 #   suspended  — ACL tokens revoked; data preserved
 #   archived   — bucket versioning suspended; read-only intent
 #   deleted    — tombstone only; remove entry after `pulumi destroy` confirms
 #
-# Priority tiers:
+# PRIORITY TIERS
+# ──────────────
 #   high   → job_priority=70  (preempts normal-priority batch jobs)
-#   normal → job_priority=50  (default; can be preempted by high-priority groups)
+#   normal → job_priority=50  (default)
 #
-# To add a workspace:    add an entry here, run `pulumi up`.
-# To add a member:       add an entry under members:, run `pulumi up`.
-# To add a collaborator: add an entry under collaborators: with expiresAt, run `pulumi up`.
-# To remove a workspace: delete the entry (or set state: deleted), run `pulumi up`.
-# To remove a member:    delete the entry, run `pulumi up` (token + MinIO user destroyed).
-# To suspend:            set state: suspended, run `pulumi up` (tokens revoked, data preserved).
+# COMMON OPERATIONS
+# ─────────────────
+#   Add a person:           append to users[]; reference from workspace members[]
+#   Add member to ws:       append to workspace.members[] with their role
+#   Add collaborator:       append to workspace.collaborators[] with expiresAt
+#                           and (if Pulumi-managed password) set
+#                           collabPassword_<user> via `pulumi config set --secret`
+#   Remove a person:        delete from users[]; Pulumi diff destroys their token,
+#                           IAM user, and group memberships across all workspaces
+#   Remove member from ws:  delete from workspace.members[]; group membership only
+#                           is removed (token still exists if user is in other ws)
+#   Suspend workspace:      set state: suspended (data preserved, tokens revoked
+#                           for users whose ONLY membership is this workspace)
 #
-# Destroying a stack:
-#   `pulumi destroy` is gated on the project config flag `allowDestroy`.
-#   Without it, IAM users and buckets refuse to delete while non-empty,
-#   protecting against accidental data loss. To wipe a stack end-to-end:
-#     pulumi config set allowDestroy true
-#     pulumi up        # propagates forceDestroy=true onto live resources
-#     pulumi destroy
-#   This deletes all Nomad ACL tokens/policies/namespaces, MinIO IAM users +
-#   policies, and S3 buckets including every object version + delete marker.
+# DESTROY GATING
+# ──────────────
+#   pulumi config set allowDestroy true   # arm
+#   pulumi up                              # propagate forceDestroy=true
+#   pulumi destroy                         # wipes everything
 #
-# Note: all workspaces share one Pulumi stack. `pulumi up` re-evaluates the
-# entire spec but only applies diffs — unchanged resources are not touched.
-# If you want blast-radius isolation (e.g. a bad new workspace can't stall
-# updates for others), use one stack per workspace with `pulumi stack init <ns>`
-# and `pulumi config set specFile workspaces/<ns>.yaml`.
+# Without allowDestroy, IAM users + buckets refuse to delete while non-empty.
 # ---------------------------------------------------------------------------
 
+# ─── USERS ────────────────────────────────────────────────────────────────
+# Every human + service-account principal. Each gets one Nomad token and
+# one RustFS IAM user. Add an entry once; reference by `user:` in workspaces.
+users:
+  # SU-MBHG
+  - name: kim
+    email: kim@sun.ac.za
+  - name: abhi
+    email: abhinavdsharma@sun.ac.za
+  - name: yentl
+    email: yentl@sun.ac.za
+  - name: devon
+    email: devon@sun.ac.za
+  - name: dayna
+    email: dayna@sun.ac.za
+  - name: stacey
+    email: stacey@sun.ac.za
+  - name: hanno
+    email: hanno@sun.ac.za
+
+  # SU-PSY
+  - name: lauren
+    email: lauren@sun.ac.za
+
+  # SU-SDSCT
+  - name: tj
+    email: tj@sun.ac.za
+  - name: eduan
+    email: eduan@sun.ac.za
+
+  # External collaborators
+  - name: dave-uct
+    email: dave@partner-uct.ac.za
+
+
+# ─── ORGANISATIONS / WORKSPACES ───────────────────────────────────────────
 organizations:
 
   # =========================================================================
@@ -82,80 +131,56 @@ organizations:
       - name: bioinformatics
         description: "SU-MBHG Bioinformatics — pipelines and ad-hoc batch jobs (high priority)"
         state: active
-        priority: high        # job_priority=70; preempts normal-priority groups
+        priority: high
         contact: bioinformatics-pi@sun.ac.za
         ntfyTopic: su-mbhg-bioinformatics-jobs
         members:
-          # group-admin: full namespace write; creates <ns>_admin MinIO user
-          - name: admin
-            role: group-admin
-          # regular members: <ns>_kim MinIO user, member Nomad policy
-          - name: kim
+          - user: kim
             role: group-member
-            email: kim@sun.ac.za
-          # multi-role: abhi gets <ns>_abhi (default) AND <ns>_abhi-admin (sudo)
-          - name: abhi
-            role: [group-member, group-admin]
-            email: abhinavdsharma@sun.ac.za
+          # abhi is the workspace admin (single role; group-admin implies member)
+          - user: abhi
+            role: group-admin
         submitAccount:
           description: "nf-nomad Nextflow plugin service account"
         collaborators:
-          # External collaborator from UCT — access expires 2026-12-31.
-          # MinIO user: su-mbhg-bioinformatics_collab-dave-uct
-          # Scope: collab/dave-uct/ r/w + shared/ read-only
-          - name: dave-uct
+          - user: dave-uct
             expiresAt: "2026-12-31"
-            email: dave@partner-uct.ac.za
-            role: group-collaborator
 
       - name: hostgen
-        description: "SU-MBHG Host Genetics — pipelines and ad-hoc batch jobs (normal priority)"
+        description: "SU-MBHG Host Genetics — pipelines and ad-hoc batch jobs"
         state: active
         priority: normal
         contact: hostgen-pi@sun.ac.za
         ntfyTopic: su-mbhg-hostgen-jobs
         members:
-          - name: admin
+          - user: yentl
             role: group-admin
-          - name: yentl
+          - user: devon
             role: group-member
-            email: yentl@sun.ac.za
-          - name: devon
+          - user: dayna
             role: group-member
-            email: devon@sun.ac.za
-          - name: dayna
-            role: group-member
-            email: dayna@sun.ac.za
         submitAccount:
           description: "nf-nomad Nextflow plugin service account"
 
       - name: animaltb
-        description: "SU-MBHG Animal TB — pipelines and ad-hoc batch jobs (normal priority)"
+        description: "SU-MBHG Animal TB — pipelines and ad-hoc batch jobs"
         state: active
         priority: normal
         contact: animaltb-pi@sun.ac.za
         ntfyTopic: su-mbhg-animaltb-jobs
         members:
-          - name: admin
+          - user: stacey
             role: group-admin
-          - name: stacey
-            role: group-member
-            email: stacey@sun.ac.za
-        # No submitAccount: animaltb does not use nf-nomad automated pipeline submission
 
       - name: tbgenomics
-        description: "SU-MBHG TB Genomics — pipelines and ad-hoc batch jobs (normal priority)"
+        description: "SU-MBHG TB Genomics — pipelines and ad-hoc batch jobs"
         state: active
         priority: normal
         contact: tbgenomics-pi@sun.ac.za
         ntfyTopic: su-mbhg-tbgenomics-jobs
         members:
-          - name: admin
+          - user: hanno
             role: group-admin
-          - name: hanno
-            role: group-member
-            email: hanno@sun.ac.za
-        # No submitAccount: tbgenomics does not use nf-nomad automated submission
 
   # =========================================================================
   # SU-PSY — Psychiatry
@@ -170,12 +195,8 @@ organizations:
         priority: normal
         ntfyTopic: su-psy-neuropsychiatry-jobs
         members:
-          - name: admin
+          - user: lauren
             role: group-admin
-          - name: lauren
-            role: group-member
-            email: lauren@sun.ac.za
-        # No submitAccount configured
 
   # =========================================================================
   # SU-SDSCT — School of Data Science and Computational Thinking
@@ -190,12 +211,7 @@ organizations:
         priority: normal
         ntfyTopic: su-sdsct-ceri-jobs
         members:
-          - name: admin
+          - user: tj
             role: group-admin
-          - name: tj
+          - user: eduan
             role: group-member
-            email: tj@sun.ac.za
-          - name: eduan
-            role: group-member
-            email: eduan@sun.ac.za
-        # No submitAccount configured

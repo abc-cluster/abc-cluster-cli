@@ -34,6 +34,10 @@ func generateHeadJobHCLWithStaticEnv(spec *PipelineSpec, nomadAddr, nomadToken, 
 		Revision:        spec.Revision,
 		Profile:         spec.Profile,
 		ExtraConfig:     spec.ExtraConfig,
+		Resume:          spec.Resume,
+		SessionID:       spec.SessionID,
+		HostVolume:      spec.HostVolume,
+		NodeConstraint:  spec.NodeConstraint,
 		StaticEnv:       staticEnv,
 	}, nomadAddr, nomadToken, runUUID)
 }

@@ -7,6 +7,28 @@
 //
 // When jurist is not reachable (admin.services.jurist.http not set or unreachable),
 // ResolveLocally() provides the same resolution using capabilities.nodes from config.
+//
+// FUTURE: --sudo elevation tokens
+// ──────────────────────────────
+// Today, `abc --sudo` is a client-side UX flag (confirm-before-acting prompt
+// for destructive operations). Auth is unchanged: a member's Nomad token has
+// the union of every policy granted to them across workspaces and roles, so
+// no token swap is needed at request time.
+//
+// A future iteration may repurpose --sudo to ask jurist for a short-lived
+// elevation token. Sketch:
+//
+//   POST /v1/sudo
+//     { user: "<email>", workspace: "<ns>", reason: "<text>",
+//       requested_caps: [...], duration: "10m" }
+//   → 200 { token: "<short-lived-secret>", expires_at: "..." }
+//
+// The elevated token would carry only the caller's group-admin policies for
+// the named workspace, with a TTL via Nomad's expirationTtl field. Audit
+// trails would tie elevation events to the (user, workspace, reason, time)
+// tuple. Until that lands, the per-person token model keeps the audit story
+// at "user X did Y" without role attribution per action; if you need finer
+// attribution, this is where to add it.
 package jurist
 
 import "github.com/abc-cluster/abc-cluster-cli/internal/config"

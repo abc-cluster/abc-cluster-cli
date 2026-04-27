@@ -69,6 +69,47 @@ func TestModuleRun_MissingGitHubTokenFails(t *testing.T) {
 	}
 }
 
+func TestModuleRunHelp_DefaultHidesAdvanced(t *testing.T) {
+	out, err := executeModuleCmd(t, "--help")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	mustContain := []string{"--params-file", "--config-file", "--profile", "--wait", "--logs", "--dry-run", "--help --advanced"}
+	for _, want := range mustContain {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in default help, got:\n%s", want, out)
+		}
+	}
+
+	mustNotContain := []string{"--nf-version", "--cpu", "--memory", "--minio-endpoint", "--github-token", "--module-revision"}
+	for _, banned := range mustNotContain {
+		if strings.Contains(out, banned) {
+			t.Fatalf("default help unexpectedly contains %q:\n%s", banned, out)
+		}
+	}
+}
+
+func TestModuleRunHelp_AdvancedShowsAll(t *testing.T) {
+	out, err := executeModuleCmd(t, "--help", "--advanced")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	mustContain := []string{
+		"--params-file", "--wait",
+		"--nf-version", "--nf-plugin-version", "--cpu", "--memory",
+		"--minio-endpoint", "--github-token", "--module-revision",
+		"--pipeline-gen-repo", "--pipeline-gen-version", "--pipeline-gen-no-run-manifest",
+		"--work-dir", "--output-prefix", "--datacenter",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in advanced help, got:\n%s", want, out)
+		}
+	}
+}
+
 func TestModuleRunDryRun_EmbedsProvidedParamsAndConfig(t *testing.T) {
 	dir := t.TempDir()
 	paramsPath := filepath.Join(dir, "params.yml")

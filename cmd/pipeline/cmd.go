@@ -39,6 +39,7 @@ repository URL directly for ad-hoc runs.
 
 	cmd.AddCommand(
 		newRunCmd(),
+		newRunsCmd(),
 		newAddCmd(),
 		newListCmd(),
 		newInfoCmd(),

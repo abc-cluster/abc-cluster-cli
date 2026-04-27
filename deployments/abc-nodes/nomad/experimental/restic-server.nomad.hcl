@@ -1,3 +1,14 @@
+# DEPRECATED — superseded by abc-backups.nomad.hcl (restic-on-Garage).
+#
+# This experimental restic REST server stores its repo on the local `scratch`
+# host volume with no compression and no replication.  The same data now flows
+# into Garage's `cluster-backups` bucket via the abc-backups periodic job, with
+# encryption (restic), block-level dedup + zstd (Garage), and a future
+# geo-replication path.  Keep this file in the repo as a reference; deploys
+# default to disabled (var.enable_restic_server = false).
+#
+# Original header follows.
+#
 # Restic REST server — backup target (abc-experimental namespace)
 # Provides an HTTP endpoint for `restic backup --repo rest:http://...` from
 # any node or workstation that can reach aither.

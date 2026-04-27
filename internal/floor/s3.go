@@ -191,6 +191,77 @@ func (c *S3Client) HeadObject(ctx context.Context, bucket, key string) (*S3Objec
 
 // ── AWS Signature V4 helpers ─────────────────────────────────────────────────
 
+// DeleteObject removes a single object from a bucket.
+func (c *S3Client) DeleteObject(ctx context.Context, bucket, key string) error {
+	path := "/" + bucket + "/" + key
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.endpoint+path, nil)
+	if err != nil {
+		return err
+	}
+	c.signRequest(req, nil)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("delete %s/%s: HTTP %d: %s", bucket, key, resp.StatusCode, trimXMLError(body))
+	}
+	return nil
+}
+
+// DeleteObjectsWithPrefix lists all objects (recursively, no delimiter) under
+// prefix in bucket and deletes them one by one.
+// Returns the number of objects deleted and any error.
+func (c *S3Client) DeleteObjectsWithPrefix(ctx context.Context, bucket, prefix string) (int, error) {
+	var (
+		deleted           int
+		continuationToken string
+	)
+	for {
+		q := url.Values{}
+		q.Set("list-type", "2")
+		if prefix != "" {
+			q.Set("prefix", prefix)
+		}
+		q.Set("max-keys", "1000")
+		if continuationToken != "" {
+			q.Set("continuation-token", continuationToken)
+		}
+		resp, err := c.signedGet(ctx, "/"+bucket+"/", q)
+		if err != nil {
+			return deleted, fmt.Errorf("list objects: %w", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return deleted, fmt.Errorf("list objects: HTTP %d: %s", resp.StatusCode, trimXMLError(body))
+		}
+		var page struct {
+			IsTruncated           bool   `xml:"IsTruncated"`
+			NextContinuationToken string `xml:"NextContinuationToken"`
+			Contents              []struct {
+				Key string `xml:"Key"`
+			} `xml:"Contents"`
+		}
+		if err := xml.Unmarshal(body, &page); err != nil {
+			return deleted, fmt.Errorf("parse list-objects: %w", err)
+		}
+		for _, obj := range page.Contents {
+			if err := c.DeleteObject(ctx, bucket, obj.Key); err != nil {
+				return deleted, err
+			}
+			deleted++
+		}
+		if !page.IsTruncated {
+			break
+		}
+		continuationToken = page.NextContinuationToken
+	}
+	return deleted, nil
+}
+
 func (c *S3Client) signedGet(ctx context.Context, path string, query url.Values) (*http.Response, error) {
 	rawURL := c.endpoint + path
 	if query != nil {

@@ -1,15 +1,37 @@
-version: v1
+version: v2
 
 # ---------------------------------------------------------------------------
 # TEST spec — used for the `test` Pulumi stack only.
-# Contains a single net-new workspace that does not exist in Nomad or MinIO.
+#
+# Per-person credential model (v2):
+#   • Top-level users[] lists everyone once.
+#   • Workspace members[] / collaborators[] reference users by `user:`.
+#   • One Nomad token + one RustFS IAM user per person, with policies unioned
+#     across every (workspace, role) the user holds.
+#   • role: group-admin auto-implies group-member (single role per workspace).
+#   • `--sudo` is a client-side UX confirmation prompt; no token swap.
+#
 # After verifying this deploys cleanly, run `pulumi destroy -s test` to clean up.
 # ---------------------------------------------------------------------------
+
+users:
+  - name: alice
+    email: alice@su-test.example
+  - name: bob
+    email: bob@su-test.example
+  - name: carol
+    email: carol@su-test.example
+  # multi-role multi-namespace example
+  - name: eve
+    email: eve@su-test.example
+  - name: ext-bob
+    email: bob@external.example
 
 organizations:
   - name: su-test
     displayName: "SU Test — Pulumi template validation"
     workspaces:
+
       - name: sandbox
         description: "Pulumi deployment test — safe to destroy"
         state: active
@@ -17,17 +39,15 @@ organizations:
         contact: admin@su-test.example
         ntfyTopic: su-test-sandbox-jobs
         members:
-          - name: admin
-            role: group-admin
-          - name: alice
+          - user: alice
             role: group-member
-            email: alice@su-test.example
+          - user: eve
+            role: group-admin       # also gets bucket-wide via group-admin
         submitAccount:
           description: "nf-nomad test runner"
         collaborators:
-          - name: ext-bob
+          - user: ext-bob
             expiresAt: "2027-12-31"
-            email: bob@external.example
 
       - name: otherlab
         description: "Second test workspace — verifies cross-namespace isolation"
@@ -36,15 +56,12 @@ organizations:
         contact: admin@su-test.example
         ntfyTopic: su-test-otherlab-jobs
         members:
-          - name: admin
-            role: group-admin
-          - name: bob
+          - user: bob
             role: group-member
-            email: bob@su-test.example
-          - name: carol
+          - user: carol
             role: group-member
-            email: carol@su-test.example
-          # multi-role: eve gets <ns>_eve (default) AND <ns>_eve-admin (sudo)
-          - name: eve
-            role: [group-member, group-admin]
-            email: eve@su-test.example
+          # eve is also here — her single Nomad token will carry policies
+          # for BOTH sandbox (group-admin) and otherlab (group-member),
+          # so she can submit to either namespace.
+          - user: eve
+            role: group-member
