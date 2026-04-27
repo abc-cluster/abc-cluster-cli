@@ -206,6 +206,101 @@ deploy_optional_services   = false  # docker-registry, postgres, redis
 deploy_boundary_worker     = true   # Boundary worker (system job)
 ```
 
+### Experimental tier (opt-in, namespace `abc-experimental`)
+
+Each experimental service has an `enable_<name>` variable, all default to `false`:
+
+| Variable                | Service                                   |
+| ----------------------- | ----------------------------------------- |
+| `enable_postgres`       | shared postgres for experimental services |
+| `enable_redis`          | shared redis                              |
+| `enable_wave`           | Seqera Wave                               |
+| `enable_supabase`       | Supabase stack                            |
+| `enable_restic_server`  | restic backup server                      |
+| `enable_caddy`          | Caddy gateway (alt to Traefik)            |
+| `enable_xtdb`           | XTDB v2 bitemporal DB (jurist backend)    |
+
+Apply with explicit opt-in:
+
+```bash
+terraform apply -var="enable_xtdb=true"
+# or persist in terraform.tfvars:
+echo 'enable_xtdb = true' >> terraform.tfvars
+```
+
+**Supabase-specific notes** (`nomad/experimental/supabase.nomad.hcl.tftpl`):
+
+- Single Nomad job, one task group, **6 tasks sharing one bridge network
+  namespace**: `db` (supabase/postgres), `db-init` (poststart sidecar that
+  applies the deployment-specific SQL once), `meta` (postgres-meta), `auth`
+  (GoTrue), `rest` (PostgREST), `studio`, `kong`. Inter-task traffic is on
+  `127.0.0.1:<container-port>` (avoid `localhost` — resolves to IPv6 on
+  this cluster and the postgres process binds IPv4 only).
+- The image **must** be `supabase/postgres`, not vanilla `postgres:15-alpine`
+  — supabase's fork ships pgsodium / pgjwt / pg_graphql / pg_net / pg_cron
+  plus the auth/storage/realtime/_supabase migration scripts that the rest
+  of the stack depends on.
+- The image bakes its config at `/etc/postgresql/postgresql.conf` with
+  `data_directory='/var/lib/postgresql/data'` hardcoded. We override that
+  on the command line (`-c data_directory=/scratch/abc-supabase/pgdata`)
+  so the bootstrap and the running server use the same path on the
+  scratch host volume.
+- `db-init` runs in the **same image** as `db` (so it has psql) and
+  applies _supabase / realtime / webhooks / roles / jwt SQL once postgres
+  is ready. The custom `roles.sql` resets `authenticator`, `pgbouncer`,
+  `supabase_auth_admin`, etc. to var.supabase_postgres_password — without
+  this, PostgREST will loop with `role "authenticator" does not exist`.
+- Kong's declarative config (`kong.yml`) is rendered by the Nomad
+  `template` block at deploy time with the consumer keys + dashboard
+  creds substituted in directly — no envsubst pass at runtime.
+- Kong service health check is `type = "tcp"` because the catch-all
+  dashboard route returns 401 (basic-auth required) for every request,
+  which Nomad's HTTP check would interpret as unhealthy.
+- The default `supabase_postgres_password`, `supabase_jwt_secret`, anon
+  key, service-role key, and `supabase_dashboard_password` are the
+  well-known **insecure** values from supabase's own `.env.example`. They
+  work out of the box for a demo but **must** be replaced before any
+  data goes in. To generate proper secrets: pick a random ≥32 char
+  `JWT_SECRET`, then sign two HS256 JWTs over it with `role=anon` and
+  `role=service_role` (supabase publishes `utils/generate-keys.sh` for
+  this).
+- Endpoints (when enabled):
+  - `http://<tailscale-ip>:8000/` — Studio (basic-auth: var.supabase_dashboard_username / _password)
+  - `http://<tailscale-ip>:8000/rest/v1/`  — PostgREST API (apikey: var.supabase_anon_key)
+  - `http://<tailscale-ip>:8000/auth/v1/`  — GoTrue Auth API
+  - `http://<tailscale-ip>:8000/pg/`       — postgres-meta (apikey: var.supabase_service_role_key)
+  - `http://supabase.aither/`             — Traefik vhost
+- **Re-init: if the postgres bootstrap completes but the post-init
+  scripts fail (e.g. you change `data_directory` after a half-broken
+  first run), supabase roles like `authenticator` will not exist.**
+  Wipe `/opt/nomad/scratch/abc-supabase/` on aither and redeploy.
+  The simplest way to wipe: a one-shot `raw_exec` batch job pinned to
+  aither running `rm -rf /opt/nomad/scratch/abc-supabase`.
+
+**XTDB-specific notes** (`nomad/experimental/xtdb-v2.nomad.hcl.tftpl`):
+
+- Pinned to `aither` (`var.xtdb_node`); persistent log + storage on the
+  `scratch` host volume at `/opt/nomad/scratch/xtdb/{log,storage}`.
+- Networking: `mode = "bridge"` with static port forwarding (host →
+  container). Host mode does **not** work for containerd-driver containers
+  on this cluster — they remain in their own netns and the bound port is
+  unreachable on the host IP.
+- Config delivery: a `raw_exec` prestart task (`write-config`) renders the
+  YAML and copies it to `/opt/nomad/scratch/xtdb/config.yaml`. The XTDB task
+  reads it via `args = ["-f", "/scratch/xtdb/config.yaml"]` (the scratch
+  volume_mount makes that path resolve to the staged file). OCI bind mounts
+  through the containerd-driver's `mounts` block do **not** apply reliably
+  here — host volumes are the stable config-delivery path.
+- Cold-start: the JVM takes ~4–5 min to reach `Node started`; the job's
+  `update { healthy_deadline = "12m"; progress_deadline = "15m" }` and
+  `check_restart { grace = "300s" }` accommodate this. The `nomad_job.xtdb`
+  Terraform resource sets `detach = true` because the Nomad provider has a
+  hardcoded 5-minute deployment-success timeout.
+- Endpoints (when enabled):
+  - `http://<tailscale-ip>:5555/healthz/ready` — Consul / external liveness probe
+  - `psql -h <tailscale-ip> -p 15432 xtdb` — pgwire (any user/password works)
+  - `http://xtdb.aither/healthz/ready` — Traefik vhost
+
 ## Dependency Graph
 
 Services are deployed in this order:

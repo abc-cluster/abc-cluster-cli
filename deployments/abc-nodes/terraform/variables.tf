@@ -69,6 +69,36 @@ variable "enable_rustfs" {
   default     = true
 }
 
+variable "enable_garage" {
+  description = "Deploy Garage S3-compatible storage (long-term archive + backup tier behind RustFS)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_docs" {
+  description = "Deploy the docs static-site job (serves Docusaurus build at http://docs.aither)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_caddy_tailscale" {
+  description = "Deploy the unified Caddy gateway (binds port 80 on both Tailscale and LAN IPs; owns *.aither vhosts and the LAN landing page). Active production gateway."
+  type        = bool
+  default     = true
+}
+
+variable "enable_abc_backups" {
+  description = "Deploy the periodic restic-on-Garage backup job (Consul/Vault/Nomad snapshots)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_fx_archive" {
+  description = "Deploy fx-archive (periodic age-based RustFS → Garage tier-down)"
+  type        = bool
+  default     = true
+}
+
 variable "enable_prometheus" {
   description = "Deploy Prometheus metrics server"
   type        = bool
@@ -173,13 +203,13 @@ variable "enable_supabase" {
 }
 
 variable "enable_restic_server" {
-  description = "Deploy Restic REST server for cluster backups (abc-experimental)"
+  description = "DEPRECATED — superseded by enable_abc_backups (restic-on-Garage). Deploy Restic REST server for cluster backups (abc-experimental). Local scratch repo only, no compression or replication; kept for reference."
   type        = bool
   default     = false
 }
 
 variable "enable_caddy" {
-  description = "Deploy Caddy reverse-proxy (abc-experimental; integrates with Consul, Traefik, Tailscale)"
+  description = "DEPRECATED — superseded by enable_caddy_tailscale. Old ACME-focused Caddy (abc-experimental). Both jobs would conflict on port 80; do not enable simultaneously."
   type        = bool
   default     = false
 }
@@ -264,10 +294,180 @@ variable "redis_image" {
   default     = "redis:7-alpine"
 }
 
-variable "supabase_image" {
-  description = "Supabase Studio container image (abc-experimental)"
+# ─── Supabase stack ─────────────────────────────────────────────────────────
+#
+# The supabase stack ports the upstream docker-compose to one Nomad job
+# (`abc-experimental-supabase`). Defaults below are the well-known INSECURE
+# values from supabase's own .env.example — they work out of the box for a
+# demo / experimental tier but MUST be replaced before any data goes in.
+#
+# To regenerate proper secrets:
+#   - JWT_SECRET: any random ≥32 char string
+#   - ANON_KEY / SERVICE_ROLE_KEY: HS256-signed JWTs over the JWT_SECRET
+#     with role=anon and role=service_role respectively. Use
+#     supabase's own utility (sh ./utils/generate-keys.sh in their repo)
+#     or the docs at https://supabase.com/docs/guides/self-hosting
+
+variable "supabase_node" {
+  description = "Hostname constraint for the supabase stack (single-node)"
+  type        = string
+  default     = "aither"
+}
+
+variable "supabase_db_image" {
+  description = "supabase/postgres image — has the auth/storage/realtime/pg_net/pgsodium extensions baked in. Cannot be replaced with vanilla postgres."
+  type        = string
+  default     = "supabase/postgres:15.8.1.085"
+}
+
+variable "supabase_studio_image" {
+  description = "Supabase Studio (Dashboard UI) image"
   type        = string
   default     = "supabase/studio:latest"
+}
+
+variable "supabase_meta_image" {
+  description = "postgres-meta image (Studio's schema introspection backend)"
+  type        = string
+  default     = "supabase/postgres-meta:v0.96.3"
+}
+
+variable "supabase_auth_image" {
+  description = "GoTrue (auth API) image"
+  type        = string
+  default     = "supabase/gotrue:v2.186.0"
+}
+
+variable "supabase_rest_image" {
+  description = "PostgREST image (REST API over postgres + RLS)"
+  type        = string
+  default     = "postgrest/postgrest:v14.8"
+}
+
+variable "supabase_kong_image" {
+  description = "Kong API gateway image"
+  type        = string
+  default     = "kong/kong:3.9.1"
+}
+
+variable "kong_http_port" {
+  description = "Host port mapped to Kong's container port 8000 (the only externally-exposed port for the supabase stack)"
+  type        = number
+  default     = 8000
+}
+
+variable "supabase_postgres_db" {
+  description = "Default database name for the supabase postgres instance (NOT the same as var.postgres_db, which is for the standalone abc-experimental-postgres job)"
+  type        = string
+  default     = "postgres"
+}
+
+variable "supabase_postgres_password" {
+  description = "Postgres superuser password for the supabase stack (UNSAFE default — replace before exposing anywhere)"
+  type        = string
+  default     = "this-is-an-experimental-password-replace-it"
+  sensitive   = true
+}
+
+variable "supabase_jwt_secret" {
+  description = "Symmetric (HS256) JWT signing secret. Must be ≥32 chars and shared across auth/rest/realtime/storage. The default below matches the published anon/service_role keys."
+  type        = string
+  default     = "your-super-secret-jwt-token-with-at-least-32-characters-long"
+  sensitive   = true
+}
+
+variable "supabase_jwt_exp" {
+  description = "JWT expiration time in seconds"
+  type        = number
+  default     = 3600
+}
+
+variable "supabase_anon_key" {
+  description = "Pre-signed HS256 JWT for the 'anon' role over var.supabase_jwt_secret. Embedded in client-side code."
+  type        = string
+  default     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJhbm9uIiwKICAgICJpc3MiOiAic3VwYWJhc2UtZGVtbyIsCiAgICAiaWF0IjogMTY0MTc2OTIwMCwKICAgICJleHAiOiAxNzk5NTM1NjAwCn0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE"
+  sensitive   = true
+}
+
+variable "supabase_service_role_key" {
+  description = "Pre-signed HS256 JWT for the 'service_role' role over var.supabase_jwt_secret. Server-side ONLY — never embed in client code."
+  type        = string
+  default     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q"
+  sensitive   = true
+}
+
+variable "supabase_dashboard_username" {
+  description = "Studio dashboard basic-auth username (Kong-side)"
+  type        = string
+  default     = "supabase"
+}
+
+variable "supabase_dashboard_password" {
+  description = "Studio dashboard basic-auth password (UNSAFE default — replace)"
+  type        = string
+  default     = "this_password_is_insecure_and_should_be_updated"
+  sensitive   = true
+}
+
+variable "supabase_pg_meta_crypto_key" {
+  description = "AES-256 key (≥32 chars) used by postgres-meta to encrypt stored connection strings"
+  type        = string
+  default     = "this-is-an-experimental-32-char-key"
+  sensitive   = true
+}
+
+variable "supabase_public_url" {
+  description = "Externally-reachable URL for the supabase stack (used by auth for OAuth callbacks and by studio for API references)"
+  type        = string
+  default     = "http://supabase.aither"
+}
+
+variable "supabase_site_url" {
+  description = "Site URL gate-list passed to GoTrue (auth) — used to validate post-login redirects"
+  type        = string
+  default     = "http://supabase.aither"
+}
+
+variable "supabase_disable_signup" {
+  description = "Set to \"true\" to lock down GoTrue and require an admin to invite users"
+  type        = string
+  default     = "false"
+}
+
+variable "supabase_pgrst_schemas" {
+  description = "Comma-separated postgres schemas exposed via PostgREST"
+  type        = string
+  default     = "public,storage,graphql_public"
+}
+
+variable "supabase_default_org_name" {
+  description = "Default organization name shown in Studio"
+  type        = string
+  default     = "Default Organization"
+}
+
+variable "supabase_default_project_name" {
+  description = "Default project name shown in Studio"
+  type        = string
+  default     = "Default Project"
+}
+
+variable "supabase_enable_optional_integrations" {
+  description = <<-DESC
+    When true (default), db-init runs CREATE EXTENSION for the optional
+    integrations bundled with the supabase/postgres image:
+      - pg_cron       (Studio: Database / Cron Jobs)
+      - pgmq          (Studio: Database / Queues)
+      - pg_net        (Studio: Database / Webhooks; needed for the
+                       supabase_functions.http_request trigger)
+      - vector        (pgvector — embeddings / AI workloads)
+      - pg_jsonschema (JSON schema validation in CHECK constraints)
+      - hstore, citext (small, broadly-useful schema types)
+    Set to "false" to keep only the minimum (auth/storage/realtime baseline
+    that the supabase/postgres image creates on first boot).
+  DESC
+  type        = string
+  default     = "true"
 }
 
 variable "restic_server_image" {
@@ -284,7 +484,41 @@ variable "wave_image" {
 }
 
 variable "caddy_image" {
-  description = "Caddy container image (abc-experimental)"
+  description = "Caddy container image (abc-experimental, used by the OLD nomad_job.caddy ACME job)"
+  type        = string
+  default     = "caddy:2-alpine"
+}
+
+# ── caddy-tailscale (unified gateway) configuration ──────────────────────────
+# Surfaces the four landing-page / routing variables exposed by
+# nomad/experimental/caddy-tailscale.nomad.hcl.  Defaults match production.
+
+variable "caddy_tailscale_service_domain" {
+  description = "Subdomain base for cluster service vhosts (e.g. \"aither\" → grafana.aither, rustfs.aither, garage.aither)"
+  type        = string
+  default     = "aither"
+}
+
+variable "caddy_tailscale_lan_host" {
+  description = "Institutional LAN hostname users hit on the wired network"
+  type        = string
+  default     = "aither.mb.sun.ac.za"
+}
+
+variable "caddy_tailscale_lan_ip" {
+  description = "Institutional LAN IPv4 of aither (Caddy binds port 80 here in addition to the Tailscale IP)"
+  type        = string
+  default     = "146.232.174.77"
+}
+
+variable "caddy_tailscale_ts_ip" {
+  description = "Tailscale IPv4 of aither (Caddy binds port 80 here; *.aither split-DNS resolves to this address)"
+  type        = string
+  default     = "100.70.185.46"
+}
+
+variable "docs_caddy_image" {
+  description = "Caddy image used by the docs static-site job (abc-nodes-docs)"
   type        = string
   default     = "caddy:2-alpine"
 }
@@ -431,6 +665,124 @@ variable "rustfs_secret_key" {
   sensitive   = true
 }
 
+# ── Garage configuration ───────────────────────────────────────────────────
+# Garage is the long-term archive + backup tier (zstd compression + dedup
+# + future geo-replication).  Most secrets are randomly generated by
+# random_password resources in main.tf — these vars only cover knobs that
+# need to be visible to operators.
+
+variable "garage_image" {
+  description = "Garage container image (Deuxfleurs official)"
+  type        = string
+  default     = "dxflrs/garage:v1.1.0"
+}
+
+variable "garage_webui_image" {
+  description = "Garage Web UI container image (community-maintained admin UI)"
+  type        = string
+  default     = "khairul169/garage-webui:latest"
+}
+
+variable "garage_node_capacity" {
+  description = "Capacity advertised to Garage layout for aither's data dir"
+  type        = string
+  default     = "100G"
+}
+
+variable "garage_zone" {
+  description = "Garage layout zone — used for replica placement when more nodes are added"
+  type        = string
+  default     = "dc1"
+}
+
+variable "garage_restic_access_key" {
+  description = "Garage S3 access key for the restic backup repo (deterministic — stored in state)"
+  type        = string
+  default     = "GKADMIN000000000000RESTIC"
+}
+
+variable "garage_archive_access_key" {
+  description = "Garage S3 access key for the fx-archive tier-down job (deterministic — stored in state)"
+  type        = string
+  default     = "GKADMIN00000000000ARCHIVE"
+}
+
+variable "garage_internal_endpoint" {
+  description = "In-cluster S3 endpoint URL for Garage (consumed by abc-backups + fx-archive)"
+  type        = string
+  default     = "http://abc-nodes-garage-s3.service.consul:3900"
+}
+
+variable "garage_backup_bucket" {
+  description = "Garage bucket for restic snapshots"
+  type        = string
+  default     = "cluster-backups"
+}
+
+# ── abc-backups configuration ─────────────────────────────────────────────
+
+variable "backups_schedule_cron" {
+  description = "Cron schedule for abc-backups (UTC)"
+  type        = string
+  default     = "30 2 * * *"
+}
+
+variable "backups_keep_daily" {
+  description = "Number of daily restic snapshots to retain"
+  type        = number
+  default     = 7
+}
+
+variable "backups_keep_weekly" {
+  description = "Number of weekly restic snapshots to retain"
+  type        = number
+  default     = 4
+}
+
+variable "backups_keep_monthly" {
+  description = "Number of monthly restic snapshots to retain"
+  type        = number
+  default     = 12
+}
+
+variable "backups_consul_addr" {
+  description = "Consul HTTP API endpoint for snapshot capture"
+  type        = string
+  default     = "http://100.70.185.46:8500"
+}
+
+variable "backups_consul_token" {
+  description = "Consul token with snapshot:write capability (set via tfvars; empty disables)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "backups_vault_addr" {
+  description = "Vault HTTP API endpoint for raft snapshot capture"
+  type        = string
+  default     = "http://100.70.185.46:8200"
+}
+
+variable "backups_vault_token" {
+  description = "Vault token with sudo on sys/storage/raft/snapshot (set via tfvars; empty disables vault snapshot)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "backups_nomad_addr" {
+  description = "Nomad HTTP API endpoint for job-spec capture"
+  type        = string
+  default     = "http://100.70.185.46:4646"
+}
+
+variable "backups_ntfy_url" {
+  description = "ntfy topic URL for backup completion notifications"
+  type        = string
+  default     = "http://ntfy.aither/backups"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Experimental Service Configuration
 # ═══════════════════════════════════════════════════════════════════════════
@@ -565,27 +917,77 @@ variable "fx_tusd_hook_ntfy_url" {
 }
 
 variable "fx_tusd_hook_minio_endpoint" {
-  description = "MinIO S3 API base URL for the hook to call (no trailing slash)"
+  description = "S3 API base URL the tusd hook signs requests against (no trailing slash). Variable name kept for back-compat; default points at RustFS now that MinIO is retired."
   type        = string
-  default     = "http://100.70.185.46:9000"
+  default     = "http://abc-nodes-rustfs-s3.service.consul:9900"
 }
 
 variable "fx_tusd_hook_minio_bucket" {
-  description = "MinIO bucket where tusd stores in-progress uploads"
+  description = "S3 bucket where tusd stores in-progress uploads (RustFS, with archival to Garage via fx-archive)"
   type        = string
   default     = "tusd"
 }
 
 variable "fx_tusd_hook_s3_access_key" {
-  description = "S3 / MinIO access key used by fx-tusd-hook for object rename operations"
+  description = "S3 access key used by fx-tusd-hook for object rename operations (RustFS admin creds)"
   type        = string
-  default     = "minioadmin"
+  default     = "rustfsadmin"
   sensitive   = true
 }
 
 variable "fx_tusd_hook_s3_secret_key" {
-  description = "S3 / MinIO secret key used by fx-tusd-hook for object rename operations"
+  description = "S3 secret key used by fx-tusd-hook for object rename operations (RustFS admin creds)"
   type        = string
-  default     = "minioadmin"
+  default     = "rustfsadmin"
   sensitive   = true
+}
+
+# ── fx-archive configuration ───────────────────────────────────────────────
+
+variable "fx_archive_node" {
+  description = "Hostname of the cluster node to schedule fx-archive on (must reach RustFS + Garage)"
+  type        = string
+  default     = "aither"
+}
+
+variable "fx_archive_rustfs_endpoint" {
+  description = "In-cluster RustFS S3 endpoint that fx-archive reads from"
+  type        = string
+  default     = "http://abc-nodes-rustfs-s3.service.consul:9900"
+}
+
+variable "fx_archive_dest_bucket" {
+  description = "Destination bucket on Garage for tier-down (created by garage bootstrap)"
+  type        = string
+  default     = "archive"
+}
+
+variable "fx_archive_source_buckets" {
+  description = "Comma-separated RustFS bucket names to tier into Garage's archive bucket"
+  type        = string
+  default     = "tusd"
+}
+
+variable "fx_archive_age_days" {
+  description = "Only RustFS objects older than this are eligible for tier-down"
+  type        = number
+  default     = 30
+}
+
+variable "fx_archive_delete_after_copy" {
+  description = "If true, delete from RustFS after a verified copy to Garage. Off by default — flip on once the archive is trusted."
+  type        = bool
+  default     = false
+}
+
+variable "fx_archive_ntfy_url" {
+  description = "ntfy topic URL for fx-archive run summaries"
+  type        = string
+  default     = "http://ntfy.aither/archive"
+}
+
+variable "fx_archive_schedule_cron" {
+  description = "Cron schedule for fx-archive (UTC)"
+  type        = string
+  default     = "0 3 * * *"
 }

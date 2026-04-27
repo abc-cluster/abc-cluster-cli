@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
@@ -65,7 +66,9 @@ EXAMPLES
 	cmd.Flags().String("revision", "", "Pipeline revision (branch, tag, or commit SHA)")
 	cmd.Flags().String("profile", "", "Nextflow config profile(s), comma-separated")
 	cmd.Flags().String("config", "", "Extra nextflow config file to merge")
-	cmd.Flags().String("work-dir", "", "Shared host volume path (default: /work/nextflow-work)")
+	cmd.Flags().String("work-dir", "", "Shared work directory: local path or s3:// URI (default: /work/nextflow-work)")
+	cmd.Flags().String("host-volume", "", "Nomad host volume name for the work dir (default: nextflow-work; use \"-\" to disable)")
+	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (also use --config to constrain child jobs)")
 
 	// Nomad placement
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
@@ -79,10 +82,30 @@ EXAMPLES
 	// Job identity
 	cmd.Flags().String("name", "", "Override Nomad job name (default: nextflow-head)")
 
+	// Inline parameter overrides (--param key=value, repeatable)
+	cmd.Flags().StringArray("param", nil, "Inline pipeline parameter override (key=value, repeatable; merged on top of --params-file)")
+
+	// Resume / session control
+	cmd.Flags().Bool("resume", false, "Append -resume to the nextflow run command (checkpoint restart)")
+	cmd.Flags().String("session-id", "", "Resume a specific Nextflow session UUID (implies --resume)")
+
 	// Behaviour
 	cmd.Flags().Bool("wait", false, "Block until the head job completes")
 	cmd.Flags().Bool("logs", false, "Stream head job logs after submit")
 	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
+	cmd.Flags().Duration("timeout", watchTimeout, "Max time to wait for head job completion when using --wait (0 = no limit)")
+
+	advhelp.Register(cmd, []string{
+		"work-dir",
+		"host-volume",
+		"datacenter",
+		"nf-version",
+		"nf-plugin-version",
+		"cpu",
+		"memory",
+		"session-id",
+		"timeout",
+	})
 
 	return cmd
 }
@@ -124,6 +147,12 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("work-dir"); v != "" {
 		override.WorkDir = v
 	}
+	if v, _ := cmd.Flags().GetString("host-volume"); v != "" {
+		override.HostVolume = v
+	}
+	if v, _ := cmd.Flags().GetString("node"); v != "" {
+		override.NodeConstraint = v
+	}
 	if v, _ := cmd.Flags().GetStringSlice("datacenter"); len(v) > 0 {
 		override.Datacenters = v
 	}
@@ -152,6 +181,22 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("reading --params-file: %w", err)
 		}
 		override.Params = params
+	}
+	// Inline --param key=value overrides (merged on top of --params-file).
+	if paramKVs, _ := cmd.Flags().GetStringArray("param"); len(paramKVs) > 0 {
+		if override.Params == nil {
+			override.Params = map[string]any{}
+		}
+		for _, kv := range paramKVs {
+			k, v, _ := strings.Cut(kv, "=")
+			override.Params[strings.TrimSpace(k)] = v
+		}
+	}
+	if resume, _ := cmd.Flags().GetBool("resume"); resume {
+		override.Resume = true
+	}
+	if sessionID, _ := cmd.Flags().GetString("session-id"); sessionID != "" {
+		override.SessionID = sessionID
 	}
 	if ns != "" {
 		override.Namespace = ns
@@ -266,7 +311,8 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 		if streamLogs {
 			w = out
 		}
-		if err := utils.WatchJobLogs(ctx, nc, jobName, spec.Namespace, w, watchDelay, watchTimeout); err != nil {
+		timeout, _ := cmd.Flags().GetDuration("timeout")
+		if err := utils.WatchJobLogs(ctx, nc, jobName, spec.Namespace, w, watchDelay, timeout); err != nil {
 			return err
 		}
 		return nil

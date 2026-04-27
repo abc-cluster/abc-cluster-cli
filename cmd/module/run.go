@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 const (
@@ -62,6 +64,22 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().Bool("logs", false, "Stream module run logs after submit")
 	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
 	cmd.Flags().Bool("pipeline-gen-no-run-manifest", false, "Pass --no-run-manifest to nf-pipeline-gen (omit run-manifest.json in each driver)")
+
+	advhelp.Register(cmd, []string{
+		"work-dir",
+		"output-prefix",
+		"module-revision",
+		"pipeline-gen-repo",
+		"pipeline-gen-version",
+		"github-token",
+		"nf-version",
+		"nf-plugin-version",
+		"cpu",
+		"memory",
+		"datacenter",
+		"minio-endpoint",
+		"pipeline-gen-no-run-manifest",
+	})
 
 	return cmd
 }
@@ -141,7 +159,7 @@ func runModule(cmd *cobra.Command, args []string) error {
 	spec.defaults()
 
 	if spec.GitHubToken == "" {
-		return fmt.Errorf("missing GitHub token: set --github-token or GITHUB_TOKEN/GH_TOKEN")
+		return fmt.Errorf("missing GitHub token: set GITHUB_TOKEN or GH_TOKEN env var (see --help --advanced for --github-token)")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -166,7 +184,21 @@ func runModule(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if err := runPreflight(cmd.Context(), cmd.ErrOrStderr(), spec, nomadAddr, nomadToken); err != nil {
+		return err
+	}
+
+	if !cmd.Flags().Changed("wait") && !cmd.Flags().Changed("logs") && stdoutIsTTY() {
+		_ = cmd.Flags().Set("wait", "true")
+		_ = cmd.Flags().Set("logs", "true")
+		fmt.Fprintln(cmd.ErrOrStderr(), "  Interactive terminal detected — streaming logs (override with --wait=false --logs=false)")
+	}
+
 	return submitAndWatch(cmd.Context(), cmd, nc, spec, hcl)
+}
+
+func stdoutIsTTY() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
 func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClient, spec *RunSpec, hcl string) error {

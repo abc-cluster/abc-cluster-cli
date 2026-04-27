@@ -134,7 +134,7 @@ agent { policy = "read" }
 }
 
 // ============================================================
-// MinIO IAM policies (JSON)
+// S3 IAM policies (JSON) — applied to the rustfs/MinIO backend
 //
 // Bucket layout:
 //   users/<username>/            — member private workspace
@@ -143,6 +143,17 @@ agent { policy = "read" }
 //   collab/<name>/               — collaborator scoped r/w
 //   samplesheets/                — read by members + submit; managed by group-admin
 //   pipelines/                   — written by submit SA; read by members + group-admin
+//
+// ListBucket scoping note:
+//   These policies grant unconditional `s3:ListBucket` rather than scoping it
+//   via `s3:prefix` Condition. RustFS (the S3 backend in use) does not yet
+//   evaluate the `s3:prefix` condition variable — adding any Condition denies
+//   ListBucket entirely. Members can therefore enumerate peer file *names*
+//   inside the bucket, but `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject`
+//   are still scoped to the member's own prefixes via Resource patterns,
+//   which RustFS does evaluate correctly. The threat model accepts a
+//   filename-disclosure leak in exchange for portability across MinIO and
+//   RustFS; data isolation is still enforced.
 // ============================================================
 
 const rw = [
@@ -213,22 +224,8 @@ export function minioMemberPolicy(bucket: string, username: string): string {
           Effect: "Allow",
           Action: ["s3:ListBucket"],
           Resource: [bucketArn(bucket)],
-          Condition: {
-            StringLike: {
-              "s3:prefix": [
-                privatePrefix,
-                `${privatePrefix}*`,
-                sharedUserPrefix,
-                `${sharedUserPrefix}*`,
-                "shared/",
-                "shared/*",
-                "samplesheets/",
-                "samplesheets/*",
-                "pipelines/",
-                "pipelines/*",
-              ],
-            },
-          },
+          // Unconditional — see policies.ts header comment on RustFS
+          // s3:prefix Condition unsupported.
         },
         {
           Sid: "OwnPrefixReadWrite",
@@ -281,16 +278,7 @@ export function minioCollaboratorPolicy(bucket: string, collabName: string): str
           Effect: "Allow",
           Action: ["s3:ListBucket"],
           Resource: [bucketArn(bucket)],
-          Condition: {
-            StringLike: {
-              "s3:prefix": [
-                collabPrefix,
-                `${collabPrefix}*`,
-                "shared/",
-                "shared/*",
-              ],
-            },
-          },
+          // Unconditional — see policies.ts header note on RustFS.
         },
         {
           Sid: "CollabPrefixReadWrite",
@@ -328,18 +316,7 @@ export function minioPipelinePolicy(bucket: string): string {
           Effect: "Allow",
           Action: ["s3:ListBucket"],
           Resource: [bucketArn(bucket)],
-          Condition: {
-            StringLike: {
-              "s3:prefix": [
-                "pipelines/",
-                "pipelines/*",
-                "samplesheets/",
-                "samplesheets/*",
-                "shared/",
-                "shared/*",
-              ],
-            },
-          },
+          // Unconditional — see policies.ts header note on RustFS.
         },
         {
           Sid: "PipelinesReadWrite",

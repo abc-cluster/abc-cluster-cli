@@ -19,7 +19,13 @@ The Docker driver is **not** required and is not enabled on this cluster.
 - For `network { mode = "bridge" }`: **`bridge` kernel module** loaded + **CNI plugins** at `cni_path`.
   - Check: `journalctl -u nomad | grep bridge`
   - Fix: `sudo modprobe bridge && echo bridge | sudo tee /etc/modules-load.d/nomad-bridge.conf && sudo systemctl restart nomad`
-  - Current cluster: all jobs use `mode = "host"` — bridge module not required right now.
+  - **Bridge module IS required.** Most containerd-driver jobs (grafana,
+    loki, prometheus, rustfs, xtdb, …) use `mode = "bridge"` with static
+    port forwarding (`port "..." { static = N; to = N }`). `mode = "host"`
+    does not actually put containerd-driver containers in the host netns —
+    the container stays isolated and the bound port is unreachable on the
+    host IP. Use bridge unless you're certain the driver supports host netns.
+    Raw_exec / java tasks (alloy, traefik, jurist) can use either freely.
 
 ### 2. Host volumes
 
@@ -89,6 +95,21 @@ Opt-in **Vault**, **Supabase**, and **Wave** jobs (not in this layout by default
 | `docker-registry.nomad.hcl` | `abc-nodes-docker-registry` | 5000 | ✅ running | containerd |
 
 Experimental (Vault / Supabase / Wave / faasd): **`../experimental/nomad/*.nomad.hcl`** — see **`../experimental/README.md`**.
+
+### Experimental tier (`abc-experimental` namespace, Terraform-managed)
+
+A separate set of opt-in services lives under `nomad/experimental/` and is
+provisioned via Terraform (`enable_<name>` toggles, all default `false`).
+See **`../terraform/README.md`** for the full list.
+
+| Job file | Job name | Port(s) | Status | Notes |
+|---|---|---|---|---|
+| `experimental/xtdb-v2.nomad.hcl.tftpl` | `abc-experimental-xtdb` | 5555, 15432 | ✅ on aither | XTDB v2 bitemporal DB; pgwire backend for jurist |
+
+The `abc-jurist-svc` package's `abc-experimental-jurist` job (java driver,
+deployed manually via `nomad job run` from that repo) connects to
+`abc-experimental-xtdb` over pgwire on `localhost:15432` — both pinned to
+aither.
 
 ---
 
@@ -245,8 +266,10 @@ Full narrative: **`docs/abc-nodes-observability-and-operations.md`**.
 - **Token for operations** — use the management token or the `cluster_services_admin`
   token. Both are in `~/.abc/config.yaml` (aither context) and `acl/tokens.env`.
 
-- **Networking** — all jobs use `mode = "host"`. Ports are static. No CNI/bridge
-  module required in the current single-node setup.
+- **Networking** — most containerd-driver jobs use `mode = "bridge"` with
+  static port forwarding (`{ static = N; to = N }`). Raw_exec and java
+  tasks use `mode = "host"`. The `bridge` kernel module is required —
+  see Prerequisites above.
 
 - **Vault health check** — uses `?uninitcode=200&sealedcode=200` (not the
   incorrect `uninitok`/`sealedok` params that pre-1.x docs sometimes show).

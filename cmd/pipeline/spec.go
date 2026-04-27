@@ -15,9 +15,16 @@ type PipelineSpec struct {
 	Profile    string `json:"profile,omitempty" yaml:"profile,omitempty"`   // comma-separated
 
 	// Runtime
-	WorkDir     string         `json:"workDir,omitempty" yaml:"workDir,omitempty"`         // host volume path
+	WorkDir     string         `json:"workDir,omitempty" yaml:"workDir,omitempty"`         // host volume path or s3:// URI
 	ExtraConfig string         `json:"extraConfig,omitempty" yaml:"extraConfig,omitempty"` // appended to nextflow config
 	Params      map[string]any `json:"params,omitempty" yaml:"params,omitempty"`           // nextflow pipeline params
+	Resume      bool           `json:"resume,omitempty" yaml:"resume,omitempty"`           // append -resume to nextflow run
+	SessionID   string         `json:"sessionID,omitempty" yaml:"sessionID,omitempty"`     // resume specific Nextflow session
+	// HostVolume is the Nomad host volume name for shared work storage.
+	// Use "-" to disable host volumes (e.g. when workDir is an S3 URI).
+	HostVolume     string `json:"hostVolume,omitempty" yaml:"hostVolume,omitempty"`
+	// NodeConstraint pins the head job to a specific Nomad node hostname.
+	NodeConstraint string `json:"nodeConstraint,omitempty" yaml:"nodeConstraint,omitempty"`
 
 	// Head job resource overrides
 	CPU      int    `json:"cpu,omitempty" yaml:"cpu,omitempty"`           // MHz
@@ -89,13 +96,34 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	if len(override.Datacenters) > 0 {
 		base.Datacenters = append([]string(nil), override.Datacenters...)
 	}
+	if override.Resume {
+		base.Resume = true
+	}
+	if override.SessionID != "" {
+		base.SessionID = override.SessionID
+	}
+	if override.HostVolume != "" {
+		base.HostVolume = override.HostVolume
+	}
+	if override.NodeConstraint != "" {
+		base.NodeConstraint = override.NodeConstraint
+	}
 	return base
+}
+
+// isS3URI returns true when the path begins with s3:// or s3a://.
+func isS3URI(path string) bool {
+	return len(path) > 5 && (path[:5] == "s3://" || (len(path) > 6 && path[:6] == "s3a://"))
 }
 
 // defaults fills in zero-value fields with sensible defaults.
 func (s *PipelineSpec) defaults() {
 	if s.WorkDir == "" {
 		s.WorkDir = "/work/nextflow-work"
+	}
+	// When work dir is S3, disable the host volume unless explicitly set.
+	if s.HostVolume == "" && isS3URI(s.WorkDir) {
+		s.HostVolume = "-"
 	}
 	if s.CPU == 0 {
 		s.CPU = 1000

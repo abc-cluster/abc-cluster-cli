@@ -29,6 +29,22 @@ type Spec struct {
 	Profile     string
 	ExtraConfig string
 
+	// Resume appends -resume to the nextflow run command (checkpoint restart).
+	Resume bool
+	// SessionID resumes a specific Nextflow session (implies Resume).
+	SessionID string
+
+	// HostVolume is the Nomad host volume name used for the shared work directory.
+	// Defaults to "nextflow-work". Override with the name of any host volume
+	// available on the target nodes (e.g. "scratch").
+	// Set to "-" to skip the host volume block entirely (use with S3 work dirs).
+	HostVolume string
+
+	// NodeConstraint pins the head job to a specific Nomad node hostname.
+	// When set, a constraint { attribute = "${attr.unique.hostname}" value = "<node>" }
+	// block is added to the group.
+	NodeConstraint string
+
 	// StaticEnv is merged into the task env block as literal strings (abc-nodes
 	// enhanced floor: Loki, Prometheus, Grafana Alloy).
 	StaticEnv map[string]string
@@ -68,10 +84,24 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	groupBody := jobBody.AppendNewBlock("group", []string{"head"}).Body()
 
-	// Host volume for the shared work directory.
-	volBody := groupBody.AppendNewBlock("volume", []string{"nextflow-work"}).Body()
-	volBody.SetAttributeValue("type", cty.StringVal("host"))
-	volBody.SetAttributeValue("source", cty.StringVal("nextflow-work"))
+	// Node hostname constraint — pins the head job to a specific Nomad client.
+	if spec.NodeConstraint != "" {
+		cBody := groupBody.AppendNewBlock("constraint", nil).Body()
+		cBody.SetAttributeValue("attribute", cty.StringVal("${attr.unique.hostname}"))
+		cBody.SetAttributeValue("value", cty.StringVal(spec.NodeConstraint))
+	}
+
+	// Host volume for the shared work directory (optional; skip when using S3 work dir).
+	hostVol := spec.HostVolume
+	if hostVol == "" {
+		hostVol = "nextflow-work" // default
+	}
+	useHostVol := spec.HostVolume != "-" // "-" explicitly disables the host volume
+	if useHostVol {
+		volBody := groupBody.AppendNewBlock("volume", []string{hostVol}).Body()
+		volBody.SetAttributeValue("type", cty.StringVal("host"))
+		volBody.SetAttributeValue("source", cty.StringVal(hostVol))
+	}
 
 	taskBody := groupBody.AppendNewBlock("task", []string{"nextflow"}).Body()
 	taskBody.SetAttributeValue("driver", cty.StringVal("docker"))
@@ -81,11 +111,13 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	resBody.SetAttributeValue("cpu", cty.NumberIntVal(int64(spec.CPU)))
 	resBody.SetAttributeValue("memory", cty.NumberIntVal(int64(spec.MemoryMB)))
 
-	// Volume mount
-	mountBody := taskBody.AppendNewBlock("volume_mount", nil).Body()
-	mountBody.SetAttributeValue("volume", cty.StringVal("nextflow-work"))
-	mountBody.SetAttributeValue("destination", cty.StringVal(spec.WorkDir))
-	mountBody.SetAttributeValue("read_only", cty.BoolVal(false))
+	// Volume mount (only when a host volume is in use).
+	if useHostVol && spec.WorkDir != "" && !isS3URI(spec.WorkDir) {
+		mountBody := taskBody.AppendNewBlock("volume_mount", nil).Body()
+		mountBody.SetAttributeValue("volume", cty.StringVal(hostVol))
+		mountBody.SetAttributeValue("destination", cty.StringVal(spec.WorkDir))
+		mountBody.SetAttributeValue("read_only", cty.BoolVal(false))
+	}
 
 	// Template: nextflow config
 	nfCfgTmpl := taskBody.AppendNewBlock("template", nil).Body()
@@ -133,10 +165,26 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	return utils.PrettyPrintHCL(string(f.Bytes()))
 }
 
+// isS3URI returns true if the path starts with s3:// or s3a://.
+func isS3URI(path string) bool {
+	return strings.HasPrefix(path, "s3://") || strings.HasPrefix(path, "s3a://")
+}
+
 // buildNextflowConfig generates the Groovy nextflow config embedded in the
 // head job. It closely mirrors nextflow.headjob.config from the infra scripts.
 func buildNextflowConfig(spec Spec) string {
 	var sb strings.Builder
+
+	// nf-nomad volumes block: omit when work dir is S3 (no shared local disk needed).
+	hostVol := spec.HostVolume
+	if hostVol == "" || hostVol == "-" {
+		hostVol = "nextflow-work"
+	}
+	volumesLine := fmt.Sprintf(`volumes = [{ type "host" name "%s" path "%s" }]`, hostVol, spec.WorkDir)
+	if isS3URI(spec.WorkDir) || spec.HostVolume == "-" {
+		volumesLine = `volumes = []`
+	}
+
 	fmt.Fprintf(&sb, `plugins {
   id "nf-nomad@%s"
 }
@@ -171,19 +219,19 @@ nomad {
     submitThrottle = "100ms"
   }
   jobs {
-    namespace                = "default"
+    namespace                = "%s"
     deleteOnCompletion       = false
     cpuMode                  = "cores"
     failOnPlacementFailure   = true
     placementFailureTimeout  = "5m"
-    volumes = [{ type "host" name "nextflow-work" path "%s" }]
+    %s
     failures = [
       restart   : [attempts: 1, mode: "fail"],
       reschedule: [attempts: 1]
     ]
   }
 }
-`, spec.NfPluginVersion, spec.WorkDir, spec.WorkDir)
+`, spec.NfPluginVersion, spec.WorkDir, spec.Namespace, volumesLine)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")
@@ -196,7 +244,12 @@ nomad {
 func buildEntrypoint(spec Spec) string {
 	var sb strings.Builder
 	sb.WriteString("#!/usr/bin/env bash\nset -euo pipefail\ncd /local\n\n")
-	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s/.nxf-home\n\n", spec.WorkDir)
+	// NXF_HOME must be a local writable path even when workDir is S3.
+	nxfHome := spec.WorkDir + "/.nxf-home"
+	if isS3URI(spec.WorkDir) {
+		nxfHome = "/local/.nxf-home"
+	}
+	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s\n\n", nxfHome)
 	fmt.Fprintf(&sb, "nextflow run %s \\\n", spec.Repository)
 	sb.WriteString("  -c /local/nextflow.headjob.config")
 	if spec.Revision != "" {
@@ -204,6 +257,12 @@ func buildEntrypoint(spec Spec) string {
 	}
 	if spec.Profile != "" {
 		fmt.Fprintf(&sb, " \\\n  -profile %s", spec.Profile)
+	}
+	if spec.Resume || spec.SessionID != "" {
+		sb.WriteString(" \\\n  -resume")
+	}
+	if spec.SessionID != "" {
+		fmt.Fprintf(&sb, " \\\n  -sessionId %s", spec.SessionID)
 	}
 	if len(spec.Params) > 0 {
 		sb.WriteString(" \\\n  -params-file /local/params.json")

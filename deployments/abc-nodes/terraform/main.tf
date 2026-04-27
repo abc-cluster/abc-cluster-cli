@@ -124,6 +124,134 @@ resource "nomad_job" "rustfs" {
   depends_on = [nomad_namespace.abc_services]
 }
 
+# ── Docs (Docusaurus static site) — served at http://docs.aither ───────────
+# Content is pushed via `just docs-deploy` to /opt/nomad/scratch/abc-docs on
+# aither.  The job mounts that path and serves it via a tiny Caddy file_server.
+# Restart not needed for content updates — only when changing the embedded
+# Caddyfile.
+
+resource "nomad_job" "docs" {
+  count = var.enable_docs ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/abc-nodes-docs.nomad.hcl")
+  detach  = false
+
+  hcl2 {
+    vars = {
+      caddy_image = var.docs_caddy_image
+    }
+  }
+
+  depends_on = [nomad_namespace.abc_services]
+}
+
+# ── Garage — long-term archive + backup tier (zstd compression + dedup) ────
+# Sits behind RustFS as a cold-data + backup target.  Bootstrap (layout +
+# buckets + key import) runs as a poststart task inside the job — see
+# garage.nomad.hcl for the full sequence.
+
+resource "random_password" "garage_rpc_secret" {
+  length  = 64
+  upper   = false
+  special = false
+  # 64 hex chars = 32 bytes; Garage's rpc_secret expects exactly that.
+  override_special = ""
+}
+
+resource "random_password" "garage_admin_token" {
+  length  = 48
+  special = false
+}
+
+resource "random_password" "garage_metrics_token" {
+  length  = 48
+  special = false
+}
+
+# Garage S3 access keys are imported via `garage key import` during bootstrap
+# so terraform owns them.  AWS access-key IDs are constrained to ~20 alnum chars;
+# secret keys are 40 alnum chars.
+resource "random_password" "garage_restic_secret_key" {
+  length  = 40
+  special = false
+}
+
+resource "random_password" "garage_archive_secret_key" {
+  length  = 40
+  special = false
+}
+
+# Restic repository encryption key — losing this loses ALL backups.  Surface
+# via terraform output so an operator can stash it in the team password
+# manager.  Treat as sensitive everywhere.
+resource "random_password" "restic_repo_password" {
+  length  = 48
+  special = false
+}
+
+resource "nomad_job" "garage" {
+  count = var.enable_garage ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/garage.nomad.hcl")
+  detach  = false
+
+  hcl2 {
+    vars = {
+      garage_image              = var.garage_image
+      garage_webui_image        = var.garage_webui_image
+      garage_rpc_secret         = random_password.garage_rpc_secret.result
+      garage_admin_token        = random_password.garage_admin_token.result
+      garage_metrics_token      = random_password.garage_metrics_token.result
+      garage_restic_access_key  = var.garage_restic_access_key
+      garage_restic_secret_key  = random_password.garage_restic_secret_key.result
+      garage_archive_access_key = var.garage_archive_access_key
+      garage_archive_secret_key = random_password.garage_archive_secret_key.result
+      garage_node_capacity      = var.garage_node_capacity
+      garage_zone               = var.garage_zone
+    }
+  }
+
+  depends_on = [nomad_namespace.abc_services]
+}
+
+# ── abc-backups — nightly restic-on-Garage of cluster state ────────────────
+# Periodic batch.  Snapshots Consul / Vault / Nomad job specs, encrypts via
+# restic, stores in the `cluster-backups` bucket on Garage.  Replaces the
+# experimental restic-server.nomad.hcl (kept in repo for reference).
+
+resource "nomad_job" "abc_backups" {
+  count = var.enable_abc_backups ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/abc-backups.nomad.hcl")
+  detach  = false
+
+  hcl2 {
+    vars = {
+      garage_endpoint          = var.garage_internal_endpoint
+      garage_restic_access_key = var.garage_restic_access_key
+      garage_restic_secret_key = random_password.garage_restic_secret_key.result
+      garage_backup_bucket     = var.garage_backup_bucket
+      restic_password          = random_password.restic_repo_password.result
+      consul_addr              = var.backups_consul_addr
+      consul_token             = var.backups_consul_token
+      vault_addr               = var.backups_vault_addr
+      vault_token              = var.backups_vault_token
+      nomad_addr               = var.backups_nomad_addr
+      nomad_token              = var.nomad_token
+      keep_daily               = var.backups_keep_daily
+      keep_weekly              = var.backups_keep_weekly
+      keep_monthly             = var.backups_keep_monthly
+      schedule_cron            = var.backups_schedule_cron
+      ntfy_url                 = var.backups_ntfy_url
+    }
+  }
+
+  depends_on = [
+    nomad_job.garage,
+    nomad_job.ntfy,
+  ]
+}
+
 # ───────────────────────────────────────────────────────────────────────────
 # Enhanced Tier — Observability
 # ───────────────────────────────────────────────────────────────────────────
@@ -301,14 +429,42 @@ resource "nomad_job" "wave" {
 resource "nomad_job" "supabase" {
   count = var.enable_supabase ? 1 : 0
 
+  # The supabase stack ports the upstream docker-compose to a single Nomad
+  # job with multiple tasks sharing one bridge network namespace. It runs
+  # its OWN postgres (supabase/postgres) — independent of the standalone
+  # abc-experimental-postgres job — because the supabase services require
+  # extensions and migration scripts that vanilla postgres does not have.
   jobspec = templatefile("${path.module}/../nomad/experimental/supabase.nomad.hcl.tftpl", {
-    supabase_image    = var.supabase_image
-    postgres_password = var.postgres_password
+    supabase_node                 = var.supabase_node
+    supabase_db_image             = var.supabase_db_image
+    supabase_studio_image         = var.supabase_studio_image
+    supabase_meta_image           = var.supabase_meta_image
+    supabase_auth_image           = var.supabase_auth_image
+    supabase_rest_image           = var.supabase_rest_image
+    supabase_kong_image           = var.supabase_kong_image
+    kong_http_port                = var.kong_http_port
+    supabase_postgres_db          = var.supabase_postgres_db
+    supabase_postgres_password    = var.supabase_postgres_password
+    supabase_jwt_secret           = var.supabase_jwt_secret
+    supabase_jwt_exp              = var.supabase_jwt_exp
+    supabase_anon_key             = var.supabase_anon_key
+    supabase_service_role_key     = var.supabase_service_role_key
+    supabase_dashboard_username   = var.supabase_dashboard_username
+    supabase_dashboard_password   = var.supabase_dashboard_password
+    supabase_pg_meta_crypto_key   = var.supabase_pg_meta_crypto_key
+    supabase_public_url           = var.supabase_public_url
+    supabase_site_url             = var.supabase_site_url
+    supabase_disable_signup       = var.supabase_disable_signup
+    supabase_pgrst_schemas        = var.supabase_pgrst_schemas
+    supabase_default_org_name             = var.supabase_default_org_name
+    supabase_default_project_name         = var.supabase_default_project_name
+    supabase_enable_optional_integrations = var.supabase_enable_optional_integrations
   })
-  detach = false
+  # JVM-like cold start: postgres + 5 other JVM-ish services in parallel
+  # easily exceed the 5-min hardcoded provider timeout.
+  detach = true
 
-  # Supabase uses the shared postgres instance.
-  depends_on = [nomad_job.postgres]
+  depends_on = [nomad_namespace.abc_experimental]
 }
 
 resource "nomad_job" "restic_server" {
@@ -337,6 +493,41 @@ resource "nomad_job" "caddy" {
   detach = false
 
   # Caddy may proxy to Traefik; deploy after networking is up.
+  depends_on = [
+    nomad_namespace.abc_experimental,
+    nomad_job.traefik,
+  ]
+}
+
+# ── Caddy (unified Tailscale + LAN gateway) — abc-experimental ─────────────
+# This is the ACTIVE production gateway: a single Caddy raw_exec job binding
+# port 80 on BOTH the Tailscale IP and the institutional LAN IP, owning all
+# *.aither vhosts AND the subpath routing for the LAN landing page surface.
+# Supersedes the older nomad_job.caddy resource above (which only handled
+# ACME / TLS in front of Traefik).  Default to enabled; disable if you're
+# rolling back to two-Caddy split.
+#
+# Variables surfaced as hcl2.vars: service_domain (e.g. "aither"), lan_host
+# (institutional FQDN), lan_ip (institutional v4), ts_ip (Tailscale v4).
+# These flow into Caddy's bind directives AND the landing-page JS toggle.
+
+resource "nomad_job" "caddy_tailscale" {
+  count = var.enable_caddy_tailscale ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/experimental/caddy-tailscale.nomad.hcl")
+  detach  = false
+
+  hcl2 {
+    vars = {
+      service_domain = var.caddy_tailscale_service_domain
+      lan_host       = var.caddy_tailscale_lan_host
+      lan_ip         = var.caddy_tailscale_lan_ip
+      ts_ip          = var.caddy_tailscale_ts_ip
+    }
+  }
+
+  # Owns port 80 on the LAN IP — Traefik (port 80 on Tailscale via Consul-LB
+  # service) and the routing chain Caddy → Traefik:8081 → service must be up.
   depends_on = [
     nomad_namespace.abc_experimental,
     nomad_job.traefik,
@@ -418,6 +609,41 @@ resource "nomad_job" "fx_tusd_hook" {
   depends_on = [
     nomad_namespace.abc_automations,
     # ntfy must be running before the hook can deliver upload notifications.
+    nomad_job.ntfy,
+  ]
+}
+
+resource "nomad_job" "fx_archive" {
+  count = var.enable_fx_archive ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/fx/fx-archive.nomad.hcl")
+  detach  = false
+
+  # Periodic batch — copies aged objects from RustFS buckets into Garage's
+  # `archive` bucket nightly.  Reads from RustFS using rustfs admin creds;
+  # writes to Garage using the imported `archive-key`.
+  hcl2 {
+    vars = {
+      docker_node               = var.fx_archive_node
+      rustfs_endpoint           = var.fx_archive_rustfs_endpoint
+      rustfs_access_key         = var.rustfs_access_key
+      rustfs_secret_key         = var.rustfs_secret_key
+      garage_endpoint           = var.garage_internal_endpoint
+      garage_archive_access_key = var.garage_archive_access_key
+      garage_archive_secret_key = random_password.garage_archive_secret_key.result
+      garage_bucket             = var.fx_archive_dest_bucket
+      source_buckets            = var.fx_archive_source_buckets
+      archive_age_days          = var.fx_archive_age_days
+      delete_after_copy         = var.fx_archive_delete_after_copy
+      ntfy_url                  = var.fx_archive_ntfy_url
+      schedule_cron             = var.fx_archive_schedule_cron
+    }
+  }
+
+  depends_on = [
+    nomad_namespace.abc_automations,
+    nomad_job.garage,
+    nomad_job.rustfs,
     nomad_job.ntfy,
   ]
 }

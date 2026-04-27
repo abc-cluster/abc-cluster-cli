@@ -67,26 +67,28 @@ const MINIO_ADMIN_SCHEME = MINIO_ADMIN_SSL ? "https" : "http";
 // ---- helpers ---------------------------------------------------------------
 
 /**
- * Provision a MinIO IAM user and close the post-create race window where a
- * freshly created IamUser briefly authenticates with overly permissive access
- * before the IamUserPolicyAttachment fully propagates through MinIO's IAM
- * cache.
+ * Provision a MinIO IAM user, attach its scoped policy, and flush the IAM
+ * identity cache so the attachment is authoritative immediately.
+ *
+ * Why mc instead of `minio.IamUserPolicyAttachment`:
+ *   The @pulumi/minio provider's IamUserPolicyAttachment sends an HTTP
+ *   request without a Content-Length header, which MinIO accepts but RustFS
+ *   (the S3-compatible backend we run today) rejects with
+ *   `missing header: content-length`. Using `mc admin policy attach` via a
+ *   local.Command works against both backends, so this template is portable
+ *   across MinIO and RustFS without further changes.
  *
  * Sequence:
- *   1. IamUser is created (the @pulumi/minio provider does not support
- *      atomic create-with-policy, and disableUser=true on create is broken
- *      upstream so we cannot create disabled).
- *   2. IamUserPolicyAttachment binds the scoped policy.
- *   3. local.Command runs `mc admin user disable && mc admin user enable`
- *      to force MinIO to flush its IAM identity cache, ensuring the
- *      attached policy is the authoritative one for any subsequent request.
- *
- * The disable/enable cycle takes ~100ms; access during that window already
- * fails. After the cycle completes the user authenticates against the
- * attached policy with no leftover permissions.
- *
- * The local.Command depends on the attachment so it runs after the policy
- * binding lands. It re-runs whenever the username changes (idempotent on mc).
+ *   1. IamUser is created by the provider (the user-create path works fine
+ *      on both MinIO and RustFS).
+ *   2. local.Command runs `mc admin policy attach` to bind the scoped policy,
+ *      then `disable && enable` to flush the IAM identity cache so the
+ *      attached policy is the authoritative one for the next request — this
+ *      closes the brief post-create window where a user has overly permissive
+ *      defaults.
+ *   3. On destroy, the same Command runs `mc admin policy detach` so the
+ *      policy is cleanly disassociated before the IamUser is removed (and
+ *      before any per-user IamPolicy is removed).
  */
 function provisionMinioUser(
   ns: string,
@@ -106,15 +108,6 @@ function provisionMinioUser(
     opts,
   );
 
-  const attachment = new minio.IamUserPolicyAttachment(
-    `${ns}-attach-${slug}`,
-    {
-      userName: user.name,
-      policyName: policyResource.name,
-    },
-    { ...opts, dependsOn: [policyResource, user] },
-  );
-
   // mc reads MC_HOST_<alias> from env, so we synthesise an alias URL with the
   // admin creds from `minio:` Pulumi config (same source the provider uses).
   const mcHost = pulumi
@@ -123,24 +116,29 @@ function provisionMinioUser(
       `${MINIO_ADMIN_SCHEME}://${encodeURIComponent(u)}:${encodeURIComponent(p)}@${MINIO_ADMIN_HOST}`,
     );
 
-  const reset = new command.local.Command(
-    `${ns}-iam-reset-${slug}`,
+  const attach = new command.local.Command(
+    `${ns}-attach-${slug}`,
     {
-      // Toggle disable→enable to flush MinIO's IAM cache for this principal.
-      // After this runs, the attached policy is the only one in effect.
       create:
+        `mc admin policy attach userspace "$POLICY" --user "$TARGET_USER" && ` +
         `mc admin user disable userspace "$TARGET_USER" && ` +
         `mc admin user enable userspace "$TARGET_USER"`,
-      triggers: [username],
+      // detach on destroy; tolerate "already detached / user gone" by ORing
+      // with true so the command never blocks the rest of the destroy path.
+      delete:
+        `mc admin policy detach userspace "$POLICY" --user "$TARGET_USER" || true`,
+      // re-run whenever username or policy name changes
+      triggers: [pulumi.all([username, policyResource.name]).apply(([u, p]) => `${u}|${p}`)],
       environment: {
         TARGET_USER: username,
+        POLICY: policyResource.name,
         MC_HOST_userspace: mcHost,
       },
     },
-    { ...opts, dependsOn: [attachment] },
+    { ...opts, dependsOn: [policyResource, user] },
   );
 
-  return { user, ready: reset };
+  return { user, ready: attach };
 }
 
 /**
