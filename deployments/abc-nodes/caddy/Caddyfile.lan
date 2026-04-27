@@ -3,10 +3,12 @@
 # Architecture
 # ────────────
 #  Two entry surfaces:
-#    *.aither            — per-service vhosts, bind on BOTH IPs (LAN + Tailscale).
-#                          DNS: dnsmasq on aither resolves *.aither → 146.232.174.77.
-#                          Tailscale: add 100.70.185.46 as nameserver for ".aither"
-#                          in the Tailscale admin console for tailnet-wide resolution.
+#    *.aither            — per-service vhosts served by the Tailscale Caddy job
+#                          (abc-experimental-caddy-tailscale, binds 100.70.185.46).
+#                          DNS: dnsmasq on aither resolves *.aither → 100.70.185.46
+#                          (see /etc/dnsmasq.d/20-aither.conf).
+#                          Tailscale split-DNS: admin console → DNS → nameserver
+#                          100.70.185.46, domain "aither" (no leading dot).
 #    aither.mb.sun.ac.za — institutional LAN face, binds on LAN IP only. Mostly
 #                          redirects to *.aither; Nomad UI stays here (/ui/*).
 #
@@ -123,6 +125,11 @@ http://tusd.aither {
 	}
 }
 
+http://notify.aither {
+	import lan_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
 http://uppy.aither {
 	import lan_bind
 	reverse_proxy abc-nodes-traefik.service.consul:8081
@@ -168,6 +175,12 @@ http://nomad.aither {
 	@nomad_root path /
 	redir @nomad_root /ui/settings/tokens 308
 	reverse_proxy 100.70.185.46:4646
+}
+
+# Docusaurus-built abc-cluster-cli docs (served by abc-nodes-docs Nomad job).
+http://docs.aither {
+	import lan_bind
+	reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
 # ══ INSTITUTIONAL HOST (aither.mb.sun.ac.za) ══════════════════════════════════
@@ -244,6 +257,9 @@ http://aither.mb.sun.ac.za {
 
 	@svc_ntfy path_regexp svc_ntfy ^/services/ntfy(/.*)?$
 	redir @svc_ntfy http://ntfy.aither{re.svc_ntfy.1} 308
+
+	@svc_notify path_regexp svc_notify ^/services/notify(/.*)?$
+	redir @svc_notify http://notify.aither{re.svc_notify.1} 308
 
 	@svc_tusd path_regexp svc_tusd ^/services/tusd(/.*)?$
 	redir @svc_tusd http://tusd.aither{re.svc_tusd.1} 308

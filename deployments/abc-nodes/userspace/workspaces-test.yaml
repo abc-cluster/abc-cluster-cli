@@ -1,0 +1,30 @@
+version: v1
+
+# ---------------------------------------------------------------------------
+# TEST spec — used for the `test` Pulumi stack only.
+# Contains a single net-new workspace that does not exist in Nomad or MinIO.
+# After verifying this deploys cleanly, run `pulumi destroy -s test` to clean up.
+# ---------------------------------------------------------------------------
+
+organizations:
+  - name: su-test
+    displayName: "SU Test — Pulumi template validation"
+    workspaces:
+      - name: sandbox
+        description: "Pulumi deployment test — safe to destroy"
+        state: active
+        priority: normal
+        contact: admin@su-test.example
+        ntfyTopic: su-test-sandbox-jobs
+        members:
+          - name: admin
+            role: group-admin
+          - name: alice
+            role: member
+            email: alice@su-test.example
+        submitAccount:
+          description: "nf-nomad test runner"
+        collaborators:
+          - name: ext-bob
+            expiresAt: "2027-12-31"
+            email: bob@external.example

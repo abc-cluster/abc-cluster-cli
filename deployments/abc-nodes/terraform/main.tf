@@ -19,22 +19,28 @@
 #   abc-services      enhanced platform services
 #   abc-applications  enhanced user-facing apps
 #   abc-experimental  experimental / WIP services
+#   abc-automations   automation functions (fx hooks, event bridges)
 #
 # DEPLOYMENT ORDER
 # ────────────────
 #   0. Namespaces
-#   1. Networking   (traefik)
-#   2. Storage      (rustfs)
+#   1. Networking    (traefik)
+#   2. Storage       (rustfs)
 #   3. Observability (prometheus → loki → grafana, alloy)
 #   4. Notifications (ntfy → job-notifier)
-#   5. System       (boundary-worker)
-#   6. Optional     (docker-registry)
-#   7. Experimental (postgres, redis → wave, supabase; restic-server)
+#   5. System        (boundary-worker)
+#   6. Optional      (docker-registry)
+#   7. Experimental  (postgres, redis → wave, supabase; restic-server; xtdb)
+#   8. Automations   (fx-notify, fx-tusd-hook)  ← abc-automations namespace
 #
 # IMPORT HINTS
 # ────────────
 #   terraform import nomad_namespace.abc_experimental abc-experimental
-#   terraform import nomad_job.traefik  "abc-nodes-traefik@abc-services"
+#   terraform import nomad_namespace.abc_automations  abc-automations
+#   terraform import nomad_job.traefik                "abc-nodes-traefik@abc-services"
+#   terraform import nomad_job.xtdb                   "abc-experimental-xtdb@abc-experimental"
+#   terraform import nomad_job.fx_notify              "fx-notify@abc-automations"
+#   terraform import nomad_job.fx_tusd_hook           "fx-tusd-hook@abc-automations"
 #
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -74,6 +80,11 @@ resource "nomad_namespace" "abc_applications" {
 resource "nomad_namespace" "abc_experimental" {
   name        = "abc-experimental"
   description = "WIP / evaluation services — not production-ready; may be torn down at any time"
+}
+
+resource "nomad_namespace" "abc_automations" {
+  name        = "abc-automations"
+  description = "Automation functions — fx hooks, event bridges, and lightweight glue services"
 }
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -318,5 +329,80 @@ resource "nomad_job" "caddy" {
   depends_on = [
     nomad_namespace.abc_experimental,
     nomad_job.traefik,
+  ]
+}
+
+resource "nomad_job" "xtdb" {
+  count = var.enable_xtdb ? 1 : 0
+
+  jobspec = templatefile("${path.module}/../nomad/experimental/xtdb-v2.nomad.hcl.tftpl", {
+    xtdb_image        = var.xtdb_image
+    xtdb_node         = var.xtdb_node
+    xtdb_http_port    = var.xtdb_http_port
+    xtdb_postgres_url = var.xtdb_postgres_url
+  })
+  detach = false
+
+  depends_on = [
+    nomad_namespace.abc_experimental,
+    # When a Postgres txLog URL is provided, ensure postgres is running first.
+    # This is a soft dependency (no count-conditional syntax) — if postgres is
+    # not managed by Terraform, remove this line and bring it up manually.
+    nomad_job.postgres,
+  ]
+}
+
+# ───────────────────────────────────────────────────────────────────────────
+# Automations Tier — fx event-driven microservices
+# All jobs in this section run in the abc-automations namespace.
+# Both are lightweight Python HTTP servers; no Docker, no compiled binaries.
+# ───────────────────────────────────────────────────────────────────────────
+
+resource "nomad_job" "fx_notify" {
+  count = var.enable_fx_notify ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/fx/fx-notify.nomad.hcl")
+  detach  = false
+
+  # Pass Terraform variables through to the Nomad HCL2 variable blocks so
+  # the node constraint and ntfy URL are controlled from this Terraform config
+  # rather than relying on in-file defaults.
+  hcl2 {
+    vars = {
+      docker_node = var.fx_notify_node
+      ntfy_url    = var.fx_notify_ntfy_url
+    }
+  }
+
+  depends_on = [
+    nomad_namespace.abc_automations,
+    # ntfy must be running before fx-notify can forward events.
+    nomad_job.ntfy,
+  ]
+}
+
+resource "nomad_job" "fx_tusd_hook" {
+  count = var.enable_fx_tusd_hook ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/fx/fx-tusd-hook.nomad.hcl")
+  detach  = false
+
+  # All tusd hook parameters are surfaced as Terraform variables so MinIO
+  # credentials and node placement can be overridden without editing the HCL.
+  hcl2 {
+    vars = {
+      docker_node    = var.fx_tusd_hook_node
+      ntfy_url       = var.fx_tusd_hook_ntfy_url
+      minio_endpoint = var.fx_tusd_hook_minio_endpoint
+      minio_bucket   = var.fx_tusd_hook_minio_bucket
+      s3_access_key  = var.fx_tusd_hook_s3_access_key
+      s3_secret_key  = var.fx_tusd_hook_s3_secret_key
+    }
+  }
+
+  depends_on = [
+    nomad_namespace.abc_automations,
+    # ntfy must be running before the hook can deliver upload notifications.
+    nomad_job.ntfy,
   ]
 }

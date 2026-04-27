@@ -2,40 +2,28 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
-// This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
-
 const config: Config = {
-  title: 'abc CLI docs',
-  tagline: 'Documentation for abc-cluster-cli',
+  title: 'abc CLI',
+  tagline: 'African Bioinformatics Computing — command-line tool',
   favicon: 'img/favicon.ico',
 
-  // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
-    v4: true, // Improve compatibility with the upcoming Docusaurus v4
+    v4: true,
   },
 
-  // Set the production url of your site here
   url: 'https://abc-cluster.io',
-  // Set the /<baseUrl>/ pathname under which your site is served
-  // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: '/',
 
-  // GitHub pages deployment config.
-  // If you aren't using GitHub pages, you don't need these.
   organizationName: 'abc-cluster',
   projectName: 'abc-cluster-cli',
 
   onBrokenLinks: 'throw',
 
-  // Even if you don't use internationalization, you can use this field to set
-  // useful metadata like html lang. For example, if your site is Chinese, you
-  // may want to replace "en" with "zh-Hans".
   i18n: {
     defaultLocale: 'en',
     locales: ['en'],
   },
 
-  // Parse .md files as CommonMark (not MDX JSX).
   markdown: {
     format: 'md',
   },
@@ -59,23 +47,31 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with your project's social card
     image: 'img/docusaurus-social-card.jpg',
     colorMode: {
+      defaultMode: 'dark',
+      disableSwitch: false,
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'abc docs',
+      title: 'abc',
       logo: {
-        alt: 'abc CLI Logo',
+        alt: 'abc-cluster mark',
         src: 'img/logo.svg',
+        srcDark: 'img/logo-dark.svg',
+        style: { width: '22px', height: '22px' },
       },
       items: [
         {
           type: 'docSidebar',
-          sidebarId: 'tutorialSidebar',
+          sidebarId: 'mainSidebar',
           position: 'left',
           label: 'Docs',
+        },
+        {
+          href: 'http://aither.mb.sun.ac.za/',
+          label: 'Cluster',
+          position: 'right',
         },
         {
           href: 'https://github.com/abc-cluster/abc-cluster-cli',
@@ -85,32 +81,33 @@ const config: Config = {
       ],
     },
     footer: {
-      style: 'light',
+      style: 'dark',
       links: [
         {
           title: 'Docs',
           items: [
-            {
-              label: 'Home',
-              to: '/docs',
-            },
+            {label: 'Installation',  to: '/docs/installation'},
+            {label: 'Quick start',   to: '/docs/quickstart'},
+            {label: 'Command reference', to: '/docs/reference'},
+            {label: 'Tutorials',     to: '/docs/tutorials'},
           ],
         },
         {
-          title: 'More',
+          title: 'Platform',
           items: [
-            {
-              label: 'GitHub',
-              href: 'https://github.com/abc-cluster/abc-cluster-cli',
-            },
+            {label: 'Cluster gateway', href: 'http://aither.mb.sun.ac.za/'},
+            {label: 'Nomad jobs',      href: 'http://nomad.aither/ui/'},
+            {label: 'MinIO storage',   href: 'http://minio-console.aither/'},
+            {label: 'GitHub releases', href: 'https://github.com/abc-cluster/abc-cluster-cli/releases'},
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} abc-cluster. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} abc-cluster · Built with Docusaurus`,
     },
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,
+      additionalLanguages: ['bash', 'yaml', 'hcl', 'json'],
     },
   } satisfies Preset.ThemeConfig,
 };

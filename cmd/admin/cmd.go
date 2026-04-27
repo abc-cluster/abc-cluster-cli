@@ -24,6 +24,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/rustfs"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/serviceconfig"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tailscale"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/pulumi"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/terraform"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/traefik"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/vault"
@@ -47,6 +48,8 @@ func NewCmd() *cobra.Command {
 	abc admin services grafana cli -- plugins ls        Run the local Grafana CLI
 	abc admin services hashi-up cli -- --help           Run the local hashi-up CLI
 	abc admin services terraform cli -- plan             Run the local Terraform CLI
+	abc admin services pulumi cli -- up --yes            Run the local Pulumi CLI (per-service form)
+	abc admin services cli pulumi -- up --yes            Run any service CLI (unified form)
 	abc admin services boundary cli -- --version         Run the local Boundary CLI
 	abc admin services consul cli -- members             Run the local Consul CLI
 	abc admin services eget cli -- --help                Run the local eget CLI
@@ -75,6 +78,7 @@ func NewCmd() *cobra.Command {
 	svcCmd.AddCommand(postgres.NewCmd())
 	svcCmd.AddCommand(hashiup.NewCmd())
 	svcCmd.AddCommand(terraform.NewCmd())
+	svcCmd.AddCommand(pulumi.NewCmd())
 	svcCmd.AddCommand(boundary.NewCmd())
 	svcCmd.AddCommand(consul.NewCmd())
 	svcCmd.AddCommand(eget.NewCmd())

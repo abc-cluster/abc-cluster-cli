@@ -38,6 +38,17 @@ output "experimental_services" {
     supabase      = var.enable_supabase ? nomad_job.supabase[0].id : "disabled"
     restic_server = var.enable_restic_server ? nomad_job.restic_server[0].id : "disabled"
     caddy         = var.enable_caddy ? nomad_job.caddy[0].id : "disabled"
+    xtdb          = var.enable_xtdb ? nomad_job.xtdb[0].id : "disabled"
+  }
+}
+
+# ── Automations tier ───────────────────────────────────────────────────────
+
+output "automations_services" {
+  description = "Automations-tier services in abc-automations (fx hooks)"
+  value = {
+    fx_notify    = var.enable_fx_notify ? nomad_job.fx_notify[0].id : "disabled"
+    fx_tusd_hook = var.enable_fx_tusd_hook ? nomad_job.fx_tusd_hook[0].id : "disabled"
   }
 }
 
@@ -63,6 +74,15 @@ output "experimental_endpoints" {
     restic_server = var.enable_restic_server ? "http://${var.cluster_public_host}:8000" : "disabled"
     supabase      = var.enable_supabase ? "http://supabase.aither" : "disabled"
     caddy         = var.enable_caddy ? "http://${var.cluster_public_host}:2015  https://${var.cluster_public_host}:443" : "disabled"
+    xtdb_http     = var.enable_xtdb ? "http://${var.cluster_tailscale_ip}:${var.xtdb_http_port}  (vhost: http://xtdb.aither)" : "disabled"
+  }
+}
+
+output "automations_endpoints" {
+  description = "Traefik vhost endpoints for enabled automations-tier fx services"
+  value = {
+    fx_notify    = var.enable_fx_notify ? "http://notify.aither (port ${14001})" : "disabled"
+    fx_tusd_hook = var.enable_fx_tusd_hook ? "http://tusd-hook.aither (port ${14002})" : "disabled"
   }
 }
 
@@ -77,6 +97,7 @@ output "deployment_summary" {
     namespaces = {
       enhanced     = "abc-services + abc-applications"
       experimental = "abc-experimental"
+      automations  = "abc-automations"
     }
 
     enhanced_enabled = {
@@ -99,6 +120,12 @@ output "deployment_summary" {
       supabase      = var.enable_supabase
       restic_server = var.enable_restic_server
       caddy         = var.enable_caddy
+      xtdb          = var.enable_xtdb
+    }
+
+    automations_enabled = {
+      fx_notify    = var.enable_fx_notify
+      fx_tusd_hook = var.enable_fx_tusd_hook
     }
   }
 }

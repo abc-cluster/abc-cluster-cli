@@ -22,6 +22,14 @@ job "abc-nodes-auth" {
   group "auth" {
     count = 1
 
+    # Pin to aither: Caddy's forward_auth resolves abc-nodes-auth.service.consul
+    # from within the same host. Exec driver + Consul registration works reliably
+    # on aither; other nodes may lack Consul integration for exec tasks.
+    constraint {
+      attribute = "${attr.unique.hostname}"
+      value     = "aither"
+    }
+
     network {
       mode = "host"
       port "http" { static = 9191 }
@@ -84,6 +92,10 @@ def validate_token(token: str):
     """
     Call Nomad /v1/acl/token/self.
     Returns (name, policies, is_management) or raises urllib.error.HTTPError.
+
+    When Nomad ACLs are disabled the endpoint returns a synthetic token with
+    AccessorID == "acls-disabled" and Policies == null.  Treat that as
+    management access so all requests are permitted.
     """
     req = urllib.request.Request(
         f"{NOMAD_ADDR}/v1/acl/token/self",
@@ -91,11 +103,14 @@ def validate_token(token: str):
     )
     with urllib.request.urlopen(req, timeout=3) as resp:
         data = json.loads(resp.read())
-    return (
-        data.get("Name", "unknown"),
-        data.get("Policies", []),
-        data.get("Type") == "management",
+    # Guard: Nomad sends Policies: null (not []) when ACLs are disabled or the
+    # token has no policies — normalise to an empty list to avoid TypeError.
+    policies  = data.get("Policies") or []
+    is_mgmt   = (
+        data.get("Type") == "management"
+        or data.get("AccessorID") == "acls-disabled"
     )
+    return (data.get("Name", "unknown"), policies, is_mgmt)
 
 
 class AuthHandler(http.server.BaseHTTPRequestHandler):

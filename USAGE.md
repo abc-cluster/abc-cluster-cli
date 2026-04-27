@@ -260,6 +260,15 @@ contexts:
           nomad_addr: http://10.70.185.46:4646  # set by abc infra compute add
           nomad_token: s.123...                  # set by abc infra compute add
           nomad_region: global                  # optional; Nomad multi-region ID only if not default
+        terraform:                              # optional; used by abc admin services cli terraform
+          deploy_dir: deployments/abc-nodes/tf
+          workspace: prod
+          vars: {}
+        pulumi:                                 # optional; used by abc admin services cli pulumi
+          deploy_dir: deployments/abc-nodes/userspace
+          stack: prod
+          access_token: ""                      # leave empty for local/self-managed state
+          config_passphrase: ""
 defaults:
   output: table
   region: za-cpt
@@ -331,6 +340,13 @@ $ abc config set contexts.myorg.endpoint https://api.myorg.example
 | `contexts.<name>.admin.services.grafana.http` | Grafana HTTP URL | `http://10.0.0.1:3000` |
 | `contexts.<name>.admin.services.prometheus.http` | Prometheus HTTP URL | `http://10.0.0.1:9090` |
 | `contexts.<name>.admin.services.traefik.http` | Traefik dashboard URL | `http://10.0.0.1:8888` |
+| `contexts.<name>.admin.services.terraform.deploy_dir` | Working directory for `terraform` CLI | `/path/to/tf/project` |
+| `contexts.<name>.admin.services.terraform.workspace` | Terraform workspace name | `prod` |
+| `contexts.<name>.admin.services.terraform.vars` | Extra `TF_VAR_*` overrides (map) | `{region: za-cpt}` |
+| `contexts.<name>.admin.services.pulumi.deploy_dir` | Working directory for `pulumi` CLI | `/path/to/pulumi/project` |
+| `contexts.<name>.admin.services.pulumi.stack` | Pulumi stack name | `prod` |
+| `contexts.<name>.admin.services.pulumi.access_token` | Pulumi SaaS access token (if used) | `pul-...` |
+| `contexts.<name>.admin.services.pulumi.config_passphrase` | Passphrase for local Pulumi state encryption | `hunter2` |
 
 ### `config get KEY`
 

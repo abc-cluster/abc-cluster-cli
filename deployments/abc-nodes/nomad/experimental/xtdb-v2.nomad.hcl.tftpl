@@ -1,0 +1,155 @@
+# xtdb-v2.nomad.hcl.tftpl
+#
+# XTDB v2 — bitemporal database with SQL and Datalog query support.
+# Runs in abc-experimental namespace on the aither node.
+#
+# Architecture
+# ────────────
+#   XTDB v2 standalone HTTP server (port 5555 → 3000)
+#     ├─ txLog:  local disk (default) or Postgres (set xtdb_postgres_url)
+#     └─ storage: local disk on the scratch host volume
+#
+# Wiring
+# ──────
+#   1. Deploy via Terraform:
+#        abc admin services cli terraform -- apply -auto-approve
+#
+#   2. Verify health:
+#        curl http://100.70.185.46:5555/healthz
+#        curl http://xtdb.aither/healthz    # via Traefik
+#
+#   3. Submit a query (HTTP API):
+#        curl http://xtdb.aither/query \
+#          -H 'Content-Type: application/json' \
+#          -d '{"query": "SELECT * FROM xt/txs LIMIT 5"}'
+#
+# Postgres txLog (optional)
+# ─────────────────────────
+#   Set var.xtdb_postgres_url to a full JDBC URL.  The database referenced
+#   must already exist and the user must have CREATE TABLE privileges.
+#   XTDB will create its own tables on first startup.
+#
+#   Example (using the shared abc-experimental postgres instance):
+#     xtdb_postgres_url = "jdbc:postgresql://127.0.0.1:5432/xtdb?user=abc&password=abc_db_secret"
+#   (Create the 'xtdb' database first: psql -U abc -c 'CREATE DATABASE xtdb;')
+#
+# Logs
+# ────
+#   NOMAD_NAMESPACE=abc-experimental \
+#     abc admin services cli nomad -- alloc logs -f <alloc-id>
+
+job "abc-experimental-xtdb" {
+  namespace = "abc-experimental"
+  type      = "service"
+  priority  = 50
+
+  group "xtdb" {
+    count = 1
+
+    constraint {
+      attribute = "$${attr.unique.hostname}"
+      value     = "${xtdb_node}"
+    }
+
+    restart {
+      attempts = 3
+      delay    = "15s"
+      interval = "2m"
+      mode     = "delay"
+    }
+
+    network {
+      mode = "bridge"
+      port "http" {
+        static = ${xtdb_http_port}
+        to     = 3000
+      }
+    }
+
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
+    service {
+      name     = "xtdb"
+      port     = "http"
+      provider = "consul"
+
+      tags = [
+        "traefik.enable=true",
+        "traefik.http.routers.xtdb.rule=Host(`xtdb.aither`)",
+        "traefik.http.routers.xtdb.entrypoints=web",
+      ]
+
+      check {
+        type     = "http"
+        path     = "/healthz"
+        interval = "30s"
+        timeout  = "10s"
+      }
+
+      check_restart {
+        limit           = 3
+        grace           = "30s"   # JVM startup takes a few seconds
+        ignore_warnings = false
+      }
+    }
+
+    task "xtdb" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${xtdb_image}"
+        # Pass the rendered config file path as the first argument.
+        # XTDB v2 standalone JAR accepts an optional YAML config path;
+        # NOMAD_TASK_DIR is bind-mounted into the container by the driver.
+        args = ["$${NOMAD_TASK_DIR}/config.yaml"]
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
+      }
+
+      # ── XTDB v2 configuration ───────────────────────────────────────────────
+      # Rendered by Terraform templatefile(); all values are resolved at apply
+      # time.  The resulting YAML is static — no Nomad template directives
+      # are needed inside the config.
+      template {
+        destination = "local/config.yaml"
+        change_mode = "restart"
+        data        = <<-XTDB_YAML
+server:
+  port: 3000
+
+healthz: {}
+
+%{ if xtdb_postgres_url != "" ~}
+# Transaction log backed by PostgreSQL — durable, survives task restarts
+# without replaying storage.  The database must exist before first startup.
+txLog: !Postgres
+  jdbcUrl: "${xtdb_postgres_url}"
+
+%{ else ~}
+# Transaction log on local disk (default).  Data is durable across restarts
+# as long as the scratch host volume persists.
+txLog: !Local
+  path: /scratch/xtdb/txlog
+
+%{ endif ~}
+# Object store for index segments, kept on the scratch host volume.
+storage: !Local
+  path: /scratch/xtdb/storage
+XTDB_YAML
+      }
+
+      resources {
+        cpu    = 500
+        memory = 1024  # JVM; increase if handling heavy query load
+      }
+    }
+  }
+}

@@ -110,6 +110,16 @@ docs-serve:
 docs-build:
     npm --prefix website run build
 
+# Build docs and push the output to the abc-nodes "scratch" host volume on aither.
+# Caddy (abc-nodes-docs job) picks up the new content on the next request.
+docs-deploy: docs-build
+    bash deployments/abc-nodes/docs/deploy-docs.sh
+
+# (Re)submit the abc-nodes-docs Nomad job. Needed on first deploy and after
+# editing the job spec — content updates alone do NOT require this.
+docs-job-run:
+    @just nomad-cli job run deployments/abc-nodes/nomad/abc-nodes-docs.nomad.hcl
+
 # Run upstream `nomad` via abc using the `abc-bootstrap` context (see ~/.abc/config.yaml).
 # Resolves NOMAD_ADDR / token / region from that context’s `admin.services.nomad.*`.
 # Override context: `ABC_ACTIVE_CONTEXT=other just nomad-cli -- job status -short`

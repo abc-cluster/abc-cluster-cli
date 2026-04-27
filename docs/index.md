@@ -1,19 +1,21 @@
-# abc CLI docs
+---
+sidebar_position: 1
+slug: /
+---
 
-This site hosts the documentation for `abc-cluster-cli`.
+# abc CLI
 
-Use the top navigation to browse:
+`abc` is the command-line interface for the **African Bioinformatics Computing Cluster**. It covers the full workflow: configure contexts, protect credentials, move data, submit jobs, and manage the cluster fabric.
 
-- command usage and examples,
-- operator notes for abc-nodes services.
+## What's here
 
-## Quick start
+| Section | What you'll find |
+|---|---|
+| [Installation](./installation) | Install on Linux, macOS, or Windows |
+| [Quick start](./quickstart) | First commands in under five minutes |
+| [Tutorials](./tutorials) | Hands-on walkthrough of every major feature |
+| [Reference](./reference) | Every command, flag, and environment variable |
 
-From the repository root:
+## The three-sentence version
 
-```bash
-just docs-install
-just docs-serve
-```
-
-Then open <http://127.0.0.1:8000>.
+Set an **active context** (`abc context add`) that points `abc` at your cluster endpoint and tokens. Researchers use `abc data upload/download`, `abc job run`, and `abc pipeline run`. Operators use `abc admin services …` to proxy into Nomad, Vault, Consul, and Tailscale CLIs without manual token wrangling.

@@ -10,8 +10,11 @@ set -euo pipefail
 #   4. Starts and enables the Consul service
 #   5. Installs dnsmasq and configures:
 #        a. Forward *.consul → Consul DNS (127.0.0.1:8600)
-#        b. Resolve *.aither → aither's LAN IP (146.232.174.77)
-#        c. Disable systemd-resolved stub so dnsmasq owns port 53
+#        b. Resolve *.aither → aither's Tailscale IP (100.70.185.46)
+#           (Tailscale Caddy owns 100.70.185.46; system Caddy owns LAN IP)
+#        c. Listen on BOTH 127.0.0.1 AND 100.70.185.46 so that Tailscale
+#           split-DNS clients can reach dnsmasq over the tailnet
+#        d. Disable systemd-resolved stub so dnsmasq owns port 53
 #   6. Adds a consul { } stanza to Nomad's config
 #   7. Smoke-tests that `consul members` shows the server healthy
 #
@@ -19,7 +22,9 @@ set -euo pipefail
 # ─────────────────────
 #  After this script aither itself resolves *.aither and *.consul correctly.
 #  For tailnet devices: Tailscale admin console → DNS → add nameserver
-#  100.70.185.46 restricted to domain ".aither".
+#  100.70.185.46, restricted to domain "aither" (no leading dot in the UI).
+#  Clients will then send *.aither queries to 100.70.185.46:53 (dnsmasq)
+#  and receive 100.70.185.46 as the answer, reaching the Tailscale Caddy.
 #
 # Override defaults via environment variables:
 #   CONSUL_VERSION=1.19.2 REMOTE_HOST=sun-aither ./deploy-consul.sh
@@ -114,14 +119,19 @@ no-negcache
 DNS
 
 cat > /etc/dnsmasq.d/20-aither.conf <<DNS
-# Resolve *.aither to aither's LAN IP.
-# Caddy binds on this IP for all vhost routes.
-address=/.aither/\${AITHER_LAN_IP}
+# Resolve *.aither to aither's Tailscale IP.
+# The Tailscale Caddy job (abc-experimental-caddy-tailscale) binds on
+# \${AITHER_TS_IP} and serves all *.aither vhosts over the tailnet.
+# Using the TS IP here means both LAN and Tailscale clients get an address
+# that is reachable via Tailscale and that this Caddy actually owns.
+address=/.aither/\${AITHER_TS_IP}
 DNS
 
-cat > /etc/dnsmasq.d/00-listen.conf <<'DNS'
-# Listen only on loopback (containers and remote clients use the host IP).
-listen-address=127.0.0.1
+cat > /etc/dnsmasq.d/00-listen.conf <<DNS
+# Listen on loopback (for aither itself) AND on the Tailscale IP so that
+# Tailscale split-DNS clients can send *.aither queries here.
+# Tailscale admin console → DNS → nameserver \${AITHER_TS_IP}, domain "aither".
+listen-address=127.0.0.1,\${AITHER_TS_IP}
 bind-interfaces
 DNS
 
@@ -153,7 +163,7 @@ systemctl is-active dnsmasq || { echo "ERROR: dnsmasq failed"; journalctl -u dns
 chattr -i /etc/resolv.conf 2>/dev/null || true
 cat > /etc/resolv.conf <<'RESOLV'
 # Managed by deploy-consul.sh — points to local dnsmasq.
-# dnsmasq: .consul → Consul DNS:8600, *.aither → LAN IP, rest → upstream.
+# dnsmasq: .consul → Consul DNS:8600, *.aither → Tailscale IP, rest → upstream.
 nameserver 127.0.0.1
 RESOLV
 echo "    /etc/resolv.conf updated"
@@ -188,11 +198,21 @@ else
 fi
 
 echo ""
-echo "--- DNS: grafana.aither via dnsmasq ---"
-if host grafana.aither 127.0.0.1 2>/dev/null | grep -q "\${AITHER_LAN_IP}"; then
-  echo "  ✓ grafana.aither → \${AITHER_LAN_IP}"
+echo "--- DNS: grafana.aither via loopback dnsmasq ---"
+if host grafana.aither 127.0.0.1 2>/dev/null | grep -q "\${AITHER_TS_IP}"; then
+  echo "  ✓ grafana.aither → \${AITHER_TS_IP} (via 127.0.0.1)"
 else
-  echo "  WARNING: grafana.aither did not resolve — check dnsmasq"
+  echo "  WARNING: grafana.aither did not resolve via 127.0.0.1 — check dnsmasq"
+fi
+
+echo ""
+echo "--- DNS: grafana.aither via Tailscale IP (split-DNS path) ---"
+if dig @\${AITHER_TS_IP} grafana.aither +short +time=3 2>/dev/null | grep -q "\${AITHER_TS_IP}"; then
+  echo "  ✓ grafana.aither → \${AITHER_TS_IP} (via \${AITHER_TS_IP}:53 — split-DNS path works)"
+else
+  echo "  WARNING: grafana.aither did not resolve via \${AITHER_TS_IP}:53"
+  echo "           Tailscale split-DNS clients will not be able to resolve *.aither"
+  ss -ulnp | grep ':53' || true
 fi
 
 echo ""

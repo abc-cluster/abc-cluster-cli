@@ -1,0 +1,17 @@
+# Stack configuration for the "dev" environment.
+# Copy to Pulumi.<env>.yaml and fill in values for each environment.
+#
+# Secrets (nomadToken, minioAccessKey, minioSecretKey) must be set via:
+#   pulumi config set --secret <key> <value>
+# They will be stored encrypted in this file.
+
+config:
+  abc-userspace:specFile: workspaces.yaml
+  abc-userspace:nomadAddress: http://127.0.0.1:4646
+  abc-userspace:minioEndpoint: 127.0.0.1:9000
+
+  # Set these with --secret:
+  # abc-userspace:nomadToken: (encrypted)
+  # abc-userspace:minioAccessKey: (encrypted)
+  # abc-userspace:minioSecretKey: (encrypted)
+  # abc-userspace:minioUseSsl: "false"

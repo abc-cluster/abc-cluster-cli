@@ -53,6 +53,17 @@ variable "s3_region" {
   default = "us-east-1"
 }
 
+variable "hook_url" {
+  type    = string
+  default = "http://100.77.21.36:14002/hook"
+  description = <<-DESC
+    URL of the post-finish hook server (fx-tusd-hook job, port 14002 on nomad01).
+    Uses hardcoded Tailscale IP (100.77.21.36) because tusd runs in bridge-mode
+    containers where Consul DNS (.service.consul) may not resolve.
+    Set to "" to disable hooks.
+  DESC
+}
+
 job "abc-nodes-tusd" {
   namespace   = "abc-services"
   region      = "global"
@@ -93,6 +104,12 @@ job "abc-nodes-tusd" {
             "-base-path", "/files/",
           ],
           var.s3_disable_content_hashes ? ["-s3-disable-content-hashes"] : [],
+          # Hook: rename S3 object to original filename after upload completes.
+          # Deploy fx-tusd-hook first, then pass -var="hook_url=http://fx-tusd-hook.service.consul:14002/hook"
+          var.hook_url != "" ? [
+            "-hooks-http", var.hook_url,
+            "-hooks-enabled-events", "post-finish",
+          ] : [],
         )
       }
 
@@ -114,7 +131,7 @@ EOF
       service {
         name     = "abc-nodes-tusd"
         port     = "http"
-        provider = "nomad"
+        provider = "consul"
         tags = [
           "abc-nodes", "tusd", "uploads",
           "traefik.enable=true",

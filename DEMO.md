@@ -498,7 +498,7 @@ abc job translate --help
 - **`infra compute`** — register Nomad endpoints and probes against workspace contexts.
 - **`job translate`** — explore SLURM → ABC directive mapping without submitting.
 
-For service operators, `abc admin services nomad cli -- …` wraps the Nomad CLI with cluster-local defaults (see [`USAGE.md`](USAGE.md)).
+For service operators, `abc admin services cli nomad -- …` wraps the Nomad CLI with cluster-local defaults, and `abc admin services cli <tool> -- …` works for any supported service (pulumi, terraform, vault, minio, loki, and more — see [`USAGE.md`](USAGE.md)).
 
 ---
 
