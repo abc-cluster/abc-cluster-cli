@@ -368,10 +368,19 @@ resource "nomad_job" "boundary_worker" {
 resource "nomad_job" "docker_registry" {
   count = local.registry_count
 
-  jobspec = file("${path.module}/../nomad/docker-registry.nomad.hcl")
-  detach  = false
+  # Local OCI registry (registry:2) for pushing locally-built images and
+  # pulling them back into Nomad jobs.  Lives in `abc-experimental` so it
+  # can be torn down without touching the production-tier services; the
+  # data lives on aither's scratch host volume so it survives rescheduling.
+  jobspec = templatefile("${path.module}/../nomad/experimental/docker-registry.nomad.hcl.tftpl", {
+    registry_image = var.docker_registry_image
+    registry_node  = var.docker_registry_node
+    registry_port  = var.docker_registry_port
+    registry_host  = var.cluster_tailscale_ip
+  })
+  detach = false
 
-  depends_on = [nomad_namespace.abc_services]
+  depends_on = [nomad_namespace.abc_experimental]
 }
 
 # ───────────────────────────────────────────────────────────────────────────

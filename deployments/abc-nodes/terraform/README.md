@@ -42,30 +42,27 @@ terraform/
    nomad_address = "http://100.77.21.36:4646"
    ```
 
-## ⚠️ CRITICAL: Namespace Issue
+## Namespaces
 
-**Before using Terraform, you MUST fix a namespace mismatch:**
+The Terraform config provisions **four** Nomad namespaces and places each
+managed job into one of them. They are created automatically by
+`terraform apply` (they're standalone `nomad_namespace` resources), so the
+operator does not have to pre-create them.
 
-The .nomad.hcl files declare various namespaces (`abc-services`, `services`, `abc-applications`) but **ALL services are actually running in the `default` namespace**. This will cause Terraform imports and plans to fail.
+| Namespace          | Owner of                                                     |
+| ------------------ | ------------------------------------------------------------ |
+| `abc-services`     | Enhanced platform services (traefik, rustfs, garage, observability, ntfy, docs, …) |
+| `abc-applications` | Enhanced user-facing apps                                    |
+| `abc-experimental` | WIP / opt-in services (postgres, supabase, xtdb, caddy_tailscale, …) |
+| `abc-automations`  | fx hooks (fx_notify, fx_tusd_hook, fx_archive)               |
 
-### Fix the Namespace Declarations
-
-```bash
-cd terraform
-./fix-namespaces.sh
-```
-
-This script will:
-1. Update all .nomad.hcl files to use `namespace = "default"`
-2. Create `.bak` backups
-3. Show you what changed
-
-After running, review and commit the changes:
-```bash
-git diff ../nomad/
-git add ../nomad/*.nomad.hcl
-git commit -m "fix: correct namespace declarations to default"
-```
+> **Historical note:** an earlier iteration of this README warned that all
+> jobs were colliding in the `default` namespace and pointed at a
+> `fix-namespaces.sh` script. That problem is fixed: every Terraform-managed
+> jobspec declares its target namespace, and the four namespace resources
+> in `main.tf` are listed as the `depends_on` head of every job. If you see
+> jobs in `default`, they were registered manually with `nomad job run` and
+> should be migrated.
 
 ## Quick Start
 
@@ -94,27 +91,50 @@ This shows what Terraform will create/modify/destroy **without actually doing it
 
 ### 4. Import Existing Services (First Time Only)
 
-Since services are already running, import them into Terraform state:
+Only Terraform-managed jobs need importing — `minio`, `tusd`, `uppy`, and
+`auth` are basic-tier (owned by the abc CLI) and are NOT in this Terraform
+config, so do not try to import them here.
+
+The job IDs all carry the `@<namespace>` suffix so the import targets the
+right namespace:
 
 ```bash
-# Core services
-terraform import nomad_job.traefik abc-nodes-traefik
-terraform import nomad_job.minio abc-nodes-minio
-terraform import nomad_job.rustfs abc-nodes-rustfs
-terraform import nomad_job.tusd abc-nodes-tusd
-terraform import nomad_job.uppy abc-nodes-uppy
-terraform import nomad_job.ntfy abc-nodes-ntfy
-terraform import nomad_job.job_notifier abc-nodes-job-notifier
-terraform import nomad_job.auth abc-nodes-auth
+# Namespaces (created by Terraform — only import if you pre-created them)
+terraform import nomad_namespace.abc_services     abc-services
+terraform import nomad_namespace.abc_applications abc-applications
+terraform import nomad_namespace.abc_experimental abc-experimental
+terraform import nomad_namespace.abc_automations  abc-automations
 
-# Observability (if deploy_observability_stack = true)
-terraform import 'nomad_job.prometheus[0]' abc-nodes-prometheus
-terraform import 'nomad_job.loki[0]' abc-nodes-loki
-terraform import 'nomad_job.grafana[0]' abc-nodes-grafana
-terraform import 'nomad_job.alloy[0]' abc-nodes-alloy
+# Enhanced tier — networking + storage
+terraform import nomad_job.traefik             "abc-nodes-traefik@abc-services"
+terraform import nomad_job.rustfs              "abc-nodes-rustfs@abc-services"
+terraform import nomad_job.garage              "abc-nodes-garage@abc-services"
+terraform import nomad_job.docs                "abc-nodes-docs@abc-services"
 
-# Optional services (if deploy_boundary_worker = true)
-terraform import 'nomad_job.boundary_worker[0]' abc-nodes-boundary-worker
+# Enhanced tier — observability (count-conditional)
+terraform import 'nomad_job.prometheus[0]'     "abc-nodes-prometheus@abc-services"
+terraform import 'nomad_job.loki[0]'           "abc-nodes-loki@abc-services"
+terraform import 'nomad_job.grafana[0]'        "abc-nodes-grafana@abc-services"
+terraform import 'nomad_job.alloy[0]'          "abc-nodes-alloy@abc-services"
+
+# Enhanced tier — notifications, system, optional
+terraform import nomad_job.ntfy                "abc-nodes-ntfy@abc-services"
+terraform import nomad_job.job_notifier        "abc-nodes-job-notifier@abc-services"
+terraform import 'nomad_job.boundary_worker[0]' "abc-nodes-boundary-worker@abc-services"
+terraform import nomad_job.abc_backups         "abc-backups@abc-services"
+
+# Experimental tier (only if enabled)
+terraform import nomad_job.xtdb                "abc-experimental-xtdb@abc-experimental"
+terraform import nomad_job.postgres            "abc-experimental-postgres@abc-experimental"
+terraform import nomad_job.supabase            "abc-experimental-supabase@abc-experimental"
+terraform import nomad_job.caddy_tailscale     "abc-experimental-caddy-tailscale@abc-experimental"
+
+# Automations tier
+terraform import nomad_job.fx_notify    "fx-notify@abc-automations"
+terraform import nomad_job.fx_tusd_hook "fx-tusd-hook@abc-automations"
+terraform import nomad_job.fx_archive   "fx-archive@abc-automations"
+
+# (Truncated reference — for the full set, see main.tf "IMPORT HINTS" header.)
 
 # Optional services (if deploy_optional_services = true)
 terraform import 'nomad_job.docker_registry[0]' abc-nodes-docker-registry
@@ -147,7 +167,18 @@ terraform state list
 ### View Service Endpoints
 
 ```bash
+# Direct host:port endpoints for the enhanced tier
 terraform output service_endpoints
+
+# Production-shape *.aither vhosts (resolved by caddy_tailscale on host :80)
+terraform output public_endpoints
+
+# Direct host:port endpoints for opt-in experimental services
+terraform output experimental_endpoints
+
+# Garage / restic secrets (sensitive — fetch with -raw and stash in 1Password)
+terraform output -raw garage_admin_token
+terraform output -raw restic_repo_password
 ```
 
 ### Deploy Specific Services Only
@@ -210,15 +241,16 @@ deploy_boundary_worker     = true   # Boundary worker (system job)
 
 Each experimental service has an `enable_<name>` variable, all default to `false`:
 
-| Variable                | Service                                   |
-| ----------------------- | ----------------------------------------- |
-| `enable_postgres`       | shared postgres for experimental services |
-| `enable_redis`          | shared redis                              |
-| `enable_wave`           | Seqera Wave                               |
-| `enable_supabase`       | Supabase stack                            |
-| `enable_restic_server`  | restic backup server                      |
-| `enable_caddy`          | Caddy gateway (alt to Traefik)            |
-| `enable_xtdb`           | XTDB v2 bitemporal DB (jurist backend)    |
+| Variable                | Service                                            |
+| ----------------------- | -------------------------------------------------- |
+| `enable_postgres`       | standalone vanilla postgres (separate from supabase's bundled `supabase/postgres` — use this for Wave or other workloads needing a generic relational DB) |
+| `enable_redis`          | shared redis                                       |
+| `enable_wave`           | Seqera Wave (needs postgres + redis)               |
+| `enable_supabase`       | Supabase stack — full multi-task port of the upstream docker-compose (db + meta + auth + rest + studio + kong, all in one Nomad group) |
+| `enable_xtdb`           | XTDB v2 bitemporal DB (backs the abc-jurist policy service) |
+| `enable_docker_registry` | Local OCI registry (registry:2) — push laptop-built images, pull them in Nomad jobs. Persistent on aither's scratch volume. See "Local registry workflow" below |
+| `enable_restic_server`  | **DEPRECATED** — superseded by `enable_abc_backups` (restic-on-Garage) in the enhanced tier |
+| `enable_caddy`          | **DEPRECATED** — superseded by `enable_caddy_tailscale` (the unified gateway in the enhanced tier). The two cannot run together; both want host port 80 |
 
 Apply with explicit opt-in:
 
@@ -301,25 +333,136 @@ echo 'enable_xtdb = true' >> terraform.tfvars
   - `psql -h <tailscale-ip> -p 15432 xtdb` — pgwire (any user/password works)
   - `http://xtdb.aither/healthz/ready` — Traefik vhost
 
+### Local registry workflow (`enable_docker_registry`)
+
+The `registry:2` job in the experimental tier lets you push images you've
+built locally and reference them in any other Nomad job by their
+`<tailscale-ip>:5000/<name>:<tag>` coordinates.
+
+> **Full how-to** with troubleshooting, multi-arch notes, and a clean-up
+> recipe lives at **`../docs/local-docker-registry.md`**. The summary below
+> is enough to get going.
+
+**One-time setup**
+
+1. **On your laptop** — tell the docker daemon the registry is plain HTTP:
+
+   ```jsonc
+   // /etc/docker/daemon.json   (Linux) or Docker Desktop → Engine settings (mac/win)
+   {
+     "insecure-registries": ["100.70.185.46:5000"]
+   }
+   ```
+   …then restart the daemon.
+
+2. **On aither** — tell containerd the registry is plain HTTP, otherwise
+   any Nomad job that references `100.70.185.46:5000/<image>` will fail
+   to pull. The simplest way is the helper script:
+
+   ```bash
+   # From the abc-cluster-cli repo root:
+   ./deployments/abc-nodes/scripts/configure-aither-registry-trust.sh
+   #   --dry-run    print but don't execute
+   #   --revert     remove the trust config
+   ```
+
+   Or do it manually:
+
+   ```toml
+   # /etc/containerd/certs.d/100.70.185.46:5000/hosts.toml
+   server = "http://100.70.185.46:5000"
+
+   [host."http://100.70.185.46:5000"]
+     capabilities = ["pull", "resolve"]
+     skip_verify = true
+   ```
+   …then `sudo systemctl restart containerd`. Confirm:
+   `nerdctl --namespace nomad pull 100.70.185.46:5000/<your-image>:<tag>`
+
+**Push from laptop**
+
+```bash
+docker tag my-app:dev 100.70.185.46:5000/my-app:dev
+docker push 100.70.185.46:5000/my-app:dev
+curl http://100.70.185.46:5000/v2/_catalog
+# → {"repositories":["my-app"]}
+```
+
+**Reference in a Nomad jobspec**
+
+```hcl
+task "myapp" {
+  driver = "containerd-driver"
+  config {
+    image = "100.70.185.46:5000/my-app:dev"
+  }
+}
+```
+
+**Inspect / delete tags**
+
+```bash
+# List tags for an image
+curl http://100.70.185.46:5000/v2/my-app/tags/list
+
+# Get the manifest digest (needed to delete)
+curl -sI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  http://100.70.185.46:5000/v2/my-app/manifests/dev | grep -i docker-content-digest
+
+# Delete by digest (REGISTRY_STORAGE_DELETE_ENABLED is on)
+curl -X DELETE http://100.70.185.46:5000/v2/my-app/manifests/sha256:<digest>
+
+# Run garbage-collect on the registry container itself to reclaim disk:
+nomad alloc exec -task registry -namespace abc-experimental \
+  $(nomad job status -short abc-experimental-docker-registry | awk '/registry/ && /running/ {print $1; exit}') \
+  registry garbage-collect /etc/docker/registry/config.yml
+```
+
+**Storage**
+
+Images live at `/opt/nomad/scratch/docker-registry/` on aither (via the
+`scratch` host volume). Wipe them all with:
+
+```bash
+abc admin services nomad cli -- job stop -purge abc-experimental-docker-registry
+ssh sun-aither sudo rm -rf /opt/nomad/scratch/docker-registry
+abc admin services cli terraform -- apply -auto-approve -target='nomad_job.docker_registry[0]' -var=enable_docker_registry=true
+```
+
 ## Dependency Graph
 
-Services are deployed in this order:
+Order in which `terraform apply` brings up the managed jobs (driven by
+`depends_on` in `main.tf`). `minio`, `tusd`, `uppy`, and `auth` are
+**basic-tier** (abc CLI managed, NOT in this graph — assume already
+running before Terraform touches anything).
 
 ```
-1. traefik (reverse proxy)
-   ├─→ 2. minio (storage)
-   │   ├─→ 4. tusd (upload service)
-   │   │   └─→ 5. uppy (upload UI)
-   │   ├─→ 4. ntfy (notifications)
-   │   │   └─→ 5. job_notifier
-   │   └─→ 4. loki (logs)
-   │       └─→ 5. grafana
-   ├─→ 3. rustfs (alt storage)
-   ├─→ 4. prometheus (metrics)
-   │   └─→ 5. grafana
-   │   └─→ 5. alloy (collector)
-   └─→ 4. auth (authentication)
-       └─→ 5. boundary_worker
+0. namespaces — abc-services / abc-applications / abc-experimental / abc-automations
+
+1. traefik              (reverse proxy on host :8081 + dashboard :8888)
+   │
+   ├── 2. rustfs        (S3 storage, host :9900/:9901, "scratch" host volume)
+   │   ├── 3. garage    (long-term archive S3, host :3900 + admin :3903)
+   │   │   ├── 4. abc_backups   (periodic restic snapshots → garage; batch)
+   │   │   └── 4. fx_archive    (RustFS → Garage tier-down; abc-automations)
+   │   └── 3. docs      (Docusaurus static site → http://docs.aither)
+   │
+   ├── 2. prometheus → 3. loki → 4. grafana, 4. alloy   (observability)
+   │
+   ├── 2. ntfy → 3. job_notifier  (notifications)
+   │           └── 3. fx_notify, 3. fx_tusd_hook  (abc-automations)
+   │
+   ├── 2. boundary_worker  (system job, all nodes)
+   │
+   ├── 2. caddy_tailscale  (unified gateway: owns host :80 across LAN +
+   │                        Tailscale, proxies *.aither vhosts to traefik)
+   │
+   └── 2. (optional) docker_registry  (host :5000)
+
+— Experimental tier (opt-in, `abc-experimental` namespace) —
+   postgres ──┬─ wave
+              └─ supabase  (own bundled postgres + 5 sidecar services)
+   xtdb         (independent; pinned to aither)
 ```
 
 View the full dependency graph:

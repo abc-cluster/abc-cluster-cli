@@ -27,7 +27,6 @@ output "enhanced_services" {
     ntfy            = var.enable_ntfy ? nomad_job.ntfy[0].id : "disabled"
     job_notifier    = var.enable_job_notifier ? nomad_job.job_notifier[0].id : "disabled"
     boundary_worker = local.boundary_count > 0 ? nomad_job.boundary_worker[0].id : "disabled"
-    docker_registry = local.registry_count > 0 ? nomad_job.docker_registry[0].id : "disabled"
   }
 }
 
@@ -96,13 +95,14 @@ output "restic_repo_password" {
 output "experimental_services" {
   description = "Experimental-tier services in abc-experimental (all disabled by default)"
   value = {
-    postgres      = var.enable_postgres ? nomad_job.postgres[0].id : "disabled"
-    redis         = var.enable_redis ? nomad_job.redis[0].id : "disabled"
-    wave          = var.enable_wave ? nomad_job.wave[0].id : "disabled"
-    supabase      = var.enable_supabase ? nomad_job.supabase[0].id : "disabled"
-    restic_server = var.enable_restic_server ? nomad_job.restic_server[0].id : "disabled"
-    caddy         = var.enable_caddy ? nomad_job.caddy[0].id : "disabled"
-    xtdb          = var.enable_xtdb ? nomad_job.xtdb[0].id : "disabled"
+    postgres        = var.enable_postgres ? nomad_job.postgres[0].id : "disabled"
+    redis           = var.enable_redis ? nomad_job.redis[0].id : "disabled"
+    wave            = var.enable_wave ? nomad_job.wave[0].id : "disabled"
+    supabase        = var.enable_supabase ? nomad_job.supabase[0].id : "disabled"
+    restic_server   = var.enable_restic_server ? nomad_job.restic_server[0].id : "disabled"
+    caddy           = var.enable_caddy ? nomad_job.caddy[0].id : "disabled"
+    xtdb            = var.enable_xtdb ? nomad_job.xtdb[0].id : "disabled"
+    docker_registry = local.registry_count > 0 ? nomad_job.docker_registry[0].id : "disabled"
   }
 }
 
@@ -140,6 +140,7 @@ output "experimental_endpoints" {
     caddy         = var.enable_caddy ? "http://${var.cluster_public_host}:2015  https://${var.cluster_public_host}:443" : "disabled"
     xtdb_healthz  = var.enable_xtdb ? "http://${var.cluster_tailscale_ip}:${var.xtdb_healthz_port}/healthz  (vhost: http://xtdb.aither/healthz)" : "disabled"
     xtdb_pgwire   = var.enable_xtdb ? "psql -h ${var.cluster_tailscale_ip} -p ${var.xtdb_pgwire_port} xtdb" : "disabled"
+    docker_registry = local.registry_count > 0 ? "${var.cluster_tailscale_ip}:${var.docker_registry_port}  (push: docker push ${var.cluster_tailscale_ip}:${var.docker_registry_port}/<image>:<tag>;  vhost: http://registry.aither/v2/_catalog)" : "disabled"
   }
 }
 
@@ -175,17 +176,17 @@ output "deployment_summary" {
       ntfy            = var.enable_ntfy
       job_notifier    = var.enable_job_notifier
       boundary_worker = local.boundary_count > 0
-      docker_registry = local.registry_count > 0
     }
 
     experimental_enabled = {
-      postgres      = var.enable_postgres
-      redis         = var.enable_redis
-      wave          = var.enable_wave
-      supabase      = var.enable_supabase
-      restic_server = var.enable_restic_server
-      caddy         = var.enable_caddy
-      xtdb          = var.enable_xtdb
+      postgres        = var.enable_postgres
+      redis           = var.enable_redis
+      wave            = var.enable_wave
+      supabase        = var.enable_supabase
+      restic_server   = var.enable_restic_server
+      caddy           = var.enable_caddy
+      xtdb            = var.enable_xtdb
+      docker_registry = local.registry_count > 0
     }
 
     automations_enabled = {

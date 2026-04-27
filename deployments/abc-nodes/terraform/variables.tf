@@ -142,9 +142,27 @@ variable "enable_boundary_worker" {
 }
 
 variable "enable_docker_registry" {
-  description = "Deploy private Docker registry (optional)"
+  description = "Deploy local OCI registry (registry:2) on the abc-experimental namespace — push your laptop-built images and pull them in Nomad jobs. Persists on aither's scratch volume."
   type        = bool
   default     = false
+}
+
+variable "docker_registry_image" {
+  description = "OCI image for the local registry"
+  type        = string
+  default     = "registry:2"
+}
+
+variable "docker_registry_node" {
+  description = "Hostname constraint for the local registry (single-node — data is on this node's scratch volume)"
+  type        = string
+  default     = "aither"
+}
+
+variable "docker_registry_port" {
+  description = "Host port mapped to the registry container's :5000. Clients push/pull at <cluster_tailscale_ip>:<this>."
+  type        = number
+  default     = 5000
 }
 
 # ─── Deprecated compat shims ───────────────────────────────────────────────
@@ -264,12 +282,6 @@ variable "rustfs_image" {
   description = "RustFS container image"
   type        = string
   default     = "rustfs/rustfs:latest"
-}
-
-variable "docker_registry_image" {
-  description = "Docker Registry container image"
-  type        = string
-  default     = "registry:2"
 }
 
 variable "boundary_version" {

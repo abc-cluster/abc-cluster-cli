@@ -1,11 +1,22 @@
-# Nomad jobs — `abc-nodes` services namespace
+# Nomad jobs — `abc-nodes`
 
-All jobs in this directory run in the **`services`** Nomad namespace. That namespace is
-write-accessible only to tokens carrying the `services-admin` policy (i.e. cluster-admin
-tokens). Research-group tokens cannot see or interact with these jobs.
+Jobspecs in this directory + `experimental/` are deployed by the Terraform
+config in `../terraform/`. Each one declares its target namespace explicitly:
+
+| Namespace          | Jobspec location                                                     | Examples                                              |
+| ------------------ | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `abc-services`     | `nomad/*.nomad.hcl(.tftpl)` — most files in this directory           | traefik, rustfs, garage, prometheus, loki, grafana, alloy, ntfy, job-notifier, boundary-worker, docs, abc-backups |
+| `abc-experimental` | `nomad/experimental/*.nomad.hcl.tftpl`                               | postgres, redis, wave, supabase, xtdb-v2, caddy-tailscale |
+| `abc-automations`  | `nomad/fx/*.nomad.hcl`                                               | fx-notify, fx-tusd-hook, fx-archive                   |
+| `abc-applications` | (reserved — no jobs yet)                                             |                                                       |
+
+All four namespaces are write-accessible only to tokens carrying the
+`services-admin` policy (i.e. cluster-admin tokens). Research-group tokens
+cannot see or interact with these jobs.
 
 Jobs use the community [**containerd-driver**](https://github.com/Roblox/nomad-driver-containerd)
-(`driver = "containerd-driver"`) or `raw_exec` for lightweight shell processes.
+(`driver = "containerd-driver"`) or `raw_exec` for lightweight shell processes
+(plus `java` for jurist, deployed from a separate repo).
 The Docker driver is **not** required and is not enabled on this cluster.
 
 ---
@@ -51,50 +62,104 @@ Active context must be `aither` (or whichever context points to
 
 ```bash
 abc context use aither
-abc admin services nomad cli -- namespace list   # should show 'services'
+abc admin services nomad cli -- namespace list   # should show abc-services + abc-experimental + abc-automations
 ```
 
 ---
 
 ## Cluster layout (as deployed)
 
+The unified Caddy gateway (`caddy_tailscale`) owns host **:80** across both
+the LAN and Tailscale interfaces, fronting Traefik and routing the `*.aither`
+vhost to the right backend. Direct host-port endpoints below are still
+useful for diagnostics; production traffic should go through the Caddy
+vhosts (see `terraform output public_endpoints`).
+
 ```
-Nomad cluster:  http://100.70.185.46:4646   (single node: aither)
-MinIO S3 API:   http://100.70.185.46:9000
-Grafana:        http://100.70.185.46:3000
-Prometheus:     http://100.70.185.46:9090
-Loki:           http://100.70.185.46:3100
-ntfy:           http://100.70.185.46:8088
-Traefik HTTP:   http://100.70.185.46:80   (dashboard: :8888)
-tusd:           http://100.70.185.46:8080/files/
-Docker Registry:http://100.70.185.46:5000
+Nomad cluster:        http://100.70.185.46:4646   (single node: aither)
+Caddy gateway HTTP:   http://100.70.185.46:80     ← unified entry; routes *.aither
+Traefik HTTP:         http://100.70.185.46:8081   (dashboard: :8888)
+MinIO S3 API:         http://100.70.185.46:9000   (basic-tier, abc CLI)
+RustFS S3 API:        http://100.70.185.46:9900   (console: :9901)
+Garage S3 API:        http://100.70.185.46:3900   (admin: :3903)
+Grafana:              http://100.70.185.46:3000
+Prometheus:           http://100.70.185.46:9090
+Loki:                 http://100.70.185.46:3100
+ntfy:                 http://100.70.185.46:8088
+tusd:                 http://100.70.185.46:8080/files/  (basic-tier)
+Docker Registry:      http://100.70.185.46:5000   (optional)
+Supabase Kong:        http://100.70.185.46:8000   (when enable_supabase=true)
+XTDB pgwire:          100.70.185.46:15432         (when enable_xtdb=true)
+XTDB healthz:         http://100.70.185.46:5555/healthz/ready
 ```
 
-Opt-in **Vault**, **Supabase**, and **Wave** jobs (not in this layout by default): see **`../experimental/README.md`**.
+Production-shape vhosts (resolved by the Tailscale MagicDNS or LAN /etc/hosts):
+`grafana.aither`, `nomad.aither`, `consul.aither`, `traefik.aither`,
+`rustfs.aither`, `garage.aither`, `docs.aither`, `ntfy.aither`,
+`supabase.aither`, `xtdb.aither`, `jurist.aither`.
+
+Opt-in experimental services (postgres, redis, wave, supabase, xtdb,
+caddy_tailscale): see the **Experimental tier** rows in the inventory below
+and `../terraform/README.md` for the `enable_*` toggles.
 
 ---
 
 ## Job inventory
 
-| Job file | Job name | Port(s) | Status | Notes |
-|---|---|---|---|---|
-| `traefik.nomad.hcl` | `abc-nodes-traefik` | 80, 8888 | ✅ running | raw_exec, reverse proxy |
-| `minio.nomad.hcl` | `abc-nodes-minio` | 9000, 9001 | ✅ running | containerd |
-| `rustfs.nomad.hcl` | `abc-nodes-rustfs` | 9900, 9901 | ✅ running | containerd |
-| `loki.nomad.hcl` | `abc-nodes-loki` | 3100 | ✅ running | containerd |
-| `prometheus.nomad.hcl` | `abc-nodes-prometheus` | 9090 | ✅ running | containerd |
-| `grafana.nomad.hcl` | `abc-nodes-grafana` | 3000 | ✅ running | containerd |
-| `ntfy.nomad.hcl` | `abc-nodes-ntfy` | 8088 | ✅ running | containerd |
-| `alloy.nomad.hcl` | `abc-nodes-alloy` | 12345 | ✅ running | raw_exec, system job |
-| `tusd.nomad.hcl` | `abc-nodes-tusd` | 8080 | ✅ running | containerd |
-| `uppy.nomad.hcl` | `abc-nodes-uppy` | 8090 | ✅ running | containerd |
-| `job-notifier.nomad.hcl` | `abc-nodes-job-notifier` | — | ✅ running | raw_exec |
-| `abc-nodes-auth.nomad.hcl` | `abc-nodes-auth` | 9191 | ✅ running | exec, Traefik ForwardAuth |
-| `redis.nomad.hcl` | `abc-nodes-redis` | 6379 | ✅ running | containerd, optional Wave dep |
-| `postgres.nomad.hcl` | `abc-nodes-postgres` | 5432 | ✅ running | containerd, optional Wave dep |
-| `docker-registry.nomad.hcl` | `abc-nodes-docker-registry` | 5000 | ✅ running | containerd |
+Single source of truth: see `../terraform/main.tf` for the canonical list of
+managed jobs (each `nomad_job "..."` resource is one entry below). Tier and
+namespace come from that file; ports come from the jobspec.
 
-Experimental (Vault / Supabase / Wave / faasd): **`../experimental/nomad/*.nomad.hcl`** — see **`../experimental/README.md`**.
+### Enhanced tier — `abc-services` namespace (Terraform-managed)
+
+| Job file | Job name | Host port(s) | Driver | Notes |
+|---|---|---|---|---|
+| `traefik.nomad.hcl` | `abc-nodes-traefik` | 8081, 8888 | raw_exec | Reverse proxy. Note: host **:80** is owned by `caddy_tailscale`, not traefik |
+| `rustfs.nomad.hcl` | `abc-nodes-rustfs` | 9900, 9901 | containerd (bridge) | Hot-tier S3 |
+| `garage.nomad.hcl` | `abc-nodes-garage` | 3900, 3902, 3903 | containerd (bridge) | Long-term archive S3 + admin API; bootstrap via poststart |
+| `abc-nodes-docs.nomad.hcl` | `abc-nodes-docs` | (via Caddy vhost) | containerd | Docusaurus static site → http://docs.aither |
+| `prometheus.nomad.hcl` | `abc-nodes-prometheus` | 9090 | containerd | |
+| `loki.nomad.hcl` | `abc-nodes-loki` | 3100 | containerd | |
+| `grafana.nomad.hcl(.tftpl)` | `abc-nodes-grafana` | 3000 | containerd | Dashboards baked in via templatefile |
+| `alloy.nomad.hcl` | `abc-nodes-alloy` | 12345 | raw_exec, system job | |
+| `ntfy.nomad.hcl` | `abc-nodes-ntfy` | 8088 | containerd | |
+| `job-notifier.nomad.hcl(.tftpl)` | `abc-nodes-job-notifier` | — | raw_exec | Nomad event → ntfy bridge |
+| `abc-nodes-auth.nomad.hcl` | `abc-nodes-auth` | 9191 | exec | Traefik ForwardAuth (basic-tier still uses) |
+| `abc-backups.nomad.hcl` | `abc-backups` | — | containerd, batch | Periodic restic snapshots → garage |
+| `boundary-worker.nomad.hcl` | `abc-nodes-boundary-worker` | — | exec, system job | |
+| `docker-registry.nomad.hcl` | _(none — orphaned, see note below)_ | — | — | The legacy enhanced-tier jobspec is **superseded** by the experimental-tier templated version (`experimental/docker-registry.nomad.hcl.tftpl`) which uses bridge networking + a scratch volume_mount. The old file is kept for reference but not deployed by Terraform. |
+
+Basic tier — `minio`, `tusd`, `uppy` — is owned by the **abc CLI** (deployed
+with `abc admin services nomad cli -- job run …`). They live in `abc-services`
+too but are **not** in this Terraform config.
+
+### Experimental tier — `abc-experimental` namespace (opt-in)
+
+| Job file | Job name | Host port(s) | Driver | Notes |
+|---|---|---|---|---|
+| `experimental/postgres.nomad.hcl.tftpl` | `abc-experimental-postgres` | 5432 | containerd (bridge) | Standalone vanilla postgres (NOT the supabase-bundled one) |
+| `experimental/redis.nomad.hcl.tftpl` | `abc-experimental-redis` | 6379 | containerd | |
+| `experimental/wave.nomad.hcl.tftpl` | `abc-experimental-wave` | (Seqera-defined) | containerd | Needs postgres + redis |
+| `experimental/supabase.nomad.hcl.tftpl` | `abc-experimental-supabase` | 8000 (Kong) | containerd (bridge) | 6-task group: db + db-init + meta + auth + rest + studio + kong |
+| `experimental/xtdb-v2.nomad.hcl.tftpl` | `abc-experimental-xtdb` | 5555, 15432 | containerd (bridge) | Pinned to aither; pgwire backend for jurist |
+| `experimental/docker-registry.nomad.hcl.tftpl` | `abc-experimental-docker-registry` | 5000 | containerd (bridge) | Local OCI registry. Pinned to aither, persists on scratch. See `../terraform/README.md` "Local registry workflow" |
+| `experimental/caddy-tailscale.nomad.hcl` | `abc-experimental-caddy-tailscale` | 80 | raw_exec | **Production gateway** — owns host :80 across LAN + Tailscale, fronts traefik + *.aither vhosts |
+
+### Automations tier — `abc-automations` namespace
+
+| Job file | Job name | Host port(s) | Driver | Notes |
+|---|---|---|---|---|
+| `fx/fx-notify.nomad.hcl` | `fx-notify` | dynamic | raw_exec | Webhook → ntfy |
+| `fx/fx-tusd-hook.nomad.hcl` | `fx-tusd-hook` | dynamic | raw_exec | tusd post-finish webhook |
+| `fx/fx-archive.nomad.hcl` | `fx-archive` | — | raw_exec, batch | Periodic RustFS → Garage tier-down |
+
+### Old experimental folder
+
+`../experimental/` is the **pre-Terraform** opt-in directory (Vault / Supabase
+/ Wave / faasd written manually). Most of its content has been superseded by
+the Terraform-managed experimental tier above. Treat `../experimental/README.md`
+as historical — the Terraform config in `../terraform/` is the source of truth
+for postgres/redis/wave/supabase/xtdb/caddy_tailscale today.
 
 ### Experimental tier (`abc-experimental` namespace, Terraform-managed)
 
@@ -115,36 +180,33 @@ aither.
 
 ## Deployment order
 
+The enhanced + experimental + automations tiers are deployed via Terraform
+in `../terraform/`, which encodes the dependency order via `depends_on` —
+so `terraform apply` IS the deployment-order tool. See
+`../terraform/README.md` for the canonical sequence and the dependency
+graph diagram.
+
 ```bash
 # From the abc-cluster-cli repo root, with aither context active:
+cd deployments/abc-nodes/terraform
+abc admin services cli terraform -- apply -auto-approve
 
-# 1. Reverse proxy (no deps)
-abc admin services nomad cli -- job run deployments/abc-nodes/nomad/traefik.nomad.hcl
+# Opt into experimental services on top:
+abc admin services cli terraform -- apply -auto-approve \
+  -var=enable_xtdb=true \
+  -var=enable_postgres=true \
+  -var=enable_supabase=true
+```
 
-# 2. Storage
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/minio.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/rustfs.nomad.hcl
+Basic-tier (`minio`, `tusd`, `uppy`) is **not** Terraform-managed and is
+expected to be running already. Bring it up manually only if it's missing:
 
-# 3. Observability stack
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/prometheus.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/loki.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/grafana.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/alloy.nomad.hcl
-
-# 4. Notifications + upload
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/ntfy.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/tusd.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/uppy.nomad.hcl
-abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/job-notifier.nomad.hcl
-
-# 5. Auth (after tusd + traefik)
+```bash
+# Basic tier (manual, not Terraform):
+abc admin services nomad cli -- job run deployments/abc-nodes/nomad/minio.nomad.hcl
+abc admin services nomad cli -- job run deployments/abc-nodes/nomad/tusd.nomad.hcl
+abc admin services nomad cli -- job run deployments/abc-nodes/nomad/uppy.nomad.hcl
 abc admin services nomad cli -- job run deployments/abc-nodes/nomad/abc-nodes-auth.nomad.hcl
-
-# Optional: redis + postgres + docker-registry + Wave (experimental — see ../experimental/README.md)
-# abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/redis.nomad.hcl
-# abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/postgres.nomad.hcl
-# abc admin services nomad cli -- job run -detach deployments/abc-nodes/nomad/docker-registry.nomad.hcl
-# abc admin services nomad cli -- job run -detach deployments/abc-nodes/experimental/nomad/wave.nomad.hcl
 ```
 
 Check all service jobs at once:
@@ -154,9 +216,25 @@ abc admin services nomad cli -- job status -namespace services
 
 ---
 
-## Experimental: Vault, Supabase, Wave, faasd
+## Experimental: Vault (legacy manual), and the Terraform-managed tier
 
-Job specs and scripts live under **`deployments/abc-nodes/experimental/`**. Default Caddy and Traefik configs do **not** expose these services; opt-in deploy and gateway notes are in **`../experimental/README.md`**.
+There are two parallel "experimental" trees in this repo — they are
+**different scopes** despite the similar name:
+
+1. **`../experimental/`** (the *legacy* directory) — manually-deployed
+   Vault + faasd + early Supabase/Wave attempts. Operator deploys with
+   `nomad job run`. The Vault initialization runbook below still applies.
+   See `../experimental/README.md`.
+
+2. **`nomad/experimental/`** (this directory's `experimental/` subfolder)
+   — Terraform-managed opt-in services with `enable_<name>` flags:
+   postgres, redis, wave, supabase, xtdb, caddy_tailscale, restic-server.
+   Operator deploys with `terraform apply -var=enable_xtdb=true …`.
+   See `../terraform/README.md`.
+
+The Terraform tier is the source of truth for postgres / redis / wave /
+supabase / xtdb today; the legacy tree is kept for Vault and any service
+that has not yet been Terraform-ported.
 
 ### Vault — first-run initialization
 
@@ -208,32 +286,26 @@ curl -si -H "X-Nomad-Token: <token>" http://100.70.185.46:9191/auth
 
 ### Wave by Seqera — ⚠ WIP
 
-`../experimental/nomad/wave.nomad.hcl` is written and tested locally but **not running** by default because
-the Wave image is on a **private** registry (see job header). Older docs referenced `ghcr.io/seqeralabs/wave`; use the image URI from Seqera support.
+The current Terraform-managed Wave jobspec lives at
+`experimental/wave.nomad.hcl.tftpl` (Terraform `enable_wave = true`); the
+older manual one at `../experimental/nomad/wave.nomad.hcl` is superseded.
+Wave is **not running** by default because the image is on a **private**
+registry (see job header).
 
 **To enable:**
 
-Option A — add auth block to `../experimental/nomad/wave.nomad.hcl`:
-```hcl
-config {
-  image = "ghcr.io/seqeralabs/wave:v1.33.2"
-  auth {
-    username = "your-github-username"
-    password = "ghp_YOUR_GITHUB_PAT"
-  }
-}
+```bash
+# Set the right wave image + tag, then:
+abc admin services cli terraform -- apply -auto-approve \
+  -var=enable_postgres=true -var=enable_redis=true -var=enable_wave=true \
+  -var=wave_image=<tower-supplied-image-URI>
 ```
 
-Option B — configure containerd on `aither` to authenticate:
+If your image is on a private registry, configure containerd auth on aither:
 ```bash
 ssh aither
 sudo mkdir -p /etc/containerd/certs.d/ghcr.io
 # Add credentials via containerd config or nerdctl login
-```
-
-Then deploy:
-```bash
-abc admin services nomad cli -- job run deployments/abc-nodes/experimental/nomad/wave.nomad.hcl
 ```
 
 Wave runs in `lite` mode (no Tower/Platform), backed by the already-running
@@ -270,6 +342,18 @@ Full narrative: **`docs/abc-nodes-observability-and-operations.md`**.
   static port forwarding (`{ static = N; to = N }`). Raw_exec and java
   tasks use `mode = "host"`. The `bridge` kernel module is required —
   see Prerequisites above.
+
+- **Known broken-pattern jobs** — `experimental/redis.nomad.hcl.tftpl`
+  combines containerd-driver with `mode = "host"`, which leaves the
+  container in its own netns and makes the bound port unreachable on the
+  host IP. It appears "running" in `nomad status` but external connections
+  to its port fail. Convert to bridge (`{ static = N; to = N }`) before
+  relying on it — the same pattern grafana / loki / prometheus / xtdb /
+  supabase / docker-registry (experimental tier) all use.
+
+  The legacy enhanced-tier `docker-registry.nomad.hcl` had this same bug
+  and is no longer deployed; `enable_docker_registry` now points at the
+  fixed `experimental/docker-registry.nomad.hcl.tftpl`.
 
 - **Vault health check** — uses `?uninitcode=200&sealedcode=200` (not the
   incorrect `uninitok`/`sealedok` params that pre-1.x docs sometimes show).

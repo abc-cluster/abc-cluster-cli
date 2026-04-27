@@ -167,10 +167,11 @@ type NomadAllocation struct {
 }
 
 type NomadTaskState struct {
-	State      string `json:"State"`
-	StartedAt  string `json:"StartedAt"`
-	FinishedAt string `json:"FinishedAt"`
-	Failed     bool   `json:"Failed"`
+	State            string            `json:"State"`
+	StartedAt        string            `json:"StartedAt"`
+	FinishedAt       string            `json:"FinishedAt"`
+	Failed           bool              `json:"Failed"`
+	DriverAttributes map[string]string `json:"DriverAttributes"`
 }
 
 type NomadEvaluation struct {

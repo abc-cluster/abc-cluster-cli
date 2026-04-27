@@ -1,0 +1,186 @@
+# docker-registry.nomad.hcl.tftpl
+#
+# OCI image registry for the abc-experimental tier — push locally-built
+# containers from your laptop and pull them into Nomad jobs that run on
+# this cluster.  Backed by the upstream `registry:2` image (CNCF
+# distribution/distribution).
+#
+# Architecture
+# ────────────
+#   Bridge networking:  host :${registry_port} → container :5000
+#   Persistent storage: /opt/nomad/scratch/docker-registry/ (host scratch volume)
+#   Pinned to aither so the on-disk repo follows the alloc.
+#
+# Push workflow (from your laptop)
+# ────────────────────────────────
+#   # 1. Configure the daemon to allow plain HTTP push to this registry:
+#   #    Docker Desktop → Preferences → Docker Engine
+#   #    add to JSON:  "insecure-registries": ["${registry_host}:${registry_port}"]
+#   #    (or edit /etc/docker/daemon.json on Linux)
+#   docker tag my-image:dev ${registry_host}:${registry_port}/my-image:dev
+#   docker push ${registry_host}:${registry_port}/my-image:dev
+#
+#   # macOS without docker daemon: use nerdctl over containerd (or skopeo)
+#   skopeo copy --dest-tls-verify=false \
+#     containers-storage:my-image:dev \
+#     docker://${registry_host}:${registry_port}/my-image:dev
+#
+# Pull workflow (Nomad jobs on aither)
+# ────────────────────────────────────
+#   The aither containerd config must trust this registry as plain HTTP.
+#   Add to /etc/containerd/certs.d/${registry_host}:${registry_port}/hosts.toml on aither:
+#
+#     server = "http://${registry_host}:${registry_port}"
+#     [host."http://${registry_host}:${registry_port}"]
+#       capabilities = ["pull", "resolve"]
+#       skip_verify = true
+#
+#   …then `sudo systemctl restart containerd`.  After that, jobspecs can
+#   reference images as e.g.:
+#     image = "${registry_host}:${registry_port}/my-image:dev"
+
+job "abc-experimental-docker-registry" {
+  namespace = "abc-experimental"
+  type      = "service"
+  priority  = 60
+
+  group "registry" {
+    count = 1
+
+    # Pin to aither: image data lives on aither's scratch host volume.
+    # Rescheduling onto a different node would start with an empty repo.
+    constraint {
+      attribute = "$${attr.unique.hostname}"
+      value     = "${registry_node}"
+    }
+
+    # Bridge networking with explicit host→container port mapping.  Host
+    # mode does not work for containerd-driver containers on this cluster
+    # (the container stays in its own netns), so the registry would be
+    # unreachable on the host IP.  See terraform/README.md "Networking" notes.
+    network {
+      mode = "bridge"
+      port "http" {
+        static = ${registry_port}
+        to     = 5000
+      }
+    }
+
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
+    restart {
+      attempts = 3
+      delay    = "20s"
+      interval = "5m"
+      mode     = "delay"
+    }
+
+    update {
+      max_parallel     = 1
+      min_healthy_time = "15s"
+      healthy_deadline = "5m"
+      auto_revert      = false
+    }
+
+    # ── Prestart: ensure scratch dir exists with the right perms ──────────
+    #
+    # The `registry:2` image runs as user `registry` (uid 1000).  The
+    # scratch host volume is typically owned by root, so the registry
+    # container would not be able to write to a fresh subdirectory.
+    # A raw_exec prestart task creates the dir with 0777 permissions
+    # before the main container starts.
+
+    task "stage-storage" {
+      driver = "raw_exec"
+
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
+
+      config {
+        command = "/bin/sh"
+        args = [
+          "-c",
+          "mkdir -p /opt/nomad/scratch/docker-registry && chmod 777 /opt/nomad/scratch/docker-registry && echo 'docker-registry storage staged OK'",
+        ]
+      }
+
+      resources {
+        cpu    = 50
+        memory = 32
+      }
+    }
+
+    # ── Main task: registry:2 ─────────────────────────────────────────────
+
+    task "registry" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${registry_image}"
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
+      }
+
+      env {
+        # Bind to all interfaces inside the container; bridge mode forwards
+        # host:${registry_port} → container:5000.
+        REGISTRY_HTTP_ADDR        = "0.0.0.0:5000"
+        REGISTRY_HTTP_RELATIVEURLS = "true"
+
+        # Storage: filesystem driver, pointed at the scratch volume_mount.
+        # /scratch/docker-registry ← /opt/nomad/scratch/docker-registry on aither.
+        REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY = "/scratch/docker-registry"
+
+        # Allow image deletion via the registry API (needed by Wave's
+        # pull-through cache eviction; harmless if unused).
+        REGISTRY_STORAGE_DELETE_ENABLED = "true"
+
+        # Healthcheck endpoint at /v2/ returns 200 once the registry is up.
+        # Disable the default access log to keep Nomad logs readable.
+        REGISTRY_LOG_ACCESSLOG_DISABLED = "true"
+        REGISTRY_LOG_LEVEL              = "info"
+      }
+
+      resources {
+        cpu    = 200
+        memory = 256
+      }
+
+      service {
+        name     = "abc-experimental-docker-registry"
+        port     = "http"
+        provider = "consul"
+
+        tags = [
+          "traefik.enable=true",
+          # Traefik routes registry.aither → registry's HTTP port
+          "traefik.http.routers.docker-registry.rule=Host(`registry.aither`)",
+          "traefik.http.routers.docker-registry.entrypoints=web",
+        ]
+
+        check {
+          type     = "http"
+          path     = "/v2/"
+          interval = "30s"
+          timeout  = "5s"
+        }
+
+        check_restart {
+          limit           = 3
+          grace           = "30s"
+          ignore_warnings = false
+        }
+      }
+    }
+  }
+}

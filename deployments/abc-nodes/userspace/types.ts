@@ -1,207 +1,145 @@
 // ---------------------------------------------------------------------------
-// types.ts — TypeScript interfaces for the workspace YAML spec.
+// types.ts — TypeScript interfaces for the workspaces.yaml v2 spec.
 //
-// Naming conventions (matching existing acl/ bootstrap scripts):
+// Per-person credential model:
+//   • Top-level users[] lists every principal once.
+//   • Each user gets ONE Nomad ACL token + ONE RustFS IAM user, named by
+//     their global `name` field. Policies are unioned across every
+//     (workspace, role) the user holds.
+//   • role: group-admin auto-implies group-member (one policy attached, no
+//     redundant member attachment).
+//   • A user may appear in multiple workspaces — one token covers all.
+//   • `--sudo` is a client-side UX prompt; no token swap (see
+//     internal/jurist/types.go for the future elevation-token sketch).
 //
-//   Nomad namespace:   <org>-<workspace>          e.g. su-mbhg-bioinformatics
+// Naming conventions:
+//   Nomad namespace:   <org>-<workspace>     e.g. su-mbhg-bioinformatics
+//   RustFS bucket:     <org>-<workspace>     (same as namespace)
+//   Nomad ACL token:   <user>                e.g. abhi
+//   RustFS IAM user:   <user>                (same as Nomad token name)
 //   Nomad policy:      <ns>-{group-admin|member|submit}
-//   MinIO bucket:      <org>-<workspace>          (same as namespace)
-//   MinIO IAM policy:  ns-<ns>-group-admin  /  ns-<ns>-user-<username>
-//   MinIO user:        <ns>_<username>             (underscore separator)
-//   MinIO admin user:  <ns>_admin
-//   Nomad var path:    nomad/jobs/abc-nodes-minio-iam/<principal>  in abc-services ns
-//
-// Organisation model:
-//   Organization
-//     └── Workspace  (1 Nomad namespace + 1 MinIO bucket)
-//           ├── Members        (group-admin | member)
-//           └── SubmitAccount  (nf-nomad pipeline service account; optional)
+//   RustFS IAM policy: ns-<ns>-group-admin   |  ns-<ns>-member  (uses
+//                      ${aws:username})  |  ns-<ns>-collab-<user>  |
+//                      ns-<ns>-pipeline-submit
 // ---------------------------------------------------------------------------
 
 /** Top-level spec file. Multiple orgs may coexist in one file. */
 export interface WorkspacesSpec {
-  /** Schema version for future migration support. */
-  version: "v1";
+  /** Schema version. Bumped to v2 for the per-person model. */
+  version: "v2";
+  /** Every principal that appears in any workspace. Each gets one credential pair. */
+  users: UserSpec[];
   /** List of organisations that own workspaces. */
   organizations: OrgSpec[];
 }
+
+/**
+ * A workspace member or external collaborator. Defined once at the top of
+ * the spec; referenced from workspaces by `user: <name>`.
+ */
+export interface UserSpec {
+  /** Globally unique principal name. Must match NAME_RE. */
+  name: string;
+  /** Email for notifications and Seqera Platform user mapping. */
+  email?: string;
+}
+
+/** Member role within a workspace. */
+export type Role = "group-admin" | "group-member";
 
 /** An organisation that owns one or more workspaces. */
 export interface OrgSpec {
   /** Short identifier used in resource names, e.g. "su-mbhg". */
   name: string;
-  /** Human-readable display name shown in Seqera Platform. */
+  /** Human-readable display name. */
   displayName?: string;
   /** Workspaces that belong to this org. */
   workspaces: WorkspaceSpec[];
 }
 
-/**
- * A single workspace — the unit of isolation.
- *
- * Resource naming:
- *   Nomad namespace / MinIO bucket = `<org.name>-<workspace.name>`
- *   e.g. org="su-mbhg", workspace="bioinformatics"
- *     → "su-mbhg-bioinformatics"
- */
+/** A single workspace — the unit of isolation. */
 export interface WorkspaceSpec {
-  /** Short identifier, combined with org name. */
+  /** Short identifier; combined with org name as <org>-<workspace>. */
   name: string;
   /** Human-readable description stored in namespace/variable metadata. */
   description?: string;
-  /**
-   * Scheduler priority tier:
-   *   high   → job_priority=70 (preempts normal batch)
-   *   normal → job_priority=50 (default)
-   * Maps to the `priority` and `job_priority` meta fields in the namespace HCL.
-   */
+  /** Scheduler priority tier: high → 70, normal → 50. */
   priority?: "high" | "normal";
   /**
    * Lifecycle state:
    *   active     — fully operational (default)
-   *   suspended  — Nomad ACL tokens, MinIO users, and per-user IAM policies
-   *                are destroyed; namespace, bucket, and all S3 data are
-   *                preserved. Bucket versioning is suspended. Resume by
-   *                flipping back to "active".
-   *   archived   — same destructive surface as "suspended" today; versioning
-   *                suspended. Reserved for future read-only token issuance.
-   *   deleted    — tombstone; remove entry after confirming `pulumi destroy`
+   *   suspended  — Nomad ACL tokens revoked for users whose ONLY membership
+   *                is this workspace; data preserved
+   *   archived   — bucket versioning suspended; read-only intent
+   *   deleted    — tombstone; remove entry after `pulumi destroy` confirms
    */
   state?: "active" | "suspended" | "archived" | "deleted";
   /**
-   * If true, the group-admin Nomad policy includes `alloc-node-exec` (run
-   * arbitrary commands on the host node, not just inside the container).
-   * Defaults to false — only enable for workspaces that genuinely need
-   * host-level debugging access.
+   * If true, the group-admin Nomad policy includes `alloc-node-exec` (host
+   * exec). Default false — only enable for workspaces that genuinely need it.
    */
   groupAdminNodeExec?: boolean;
   /**
    * Nomad task driver allow-list for the namespace.
-   * Defaults to: enabled=["containerd-driver","docker","exec"], disabled=["raw_exec"]
-   *
-   * The @pulumi/nomad provider does not expose the namespace `capabilities`
-   * block, so this is applied via a `local.Command` running
-   * `abc admin services nomad cli -- namespace apply -json -` after the
-   * namespace resource is created.
+   * Defaults to enabled=["containerd-driver","docker","exec"], disabled=["raw_exec"].
+   * Applied via `local.Command` invoking `abc admin services nomad cli --
+   * namespace apply -json …` because the @pulumi/nomad provider does not
+   * expose the namespace capabilities block.
    */
   taskDrivers?: TaskDriversSpec;
-  /**
-   * Contact email for the group PI / tech lead.
-   * Stored in namespace meta as `contact`.
-   */
+  /** Contact email for the group PI / tech lead (stored in namespace meta). */
   contact?: string;
-  /**
-   * ntfy topic for job-completion notifications.
-   * Stored in namespace meta as `ntfy_topic`.
-   * Defaults to "<namespace>-jobs" if not set.
-   */
+  /** ntfy topic for job-completion notifications. Defaults to "<ns>-jobs". */
   ntfyTopic?: string;
-  /** Human members of the workspace. */
-  members?: MemberSpec[];
-  /**
-   * nf-nomad pipeline service account (optional).
-   * Creates Nomad token with submit policy + MinIO user with pipeline policy.
-   * MinIO user: <namespace>_submit  |  Nomad token: <namespace>_submit
-   * MinIO access: pipelines/ r/w + samplesheets/ read + shared/ read
-   */
+  /** Workspace members. Each entry references a top-level user by name. */
+  members?: WorkspaceMember[];
+  /** Optional nf-nomad pipeline service account (one per workspace). */
   submitAccount?: SubmitAccountSpec;
-  /**
-   * Time-bounded external collaborators (optional).
-   * Each gets a MinIO user scoped to collab/<name>/ r/w + shared/ read.
-   * No Nomad access by default.
-   */
-  collaborators?: CollaboratorSpec[];
+  /** Time-bounded external collaborators. */
+  collaborators?: CollaboratorRef[];
   /** Seqera Platform integration metadata. */
   seqera?: SeqeraSpec;
 }
 
+/**
+ * A workspace member: a top-level user with a role in this workspace.
+ *
+ * group-admin auto-implies group-member capabilities — only the group-admin
+ * policy is attached (member policy would be redundant).
+ */
+export interface WorkspaceMember {
+  /** References WorkspacesSpec.users[].name. */
+  user: string;
+  /** Role within this workspace. */
+  role: Role;
+}
+
+/**
+ * A time-bounded external collaborator reference. Collaborators receive a
+ * RustFS IAM user (scoped to collab/<user>/ r/w + shared/ ro) but no Nomad
+ * token — by default they don't run jobs.
+ */
+export interface CollaboratorRef {
+  /** References WorkspacesSpec.users[].name. */
+  user: string;
+  /** ISO-8601 date (YYYY-MM-DD); after this the IAM scope is dropped. */
+  expiresAt: string;
+}
+
 /** Nomad namespace task driver capabilities. */
 export interface TaskDriversSpec {
-  /** Drivers allowed in this namespace. */
   enabled?: string[];
-  /** Drivers blocked in this namespace. */
   disabled?: string[];
 }
 
-/**
- * Member role within a workspace.
- *
- *   group-admin   — full namespace write + all caps; full bucket access.
- *                   Held by the shared "admin" account and by individuals
- *                   who need elevated access via `abc --sudo`.
- *   group-member  — submit/inspect own jobs; users/<name>/ and shared/users/<name>/
- *                   r/w; shared/ read-only.
- */
-export type Role = "group-admin" | "group-member";
-
-/**
- * A human workspace member.
- *
- * `role` may be a single role or an array — a member with multiple roles gets
- * one Nomad token + one MinIO user per role, so `abc --sudo` can pick the
- * group-admin token while the default token stays at group-member.
- *
- * Principal naming (= Nomad token Name = MinIO username):
- *   group-member   →  <namespace>_<name>
- *   group-admin    →  <namespace>_<name>-admin
- */
-export interface MemberSpec {
-  /** Username — base for principal names. Lowercase alphanumerics + hyphens. */
-  name: string;
-  /** One role or a set of roles. */
-  role: Role | Role[];
-  /** Email for notifications and Seqera Platform user mapping. */
-  email?: string;
-}
-
-/**
- * The nf-nomad pipeline service account (one per workspace).
- * Gets submit Nomad policy + group-admin MinIO policy (full bucket access).
- *
- * MinIO user:  <namespace>_submit
- * Nomad token: <namespace>_submit
- */
+/** nf-nomad pipeline service account (one per workspace). */
 export interface SubmitAccountSpec {
-  /** Optional description stored in Nomad variable metadata. */
   description?: string;
-}
-
-/**
- * A time-bounded external collaborator.
- *
- * MinIO access:
- *   collab/<name>/   — full r/w (private collaboration area)
- *   shared/          — read-only
- *
- * MinIO user:  <namespace>_collab-<name>
- * No Nomad token is issued by default.
- */
-export interface CollaboratorSpec {
-  /** Identifier used as the collab/<name>/ prefix and MinIO username suffix. */
-  name: string;
-  /**
-   * ISO-8601 date (YYYY-MM-DD) after which the MinIO user should be removed.
-   * Running `pulumi up` after this date skips / removes the collaborator resources.
-   */
-  expiresAt: string;
-  /** Email for notifications. */
-  email?: string;
-  /**
-   * Always "group-collaborator" — kept as an explicit field so the YAML
-   * documents intent and matches the role vocabulary used elsewhere.
-   * Optional; defaults to "group-collaborator".
-   */
-  role?: "group-collaborator";
 }
 
 /** Seqera Platform workspace integration settings. */
 export interface SeqeraSpec {
-  /**
-   * Seqera Platform workspace ID (numeric) — set after Platform workspace
-   * is created. Used to cross-reference compute environments.
-   */
   workspaceId?: number;
-  /** Compute environment name registered in the Platform. */
   computeEnvName?: string;
 }
 
@@ -215,6 +153,28 @@ export interface ResolvedWorkspace {
   resourceName: string;
   org: OrgSpec;
   spec: WorkspaceSpec;
+}
+
+/**
+ * Aggregated view of a single user's memberships across all workspaces.
+ * Built during spec resolution and consumed by user.ts to emit the user's
+ * Nomad token + IAM user with the right policy attachments.
+ */
+export interface UserMembership {
+  /** Workspace this membership applies to. */
+  workspace: ResolvedWorkspace;
+  /** "member" if joined via members[], "collab" if joined via collaborators[]. */
+  kind: "member" | "collab";
+  /** Effective role (members only). For collab this is always "group-collaborator". */
+  role: Role | "group-collaborator";
+  /** Collaborator expiresAt; undefined for members. */
+  expiresAt?: string;
+}
+
+export interface ResolvedUser {
+  spec: UserSpec;
+  /** Every workspace this user touches (members[] + collaborators[]). */
+  memberships: UserMembership[];
 }
 
 // ---------------------------------------------------------------------------

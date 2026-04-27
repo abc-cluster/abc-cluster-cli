@@ -56,12 +56,12 @@ organizations:
         contact: admin@su-test.example
         ntfyTopic: su-test-otherlab-jobs
         members:
+          # eve admins this workspace AND sandbox — her single Nomad token
+          # carries both group-admin policies (one per ns) so she can
+          # operate in either namespace with one credential.
+          - user: eve
+            role: group-admin
           - user: bob
             role: group-member
           - user: carol
-            role: group-member
-          # eve is also here — her single Nomad token will carry policies
-          # for BOTH sandbox (group-admin) and otherlab (group-member),
-          # so she can submit to either namespace.
-          - user: eve
             role: group-member

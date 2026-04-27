@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -143,8 +144,18 @@ func applySBATCHDirective(spec *jobSpec, directive string) error {
 				spec.SlurmWorkDir = val
 				spec.ChDir = val
 			}
-			// Intentionally ignored SBATCH flags (cluster-topology or unsupported):
-			// --nodes, --exclusive, --gres, --qos, --constraint, --reservation, etc.
+		case "qos":
+			if hasValue && val != "" {
+				spec.SlurmExtraArgs = append(spec.SlurmExtraArgs, "--qos="+val)
+			}
+		case "reservation":
+			if hasValue && val != "" {
+				spec.SlurmReservation = val
+			}
+		case "nodes", "N", "exclusive", "gres", "constraint", "licenses":
+			// silently accepted; cluster-topology or unsupported
+		default:
+			fmt.Fprintf(os.Stderr, "warning: unsupported #SBATCH directive --%s ignored\n", key)
 		}
 	}
 	return nil
@@ -558,6 +569,21 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			spec.ExposeSecretsDir = true
 		case "hpc_compat_env":
 			spec.IncludeHPCCompatEnv = true
+		case "slurm-extra":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --slurm-extra requires a value", marker)
+			}
+			spec.SlurmExtraArgs = append(spec.SlurmExtraArgs, val)
+		case "reservation":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --reservation requires a value", marker)
+			}
+			spec.SlurmReservation = val
+		case "spread":
+			if hasValue {
+				return fmt.Errorf("#%s --spread does not accept a value", marker)
+			}
+			spec.Spread = true
 
 		default:
 			return fmt.Errorf("unknown #%s directive --%s", marker, key)
