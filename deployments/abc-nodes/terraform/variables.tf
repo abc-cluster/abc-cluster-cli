@@ -547,9 +547,9 @@ variable "fx_notify_ntfy_url" {
 # ── fx-tusd-hook configuration ────────────────────────────────────────────
 
 variable "fx_tusd_hook_node" {
-  description = "Hostname of the cluster node to schedule fx-tusd-hook on"
+  description = "Hostname of the cluster node to schedule fx-tusd-hook on (must have a local Consul agent; only 'aither' qualifies on this cluster)"
   type        = string
-  default     = "nomad01"
+  default     = "aither"
 }
 
 variable "fx_tusd_hook_ntfy_url" {

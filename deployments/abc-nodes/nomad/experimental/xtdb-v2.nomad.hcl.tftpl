@@ -5,9 +5,19 @@
 #
 # Architecture
 # ────────────
-#   XTDB v2 standalone HTTP server (port 5555 → 3000)
+#   XTDB v2 standalone HTTP server (port ${xtdb_http_port})
 #     ├─ txLog:  local disk (default) or Postgres (set xtdb_postgres_url)
 #     └─ storage: local disk on the scratch host volume
+#
+# Config delivery
+# ───────────────
+#   The containerd-driver does NOT auto-mount NOMAD_TASK_DIR like the Docker
+#   driver does, and OCI bind mounts require the target path to already exist
+#   in the image.  The config YAML is therefore staged via a raw_exec prestart
+#   task that copies it from its own NOMAD_TASK_DIR into the scratch host
+#   volume at /opt/nomad/scratch/xtdb/config.yaml.  The XTDB container then
+#   reads the config from /scratch/xtdb/config.yaml (the same path, accessed
+#   via the scratch volume_mount).
 #
 # Wiring
 # ──────
@@ -15,7 +25,7 @@
 #        abc admin services cli terraform -- apply -auto-approve
 #
 #   2. Verify health:
-#        curl http://100.70.185.46:5555/healthz
+#        curl http://${xtdb_node}:${xtdb_http_port}/healthz
 #        curl http://xtdb.aither/healthz    # via Traefik
 #
 #   3. Submit a query (HTTP API):
@@ -59,10 +69,12 @@ job "abc-experimental-xtdb" {
     }
 
     network {
-      mode = "bridge"
+      # host mode: XTDB binds directly to the host NIC; no CNI/bridge needed.
+      # The containerd-driver's bridge CNI does not forward static ports
+      # reliably on this cluster, so host networking is used instead.
+      mode = "host"
       port "http" {
         static = ${xtdb_http_port}
-        to     = 3000
       }
     }
 
@@ -92,40 +104,54 @@ job "abc-experimental-xtdb" {
 
       check_restart {
         limit           = 3
-        grace           = "30s"   # JVM startup takes a few seconds
+        grace           = "60s"   # JVM startup; extra grace for config copy
         ignore_warnings = false
       }
     }
 
-    task "xtdb" {
-      driver = "containerd-driver"
+    # ── Prestart: write XTDB config to the scratch host volume ─────────────
+    #
+    # The containerd-driver cannot mount NOMAD_TASK_DIR inside the container
+    # (the target path /local doesn't exist in the XTDB image).  This task
+    # runs as raw_exec before XTDB starts, copying the rendered config YAML
+    # from its own NOMAD_TASK_DIR to /opt/nomad/scratch/xtdb/config.yaml
+    # (the scratch host volume).  XTDB then reads it from /scratch/xtdb/config.yaml.
+    #
+    # The scratch host volume path (/opt/nomad/scratch) is cluster-specific —
+    # change it if the host volume is mounted elsewhere on your Nomad client.
+
+    task "write-config" {
+      driver = "raw_exec"
+
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
 
       config {
-        image = "${xtdb_image}"
-        # Pass the rendered config file path as the first argument.
-        # XTDB v2 standalone JAR accepts an optional YAML config path;
-        # NOMAD_TASK_DIR is bind-mounted into the container by the driver.
-        args = ["$${NOMAD_TASK_DIR}/config.yaml"]
+        command = "/bin/sh"
+        # $${NOMAD_TASK_DIR} in the .tftpl escapes to a literal Nomad runtime
+        # variable reference which Nomad expands to the task-local directory.
+        args = [
+          "-c",
+          "mkdir -p /opt/nomad/scratch/xtdb && cp $${NOMAD_TASK_DIR}/config.yaml /opt/nomad/scratch/xtdb/config.yaml && echo 'xtdb config staged OK'"
+        ]
       }
 
-      volume_mount {
-        volume      = "scratch"
-        destination = "/scratch"
-        read_only   = false
-      }
-
-      # ── XTDB v2 configuration ───────────────────────────────────────────────
+      # ── XTDB v2 configuration ─────────────────────────────────────────────
       # Rendered by Terraform templatefile(); all values are resolved at apply
-      # time.  The resulting YAML is static — no Nomad template directives
+      # time.  The resulting YAML is static — no Nomad runtime directives
       # are needed inside the config.
       template {
         destination = "local/config.yaml"
         change_mode = "restart"
         data        = <<-XTDB_YAML
-server:
-  port: 3000
-
-healthz: {}
+# HTTP REST API server.  In XTDB v2, the HTTP server is a module loaded via the
+# "modules:" list — the "server:" key only configures the Postgres wire protocol
+# server (pgwire), not the HTTP API.
+modules:
+  - !HttpServer
+    port: ${xtdb_http_port}
 
 %{ if xtdb_postgres_url != "" ~}
 # Transaction log backed by PostgreSQL — durable, survives task restarts
@@ -144,6 +170,32 @@ txLog: !Local
 storage: !Local
   path: /scratch/xtdb/storage
 XTDB_YAML
+      }
+
+      resources {
+        cpu    = 50
+        memory = 32
+      }
+    }
+
+    # ── Main task: XTDB v2 node ────────────────────────────────────────────
+
+    task "xtdb" {
+      driver = "containerd-driver"
+
+      config {
+        image = "${xtdb_image}"
+        # "node" starts an XT node; the config YAML is staged by the prestart
+        # task at /opt/nomad/scratch/xtdb/config.yaml on the host, which
+        # maps to /scratch/xtdb/config.yaml inside the container via the
+        # scratch volume_mount below.
+        args = ["node", "/scratch/xtdb/config.yaml"]
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
       }
 
       resources {

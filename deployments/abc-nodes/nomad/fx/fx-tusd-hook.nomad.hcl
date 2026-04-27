@@ -45,9 +45,11 @@
 # ── Variables ────────────────────────────────────────────────────────────────
 
 variable "docker_node" {
-  type        = string
-  default     = "nomad01"
-  description = "Node to schedule on."
+  type    = string
+  default = "aither"
+  # Must run on a node with a Consul agent so the service can register.
+  # On this cluster only "aither" runs Consul; "nomad01" has no Consul agent.
+  description = "Node to schedule on (must have a local Consul agent)."
 }
 
 variable "port" {
@@ -118,9 +120,12 @@ job "fx-tusd-hook" {
     }
 
     service {
-      name     = "fx-tusd-hook"
-      port     = "http"
-      provider = "consul"
+      name = "fx-tusd-hook"
+      port = "http"
+      # provider omitted — uses the cluster default (consul).
+      # Explicit "consul" was set but prevented Consul registration on this
+      # cluster; dropping to the implicit default matches fx-notify's working
+      # behaviour.
 
       tags = [
         "traefik.enable=true",
