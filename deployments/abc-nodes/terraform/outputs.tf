@@ -74,7 +74,8 @@ output "experimental_endpoints" {
     restic_server = var.enable_restic_server ? "http://${var.cluster_public_host}:8000" : "disabled"
     supabase      = var.enable_supabase ? "http://supabase.aither" : "disabled"
     caddy         = var.enable_caddy ? "http://${var.cluster_public_host}:2015  https://${var.cluster_public_host}:443" : "disabled"
-    xtdb_http     = var.enable_xtdb ? "http://${var.cluster_tailscale_ip}:${var.xtdb_http_port}  (vhost: http://xtdb.aither)" : "disabled"
+    xtdb_healthz  = var.enable_xtdb ? "http://${var.cluster_tailscale_ip}:${var.xtdb_healthz_port}/healthz  (vhost: http://xtdb.aither/healthz)" : "disabled"
+    xtdb_pgwire   = var.enable_xtdb ? "psql -h ${var.cluster_tailscale_ip} -p ${var.xtdb_pgwire_port} xtdb" : "disabled"
   }
 }
 

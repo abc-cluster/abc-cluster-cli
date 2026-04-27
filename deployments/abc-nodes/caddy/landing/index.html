@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>abc-cluster · gateway</title>
   <meta name="description" content="African Bioinformatics Computing Cluster — install the abc CLI, explore services, submit jobs.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cline x1='3' y1='11' x2='19' y2='11' stroke='%23c8a84c' stroke-width='1.3' opacity='.5'/%3E%3Ccircle cx='5' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='11' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='17' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -458,7 +459,8 @@
       <div>
         <h2 class="block-title">Consoles &amp; endpoints</h2>
         <p class="block-desc">
-          All consoles resolve over <code data-domain-glob>*.aither</code> via Tailscale split-DNS.
+          <span data-mode-domain>All consoles resolve over <code data-domain-glob>*.aither</code> via Tailscale split-DNS.</span>
+          <span data-mode-subpath style="display:none">All consoles are accessible at subpaths of <code data-lan-host>aither.mb.sun.ac.za</code> — no split-DNS required.</span>
           Featured cards are the daily drivers; the compact list below covers everything else.
         </p>
       </div>
@@ -674,12 +676,20 @@
       <div class="block-eyebrow">colophon</div>
       <div>
         <p style="margin:0 0 14px;">
-          Traffic enters via <b data-lan-host>aither.mb.sun.ac.za</b> (LAN) and is proxied by Caddy
-          through Traefik to backend services on private / Tailscale addresses.
-          Service vhosts are at <code data-domain-glob>*.aither</code> — add
-          <span class="mono-ip" data-ts-ip>100.70.185.46</span> as a split-DNS nameserver for
-          <code data-domain-suffix>.aither</code> in the Tailscale admin console to resolve them on any
-          tailnet device. <a href="http://docs.aither/docs/">abc CLI docs →</a>
+          <span data-mode-subpath style="display:none">
+            Traffic enters via <b data-lan-host>aither.mb.sun.ac.za</b> (LAN) and is proxied by Caddy
+            through Traefik to backend services. All services are reachable at subpaths of the LAN
+            gateway — no split-DNS or Tailscale required.
+          </span>
+          <span data-mode-domain>
+            Traffic enters via <b data-lan-host>aither.mb.sun.ac.za</b> (LAN) and is proxied by Caddy
+            through Traefik to backend services on private / Tailscale addresses.
+            Service vhosts are at <code data-domain-glob>*.aither</code> — add
+            <span class="mono-ip" data-ts-ip>100.70.185.46</span> as a split-DNS nameserver for
+            <code data-domain-suffix>.aither</code> in the Tailscale admin console to resolve them on any
+            tailnet device.
+          </span>
+          <a href="http://docs.aither/docs/">abc CLI docs →</a>
         </p>
         <div style="color:var(--text-mute);font-size:11.5px;line-height:1.7;border-top:1px solid var(--rule-soft);padding-top:12px;">
           <b style="color:var(--text-dim);">Stack</b>
@@ -703,34 +713,73 @@
 
 (function() {
   /* ── Single-source network config ─────────────────────────────────────────
-     Change these three values once and all service links, host labels,
-     and footer references update automatically.
-     LAN deploy  : domain='aither', lanHost='aither.mb.sun.ac.za', tsIP='146.232.174.77'
-     Tailscale   : domain='aither', lanHost='aither.mb.sun.ac.za', tsIP='100.70.185.46'
+     Set mode + three values; all service links, host labels, and footer text
+     update automatically.
+     mode 'subpath' (LAN) : links → aither.mb.sun.ac.za/<svc>/...  (no split-DNS)
+     mode 'domain'  (TS)  : links → <svc>.aither/...  (Tailscale split-DNS)
   ── */
   var CONFIG = {
+    mode:    'subpath',              // 'subpath' | 'domain'
     domain:  'aither',
     lanHost: 'aither.mb.sun.ac.za',
-    tsIP:    '100.70.185.46',
+    tsIP:    '146.232.174.77',
   };
 
   function applyConfig() {
-    var d = CONFIG.domain;
-    // Rewrite all service link hrefs containing .aither
+    var d    = CONFIG.domain;
+    var host = CONFIG.lanHost;
+    var sub  = CONFIG.mode === 'subpath';
+
+    // ── Rewrite service link hrefs ────────────────────────────────────────
     document.querySelectorAll('a[href]').forEach(function(a) {
       var h = a.getAttribute('href');
-      if (h && h.indexOf('.aither') >= 0)
-        a.setAttribute('href', h.replace(/\.aither/g, '.' + d));
+      if (!h || h.indexOf('.aither') < 0) return;
+      if (sub) {
+        // http://svc.aither/path  →  http://lanHost/svc/path
+        // Special case: Nomad SPA has rootURL=/ui/ hardcoded; serve it at /ui/ directly
+        // so the SPA boots at the right root without double-prefixing.
+        h = h.replace(/^http:\/\/([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
+          if (svc === 'nomad') return 'http://' + host + (path || '/');
+          return 'http://' + host + '/' + svc + (path || '/');
+        });
+      } else {
+        h = h.replace(/\.aither/g, '.' + d);
+      }
+      a.setAttribute('href', h);
     });
-    // Rewrite host label text in service cards
+
+    // ── Rewrite host labels in service cards ──────────────────────────────
     document.querySelectorAll('.svc-card-host, .svc-mini-host').forEach(function(el) {
-      el.textContent = el.textContent.replace(/\.aither/g, '.' + d);
+      if (sub) {
+        // "svc.aither/path"  →  "lanHost/svc/path"   (or "lanHost/svc" if no path)
+        // Nomad special case: keep path as-is (rootURL=/ui/)
+        el.textContent = el.textContent.replace(/^([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
+          if (svc === 'nomad') return host + (path || '/ui');
+          return host + '/' + svc + (path || '');
+        });
+      } else {
+        el.textContent = el.textContent.replace(/\.aither/g, '.' + d);
+      }
     });
-    // Footer: data-tagged text nodes
-    document.querySelectorAll('[data-lan-host]').forEach(function(el){ el.textContent = CONFIG.lanHost; });
+
+    // ── Footer / description data-tagged nodes ────────────────────────────
+    document.querySelectorAll('[data-lan-host]').forEach(function(el){ el.textContent = host; });
     document.querySelectorAll('[data-ts-ip]').forEach(function(el){ el.textContent = CONFIG.tsIP; });
-    document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = '*.' + d; });
-    document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '.' + d; });
+    if (sub) {
+      document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = host + '/<service>'; });
+      document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '/<service>'; });
+    } else {
+      document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = '*.' + d; });
+      document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '.' + d; });
+    }
+
+    // ── Show/hide mode-specific content blocks ────────────────────────────
+    document.querySelectorAll('[data-mode-subpath]').forEach(function(el){
+      el.style.display = sub ? '' : 'none';
+    });
+    document.querySelectorAll('[data-mode-domain]').forEach(function(el){
+      el.style.display = sub ? 'none' : '';
+    });
   }
 
   var TWEAK_DEFAULTS = { theme: 'dark', system: 'grid' };

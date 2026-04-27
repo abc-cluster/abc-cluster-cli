@@ -102,22 +102,34 @@ job "abc-experimental-caddy-tailscale" {
         change_signal = "SIGUSR1"
 
         data = <<-CADDYFILE
+# Architecture
+# ────────────
+# Single Caddy process (Nomad raw_exec) owns port 80 on BOTH network surfaces:
+#   *.aither (100.70.185.46)  — Tailscale split-DNS; domain-mode links
+#   aither.mb.sun.ac.za / 146.232.174.77  — institutional LAN; subpath-mode links
+#
+# Routing chain: Caddy → Traefik:8081 (Consul-catalog LB) → service instances.
+# All abc-services run on aither; Consul is used for health-check-aware DNS.
 {
   auto_https disable_redirects
-  # Port 2020: avoids conflict with system Caddy which owns 127.0.0.1:2019.
+  # Port 2020: avoids conflict with systemd Caddy admin socket on 2019.
   admin 127.0.0.1:2020
 }
 
-# Tailscale interface only — system Caddy owns the LAN IP (146.232.174.77).
-# *.aither DNS resolves to 100.70.185.46 via dnsmasq (/etc/dnsmasq.d/20-aither.conf).
+# ── Bind snippets ─────────────────────────────────────────────────────────────
 (ts_bind) {
   bind 100.70.185.46
 }
+(lan_bind) {
+  bind 146.232.174.77
+}
+(both_bind) {
+  bind 100.70.185.46 146.232.174.77
+}
 
-# ══ SERVICE VHOSTS (*.aither) ══════════════════════════════════════════════════
-# Routing: Caddy (Host match) → Traefik:8081 (Consul-catalog LB) → live backend.
-# Traefik reads the backend from Consul on every request — follows rescheduled
-# allocations automatically, load-balances across multiple instances.
+# ══ SERVICE VHOSTS (*.aither) — Tailscale domain mode ════════════════════════
+# Tailscale split-DNS routes *.aither → 100.70.185.46.
+# Routing: Caddy (Host match) → Traefik:8081 (Consul LB) → live backend.
 
 http://grafana.aither {
   import ts_bind
@@ -158,6 +170,11 @@ http://minio.aither {
 
 http://minio-console.aither {
   import ts_bind
+  # MinIO Console hardcodes <base href="/minio-console/"/> in its HTML because
+  # MINIO_BROWSER_REDIRECT_URL is set. The SPA's React Router expects the
+  # browser path to start with /minio-console/ — redirect root to match.
+  @root path /
+  redir @root /minio-console/ 308
   reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
@@ -166,7 +183,16 @@ http://rustfs.aither {
   reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
-# Docusaurus-built abc-cluster-cli docs (served by abc-nodes-docs Nomad job).
+http://rustfs-console.aither {
+  import ts_bind
+  # RustFS serves the browser console at /rustfs/console/ on port 9901; the
+  # root path returns S3 API errors. Redirect to the SPA root so users landing
+  # on rustfs-console.aither/ get the console UI.
+  @root path /
+  redir @root /rustfs/console/ 308
+  reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
 http://docs.aither {
   import ts_bind
   reverse_proxy abc-nodes-traefik.service.consul:8081
@@ -184,7 +210,7 @@ http://boundary.aither {
   reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
-# tusd — ForwardAuth via auth service; preflight and Uppy-Referer requests bypass.
+# tusd — ForwardAuth applied by Caddy; preflight + Uppy-Referer bypass auth.
 http://tusd.aither {
   import ts_bind
 
@@ -207,7 +233,7 @@ http://tusd.aither {
   }
 }
 
-# Direct proxies — bypass Traefik (single-node services or bootstrapping concerns).
+# Direct proxies — bypass Traefik (single-node / bootstrapping concern).
 http://traefik.aither {
   import ts_bind
   @root path /
@@ -229,13 +255,24 @@ http://nomad.aither {
   reverse_proxy 100.70.185.46:4646
 }
 
-# ══ LANDING PAGE + INSTITUTIONAL HOST ═════════════════════════════════════════
-# Matches both the hostname and bare Tailscale IP (Host: 100.70.185.46).
+# ══ LANDING PAGE + SUBPATH ROUTING (both networks) ═══════════════════════════
+# Serves the landing page and all service subpaths.
+# Binds on BOTH IPs so LAN users (aither.mb.sun.ac.za / 146.232.174.77) and
+# Tailscale users accessing by bare IP (100.70.185.46) get the same page.
+# The landing page JS auto-detects domain vs subpath mode from window.location.
+#
+# Subpath routes mirror *.aither vhosts:
+#   /grafana/*           → grafana.aither  (no prefix strip; serve_from_sub_path=true)
+#   /prometheus/*        → prometheus.aither (strip prefix)
+#   ... etc ...
+# ntfy /v1/* API calls are routed via Referer header before Nomad's /v1/* catch.
 
 http://aither.mb.sun.ac.za,
+http://146.232.174.77,
 http://100.70.185.46 {
-  import ts_bind
+  import both_bind
 
+  # ── Root landing page ────────────────────────────────────────────────────
   @root path /
   handle @root {
     root * {{ env "NOMAD_TASK_DIR" }}/landing
@@ -243,14 +280,252 @@ http://100.70.185.46 {
     file_server
   }
 
-  # Nomad UI/API — SPA rootURL is hardcoded to /ui/
+  # ── Nomad UI — SPA rootURL hardcoded to /ui/ ───────────────────────────
   handle /ui/* {
     reverse_proxy 100.70.185.46:4646
   }
+
+  # ── ntfy API (/v1/*) — before Nomad /v1/* catch-all ────────────────────
+  # ntfy's web app makes API calls to /v1/* on the same origin. Route by
+  # Referer to separate ntfy API from Nomad API on the same path prefix.
+  @ntfy_api {
+    path /v1/*
+    header Referer *aither.mb.sun.ac.za/ntfy*
+  }
+  handle @ntfy_api {
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host ntfy.aither
+    }
+  }
+
+  @ntfy_misc {
+    path /metrics /ws /v1/stats /v1/health
+    header Referer *aither.mb.sun.ac.za/ntfy*
+  }
+  handle @ntfy_misc {
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host ntfy.aither
+    }
+  }
+
   handle /v1/* {
     reverse_proxy 100.70.185.46:4646
   }
 
+  # ── tusd /files/* ────────────────────────────────────────────────────────
+  @files_preflight {
+    method OPTIONS
+    path /files/*
+  }
+  handle @files_preflight {
+    reverse_proxy abc-nodes-tusd.service.consul:8080
+  }
+  @files_from_uppy {
+    path /files/*
+    header Referer *uppy.aither*
+  }
+  handle @files_from_uppy {
+    reverse_proxy abc-nodes-tusd.service.consul:8080
+  }
+  handle /files/* {
+    forward_auth abc-nodes-auth.service.consul:9191 {
+      uri /auth
+      copy_headers X-Auth-User X-Auth-Group X-Auth-Namespace
+    }
+    reverse_proxy abc-nodes-tusd.service.consul:8080
+  }
+
+  # ── Service subpath proxies ───────────────────────────────────────────────
+  # Grafana: GF_SERVER_SERVE_FROM_SUB_PATH=true — do NOT strip /grafana prefix;
+  # Grafana handles it internally. header_down rewrites root-relative redirects.
+  handle /grafana/* {
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host grafana.aither
+      header_down Location "^(/login.*)$" "/grafana$1"
+      header_down Location "^(/logout.*)$" "/grafana$1"
+    }
+  }
+  handle /services/grafana/* {
+    uri strip_prefix /services
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host grafana.aither
+      header_down Location "^(/login.*)$" "/grafana$1"
+      header_down Location "^(/logout.*)$" "/grafana$1"
+    }
+  }
+
+  handle /prometheus/* {
+    uri strip_prefix /prometheus
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host prometheus.aither
+    }
+  }
+  handle /services/prometheus/* {
+    uri strip_prefix /services/prometheus
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host prometheus.aither
+    }
+  }
+
+  handle /loki/* {
+    @loki_root path /loki/
+    redir @loki_root /loki/ready 308
+    uri strip_prefix /loki
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host loki.aither
+    }
+  }
+  handle /services/loki/* {
+    @sloki_root path /services/loki/
+    redir @sloki_root /services/loki/ready 308
+    uri strip_prefix /services/loki
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host loki.aither
+    }
+  }
+
+  handle /alloy/* {
+    uri strip_prefix /alloy
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host alloy.aither
+    }
+  }
+  handle /services/alloy/* {
+    uri strip_prefix /services/alloy
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host alloy.aither
+    }
+  }
+
+  handle /ntfy/* {
+    uri strip_prefix /ntfy
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host ntfy.aither
+    }
+  }
+  handle /services/ntfy/* {
+    uri strip_prefix /services/ntfy
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host ntfy.aither
+    }
+  }
+
+  handle /uppy/* {
+    uri strip_prefix /uppy
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host uppy.aither
+    }
+  }
+  handle /services/uppy/* {
+    uri strip_prefix /services/uppy
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host uppy.aither
+    }
+  }
+
+  handle /minio-console/* {
+    uri strip_prefix /minio-console
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host minio-console.aither
+    }
+  }
+  handle /services/minio-console/* {
+    uri strip_prefix /services/minio-console
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host minio-console.aither
+    }
+  }
+
+  handle /minio/* {
+    uri strip_prefix /minio
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host minio.aither
+    }
+  }
+  handle /services/minio/* {
+    uri strip_prefix /services/minio
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host minio.aither
+    }
+  }
+
+  handle /rustfs/* {
+    uri strip_prefix /rustfs
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host rustfs.aither
+    }
+  }
+  handle /services/rustfs/* {
+    uri strip_prefix /services/rustfs
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host rustfs.aither
+    }
+  }
+
+  handle /vault/* {
+    uri strip_prefix /vault
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host vault.aither
+    }
+  }
+  handle /services/vault/* {
+    uri strip_prefix /services/vault
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host vault.aither
+    }
+  }
+
+  handle /boundary/* {
+    uri strip_prefix /boundary
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host boundary.aither
+    }
+  }
+  handle /services/boundary/* {
+    uri strip_prefix /services/boundary
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host boundary.aither
+    }
+  }
+
+  # Nomad — direct proxy (Ember SPA; /ui/* handled above)
+  handle /nomad/* {
+    uri strip_prefix /nomad
+    reverse_proxy 100.70.185.46:4646
+  }
+  handle /services/nomad/* {
+    uri strip_prefix /services/nomad
+    reverse_proxy 100.70.185.46:4646
+  }
+
+  # Consul — direct proxy
+  handle /consul/* {
+    uri strip_prefix /consul
+    reverse_proxy 100.70.185.46:8500
+  }
+  handle /services/consul/* {
+    uri strip_prefix /services/consul
+    reverse_proxy 100.70.185.46:8500
+  }
+
+  # Traefik dashboard — direct proxy
+  handle /traefik/* {
+    uri strip_prefix /traefik
+    reverse_proxy abc-nodes-traefik-dashboard.service.consul:8888
+  }
+  handle /services/traefik/* {
+    uri strip_prefix /services/traefik
+    reverse_proxy abc-nodes-traefik-dashboard.service.consul:8888
+  }
+
+  # Docs (Docusaurus — serves at root, no prefix strip needed)
+  handle /docs/* {
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host docs.aither
+    }
+  }
+
+  # ── Fallback ──────────────────────────────────────────────────────────────
   handle {
     respond "Not Found" 404
   }
@@ -554,6 +829,11 @@ CADDYFILE
     .abc-landing .svc-mini{grid-template-columns:1fr;}
     .abc-landing .svc-pivot{position:static;}
   }
+  .abc-landing .view-toggle-block{padding-bottom:32px;}
+  .abc-landing .view-toggle{flex-wrap:wrap;}
+  .abc-landing .view-toggle button{padding:9px 16px;font-size:11px;letter-spacing:.12em;}
+  .abc-landing .view-toggle-status{margin:14px 0 0;color:var(--text-mute);font-size:12px;}
+  .abc-landing .view-toggle-status b{color:var(--text-dim);}
   .abc-landing footer.foot{padding:36px 0 56px;color:var(--text-mute);font-size:12px;line-height:1.7;}
   .abc-landing footer.foot .row{display:grid;grid-template-columns:200px 1fr;gap:56px;}
   .abc-landing footer.foot b{color:var(--text-dim);}
@@ -727,7 +1007,8 @@ CADDYFILE
       <div>
         <h2 class="block-title">Consoles &amp; endpoints</h2>
         <p class="block-desc">
-          All consoles resolve over <code data-domain-glob>*.aither</code> via Tailscale split-DNS.
+          <span data-mode-domain>All consoles resolve over <code data-domain-glob>*.aither</code> via Tailscale split-DNS.</span>
+          <span data-mode-subpath style="display:none">All consoles are accessible at subpaths of <code data-lan-host>aither.mb.sun.ac.za</code> — no split-DNS required.</span>
           Featured cards are the daily drivers; the compact list below covers everything else.
         </p>
       </div>
@@ -814,14 +1095,23 @@ CADDYFILE
               <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
             </div>
           </a>
-        </div>
 
-        <div class="svc-mini">
-          <a class="svc-mini-row" href="http://ntfy.aither/" target="_blank" rel="noreferrer"
-             data-aud="researcher" data-name="ntfy" data-desc="job event notifications push pub sub">
-            <span class="status-dot up"></span>
-            <span><span class="name">ntfy</span><span class="desc">job event notifications</span></span>
-            <span class="svc-mini-host">ntfy.aither</span>
+          <a class="svc-card" href="http://ntfy.aither/" target="_blank" rel="noreferrer"
+             data-aud="researcher" data-name="ntfy" data-desc="job event notifications push pub sub topic subscribe"
+             data-mode-only="domain">
+            <div class="svc-card-head">
+              <span class="svc-card-glyph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+                  <path d="M18 16v-5a6 6 0 0 0-12 0v5l-2 2h16z"/><path d="M10 20a2 2 0 0 0 4 0"/>
+                </svg>
+              </span>
+              <span class="svc-card-name">ntfy <span class="arrow">→</span></span>
+            </div>
+            <p class="svc-card-desc">Job event notifications — subscribe to topics, receive push alerts when batch runs finish or fail. <em style="color:var(--text-mute);">(Tailscale only — generated links use the *.aither origin.)</em></p>
+            <div class="svc-card-foot">
+              <span class="svc-card-host">ntfy.aither</span>
+              <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
+            </div>
           </a>
         </div>
       </div>
@@ -872,8 +1162,9 @@ CADDYFILE
             </div>
           </a>
 
-          <a class="svc-card" href="http://rustfs.aither/" target="_blank" rel="noreferrer"
-             data-aud="operator" data-name="rustfs" data-desc="alternate s3 compatible store experimental">
+          <a class="svc-card" href="http://rustfs-console.aither/" target="_blank" rel="noreferrer"
+             data-aud="operator" data-name="rustfs-console" data-desc="rustfs s3 backend console primary tusd uppy"
+             data-mode-only="domain">
             <div class="svc-card-head">
               <span class="svc-card-glyph">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
@@ -882,12 +1173,12 @@ CADDYFILE
                   <line x1="11" y1="8" x2="18" y2="8"/><line x1="11" y1="16" x2="18" y2="16"/>
                 </svg>
               </span>
-              <span class="svc-card-name">rustfs <span class="arrow">→</span></span>
+              <span class="svc-card-name">rustfs-console <span class="arrow">→</span></span>
             </div>
-            <p class="svc-card-desc">Alternate S3-compatible store. Cross-vendor parity testing &amp; failover target.</p>
+            <p class="svc-card-desc">RustFS S3 backend — primary store for tusd/uppy uploads. Browse buckets, manage policies. <em style="color:var(--text-mute);">(Tailscale only — console SPA hardcodes its own base path.)</em></p>
             <div class="svc-card-foot">
-              <span class="svc-card-host">rustfs.aither</span>
-              <span class="svc-card-status"><span class="status-dot degraded"></span>Degraded</span>
+              <span class="svc-card-host">rustfs-console.aither</span>
+              <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
             </div>
           </a>
         </div>
@@ -938,6 +1229,31 @@ CADDYFILE
     </div>
   </section>
 
+  <!-- ── URL view toggle ─────────────────────────────────────────────────────
+       Lets you preview both surfaces from one page — switch between LAN
+       (subpath via aither.mb.sun.ac.za) and Tailscale (domain via *.aither)
+       without having to open two landing pages.
+  ── -->
+  <section class="block view-toggle-block">
+    <div class="block-head">
+      <div class="block-eyebrow"><span class="num">99</span>Preview</div>
+      <div>
+        <h2 class="block-title">URL view</h2>
+        <p class="block-desc">
+          All cards above adapt to the network you're on. Switch the view to preview the
+          links and host labels for the other surface — handy for testing without
+          opening a second browser on a different network.
+        </p>
+      </div>
+    </div>
+    <div class="seg view-toggle" data-control="view-mode" role="tablist" aria-label="URL view mode">
+      <button data-mode="auto" class="active" role="tab">Auto-detect</button>
+      <button data-mode="subpath" role="tab">LAN (aither.mb.sun.ac.za/svc)</button>
+      <button data-mode="domain" role="tab">Tailscale (svc.aither)</button>
+    </div>
+    <p class="view-toggle-status" id="view-mode-status"></p>
+  </section>
+
   <footer class="foot">
     <div class="row">
       <div class="block-eyebrow">colophon</div>
@@ -977,29 +1293,122 @@ CADDYFILE
      LAN deploy  : domain='aither', lanHost='aither.mb.sun.ac.za', tsIP='146.232.174.77'
      Tailscale   : domain='aither', lanHost='aither.mb.sun.ac.za', tsIP='100.70.185.46'
   ── */
+  // Auto-detect mode from the hostname this page was served on.
+  //   domain  (Tailscale) : *.${var.service_domain} or bare Tailscale IP
+  //   subpath (LAN)       : aither.mb.sun.ac.za or bare LAN IP
+  function detectMode() {
+    var h = window.location.hostname;
+    var isDomain = (h === '${var.ts_ip}') || /\.${var.service_domain}$/.test(h);
+    return isDomain ? 'domain' : 'subpath';
+  }
+
+  var DETECTED_MODE = detectMode();
+
   var CONFIG = {
+    mode:    DETECTED_MODE,           // 'subpath' | 'domain' (overridden by toggle)
+    viewMode:'auto',                  // 'auto' | 'subpath' | 'domain' (toggle state)
     domain:  '${var.service_domain}',
     lanHost: '${var.lan_host}',
     tsIP:    '${var.ts_ip}',
   };
 
   function applyConfig() {
-    var d = CONFIG.domain;
-    // Rewrite all service link hrefs containing .aither
+    var d    = CONFIG.domain;
+    var host = CONFIG.lanHost;
+    var sub  = CONFIG.mode === 'subpath';
+
+    // ── Rewrite service link hrefs ────────────────────────────────────────
+    // Snapshot the original href on first pass so we can re-apply on toggle.
     document.querySelectorAll('a[href]').forEach(function(a) {
-      var h = a.getAttribute('href');
-      if (h && h.indexOf('.aither') >= 0)
-        a.setAttribute('href', h.replace(/\.aither/g, '.' + d));
+      if (!a.dataset.origHref) {
+        var cur = a.getAttribute('href');
+        if (!cur || cur.indexOf('.aither') < 0) return;
+        a.dataset.origHref = cur;
+      }
+      var h = a.dataset.origHref;
+      if (sub) {
+        // http://svc.aither/path  →  http://lanHost/svc/path
+        // Special cases — services whose link path already contains the
+        // subpath segment used by Caddy's LAN routing, so prepending the svc
+        // again would double the segment (e.g. /docs/docs/ , /ui/ui/):
+        //   nomad → keep path as-is (Caddy /ui/* handle, SPA rootURL=/ui/)
+        //   docs  → keep path as-is (Docusaurus serves at /docs/...)
+        h = h.replace(/^http:\/\/([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
+          if (svc === 'nomad' || svc === 'docs') return 'http://' + host + (path || '/');
+          return 'http://' + host + '/' + svc + (path || '/');
+        });
+      } else {
+        h = h.replace(/\.aither/g, '.' + d);
+      }
+      a.setAttribute('href', h);
     });
-    // Rewrite host label text in service cards
+
+    // ── Rewrite host labels in service cards ──────────────────────────────
     document.querySelectorAll('.svc-card-host, .svc-mini-host').forEach(function(el) {
-      el.textContent = el.textContent.replace(/\.aither/g, '.' + d);
+      if (!el.dataset.origText) el.dataset.origText = el.textContent;
+      var t = el.dataset.origText;
+      if (sub) {
+        t = t.replace(/^([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
+          if (svc === 'nomad') return host + (path || '/ui');
+          if (svc === 'docs')  return host + (path || '/docs');
+          return host + '/' + svc + (path || '');
+        });
+      } else {
+        t = t.replace(/\.aither/g, '.' + d);
+      }
+      el.textContent = t;
     });
-    // Footer: data-tagged text nodes
-    document.querySelectorAll('[data-lan-host]').forEach(function(el){ el.textContent = CONFIG.lanHost; });
+
+    // ── Footer / description data-tagged nodes ────────────────────────────
+    document.querySelectorAll('[data-lan-host]').forEach(function(el){ el.textContent = host; });
     document.querySelectorAll('[data-ts-ip]').forEach(function(el){ el.textContent = CONFIG.tsIP; });
-    document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = '*.' + d; });
-    document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '.' + d; });
+    if (sub) {
+      document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = host + '/<service>'; });
+      document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '/<service>'; });
+    } else {
+      document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = '*.' + d; });
+      document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '.' + d; });
+    }
+
+    // ── Show/hide mode-specific content blocks ────────────────────────────
+    document.querySelectorAll('[data-mode-subpath]').forEach(function(el){
+      el.style.display = sub ? '' : 'none';
+    });
+    document.querySelectorAll('[data-mode-domain]').forEach(function(el){
+      el.style.display = sub ? 'none' : '';
+    });
+
+    // ── Hide network-specific service cards in the opposite mode ──────────
+    // A card with data-mode-only="domain" is shown only in domain (Tailscale)
+    // view; data-mode-only="subpath" is shown only in subpath (LAN) view.
+    var currentMode = sub ? 'subpath' : 'domain';
+    document.querySelectorAll('[data-mode-only]').forEach(function(el){
+      el.style.display = (el.dataset.modeOnly === currentMode) ? '' : 'none';
+    });
+
+    // ── Update view-toggle status line ────────────────────────────────────
+    var statusEl = document.getElementById('view-mode-status');
+    if (statusEl) {
+      var isAuto = CONFIG.viewMode === 'auto';
+      var detectedLabel = DETECTED_MODE === 'subpath'
+        ? 'LAN — ' + host + '/<service>'
+        : 'Tailscale — *.' + d + ' (' + CONFIG.tsIP + ')';
+      var activeLabel = sub
+        ? 'LAN — ' + host + '/<service>'
+        : 'Tailscale — *.' + d + ' (' + CONFIG.tsIP + ')';
+      statusEl.innerHTML = isAuto
+        ? 'Showing <b>' + activeLabel + '</b> (auto-detected from this page’s hostname).'
+        : 'Showing <b>' + activeLabel + '</b> (manual override; auto-detect would show <b>' + detectedLabel + '</b>).';
+    }
+  }
+
+  function setViewMode(mode) {
+    CONFIG.viewMode = mode;
+    CONFIG.mode = (mode === 'auto') ? DETECTED_MODE : mode;
+    applyConfig();
+    document.querySelectorAll('.view-toggle button').forEach(function(b){
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
   }
 
   var TWEAK_DEFAULTS = { theme: 'dark', system: 'grid' };
@@ -1059,6 +1468,15 @@ CADDYFILE
     var next=document.documentElement.dataset.theme==='dark'?'light':'dark';
     setTheme(next);
   });
+
+  // View-mode toggle (Auto / LAN / Tailscale).
+  document.querySelectorAll('.view-toggle button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      setViewMode(btn.dataset.mode);
+    });
+  });
+  // Initial render — paints the status line and ensures the right button is active.
+  setViewMode('auto');
 
   (function rotateAcronym(){
     var track=document.getElementById('ac-track');

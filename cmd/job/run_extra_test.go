@@ -1113,3 +1113,275 @@ contexts:
 		t.Errorf("expected containerd-driver, got:\n%s", out)
 	}
 }
+
+// ── B.1 auto-container driver resolution ─────────────────────────────────────
+
+// abcNodesConfigWithDocker has 6 nodes that carry docker but not containerd-driver.
+// Used to verify the docker fallback path in auto-container resolution.
+const abcNodesConfigWithDocker = `version: 1.0
+active_context: abc-nodes-docker
+contexts:
+  abc-nodes-docker:
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+    capabilities:
+      nodes:
+        - id: "bbbb0000-0000-0000-0000-000000000001"
+          hostname: "node-docker-1"
+          drivers: [docker, exec, raw_exec]
+        - id: "bbbb0000-0000-0000-0000-000000000002"
+          hostname: "node-docker-2"
+          drivers: [docker, exec, raw_exec]
+        - id: "bbbb0000-0000-0000-0000-000000000003"
+          hostname: "node-docker-3"
+          drivers: [docker, exec, raw_exec]
+        - id: "bbbb0000-0000-0000-0000-000000000004"
+          hostname: "node-docker-4"
+          drivers: [docker, exec, raw_exec]
+        - id: "bbbb0000-0000-0000-0000-000000000005"
+          hostname: "node-docker-5"
+          drivers: [docker, exec, raw_exec]
+        - id: "bbbb0000-0000-0000-0000-000000000006"
+          hostname: "node-docker-6"
+          drivers: [docker, exec, raw_exec]
+`
+
+// abcNodesConfigWithExec has one node carrying exec and raw_exec (no container drivers).
+const abcNodesConfigWithExec = `version: 1.0
+active_context: abc-nodes-exec
+contexts:
+  abc-nodes-exec:
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+    capabilities:
+      nodes:
+        - id: "cccc0000-0000-0000-0000-000000000001"
+          hostname: "node-exec-1"
+          drivers: [exec, raw_exec]
+`
+
+// abcNodesConfigNoContainerDriver has nodes but none carry any container driver.
+const abcNodesConfigNoContainerDriver = `version: 1.0
+active_context: abc-nodes-nocontainer
+contexts:
+  abc-nodes-nocontainer:
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+    capabilities:
+      nodes:
+        - id: "dddd0000-0000-0000-0000-000000000001"
+          hostname: "node-exec-only"
+          drivers: [exec, raw_exec]
+`
+
+func TestJobRun_AutoContainerResolvesToContainerd(t *testing.T) {
+	// --driver=auto-container with one containerd-driver node → resolved to containerd-driver.
+	script := "#!/bin/bash\n#ABC --name=auto-ctr-test\necho hi\n"
+	p := writeTempScript(t, "auto_ctr.sh", script)
+	out, err := executeCmdWithABCYAML(t, abcNodesConfigWithContainerd, p, "--driver", "auto-container")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Concrete driver in HCL.
+	if !strings.Contains(out, `driver = "containerd-driver"`) {
+		t.Errorf("expected containerd-driver in HCL, got:\n%s", out)
+	}
+	// auto-container must not appear literally in HCL.
+	if strings.Contains(out, `"auto-container"`) {
+		t.Errorf("auto-container should be resolved away, got:\n%s", out)
+	}
+	// Placement constraint targeting the eligible node.
+	if !strings.Contains(out, `node.unique.id`) {
+		t.Errorf("expected node.unique.id constraint, got:\n%s", out)
+	}
+	if !strings.Contains(out, `aaaa0000-0000-0000-0000-000000000001`) {
+		t.Errorf("expected eligible node ID in constraint, got:\n%s", out)
+	}
+	// [jurist] resolution lines in stderr (captured to same buf by SetErr).
+	if !strings.Contains(out, "[jurist]") {
+		t.Errorf("expected [jurist] resolution log, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 eligible node(s)") {
+		t.Errorf("expected 1 eligible node(s) in [jurist] log, got:\n%s", out)
+	}
+}
+
+func TestJobRun_AutoContainerDockerFallback(t *testing.T) {
+	// containerd-driver unavailable; docker present on 6 nodes → resolved to docker.
+	script := "#!/bin/bash\n#ABC --name=auto-docker-fb\necho hi\n"
+	p := writeTempScript(t, "auto_docker_fb.sh", script)
+	out, err := executeCmdWithABCYAML(t, abcNodesConfigWithDocker, p,
+		"--driver", "auto-container",
+		"--driver.config", "image=busybox:latest",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `driver = "docker"`) {
+		t.Errorf("expected docker fallback driver, got:\n%s", out)
+	}
+	if strings.Contains(out, `"auto-container"`) {
+		t.Errorf("auto-container should be resolved away, got:\n%s", out)
+	}
+	if !strings.Contains(out, `node.unique.id`) {
+		t.Errorf("expected node.unique.id constraint for 6-node docker cluster, got:\n%s", out)
+	}
+	if !strings.Contains(out, "6 eligible node(s)") {
+		t.Errorf("expected 6 eligible node(s) in [jurist] log, got:\n%s", out)
+	}
+}
+
+func TestJobRun_AutoContainerJuristLogLines(t *testing.T) {
+	// Verify the exact shape of [jurist] stderr lines for auto-container resolution.
+	script := "#!/bin/bash\n#ABC --name=jurist-log\necho hi\n"
+	p := writeTempScript(t, "jurist_log.sh", script)
+	out, err := executeCmdWithABCYAML(t, abcNodesConfigWithContainerd, p, "--driver", "auto-container")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Resolution line: "  [jurist] auto-container → containerd-driver  (…)"
+	if !strings.Contains(out, "[jurist] auto-container") {
+		t.Errorf("expected [jurist] auto-container resolution line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "containerd-driver") {
+		t.Errorf("expected resolved driver name in [jurist] line, got:\n%s", out)
+	}
+	// Constraint summary line.
+	if !strings.Contains(out, "[jurist] constraint: node.unique.id") {
+		t.Errorf("expected [jurist] constraint line, got:\n%s", out)
+	}
+}
+
+// ── B.2 auto-exec driver resolution ──────────────────────────────────────────
+
+func TestJobRun_AutoExecResolvesToExec(t *testing.T) {
+	// --driver=auto-exec with a node carrying exec → resolved to exec.
+	script := "#!/bin/bash\n#ABC --name=auto-exec-test\necho hi\n"
+	p := writeTempScript(t, "auto_exec.sh", script)
+	out, err := executeCmdWithABCYAML(t, abcNodesConfigWithExec, p, "--driver", "auto-exec")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `driver = "exec"`) {
+		t.Errorf("expected exec driver, got:\n%s", out)
+	}
+	if strings.Contains(out, `"auto-exec"`) {
+		t.Errorf("auto-exec should be resolved away, got:\n%s", out)
+	}
+	if !strings.Contains(out, `node.unique.id`) {
+		t.Errorf("expected node.unique.id constraint for auto-exec, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[jurist] auto-exec") {
+		t.Errorf("expected [jurist] auto-exec resolution log, got:\n%s", out)
+	}
+}
+
+// ── B.3 error paths ───────────────────────────────────────────────────────────
+
+func TestJobRun_AutoContainerNoCapabilitiesNodes(t *testing.T) {
+	// Config has no capabilities.nodes → driver resolution must error.
+	cfgNoNodes := `version: 1.0
+active_context: abc-nodes-empty
+contexts:
+  abc-nodes-empty:
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+`
+	script := "#!/bin/bash\n#ABC --name=no-caps\necho hi\n"
+	p := writeTempScript(t, "no_caps.sh", script)
+	_, err := executeCmdWithABCYAML(t, cfgNoNodes, p, "--driver", "auto-container")
+	if err == nil {
+		t.Fatal("expected error when capabilities.nodes is absent")
+	}
+	if !strings.Contains(err.Error(), "capability") && !strings.Contains(err.Error(), "capabilities sync") {
+		t.Errorf("expected capabilities-sync hint in error, got: %v", err)
+	}
+}
+
+func TestJobRun_AutoContainerNoEligibleNodes(t *testing.T) {
+	// Nodes exist but none have a container driver.
+	script := "#!/bin/bash\n#ABC --name=no-ctr-nodes\necho hi\n"
+	p := writeTempScript(t, "no_ctr_nodes.sh", script)
+	_, err := executeCmdWithABCYAML(t, abcNodesConfigNoContainerDriver, p, "--driver", "auto-container")
+	if err == nil {
+		t.Fatal("expected error when no node carries a container driver")
+	}
+	if !strings.Contains(err.Error(), "auto-container") {
+		t.Errorf("expected auto-container in error message, got: %v", err)
+	}
+}
+
+func TestJobRun_AutoExecNoEligibleNodes(t *testing.T) {
+	// Nodes only have container drivers — auto-exec must fail.
+	cfgDockerOnly := `version: 1.0
+active_context: abc-docker-only
+contexts:
+  abc-docker-only:
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+    capabilities:
+      nodes:
+        - id: "eeee0000-0000-0000-0000-000000000001"
+          hostname: "node-docker-only"
+          drivers: [docker]
+`
+	script := "#!/bin/bash\n#ABC --name=no-exec\necho hi\n"
+	p := writeTempScript(t, "no_exec.sh", script)
+	_, err := executeCmdWithABCYAML(t, cfgDockerOnly, p, "--driver", "auto-exec")
+	if err == nil {
+		t.Fatal("expected error when no exec driver available")
+	}
+	if !strings.Contains(err.Error(), "auto-exec") {
+		t.Errorf("expected auto-exec in error message, got: %v", err)
+	}
+}
+
+// ── B.4 concrete driver is a no-op ───────────────────────────────────────────
+
+func TestJobRun_ConcreteDriverSkipsAutoResolution(t *testing.T) {
+	// Passing an explicit driver (not auto-*) should not require capabilities.nodes
+	// and should not emit any [jurist] lines.
+	cfgNoNodes := `version: 1.0
+active_context: abc-nodes-nodata
+contexts:
+  abc-nodes-nodata:
+    cluster_type: abc-nodes
+    admin:
+      services:
+        nomad:
+          nomad_addr: http://127.0.0.1:4646
+          nomad_token: t
+`
+	script := "#!/bin/bash\n#ABC --name=concrete-drv\necho hi\n"
+	p := writeTempScript(t, "concrete_drv.sh", script)
+	out, err := executeCmdWithABCYAML(t, cfgNoNodes, p, "--driver", "exec")
+	if err != nil {
+		t.Fatalf("unexpected error for concrete driver: %v", err)
+	}
+	if !strings.Contains(out, `driver = "exec"`) {
+		t.Errorf("expected exec driver in HCL, got:\n%s", out)
+	}
+	if strings.Contains(out, "[jurist]") {
+		t.Errorf("expected no [jurist] lines for concrete driver, got:\n%s", out)
+	}
+}

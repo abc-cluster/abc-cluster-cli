@@ -110,6 +110,17 @@ resource "nomad_job" "rustfs" {
   jobspec = file("${path.module}/../nomad/rustfs.nomad.hcl")
   detach  = false
 
+  # Pass image / credentials through to the Nomad HCL2 variable block so they
+  # can be overridden from tfvars without editing the jobspec. RustFS data is
+  # persisted on aither's "scratch" host volume (see rustfs.nomad.hcl).
+  hcl2 {
+    vars = {
+      rustfs_image      = var.rustfs_image
+      rustfs_access_key = var.rustfs_access_key
+      rustfs_secret_key = var.rustfs_secret_key
+    }
+  }
+
   depends_on = [nomad_namespace.abc_services]
 }
 
@@ -338,10 +349,14 @@ resource "nomad_job" "xtdb" {
   jobspec = templatefile("${path.module}/../nomad/experimental/xtdb-v2.nomad.hcl.tftpl", {
     xtdb_image        = var.xtdb_image
     xtdb_node         = var.xtdb_node
-    xtdb_http_port    = var.xtdb_http_port
+    xtdb_healthz_port = var.xtdb_healthz_port
+    xtdb_pgwire_port  = var.xtdb_pgwire_port
     xtdb_postgres_url = var.xtdb_postgres_url
   })
-  detach = false
+  # detach = true: the Nomad Terraform provider has a hardcoded 5-minute wait
+  # for deployment_successful, but the XTDB JVM takes ~4-5 min to initialise.
+  # Detaching avoids the spurious timeout; Consul health checks confirm liveness.
+  detach = true
 
   depends_on = [
     nomad_namespace.abc_experimental,

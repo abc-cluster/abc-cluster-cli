@@ -59,14 +59,30 @@ export interface WorkspaceSpec {
   /**
    * Lifecycle state:
    *   active     — fully operational (default)
-   *   suspended  — jobs blocked; data accessible; ACL tokens revoked
-   *   archived   — read-only; versioning suspended
+   *   suspended  — Nomad ACL tokens, MinIO users, and per-user IAM policies
+   *                are destroyed; namespace, bucket, and all S3 data are
+   *                preserved. Bucket versioning is suspended. Resume by
+   *                flipping back to "active".
+   *   archived   — same destructive surface as "suspended" today; versioning
+   *                suspended. Reserved for future read-only token issuance.
    *   deleted    — tombstone; remove entry after confirming `pulumi destroy`
    */
   state?: "active" | "suspended" | "archived" | "deleted";
   /**
+   * If true, the group-admin Nomad policy includes `alloc-node-exec` (run
+   * arbitrary commands on the host node, not just inside the container).
+   * Defaults to false — only enable for workspaces that genuinely need
+   * host-level debugging access.
+   */
+  groupAdminNodeExec?: boolean;
+  /**
    * Nomad task driver allow-list for the namespace.
    * Defaults to: enabled=["containerd-driver","docker","exec"], disabled=["raw_exec"]
+   *
+   * The @pulumi/nomad provider does not expose the namespace `capabilities`
+   * block, so this is applied via a `local.Command` running
+   * `abc admin services nomad cli -- namespace apply -json -` after the
+   * namespace resource is created.
    */
   taskDrivers?: TaskDriversSpec;
   /**
@@ -108,21 +124,32 @@ export interface TaskDriversSpec {
 }
 
 /**
+ * Member role within a workspace.
+ *
+ *   group-admin   — full namespace write + all caps; full bucket access.
+ *                   Held by the shared "admin" account and by individuals
+ *                   who need elevated access via `abc --sudo`.
+ *   group-member  — submit/inspect own jobs; users/<name>/ and shared/users/<name>/
+ *                   r/w; shared/ read-only.
+ */
+export type Role = "group-admin" | "group-member";
+
+/**
  * A human workspace member.
  *
- * Roles:
- *   group-admin — full namespace write + all caps; full bucket access
- *   member      — submit/inspect own jobs; users/<name>/ and shared/<name>/ r/w;
- *                 shared/ read-only
+ * `role` may be a single role or an array — a member with multiple roles gets
+ * one Nomad token + one MinIO user per role, so `abc --sudo` can pick the
+ * group-admin token while the default token stays at group-member.
  *
- * MinIO user:   <namespace>_<name>
- * Nomad token:  <namespace>_<name>  (same credential = same name+secretID)
+ * Principal naming (= Nomad token Name = MinIO username):
+ *   group-member   →  <namespace>_<name>
+ *   group-admin    →  <namespace>_<name>-admin
  */
 export interface MemberSpec {
-  /** Username — used in Nomad token name and MinIO user name. */
+  /** Username — base for principal names. Lowercase alphanumerics + hyphens. */
   name: string;
-  /** Role within the workspace. */
-  role: "group-admin" | "member";
+  /** One role or a set of roles. */
+  role: Role | Role[];
   /** Email for notifications and Seqera Platform user mapping. */
   email?: string;
 }
@@ -159,6 +186,12 @@ export interface CollaboratorSpec {
   expiresAt: string;
   /** Email for notifications. */
   email?: string;
+  /**
+   * Always "group-collaborator" — kept as an explicit field so the YAML
+   * documents intent and matches the role vocabulary used elsewhere.
+   * Optional; defaults to "group-collaborator".
+   */
+  role?: "group-collaborator";
 }
 
 /** Seqera Platform workspace integration settings. */

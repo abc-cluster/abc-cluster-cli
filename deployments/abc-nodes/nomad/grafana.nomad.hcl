@@ -101,9 +101,15 @@ job "abc-nodes-grafana" {
 
       env {
         GF_SERVER_HTTP_PORT   = "3000"
-        # Grafana runs at its own vhost — no subpath prefix needed.
-        GF_SERVER_DOMAIN  = "grafana.aither"
-        GF_SERVER_ROOT_URL = "http://grafana.aither/"
+        # Serve Grafana under /grafana/ subpath so it works on the LAN gateway
+        # (http://aither.mb.sun.ac.za/grafana/) without Tailscale split-DNS.
+        # When Tailscale is re-enabled, reset to:
+        #   GF_SERVER_DOMAIN          = "grafana.aither"
+        #   GF_SERVER_ROOT_URL        = "http://grafana.aither/"
+        #   GF_SERVER_SERVE_FROM_SUB_PATH = "false"
+        GF_SERVER_DOMAIN              = "aither.mb.sun.ac.za"
+        GF_SERVER_ROOT_URL            = "http://aither.mb.sun.ac.za/grafana/"
+        GF_SERVER_SERVE_FROM_SUB_PATH = "true"
         GF_PATHS_PROVISIONING = "/local/provisioning"
         # Persist Grafana data (SQLite DB, sessions, plugins) to scratch volume
         GF_PATHS_DATA         = "/scratch/grafana-data"

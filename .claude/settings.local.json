@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh sun-aither *)",
+      "Bash(curl -v http://146.232.174.77/)",
+      "Bash(curl -v http://aither.mb.sun.ac.za/)"
+    ]
+  }
+}
