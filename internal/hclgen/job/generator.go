@@ -55,6 +55,11 @@ type Spec struct {
 	SlurmStdoutFile string
 	SlurmStderrFile string
 	SlurmNTasks     int
+	SlurmReservation string
+	SlurmExtraArgs  []string
+
+	// Spread emits a Nomad spread stanza requesting at-most-one allocation per node.
+	Spread bool
 
 	IncludeHPCCompatEnv bool
 
@@ -137,6 +142,10 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 	// failures (several attempts with backoff), delaying terminal job status.
 	groupBody.AppendNewBlock("restart", nil).Body().
 		SetAttributeValue("attempts", cty.NumberIntVal(0))
+	if spec.Spread {
+		groupBody.AppendNewBlock("spread", nil).Body().
+			SetAttributeValue("attribute", cty.StringVal("${node.unique.id}"))
+	}
 
 	if spec.NoNetwork {
 		groupBody.AppendNewBlock("network", nil).Body().
@@ -284,6 +293,16 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 		if spec.WalltimeSecs > 0 {
 			cfgBody.SetAttributeValue("walltime", cty.StringVal(secondsToWalltime(spec.WalltimeSecs)))
 		}
+		if spec.SlurmReservation != "" {
+			cfgBody.SetAttributeValue("reservation", cty.StringVal(spec.SlurmReservation))
+		}
+		if len(spec.SlurmExtraArgs) > 0 {
+			vals := make([]cty.Value, len(spec.SlurmExtraArgs))
+			for i, a := range spec.SlurmExtraArgs {
+				vals[i] = cty.StringVal(a)
+			}
+			cfgBody.SetAttributeValue("extra_args", cty.ListVal(vals))
+		}
 	} else if spec.OutputLog != "" || spec.ErrorLog != "" {
 		cmd := fmt.Sprintf("%s %s", sh, scriptArg)
 		if spec.WalltimeSecs > 0 {
@@ -314,7 +333,21 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 	}
 
 	for _, k := range utils.SortedKeys(spec.DriverConfig) {
-		cfgBody.SetAttributeValue(k, cty.StringVal(strings.TrimSpace(spec.DriverConfig[k])))
+		v := strings.TrimSpace(spec.DriverConfig[k])
+		if k == "extra_args" {
+			// hpc-bridge/slurm expect list(string); split whitespace-delimited args.
+			parts := strings.Fields(v)
+			if len(parts) == 0 {
+				parts = []string{v}
+			}
+			vals := make([]cty.Value, len(parts))
+			for i, p := range parts {
+				vals[i] = cty.StringVal(p)
+			}
+			cfgBody.SetAttributeValue(k, cty.ListVal(vals))
+		} else {
+			cfgBody.SetAttributeValue(k, cty.StringVal(v))
+		}
 	}
 	if spec.Driver != "slurm" && spec.ChDir != "" {
 		cfgBody.SetAttributeValue("work_dir", cty.StringVal(spec.ChDir))

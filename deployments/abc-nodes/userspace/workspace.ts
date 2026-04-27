@@ -1,49 +1,32 @@
 // ---------------------------------------------------------------------------
-// workspace.ts — WorkspaceComponent: top-level Pulumi ComponentResource.
+// workspace.ts — WorkspaceComponent: per-workspace shared resources only.
 //
-// Encapsulates all Nomad + MinIO resources for a single workspace so that
-// Pulumi's resource tree groups them cleanly under one logical node.
-//
-// Key design:
-//   • Nomad token SecretIDs double as MinIO user passwords (one credential pair
-//     per identity — same convention as existing acl/ bootstrap scripts).
-//   • Nomad token secrets flow from nomad.ts → minio.ts so MinIO user passwords
-//     are derived from Nomad tokens, not independently generated.
-//   • MinIO IAM credentials are written back to Nomad variables in the
-//     abc-services namespace (path: nomad/jobs/abc-nodes-minio-iam/<principal>).
+// In v2 a workspace owns the shared bits (namespace, bucket, ACL/IAM
+// policies, submit account). Per-user resources (Nomad token, IAM user,
+// policy attachments) are owned by the top-level UserComponent so a
+// multi-workspace user has a single principal across all workspaces.
 // ---------------------------------------------------------------------------
 
 import * as pulumi from "@pulumi/pulumi";
-import { OrgSpec, WorkspaceSpec } from "./types";
-import { provisionNomadWorkspace, NomadWorkspaceOutputs } from "./nomad";
-import { provisionMinioWorkspace, MinioWorkspaceOutputs } from "./minio";
-
-// ---- inputs ----------------------------------------------------------------
+import { OrgSpec, WorkspaceSpec, UserSpec } from "./types";
+import { provisionWorkspaceNomad, WorkspaceNomadOutputs } from "./nomad";
+import { provisionWorkspaceMinio, WorkspaceMinioOutputs } from "./minio";
+import { WorkspaceIamHandles } from "./user";
+import { iamVarPath } from "./naming";
+import * as nomad from "@pulumi/nomad";
 
 export interface WorkspaceComponentArgs {
   org: OrgSpec;
   spec: WorkspaceSpec;
+  /** Map of all top-level users (for collab policy generation). */
+  users: Map<string, UserSpec>;
 }
 
-// ---- component -------------------------------------------------------------
-
 export class WorkspaceComponent extends pulumi.ComponentResource {
-  /** Nomad namespace name (= MinIO bucket name = resourceName). */
   public readonly namespaceName: pulumi.Output<string>;
-  /** MinIO bucket name. */
   public readonly bucketName: pulumi.Output<string>;
-  /**
-   * Nomad ACL token secrets keyed by MinIO principal name.
-   * e.g. { "su-mbhg-bioinformatics_kim": "<secret-id>", ... }
-   * Pulumi Secret — never stored in plaintext state.
-   */
-  public readonly tokenSecrets: pulumi.Output<Record<string, string>>;
-  /**
-   * MinIO IAM credential records per principal.
-   * { accessKey, secretKey, role, scope, bucket }
-   * Pulumi Secret.
-   */
-  public readonly minioCredentials: pulumi.Output<Record<string, { accessKey: string; secretKey: string; role: string; scope: string; bucket: string }>>;
+  /** IAM/ACL policy resources surfaced to UserComponent for attachment. */
+  public readonly handles: WorkspaceIamHandles;
 
   constructor(
     resourceName: string,
@@ -51,34 +34,59 @@ export class WorkspaceComponent extends pulumi.ComponentResource {
     opts?: pulumi.ComponentResourceOptions,
   ) {
     super("abc:userspace:Workspace", resourceName, {}, opts);
+    const childOpts: pulumi.ComponentResourceOptions = { parent: this, ...opts };
 
-    const childOpts: pulumi.ComponentResourceOptions = {
-      parent: this,
-      ...opts,
-    };
-
-    // 1. Nomad resources — emits tokenSecrets (Nomad SecretIDs = MinIO passwords)
-    const nomadOut: NomadWorkspaceOutputs = provisionNomadWorkspace(
+    // 1. Nomad — namespace, ACL policies, optional submit token
+    const nomadOut: WorkspaceNomadOutputs = provisionWorkspaceNomad(
       resourceName,
       args.org,
       args.spec,
       childOpts,
     );
 
-    // 2. MinIO resources — consumes nomadOut.tokenSecrets to set MinIO passwords
-    const minioOut: MinioWorkspaceOutputs = provisionMinioWorkspace(
+    // 2. RustFS — bucket, IAM policies, optional submit IAM user
+    // submit IAM user password = submit Nomad token SecretID (one credential
+    // pair per identity, same convention as v1).
+    const submitPassword: pulumi.Output<string> = nomadOut.submitToken
+      ? pulumi.secret(nomadOut.submitToken.secretId)
+      : pulumi.output("");
+    const minioOut: WorkspaceMinioOutputs = provisionWorkspaceMinio(
       resourceName,
       args.org,
       args.spec,
-      nomadOut.tokenSecrets,
+      args.users,
+      submitPassword,
       childOpts,
     );
 
-    // Expose outputs
+    // 3. If the workspace has a submit account, write its IAM credential var.
+    if (minioOut.submit && nomadOut.submitToken) {
+      const submitScope = "pipelines/rw+samplesheets/ro+shared/ro";
+      const principal = minioOut.submit.principal;
+      new nomad.Variable(
+        `${resourceName}-submit-iamvar`,
+        {
+          namespace: new pulumi.Config().get("nomadIamNamespace") ?? "abc-services",
+          path: iamVarPath(
+            new pulumi.Config().get("nomadIamVarPrefix") ?? "nomad/jobs/abc-nodes-minio-iam",
+            principal,
+          ),
+          itemsWo: pulumi.interpolate`{"access_key":"${principal}","secret_key":"${minioOut.submit.password}","role":"submit","scope":"${submitScope}","bucket":"${resourceName}"}`,
+          itemsWoVersion: 1,
+        },
+        { ...childOpts, additionalSecretOutputs: ["itemsWo"], dependsOn: [minioOut.submit.ready] },
+      );
+    }
+
     this.namespaceName = nomadOut.namespaceName;
     this.bucketName = minioOut.bucketName;
-    this.tokenSecrets = nomadOut.tokenSecrets;
-    this.minioCredentials = minioOut.credentials;
+    this.handles = {
+      groupAdminMinio: minioOut.groupAdminPolicy,
+      memberMinio: minioOut.memberPolicy,
+      collabMinio: minioOut.collabPolicies,
+      groupAdminNomad: nomadOut.groupAdminPolicy,
+      memberNomad: nomadOut.memberPolicy,
+    };
 
     this.registerOutputs({
       namespaceName: this.namespaceName,

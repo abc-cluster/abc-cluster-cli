@@ -1,33 +1,34 @@
 // ---------------------------------------------------------------------------
-// minio.ts — MinIO resource provisioning per workspace.
+// minio.ts — Workspace-level S3 / IAM resources (per-workspace).
 //
-// Per workspace:
-//   • Bucket (always; survives suspension/archival)
-//   • Versioning: Enabled when active, Suspended otherwise
-//   • Top-level folder placeholders: users/, collab/, shared/, …
-//   • IAM policies + users for members, optional submit SA, and collaborators
-//     (only when active — suspending the workspace destroys the users + per-user
-//     IAM policies; data is preserved.)
-//   • Per-principal IAM credentials are written back to Nomad variables at
-//     <iamVarPrefix>/<principal> in the configured Nomad IAM namespace
-//     (defaults: prefix="nomad/jobs/abc-nodes-minio-iam", ns="abc-services").
+// Per-workspace this module emits:
+//   • S3 bucket + versioning
+//   • Top-level folder placeholders (users/, collab/, shared/, …)
+//   • IAM policies: group-admin, member (uses ${aws:username}), collab-<user>,
+//     pipeline-submit
+//   • Submit account (one IamUser + policy attach per workspace, if defined)
+//
+// Per-user IAM resources (the IAM users themselves and their policy
+// attachments) live in user.ts so a multi-workspace user has a single IAM
+// user with multiple policies attached — that's the whole point of v2.
+//
+// Compatible with both MinIO and RustFS:
+//   • IAM policy creation uses @pulumi/minio (works on both)
+//   • Policy attachment uses `mc admin policy attach` via local.Command
+//     (provider's IamUserPolicyAttachment fails on RustFS due to a
+//     Content-Length header strictness difference)
 // ---------------------------------------------------------------------------
 
 import * as pulumi from "@pulumi/pulumi";
 import * as minio from "@pulumi/minio";
-import * as nomad from "@pulumi/nomad";
 import * as command from "@pulumi/command";
-import { WorkspaceSpec, OrgSpec } from "./types";
+import { WorkspaceSpec, OrgSpec, UserSpec } from "./types";
 import {
   minioPolicyGroupAdmin,
-  minioPolicyUser,
+  minioPolicyMember,
   minioPolicyCollab,
   minioPolicySubmit,
-  memberPrincipal,
-  memberResourceSlug,
   principalSubmit,
-  principalCollab,
-  iamVarPath,
 } from "./naming";
 import {
   minioGroupAdminPolicy,
@@ -35,178 +36,86 @@ import {
   minioCollaboratorPolicy,
   minioPipelinePolicy,
 } from "./policies";
-import { memberRoles } from "./validate";
 
 // ---- config ----------------------------------------------------------------
 
 const cfg = new pulumi.Config();
-/** Nomad namespace where IAM credential variables are stored. */
-const NOMAD_IAM_NAMESPACE = cfg.get("nomadIamNamespace") ?? "abc-services";
-/** Variable path prefix for IAM creds. */
-const NOMAD_IAM_VAR_PREFIX = cfg.get("nomadIamVarPrefix") ?? "nomad/jobs/abc-nodes-minio-iam";
 /**
  * When true, IAM users and S3 buckets are created with forceDestroy=true so
  * `pulumi destroy` removes them along with their attached policies, all
- * object versions, and delete markers. Default is false — `pulumi destroy`
- * will fail on non-empty buckets, preventing accidental data loss. Flip with
- *   pulumi config set allowDestroy true
- * before destroying a stack.
+ * object versions, and delete markers. Default false.
  */
 export const ALLOW_DESTROY = cfg.getBoolean("allowDestroy") ?? false;
 
-// MinIO admin credentials, read from the same `minio:` config namespace the
-// @pulumi/minio provider uses. Re-used by local.Command's that need to call
-// `mc admin ...` (e.g. enabling IAM users after attachment lands).
+// MinIO/RustFS admin credentials — read from the same `minio:` config the
+// @pulumi/minio provider uses. Reused by local.Command's that call
+// `mc admin …` (policy attach, user enable cycle).
 const minioCfg          = new pulumi.Config("minio");
-const MINIO_ADMIN_HOST  = minioCfg.require("minioServer");          // host:port
+const MINIO_ADMIN_HOST  = minioCfg.require("minioServer");
 const MINIO_ADMIN_USER  = minioCfg.require("minioUser");
 const MINIO_ADMIN_PASS  = minioCfg.requireSecret("minioPassword");
 const MINIO_ADMIN_SSL   = minioCfg.getBoolean("minioSsl") ?? false;
 const MINIO_ADMIN_SCHEME = MINIO_ADMIN_SSL ? "https" : "http";
 
-// ---- helpers ---------------------------------------------------------------
-
-/**
- * Provision a MinIO IAM user, attach its scoped policy, and flush the IAM
- * identity cache so the attachment is authoritative immediately.
- *
- * Why mc instead of `minio.IamUserPolicyAttachment`:
- *   The @pulumi/minio provider's IamUserPolicyAttachment sends an HTTP
- *   request without a Content-Length header, which MinIO accepts but RustFS
- *   (the S3-compatible backend we run today) rejects with
- *   `missing header: content-length`. Using `mc admin policy attach` via a
- *   local.Command works against both backends, so this template is portable
- *   across MinIO and RustFS without further changes.
- *
- * Sequence:
- *   1. IamUser is created by the provider (the user-create path works fine
- *      on both MinIO and RustFS).
- *   2. local.Command runs `mc admin policy attach` to bind the scoped policy,
- *      then `disable && enable` to flush the IAM identity cache so the
- *      attached policy is the authoritative one for the next request — this
- *      closes the brief post-create window where a user has overly permissive
- *      defaults.
- *   3. On destroy, the same Command runs `mc admin policy detach` so the
- *      policy is cleanly disassociated before the IamUser is removed (and
- *      before any per-user IamPolicy is removed).
- */
-function provisionMinioUser(
-  ns: string,
-  slug: string,
-  username: string,
-  password: pulumi.Input<string>,
-  policyResource: minio.IamPolicy,
-  opts: pulumi.ComponentResourceOptions,
-): { user: minio.IamUser; ready: pulumi.Resource } {
-  const user = new minio.IamUser(
-    `${ns}-user-${slug}`,
-    {
-      name: username,
-      secret: password,
-      forceDestroy: ALLOW_DESTROY,
-    },
-    opts,
+/** mc-style URL with admin creds, suitable for `MC_HOST_<alias>` env var. */
+export const MC_HOST_URL: pulumi.Output<string> = pulumi
+  .all([MINIO_ADMIN_USER, MINIO_ADMIN_PASS])
+  .apply(([u, p]) =>
+    `${MINIO_ADMIN_SCHEME}://${encodeURIComponent(u)}:${encodeURIComponent(p)}@${MINIO_ADMIN_HOST}`,
   );
-
-  // mc reads MC_HOST_<alias> from env, so we synthesise an alias URL with the
-  // admin creds from `minio:` Pulumi config (same source the provider uses).
-  const mcHost = pulumi
-    .all([MINIO_ADMIN_USER, MINIO_ADMIN_PASS])
-    .apply(([u, p]) =>
-      `${MINIO_ADMIN_SCHEME}://${encodeURIComponent(u)}:${encodeURIComponent(p)}@${MINIO_ADMIN_HOST}`,
-    );
-
-  const attach = new command.local.Command(
-    `${ns}-attach-${slug}`,
-    {
-      create:
-        `mc admin policy attach userspace "$POLICY" --user "$TARGET_USER" && ` +
-        `mc admin user disable userspace "$TARGET_USER" && ` +
-        `mc admin user enable userspace "$TARGET_USER"`,
-      // detach on destroy; tolerate "already detached / user gone" by ORing
-      // with true so the command never blocks the rest of the destroy path.
-      delete:
-        `mc admin policy detach userspace "$POLICY" --user "$TARGET_USER" || true`,
-      // re-run whenever username or policy name changes
-      triggers: [pulumi.all([username, policyResource.name]).apply(([u, p]) => `${u}|${p}`)],
-      environment: {
-        TARGET_USER: username,
-        POLICY: policyResource.name,
-        MC_HOST_userspace: mcHost,
-      },
-    },
-    { ...opts, dependsOn: [policyResource, user] },
-  );
-
-  return { user, ready: attach };
-}
-
-/**
- * Write a MinIO IAM credential to a Nomad variable.
- *
- * Uses itemsWo (write-only) exclusively — Pulumi never stores any credential
- * value in plaintext stack state. Fields match the SYNC_NOMAD_VARS format used
- * by setup-minio-namespace-buckets.sh.
- */
-function writeNomadIamVar(
-  ns: string,
-  principal: string,
-  secretKey: pulumi.Input<string>,
-  role: PrincipalCredential["role"],
-  scope: string,
-  opts: pulumi.ComponentResourceOptions,
-): void {
-  const resourceId = principal.replace(/_/g, "-");
-  new nomad.Variable(
-    `${ns}-minio-var-${resourceId}`,
-    {
-      namespace: NOMAD_IAM_NAMESPACE,
-      path: iamVarPath(NOMAD_IAM_VAR_PREFIX, principal),
-      itemsWo: pulumi.interpolate`{"access_key":"${principal}","secret_key":"${secretKey}","role":"${role}","scope":"${scope}","bucket":"${ns}"}`,
-      itemsWoVersion: 1,
-    },
-    { ...opts, additionalSecretOutputs: ["itemsWo"] },
-  );
-}
 
 // ---- exported types --------------------------------------------------------
 
-export interface MinioWorkspaceOutputs {
+/** Resources produced by provisioning a single workspace's S3 + IAM bits. */
+export interface WorkspaceMinioOutputs {
+  /** Bucket name (= ns). */
   bucketName: pulumi.Output<string>;
-  credentials: pulumi.Output<Record<string, PrincipalCredential>>;
+  /** group-admin IAM policy (one per workspace). */
+  groupAdminPolicy: minio.IamPolicy;
+  /** Single member IAM policy with ${aws:username} substitution. */
+  memberPolicy: minio.IamPolicy;
+  /** Per-collaborator IAM policies, keyed by collaborator user name. */
+  collabPolicies: Record<string, minio.IamPolicy>;
+  /** Submit account resources (if the workspace defined a submitAccount). */
+  submit?: SubmitAccountOutputs;
 }
 
-export interface PrincipalCredential {
-  accessKey: string;
-  secretKey: string;
-  role: "group-admin" | "user" | "collab" | "submit";
-  scope: string;
-  bucket: string;
+export interface SubmitAccountOutputs {
+  /** IAM user resource for the submit account principal. */
+  user: minio.IamUser;
+  /** local.Command that runs after policy attach + IAM cache flush. */
+  ready: pulumi.Resource;
+  /** Principal name — used by writeNomadIamVar in the submit credential write. */
+  principal: string;
+  /** The pipeline-submit IAM policy. */
+  policy: minio.IamPolicy;
+  /** Password used for the IAM user (= Nomad token SecretID). */
+  password: pulumi.Output<string>;
 }
 
-// ---- main provisioner ------------------------------------------------------
+// ---- provisioner -----------------------------------------------------------
 
-export function provisionMinioWorkspace(
+export function provisionWorkspaceMinio(
   resourceName: string,
   org: OrgSpec,
   spec: WorkspaceSpec,
-  nomadTokenSecrets: pulumi.Output<Record<string, string>>,
+  /** Map of user name → user spec, for collab policy generation. */
+  users: Map<string, UserSpec>,
+  /** Submit-account password (Nomad token SecretID); empty if none. */
+  submitPassword: pulumi.Output<string>,
   opts: pulumi.ComponentResourceOptions,
-): MinioWorkspaceOutputs {
+): WorkspaceMinioOutputs {
   const ns = resourceName;
   const isActive = (spec.state ?? "active") === "active";
 
   // ------------------------------------------------------------------
-  // 1. Bucket (kept across all non-deleted states — data survives suspension)
+  // 1. Bucket + versioning
   // ------------------------------------------------------------------
   const bucket = new minio.S3Bucket(
     `${ns}-bucket`,
     {
       bucket: ns,
       objectLocking: false,
-      // Gate on ALLOW_DESTROY so `pulumi destroy` only nukes data when the
-      // operator has explicitly opted in. With versioning enabled the
-      // provider deletes every object version + delete marker on destroy.
       forceDestroy: ALLOW_DESTROY,
     },
     opts,
@@ -215,250 +124,151 @@ export function provisionMinioWorkspace(
   const versioningStatus = isActive ? "Enabled" : "Suspended";
   new minio.S3BucketVersioning(
     `${ns}-versioning`,
-    {
-      bucket: bucket.bucket,
-      versioningConfiguration: { status: versioningStatus },
-    },
+    { bucket: bucket.bucket, versioningConfiguration: { status: versioningStatus } },
     { ...opts, dependsOn: [bucket] },
   );
 
   // ------------------------------------------------------------------
   // 2. Top-level folder placeholders
   // ------------------------------------------------------------------
-  const mkPlaceholder = (name: string, objectName: string) =>
+  const mkPlaceholder = (slug: string, key: string) =>
     new minio.S3Object(
-      `${ns}-ph-${name}`,
+      `${ns}-ph-${slug}`,
       {
         bucketName: bucket.bucket,
-        objectName,
+        objectName: key,
         contentType: "application/octet-stream",
         content: "\n",
       },
       { ...opts, dependsOn: [bucket], ignoreChanges: ["content"] },
     );
 
-  mkPlaceholder("users",         "users/.keep");
-  mkPlaceholder("collab",        "collab/.keep");
-  mkPlaceholder("shared",        "shared/.keep");
-  mkPlaceholder("shared-refs",   "shared/references-and-databases/.keep");
-  mkPlaceholder("shared-users",  "shared/users/.keep");
-  mkPlaceholder("samplesheets",  "samplesheets/.keep");
-  mkPlaceholder("pipelines",     "pipelines/.keep");
+  mkPlaceholder("users",        "users/.keep");
+  mkPlaceholder("collab",       "collab/.keep");
+  mkPlaceholder("shared",       "shared/.keep");
+  mkPlaceholder("shared-refs",  "shared/references-and-databases/.keep");
+  mkPlaceholder("shared-users", "shared/users/.keep");
+  mkPlaceholder("samplesheets", "samplesheets/.keep");
+  mkPlaceholder("pipelines",    "pipelines/.keep");
+
+  // Per-member folder placeholders (users/<name>/ and shared/users/<name>/)
+  // need to exist for each group-member who shows up in this workspace.
+  // group-admins also write there sometimes — pre-create for any user with
+  // any role in the workspace.
+  const seenUserFolders = new Set<string>();
+  for (const m of spec.members ?? []) {
+    if (seenUserFolders.has(m.user)) continue;
+    seenUserFolders.add(m.user);
+    mkPlaceholder(`users-${m.user}`,        `users/${m.user}/.keep`);
+    mkPlaceholder(`shared-users-${m.user}`, `shared/users/${m.user}/.keep`);
+  }
+  for (const c of spec.collaborators ?? []) {
+    mkPlaceholder(`collab-${c.user}`, `collab/${c.user}/.keep`);
+  }
 
   // ------------------------------------------------------------------
-  // 3. Group-admin IAM policy (always declared; cheap to keep on suspend)
+  // 3. IAM policies — group-admin + member (one each, per workspace)
   // ------------------------------------------------------------------
-  const groupAdminIamPolicy = new minio.IamPolicy(
+  const groupAdminPolicy = new minio.IamPolicy(
     `${ns}-iam-group-admin`,
-    {
-      name: minioPolicyGroupAdmin(ns),
-      policy: minioGroupAdminPolicy(ns),
-    },
+    { name: minioPolicyGroupAdmin(ns), policy: minioGroupAdminPolicy(ns) },
     opts,
   );
 
-  const credOutputs: pulumi.Output<{ key: string; cred: PrincipalCredential }>[] = [];
+  const memberPolicy = new minio.IamPolicy(
+    `${ns}-iam-member`,
+    { name: minioPolicyMember(ns), policy: minioMemberPolicy(ns) },
+    opts,
+  );
 
   // ------------------------------------------------------------------
-  // 4. Submit account (active only)
+  // 4. Per-collaborator IAM policies (one per active collaborator)
   // ------------------------------------------------------------------
+  const collabPolicies: Record<string, minio.IamPolicy> = {};
+  if (isActive) {
+    for (const c of spec.collaborators ?? []) {
+      collabPolicies[c.user] = new minio.IamPolicy(
+        `${ns}-iam-collab-${c.user}`,
+        {
+          name: minioPolicyCollab(ns, c.user),
+          policy: minioCollaboratorPolicy(ns, c.user),
+        },
+        opts,
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 5. Submit account (per-workspace; remains a single IAM user
+  //    because there's no top-level user counterpart).
+  // ------------------------------------------------------------------
+  let submit: SubmitAccountOutputs | undefined;
   if (spec.submitAccount && isActive) {
-    const submitIamPolicy = new minio.IamPolicy(
+    const submitPolicy = new minio.IamPolicy(
       `${ns}-iam-submit`,
-      {
-        name: minioPolicySubmit(ns),
-        policy: minioPipelinePolicy(ns),
-      },
+      { name: minioPolicySubmit(ns), policy: minioPipelinePolicy(ns) },
       opts,
     );
 
     const submitMinioUser = principalSubmit(ns);
-    const submitPassword = nomadTokenSecrets.apply(
-      (m) => m[submitMinioUser] ?? "",
+    const submitUser = new minio.IamUser(
+      `${ns}-user-submit`,
+      { name: submitMinioUser, secret: submitPassword, forceDestroy: ALLOW_DESTROY },
+      opts,
     );
 
-    provisionMinioUser(ns, "submit", submitMinioUser, submitPassword, submitIamPolicy, opts);
-
-    const submitScope = "pipelines/rw+samplesheets/ro+shared/ro";
-    writeNomadIamVar(ns, submitMinioUser, submitPassword, "submit", submitScope, opts);
-
-    credOutputs.push(
-      submitPassword.apply((secret) => ({
-        key: submitMinioUser,
-        cred: {
-          accessKey: submitMinioUser,
-          secretKey: secret,
-          role: "submit" as const,
-          scope: submitScope,
-          bucket: ns,
-        },
-      })),
+    const submitReady = mkAttachCommand(
+      `${ns}-attach-submit`,
+      submitMinioUser,
+      submitPolicy.name,
+      [submitPolicy, submitUser],
+      opts,
     );
+
+    submit = { user: submitUser, ready: submitReady, principal: submitMinioUser, policy: submitPolicy, password: submitPassword };
   }
-
-  // ------------------------------------------------------------------
-  // 5. Per-member IAM policies + users (active only)
-  // ------------------------------------------------------------------
-  if (isActive) {
-    // Per-member, per-role: each role gets its own MinIO user, IAM attachment,
-    // and Nomad credential variable. group-member roles share one per-user
-    // IAM policy (and folder placeholders) regardless of how many other roles
-    // the same person holds.
-    const memberFolderInitialised = new Set<string>();
-
-    for (const member of spec.members ?? []) {
-      const roles = memberRoles(member);
-
-      for (const role of roles) {
-        const minioUsername = memberPrincipal(ns, role, member.name);
-        const slug = memberResourceSlug(role, member.name);
-
-        const memberPassword = nomadTokenSecrets.apply(
-          (m) => m[minioUsername] ?? "",
-        );
-
-        let iamPolicyResource: minio.IamPolicy;
-        let roleName: "group-admin" | "user";
-        let scopeStr: string;
-
-        if (role === "group-admin") {
-          iamPolicyResource = groupAdminIamPolicy;
-          roleName = "group-admin";
-          scopeStr = "bucket-full";
-        } else {
-          iamPolicyResource = new minio.IamPolicy(
-            `${ns}-iam-user-${member.name}`,
-            {
-              name: minioPolicyUser(ns, member.name),
-              policy: minioMemberPolicy(ns, member.name),
-            },
-            opts,
-          );
-          roleName = "user";
-          scopeStr = `users/${member.name}/rw+shared/users/${member.name}/rw+shared/ro+samplesheets/ro+pipelines/ro`;
-
-          if (!memberFolderInitialised.has(member.name)) {
-            mkPlaceholder(`users-${member.name}`,        `users/${member.name}/.keep`);
-            mkPlaceholder(`shared-users-${member.name}`, `shared/users/${member.name}/.keep`);
-            memberFolderInitialised.add(member.name);
-          }
-        }
-
-        provisionMinioUser(ns, slug, minioUsername, memberPassword, iamPolicyResource, opts);
-
-        writeNomadIamVar(ns, minioUsername, memberPassword, roleName, scopeStr, opts);
-
-        const capRole = roleName;
-        const capScope = scopeStr;
-        credOutputs.push(
-          memberPassword.apply((secret) => ({
-            key: minioUsername,
-            cred: {
-              accessKey: minioUsername,
-              secretKey: secret,
-              role: capRole,
-              scope: capScope,
-              bucket: ns,
-            },
-          })),
-        );
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // 6. Collaborators (active only, expiresAt > now).
-  //
-  // Expired collaborators are skipped entirely — their IAM user, IAM policy,
-  // and `collab/<name>/.keep` placeholder are removed by Pulumi diff on the
-  // first `pulumi up` after expiry. Bucket data under collab/<name>/ is
-  // preserved (the placeholder `.keep` deletion does not remove the prefix's
-  // other objects). Operators still need to remove the YAML entry to keep
-  // the spec tidy.
-  //
-  // Password requirement: collaborators do NOT get a Nomad token; their MinIO
-  // password must be pre-seeded by the operator with
-  //   pulumi config set --secret collabPassword:<ns>_collab-<name> <password>
-  // Missing → hard fail (no weak fallback).
-  // ------------------------------------------------------------------
-  const now = new Date();
-  if (isActive) {
-    for (const collab of spec.collaborators ?? []) {
-      const expiry = new Date(collab.expiresAt + "T00:00:00Z");
-      if (expiry <= now) {
-        pulumi.log.warn(
-          `Collaborator ${collab.name} in ${ns} expired ${collab.expiresAt}; resources destroyed (collab/${collab.name}/ data preserved).`,
-        );
-        continue;
-      }
-
-      const collabMinioUser = principalCollab(ns, collab.name);
-
-      const collabIamPolicy = new minio.IamPolicy(
-        `${ns}-iam-collab-${collab.name}`,
-        {
-          name: minioPolicyCollab(ns, collab.name),
-          policy: minioCollaboratorPolicy(ns, collab.name),
-        },
-        opts,
-      );
-
-      // Pre-seeded via `pulumi config set --secret collabPassword_<principal> <pw>`.
-      // Hard-fail if missing — no fallback to a guessable password.
-      // Note: Pulumi config keys cannot contain ':' in the name, so we use '_'
-      // as the separator after the "collabPassword" prefix.
-      const configKey = `collabPassword_${collabMinioUser}`;
-      const collabPassword = cfg.requireSecret(configKey);
-
-      provisionMinioUser(
-        ns,
-        `collab-${collab.name}`,
-        collabMinioUser,
-        collabPassword,
-        collabIamPolicy,
-        opts,
-      );
-
-      mkPlaceholder(`collab-${collab.name}`, `collab/${collab.name}/.keep`);
-
-      const collabScope = `collab/${collab.name}/rw+shared/ro`;
-      writeNomadIamVar(ns, collabMinioUser, collabPassword, "collab", collabScope, opts);
-
-      credOutputs.push(
-        collabPassword.apply((secret) => ({
-          key: collabMinioUser,
-          cred: {
-            accessKey: collabMinioUser,
-            secretKey: secret,
-            role: "collab" as const,
-            scope: collabScope,
-            bucket: ns,
-          },
-        })),
-      );
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // 7. Merge credentials
-  // ------------------------------------------------------------------
-  const credentials: pulumi.Output<Record<string, PrincipalCredential>> =
-    credOutputs.length > 0
-      ? pulumi.secret(
-          pulumi.all(credOutputs).apply((entries) =>
-            entries.reduce(
-              (acc, { key, cred }) => {
-                acc[key] = cred;
-                return acc;
-              },
-              {} as Record<string, PrincipalCredential>,
-            ),
-          ),
-        )
-      : pulumi.output({} as Record<string, PrincipalCredential>);
 
   return {
     bucketName: bucket.bucket,
-    credentials,
+    groupAdminPolicy,
+    memberPolicy,
+    collabPolicies,
+    submit,
   };
+}
+
+// ---- helpers shared with user.ts ------------------------------------------
+
+/**
+ * Run `mc admin policy attach` (and a disable→enable cycle to flush IAM
+ * cache) against the configured MinIO/RustFS endpoint. Idempotent on re-runs;
+ * `mc admin policy detach` runs on destroy.
+ *
+ * Used by both the per-workspace submit account and per-user attachments
+ * emitted by user.ts. Returns the local.Command for use as a dependency.
+ */
+export function mkAttachCommand(
+  resourceName: string,
+  username: pulumi.Input<string>,
+  policyName: pulumi.Input<string>,
+  dependsOn: pulumi.Resource[],
+  opts: pulumi.ComponentResourceOptions,
+): command.local.Command {
+  return new command.local.Command(
+    resourceName,
+    {
+      create:
+        `mc admin policy attach userspace "$POLICY" --user "$TARGET_USER" && ` +
+        `mc admin user disable userspace "$TARGET_USER" && ` +
+        `mc admin user enable userspace "$TARGET_USER"`,
+      delete: `mc admin policy detach userspace "$POLICY" --user "$TARGET_USER" || true`,
+      triggers: [pulumi.all([username, policyName]).apply(([u, p]) => `${u}|${p}`)],
+      environment: {
+        TARGET_USER: pulumi.output(username) as unknown as pulumi.Input<string>,
+        POLICY: pulumi.output(policyName) as unknown as pulumi.Input<string>,
+        MC_HOST_userspace: MC_HOST_URL,
+      },
+    },
+    { ...opts, dependsOn },
+  );
 }

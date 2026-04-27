@@ -14,6 +14,6 @@ config:
     secure: AAABAI0Twjkuq1C3eFTIHs98/MwtwMBzSFhdAs0Bn/LqbyFfc7vQt0z1H0kCqWA8Y89cn5uddAXQp+n+9u2/v+9qVkA=
   minio:minioPassword:
     secure: AAABAAg4RABlSSql3HNH3QPu5VsBxqjDfOA9El4uAHVhNqZjmcGr4/yz3Q==
-  abc-userspace:collabPassword_su-mbhg-bioinformatics_collab-dave-uct:
-    secure: AAABAGbMrUN6KeZWpqvo9wWbA1mluYDC/RTtOI1yTnLAYKRYwxhtpL9Q5a/jk3Q85a4WyzmYNMon3GVW
   abc-userspace:allowDestroy: "true"
+  abc-userspace:collabPassword_dave-uct:
+    secure: AAABAEEA7uyN24OEN3iZfkJ5JHLX1SeYKZHeubD+USCHjYPRUVhOYoXMo2u5jXP+NNVFk/0JGccYLF/r

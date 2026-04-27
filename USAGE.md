@@ -1001,6 +1001,9 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--port`                        | `--port=<label>`                    | Named dynamic port; injects `NOMAD_IP/PORT/ADDR_<label>`          |
 | `--constraint=<attr><op><val>`  | `--constraint=<attr><op><val>`      | Nomad placement constraint (repeatable). Ops: `== != =~ !~ < <= > >=` |
 | `--affinity=<expr>[,weight=N]`  | `--affinity=<expr>[,weight=N]`      | Nomad placement affinity (repeatable)                             |
+| `--spread`                      | `--spread`                          | Emit a Nomad `spread` stanza on `${node.unique.id}`; best-effort 1-per-node distribution for scatter jobs |
+| `--reservation=<name>`          | `--reservation=<name>`              | SLURM reservation name (`--driver=slurm` or `hpc-bridge`)        |
+| `--slurm-extra=<arg>`           | `--slurm-extra=<arg>`               | Extra `sbatch` argument (repeatable); e.g. `--slurm-extra='--qos=high'` |
 | *(preamble only)*               | `--driver.config.<key>=<val>`       | Arbitrary driver config field                                     |
 
 #### Reschedule flags
@@ -1148,6 +1151,37 @@ also understood (mapped to their ABC equivalents) for SLURM script compatibility
 #ABC --cores=8    # 8 cores per task (inline comments are stripped)
 ```
 
+#### `#SBATCH` directive support
+
+When a script contains at least one `#SBATCH` line (and `--preamble-mode` is `auto` or `slurm`),
+the following `#SBATCH` directives are translated:
+
+| `#SBATCH` directive | ABC equivalent |
+|---------------------|----------------|
+| `--job-name` / `-J` | `--name` |
+| `--cpus-per-task` / `-c` | `--cores` |
+| `--mem` | `--mem` |
+| `--time` / `-t` | `--time` |
+| `--partition` / `-p` | SLURM partition (driver config) |
+| `--account` / `-A` | SLURM account (driver config) |
+| `--output` / `-o` | SLURM stdout file (driver config) |
+| `--error` / `-e` | SLURM stderr file (driver config) |
+| `--chdir` / `-D` | `--chdir` |
+| `--ntasks` | SLURM ntasks (driver config) |
+| `--qos` | appended to `--slurm-extra` (e.g. `--qos=high` → `--slurm-extra=--qos=high`) |
+| `--reservation` | `--reservation` |
+| `--nodes`, `--exclusive`, `--gres`, `--constraint`, `--licenses` | silently accepted (cluster-topology; not translated) |
+
+Any other unrecognised `#SBATCH` directive emits a warning to stderr so scripts don't silently drop options.
+
+**`#ABC` SLURM-specific directives** (valid in preamble, and as CLI flags):
+
+| Directive | Description |
+|-----------|-------------|
+| `#ABC --spread` | Emit a Nomad `spread` stanza; 1-per-node best-effort for scatter jobs |
+| `#ABC --reservation=<name>` | SLURM reservation name |
+| `#ABC --slurm-extra=<arg>` | Extra `sbatch` argument (repeatable) |
+
 ### Examples
 
 ```bash
@@ -1173,15 +1207,17 @@ abc job run bwa-align.sh --submit --nodes=96 --cores=16
 abc job run bwa-align.sh --output-file bwa-align.hcl
 ```
 
-### Annotated script example
+### Annotated script examples
 
 ```bash
 #!/bin/bash
+# Nomad exec driver — scatter across all nodes (1-per-node)
 #ABC --name=ocean-model
 #ABC --nodes=4
 #ABC --cores=28
 #ABC --mem=64G
 #ABC --time=02:00:00
+#ABC --spread            # best-effort 1-per-node distribution
 #ABC --alloc_id          # expose NOMAD_ALLOC_ID
 #ABC --alloc_index       # expose NOMAD_ALLOC_INDEX (0-based, for sharding)
 #ABC --task_dir          # expose NOMAD_TASK_DIR
@@ -1190,6 +1226,21 @@ abc job run bwa-align.sh --output-file bwa-align.hcl
 #ABC --meta=sample_id=S001
 
 mpirun -np 112 ./ocean_model
+```
+
+```bash
+#!/bin/bash
+# SLURM driver — submit through the slurm or hpc-bridge task driver
+#SBATCH --job-name=gwas-scan
+#SBATCH --partition=compute
+#SBATCH --account=mygroup
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=02:00:00
+#SBATCH --qos=high           # mapped to --slurm-extra=--qos=high
+#SBATCH --reservation=maint  # mapped to --reservation=maint
+
+plink2 --bfile /data/cohort --assoc --out /scratch/results
 ```
 
 ---
@@ -1227,6 +1278,10 @@ abc job show <job-id> [flags]
 | Flag          | Description     |
 |---------------|-----------------|
 | `--namespace` | Nomad namespace |
+
+When a job was submitted via the `slurm` or `hpc-bridge` driver, `abc job show` additionally
+displays a **SLURM JOB IDS** table mapping each Nomad allocation to its native SLURM job ID.
+This lets you cross-reference `squeue`/`sacct` output without extra lookups.
 
 ```bash
 abc job show script-job-bwa-align-a1b2c3d4

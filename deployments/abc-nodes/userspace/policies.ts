@@ -12,7 +12,7 @@
 // "./naming".
 export {
   minioPolicyGroupAdmin as minioGroupAdminPolicyName,
-  minioPolicyUser       as minioUserPolicyName,
+  minioPolicyMember     as minioMemberPolicyName,
   minioPolicyCollab     as minioCollaboratorPolicyName,
 } from "./naming";
 
@@ -201,13 +201,18 @@ export function minioGroupAdminPolicy(bucket: string): string {
 /**
  * member: scoped access reflecting the bucket layout.
  *
- * R/W:  users/<username>/, shared/users/<username>/
+ * Single per-workspace policy that uses the IAM `${aws:username}` policy
+ * variable so one policy works for every member of the workspace — at
+ * authorization time the variable is substituted with the requesting user's
+ * IAM username, scoping access to that user's own prefixes.
+ *
+ * R/W:  users/${aws:username}/, shared/users/${aws:username}/
  * R/O:  shared/, samplesheets/, pipelines/
- * tusd: own uploads/<username>/ put + get
+ * tusd: own uploads/${aws:username}/ put + get
  */
-export function minioMemberPolicy(bucket: string, username: string): string {
-  const privatePrefix    = `users/${username}/`;
-  const sharedUserPrefix = `shared/users/${username}/`;
+export function minioMemberPolicy(bucket: string): string {
+  const privatePrefix    = `users/\${aws:username}/`;
+  const sharedUserPrefix = `shared/users/\${aws:username}/`;
 
   return JSON.stringify(
     {
@@ -250,7 +255,7 @@ export function minioMemberPolicy(bucket: string, username: string): string {
           Sid: "TusdUploadOwnFiles",
           Effect: "Allow",
           Action: ["s3:PutObject", "s3:GetObject"],
-          Resource: [`arn:aws:s3:::tusd/uploads/${username}/*`],
+          Resource: [`arn:aws:s3:::tusd/uploads/\${aws:username}/*`],
         },
       ],
     },

@@ -87,11 +87,19 @@ version: v2
 # Every human + service-account principal. Each gets one Nomad token and
 # one RustFS IAM user. Add an entry once; reference by `user:` in workspaces.
 users:
-  # SU-MBHG
-  - name: kim
-    email: kim@sun.ac.za
+  # Cluster operators — group-admin in every workspace.
+  # `ops` is a shared service account (break-glass admin); abhi + gvds are
+  # named operators so audit logs attribute actions to a real person.
+  - name: ops
+    email: ops@sun.ac.za
   - name: abhi
     email: abhinavdsharma@sun.ac.za
+  - name: gvds
+    email: gvds@sun.ac.za
+
+  # SU-MBHG members
+  - name: kim
+    email: kim@sun.ac.za
   - name: yentl
     email: yentl@sun.ac.za
   - name: devon
@@ -103,12 +111,12 @@ users:
   - name: hanno
     email: hanno@sun.ac.za
 
-  # SU-PSY
+  # SU-PSY members
   - name: lauren
     email: lauren@sun.ac.za
 
-  # SU-SDSCT
-  - name: tj
+  # SU-SDSCT members
+  - name: tjsanko
     email: tj@sun.ac.za
   - name: eduan
     email: eduan@sun.ac.za
@@ -135,11 +143,16 @@ organizations:
         contact: bioinformatics-pi@sun.ac.za
         ntfyTopic: su-mbhg-bioinformatics-jobs
         members:
-          - user: kim
-            role: group-member
-          # abhi is the workspace admin (single role; group-admin implies member)
+          # Cluster operators (group-admin everywhere)
+          - user: ops
+            role: group-admin
           - user: abhi
             role: group-admin
+          - user: gvds
+            role: group-admin
+          # Lab members
+          - user: kim
+            role: group-member
         submitAccount:
           description: "nf-nomad Nextflow plugin service account"
         collaborators:
@@ -153,6 +166,13 @@ organizations:
         contact: hostgen-pi@sun.ac.za
         ntfyTopic: su-mbhg-hostgen-jobs
         members:
+          - user: ops
+            role: group-admin
+          - user: abhi
+            role: group-admin
+          - user: gvds
+            role: group-admin
+          # yentl is the lab lead (also group-admin); devon + dayna are members
           - user: yentl
             role: group-admin
           - user: devon
@@ -169,6 +189,12 @@ organizations:
         contact: animaltb-pi@sun.ac.za
         ntfyTopic: su-mbhg-animaltb-jobs
         members:
+          - user: ops
+            role: group-admin
+          - user: abhi
+            role: group-admin
+          - user: gvds
+            role: group-admin
           - user: stacey
             role: group-admin
 
@@ -179,6 +205,12 @@ organizations:
         contact: tbgenomics-pi@sun.ac.za
         ntfyTopic: su-mbhg-tbgenomics-jobs
         members:
+          - user: ops
+            role: group-admin
+          - user: abhi
+            role: group-admin
+          - user: gvds
+            role: group-admin
           - user: hanno
             role: group-admin
 
@@ -195,6 +227,12 @@ organizations:
         priority: normal
         ntfyTopic: su-psy-neuropsychiatry-jobs
         members:
+          - user: ops
+            role: group-admin
+          - user: abhi
+            role: group-admin
+          - user: gvds
+            role: group-admin
           - user: lauren
             role: group-admin
 
@@ -211,7 +249,13 @@ organizations:
         priority: normal
         ntfyTopic: su-sdsct-ceri-jobs
         members:
-          - user: tj
+          - user: ops
+            role: group-admin
+          - user: abhi
+            role: group-admin
+          - user: gvds
+            role: group-admin
+          - user: tjsanko
             role: group-admin
           - user: eduan
             role: group-member

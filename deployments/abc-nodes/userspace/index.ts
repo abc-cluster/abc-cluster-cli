@@ -1,36 +1,36 @@
 // ---------------------------------------------------------------------------
-// index.ts — Pulumi entry point for abc-userspace.
+// index.ts — Pulumi entry point for abc-userspace (schema v2).
 //
-// Reads workspaces.yaml (or the path set in `pulumi config set specFile ...`),
-// validates it, then iterates over orgs → workspaces and instantiates a
-// WorkspaceComponent for each non-deleted workspace.
+// Order of operations:
+//   1. Load + validate workspaces.yaml (must be version: v2)
+//   2. For each non-deleted workspace, instantiate WorkspaceComponent
+//      → emits namespace, bucket, ACL/IAM policies, submit account
+//   3. For each top-level user, instantiate per-user resources
+//      → one Nomad token + one IAM user with policies attached for every
+//        (workspace, role) the user holds
+//   4. Export a workspaceSummary suitable for `pulumi stack output --json`
 //
 // Quick-start:
 //   cd deployments/abc-nodes/userspace
 //   npm install
 //   npm run build
-//   pulumi stack init dev
+//   pulumi stack init <name>
 //   pulumi config set nomadAddress http://nomad.example.com:4646
-//   pulumi config set minioEndpoint minio.example.com:9000
-//   pulumi config set --secret nomadToken <management-token>
-//   pulumi config set --secret minioAccessKey <access-key>
-//   pulumi config set --secret minioSecretKey <secret-key>
+//   pulumi config set minioEndpoint <rustfs-host>:9900
+//   pulumi config set --secret nomad:secretId <management-token>
+//   pulumi config set --secret minio:minioPassword <admin-password>
+//   pulumi config set minio:minioUser <admin-user>
 //   pulumi up
 //
 // Optional config:
 //   nomadIamNamespace  — namespace for IAM cred variables (default: abc-services)
 //   nomadIamVarPrefix  — variable path prefix (default: nomad/jobs/abc-nodes-minio-iam)
-//   allowDestroy       — boolean (default: false). When true, IAM users and S3
-//                        buckets are created with forceDestroy=true so
-//                        `pulumi destroy` removes everything including all
-//                        object versions and delete markers. Set this and run
-//                        `pulumi up` once to flip the flag, then `pulumi
-//                        destroy`. Without it, destroy fails on non-empty
-//                        buckets to prevent accidental data loss.
+//   allowDestroy       — boolean (default: false). When true, IAM users and
+//                        S3 buckets are forceDestroy=true so `pulumi destroy`
+//                        wipes everything including object versions.
 //
-// Per-collaborator passwords (no fallback — required when state=active and
-// collaborator is not expired):
-//   pulumi config set --secret collabPassword_<ns>_collab-<name> <password>
+// Per-collaborator passwords (no fallback — required when state=active):
+//   pulumi config set --secret collabPassword_<user> <password>
 // ---------------------------------------------------------------------------
 
 import * as pulumi from "@pulumi/pulumi";
@@ -38,10 +38,10 @@ import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "js-yaml";
 
-import { WorkspacesSpec, ResolvedWorkspace } from "./types";
+import { WorkspacesSpec, UserSpec } from "./types";
 import { WorkspaceComponent } from "./workspace";
-import { validateSpec, memberRoles } from "./validate";
-import { memberPrincipal } from "./naming";
+import { provisionUser } from "./user";
+import { validateSpec, isCollabActive } from "./validate";
 
 // ---- configuration ---------------------------------------------------------
 
@@ -65,77 +65,68 @@ function loadSpec(filePath: string): WorkspacesSpec {
   return yaml.load(raw) as WorkspacesSpec;
 }
 
-const spec = loadSpec(resolvedSpecPath);
-validateSpec(spec);
+const rawSpec = loadSpec(resolvedSpecPath);
+const resolved = validateSpec(rawSpec);
 
-// ---- resolve workspaces ----------------------------------------------------
+pulumi.log.info(
+  `userspace v2: ${resolved.users.size} users, ${resolved.workspaces.length} workspaces`,
+);
 
-function resolveWorkspaces(spec: WorkspacesSpec): ResolvedWorkspace[] {
-  const resolved: ResolvedWorkspace[] = [];
-  for (const org of spec.organizations) {
-    for (const ws of org.workspaces) {
-      if (ws.state === "deleted") {
-        pulumi.log.info(
-          `Skipping ${org.name}-${ws.name} (state=deleted); remove from YAML after confirming destruction.`,
-        );
-        continue;
-      }
-      resolved.push({
-        resourceName: `${org.name}-${ws.name}`,
-        org,
-        spec: ws,
-      });
-    }
-  }
-  return resolved;
-}
+// ---- instantiate workspace components --------------------------------------
 
-const workspaces = resolveWorkspaces(spec);
-
-// ---- instantiate components ------------------------------------------------
+const userSpecMap = new Map<string, UserSpec>();
+for (const ru of resolved.users.values()) userSpecMap.set(ru.spec.name, ru.spec);
 
 const workspaceComponents: Record<string, WorkspaceComponent> = {};
-
-for (const ws of workspaces) {
+for (const ws of resolved.workspaces) {
+  if (ws.spec.state === "deleted") {
+    pulumi.log.info(
+      `Skipping ${ws.resourceName} (state=deleted); remove from YAML after confirming destruction.`,
+    );
+    continue;
+  }
   workspaceComponents[ws.resourceName] = new WorkspaceComponent(
     ws.resourceName,
-    { org: ws.org, spec: ws.spec },
+    { org: ws.org, spec: ws.spec, users: userSpecMap },
   );
+}
+
+// ---- instantiate per-user resources ----------------------------------------
+
+const handlesByNs = new Map<string, ReturnType<() => WorkspaceComponent["handles"]>>();
+for (const [ns, comp] of Object.entries(workspaceComponents)) {
+  handlesByNs.set(ns, comp.handles);
+}
+
+for (const user of resolved.users.values()) {
+  // skip users with zero memberships across all active workspaces
+  const hasAny = user.memberships.some(
+    (m) => (m.workspace.spec.state ?? "active") === "active",
+  );
+  if (!hasAny) {
+    pulumi.log.info(`User ${user.spec.name} has no active memberships; skipping.`);
+    continue;
+  }
+  provisionUser(user, handlesByNs as any, {});
 }
 
 // ---- stack outputs ---------------------------------------------------------
 
 /**
- * Audit-friendly summary for `pulumi stack output workspaceSummary --json`.
- * Lists members, collaborators (with expiry status), and submit account
- * presence per workspace — usable as an inventory without reading the YAML.
+ * Audit-friendly summary keyed by workspace.
+ * `pulumi stack output workspaceSummary --json` returns the full picture.
  */
 const now = new Date();
 const summary: Record<string, pulumi.Output<unknown>> = {};
 
-for (const ws of workspaces) {
+for (const ws of resolved.workspaces) {
+  if (ws.spec.state === "deleted") continue;
   const ns = ws.resourceName;
   const comp = workspaceComponents[ns];
-
-  const members = (ws.spec.members ?? []).map((m) => {
-    const roles = memberRoles(m);
-    return {
-      name: m.name,
-      roles,
-      principals: roles.map((r) => ({
-        role: r,
-        principal: memberPrincipal(ns, r, m.name),
-      })),
-    };
-  });
-
+  const members = (ws.spec.members ?? []).map((m) => ({ user: m.user, role: m.role }));
   const collaborators = (ws.spec.collaborators ?? []).map((c) => {
-    const expiry = new Date(c.expiresAt + "T00:00:00Z");
-    return {
-      name: c.name,
-      expiresAt: c.expiresAt,
-      expired: expiry <= now,
-    };
+    const m = { kind: "collab" as const, expiresAt: c.expiresAt, workspace: ws, role: "group-collaborator" as const };
+    return { user: c.user, expiresAt: c.expiresAt, expired: !isCollabActive(m, now) };
   });
 
   summary[ns] = pulumi.all([comp.namespaceName, comp.bucketName]).apply(
@@ -154,3 +145,15 @@ for (const ws of workspaces) {
 }
 
 export const workspaceSummary = pulumi.all(summary);
+
+/** Inventory of every user and their memberships, for ops auditing. */
+export const userSummary = Array.from(resolved.users.values()).map((u) => ({
+  name: u.spec.name,
+  email: u.spec.email,
+  memberships: u.memberships.map((m) => ({
+    ns: m.workspace.resourceName,
+    kind: m.kind,
+    role: m.role,
+    ...(m.expiresAt ? { expiresAt: m.expiresAt } : {}),
+  })),
+}));

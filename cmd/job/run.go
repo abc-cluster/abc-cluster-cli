@@ -208,6 +208,19 @@ EXAMPLES
 	cmd.Flags().StringToString("driver.config", nil, "Driver config key=value (repeatable)")
 	cmd.Flags().String("params-file", "", "YAML params file path")
 
+	// Placement
+	cmd.Flags().StringArray("constraint", nil,
+		"Nomad placement constraint (repeatable); e.g. --constraint='${node.class}==slurm-login'")
+	cmd.Flags().StringArray("affinity", nil,
+		"Nomad placement affinity (repeatable); e.g. --affinity='datacenter==c1,weight=75'")
+	cmd.Flags().Bool("spread", false,
+		"Emit a Nomad spread stanza on ${node.unique.id} for 1-per-node distribution (best-effort)")
+
+	// SLURM passthrough
+	cmd.Flags().StringArray("slurm-extra", nil,
+		"Extra sbatch argument(s) (repeatable); e.g. --slurm-extra='--qos=high'")
+	cmd.Flags().String("reservation", "", "SLURM reservation name (maps to #SBATCH --reservation)")
+
 	// Preamble mode + HPC compat
 	cmd.Flags().String("preamble-mode", "auto",
 		"Preamble parsing mode: auto (default), abc (ignore #SBATCH), slurm (require #SBATCH)")
@@ -333,6 +346,33 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if v, _ := cmd.Flags().GetBool("task-tmp"); v {
 		spec.TaskTmp = true
+	}
+	if vs, _ := cmd.Flags().GetStringArray("constraint"); len(vs) > 0 {
+		for _, expr := range vs {
+			c, err := parseConstraint(expr)
+			if err != nil {
+				return fmt.Errorf("--constraint: %w", err)
+			}
+			spec.Constraints = append(spec.Constraints, c)
+		}
+	}
+	if vs, _ := cmd.Flags().GetStringArray("affinity"); len(vs) > 0 {
+		for _, expr := range vs {
+			a, err := parseAffinity(expr)
+			if err != nil {
+				return fmt.Errorf("--affinity: %w", err)
+			}
+			spec.Affinities = append(spec.Affinities, a)
+		}
+	}
+	if v, _ := cmd.Flags().GetBool("spread"); v {
+		spec.Spread = true
+	}
+	if vs, _ := cmd.Flags().GetStringArray("slurm-extra"); len(vs) > 0 {
+		spec.SlurmExtraArgs = append(spec.SlurmExtraArgs, vs...)
+	}
+	if v, _ := cmd.Flags().GetString("reservation"); v != "" {
+		spec.SlurmReservation = v
 	}
 	syncStackMetaKeys(spec)
 	syncTaskTmpMeta(spec)

@@ -185,6 +185,20 @@ func buildNextflowConfig(spec Spec) string {
 		volumesLine = `volumes = []`
 	}
 
+	// Per-process Nomad constraint via the `constraints` process directive.
+	// Note: nf-nomad 0.4.0-edge3 requires the `constraints` value to be a Closure.
+	// Nextflow's config-file parser converts `constraints { ... }` blocks to Maps,
+	// so we MUST use property-assignment form (`= { ... }`) which preserves the closure.
+	processConstraint := ""
+	if spec.NodeConstraint != "" {
+		processConstraint = fmt.Sprintf(`
+
+process {
+  constraints = { node { unique = [name: '%s'] } }
+}
+`, spec.NodeConstraint)
+	}
+
 	fmt.Fprintf(&sb, `plugins {
   id "nf-nomad@%s"
 }
@@ -231,7 +245,7 @@ nomad {
     ]
   }
 }
-`, spec.NfPluginVersion, spec.WorkDir, spec.Namespace, volumesLine)
+%s`, spec.NfPluginVersion, spec.WorkDir, spec.Namespace, volumesLine, processConstraint)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")

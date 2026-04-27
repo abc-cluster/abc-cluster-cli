@@ -184,6 +184,34 @@ func runShow(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(out, "  %-12s %-16s %-12s %-10s %-18s %-10s\n",
 				shortID, node, a.TaskGroup, a.ClientStatus, started, allocDur)
 		}
+
+		// Surface native SLURM job IDs when the hpc-bridge or slurm driver stored them.
+		type slurmIDRow struct {
+			allocShort string
+			slurmID    string
+		}
+		var slurmRows []slurmIDRow
+		for _, a := range shown {
+			for _, ts := range a.TaskStates {
+				if id, ok := ts.DriverAttributes["slurm_job_id"]; ok && id != "" {
+					shortID := a.ID
+					if len(shortID) > 8 {
+						shortID = shortID[:8]
+					}
+					slurmRows = append(slurmRows, slurmIDRow{shortID, id})
+					break
+				}
+			}
+		}
+		if len(slurmRows) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintf(out, "  SLURM JOB IDS\n")
+			fmt.Fprintf(out, "  %-12s %s\n", "ALLOC ID", "SLURM JOB ID")
+			fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 28))
+			for _, r := range slurmRows {
+				fmt.Fprintf(out, "  %-12s %s\n", r.allocShort, r.slurmID)
+			}
+		}
 	}
 
 	fmt.Fprintln(out)

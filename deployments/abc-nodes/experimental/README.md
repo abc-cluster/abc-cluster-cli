@@ -1,4 +1,20 @@
-# Experimental abc-nodes workloads
+# Experimental abc-nodes workloads (legacy / pre-Terraform)
+
+> **Heads-up — there are TWO experimental directories with similar names:**
+>
+> - **THIS directory** (`deployments/abc-nodes/experimental/`) is the
+>   **legacy / manual-deploy** tree. Jobs here are run with `abc admin
+>   services nomad cli -- job run …` directly. **Vault** initialization
+>   below still uses this path. Most other content here has been
+>   superseded.
+> - **`deployments/abc-nodes/nomad/experimental/`** is the **current
+>   Terraform-managed** opt-in tier. `postgres`, `redis`, `wave`,
+>   `supabase`, `xtdb`, and `caddy_tailscale` live there now and are
+>   enabled with `enable_<name>` Terraform variables — see
+>   `../terraform/README.md`.
+>
+> If you came here looking for Supabase / Wave / Postgres / Redis: those
+> are now Terraform-managed in the **other** directory. Use that.
 
 Nomad jobs, scripts, and examples for **HashiCorp Vault**, **Supabase**, **Seqera Wave**, and **faasd** live here. They are **not** part of the default gateway (Caddy `Caddyfile.lan`) or Traefik static routes, and are **not** assumed by the main `deployments/abc-nodes/nomad/README.md` deployment order.
 

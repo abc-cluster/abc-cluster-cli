@@ -5,7 +5,11 @@
       "Bash(curl -v http://146.232.174.77/)",
       "Bash(curl -v http://aither.mb.sun.ac.za/)",
       "Bash(go build *)",
-      "Bash(go run *)"
+      "Bash(go run *)",
+      "Bash(NOMAD_ADDR=http://100.77.21.36:4646 nomad alloc status 2e689894)",
+      "Bash(NOMAD_ADDR=http://100.77.21.36:4646 nomad alloc status -json 2e689894)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -v \"slurm$\")"
     ]
   }
 }

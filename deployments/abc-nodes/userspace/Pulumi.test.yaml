@@ -1,15 +1,15 @@
 config:
   abc-userspace:specFile: workspaces-test.yaml
   abc-userspace:nomadAddress: http://100.70.185.46:4646
-  abc-userspace:minioEndpoint: 100.70.185.46:9000
+  abc-userspace:minioEndpoint: 100.70.185.46:9900
   nomad:secretId:
     secure: AAABAABGr53OZnV+cRXUGvGmZZk/B2qZ5dpDupVqOwGFlTVuBv22jzz5iO10DLLzCmBGOQNieG7hynSUzVx+QLlUzrk=
   nomad:address: http://100.70.185.46:4646
   minio:minioPassword:
-    secure: AAABANJUfbNPJf85CrDoqaQYZ7fr/ZUzN+XcmpWTutlGTshPYJsj1Zfp
-  minio:minioUser: minioadmin
-  minio:minioServer: 100.70.185.46:9000
+    secure: AAABAJn2G06BSDMdN4JG+1HLcLHHmuhU26akuyq+t2xDATAVNHJBQQzpLw==
+  minio:minioUser: rustfsadmin
+  minio:minioServer: 100.70.185.46:9900
   minio:minioSsl: "false"
-  abc-userspace:collabPassword_su-test-sandbox_collab-ext-bob:
-    secure: AAABANyigLzwyk2DLDduEw3R4bC52SoxmZoPGV6Y+yZBytppUQvIKXgporp0LCdBZFFylYKJBm5c9MGL4beh
   abc-userspace:allowDestroy: "true"
+  abc-userspace:collabPassword_ext-bob:
+    secure: AAABANBPLydgEzm56AZf7LQxyxGhJqMMJMIUiLSw/6ZFM9Mogmt7SdM0+oRX6qtpcvPu1HRva1Su/CJqqdY=

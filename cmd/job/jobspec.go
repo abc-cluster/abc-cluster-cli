@@ -63,6 +63,14 @@ type jobSpec struct {
 	SlurmStdoutFile string
 	SlurmStderrFile string
 	SlurmNTasks     int
+	SlurmReservation string
+	SlurmExtraArgs  []string
+
+	// ── Placement spread ─────────────────────────────────────────────────────
+	// Spread emits a Nomad spread stanza on ${node.unique.id} requesting
+	// at-most-one allocation per node (best-effort; Nomad may still bin-pack
+	// when eligible nodes < group count).
+	Spread bool
 
 	// ── HPC compatibility env layer ───────────────────────────────────────────
 	IncludeHPCCompatEnv bool
@@ -255,6 +263,15 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.SlurmNTasks != 0 {
 		base.SlurmNTasks = override.SlurmNTasks
+	}
+	if override.SlurmReservation != "" {
+		base.SlurmReservation = override.SlurmReservation
+	}
+	if len(override.SlurmExtraArgs) > 0 {
+		base.SlurmExtraArgs = append([]string(nil), override.SlurmExtraArgs...)
+	}
+	if override.Spread {
+		base.Spread = true
 	}
 	if override.IncludeHPCCompatEnv {
 		base.IncludeHPCCompatEnv = true
