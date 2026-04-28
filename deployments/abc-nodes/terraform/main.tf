@@ -336,12 +336,17 @@ resource "nomad_job" "job_notifier" {
   count = var.enable_job_notifier ? 1 : 0
 
   # Nomad workload-identity JWT verification returns 500 on this cluster, so
-  # the nomadVar template function can't read secrets at runtime.  The token
-  # is injected directly via templatefile() at deploy time instead.
-  jobspec = templatefile("${path.module}/../nomad/job-notifier.nomad.hcl.tftpl", {
-    nomad_token = var.nomad_token != "" ? var.nomad_token : "6acff123-f6eb-70c6-48d6-9650fdf2c45f"
-  })
-  detach = false
+  # the nomadVar template function can't read secrets at runtime.  We inject
+  # the token via hcl2.vars instead (cleaner than templatefile — no double
+  # escaping for shell expansions inside the heredoc body).
+  jobspec = file("${path.module}/../nomad/job-notifier.nomad.hcl")
+  detach  = false
+
+  hcl2 {
+    vars = {
+      nomad_token = var.nomad_token != "" ? var.nomad_token : "6acff123-f6eb-70c6-48d6-9650fdf2c45f"
+    }
+  }
 
   depends_on = [nomad_job.ntfy]
 }
@@ -540,6 +545,74 @@ resource "nomad_job" "caddy_tailscale" {
   depends_on = [
     nomad_namespace.abc_experimental,
     nomad_job.traefik,
+  ]
+}
+
+# ── GitRiver — self-hosted Git platform (abc-experimental) ─────────────────
+# Single-job two-group deploy: dedicated Postgres + the GitRiver server.  Used
+# to host private projects, distribute releases / artifacts, and serve as the
+# remote for Nomad job prestart `git clone` tasks.  Setup wizard runs on first
+# launch — operator must complete admin user creation via the web UI.
+
+resource "random_password" "gitriver_db_password" {
+  length  = 40
+  special = false
+}
+
+resource "nomad_job" "gitriver" {
+  count = var.enable_gitriver ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/experimental/gitriver.nomad.hcl")
+  detach  = false
+
+  hcl2 {
+    vars = {
+      gitriver_image       = var.gitriver_image
+      gitriver_db_user     = var.gitriver_db_user
+      gitriver_db_name     = var.gitriver_db_name
+      gitriver_db_password = random_password.gitriver_db_password.result
+      gitriver_base_url    = var.gitriver_base_url
+      gitriver_ssh_host_port = var.gitriver_ssh_host_port
+      postgres_static_port = var.gitriver_postgres_port
+    }
+  }
+
+  depends_on = [
+    nomad_namespace.abc_experimental,
+    # gitriver.aither vhost is served by caddy_tailscale; deploying GitRiver
+    # before Caddy is fine (the vhost is just unreachable until Caddy comes up)
+    # but listing the dep makes apply order obvious.
+    nomad_job.caddy_tailscale,
+  ]
+}
+
+# ── NATS — messaging + JetStream (abc-experimental) ───────────────────────
+# Single-node NATS server with JetStream persistence on aither's scratch
+# volume.  Cluster-internal messaging bus + durable streams / KV.  No auth
+# on initial deploy — operators add NKEYs via the [authorization] block in
+# the rendered nats.conf when this graduates out of abc-experimental.
+
+resource "nomad_job" "nats" {
+  count = var.enable_nats ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/experimental/nats.nomad.hcl")
+  detach  = false
+
+  hcl2 {
+    vars = {
+      nats_image                = var.nats_image
+      nats_server_name          = var.nats_server_name
+      nats_client_port          = var.nats_client_port
+      nats_monitoring_port      = var.nats_monitoring_port
+      nats_jetstream_max_memory = var.nats_jetstream_max_memory
+      nats_jetstream_max_file   = var.nats_jetstream_max_file
+    }
+  }
+
+  depends_on = [
+    nomad_namespace.abc_experimental,
+    # nats.aither vhost is served by caddy_tailscale.
+    nomad_job.caddy_tailscale,
   ]
 }
 

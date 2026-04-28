@@ -51,6 +51,10 @@ output "public_endpoints" {
     uppy          = "http://uppy.${var.caddy_tailscale_service_domain}/"
     tusd          = "http://tusd.${var.caddy_tailscale_service_domain}/"
     vault         = "http://vault.${var.caddy_tailscale_service_domain}/"
+    gitriver_http = var.enable_gitriver ? "http://gitriver.${var.caddy_tailscale_service_domain}/" : "n/a"
+    gitriver_ssh  = var.enable_gitriver ? "ssh://git@${var.caddy_tailscale_ts_ip}:${var.gitriver_ssh_host_port}/<org>/<repo>.git" : "n/a"
+    nats_client   = var.enable_nats ? "nats://${var.caddy_tailscale_ts_ip}:${var.nats_client_port}" : "n/a"
+    nats_monitor  = var.enable_nats ? "http://nats.${var.caddy_tailscale_service_domain}/" : "n/a"
   } : null
 }
 
@@ -102,8 +106,16 @@ output "experimental_services" {
     restic_server   = var.enable_restic_server ? nomad_job.restic_server[0].id : "disabled"
     caddy           = var.enable_caddy ? nomad_job.caddy[0].id : "disabled"
     xtdb            = var.enable_xtdb ? nomad_job.xtdb[0].id : "disabled"
+    gitriver        = var.enable_gitriver ? nomad_job.gitriver[0].id : "disabled"
+    nats            = var.enable_nats ? nomad_job.nats[0].id : "disabled"
     docker_registry = local.registry_count > 0 ? nomad_job.docker_registry[0].id : "disabled"
   }
+}
+
+output "gitriver_db_password" {
+  description = "GitRiver Postgres password (auto-generated; surface for ad-hoc psql / DB inspection)"
+  value       = var.enable_gitriver ? random_password.gitriver_db_password.result : ""
+  sensitive   = true
 }
 
 # ── Automations tier ───────────────────────────────────────────────────────

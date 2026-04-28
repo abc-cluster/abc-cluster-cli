@@ -238,6 +238,94 @@ variable "enable_xtdb" {
   default     = false
 }
 
+variable "enable_gitriver" {
+  description = "Deploy GitRiver (self-hosted git, releases, container registry — abc-experimental). Two groups: dedicated Postgres + server. Setup wizard requires operator completion on first launch."
+  type        = bool
+  default     = false
+}
+
+variable "enable_nats" {
+  description = "Deploy NATS with JetStream (messaging + durable streams + KV — abc-experimental). Single-node, no auth on initial deploy."
+  type        = bool
+  default     = false
+}
+
+# ── NATS configuration ───────────────────────────────────────────────────────
+
+variable "nats_image" {
+  description = "NATS container image (must include JetStream — official nats:2.10+ alpine variant is fine)"
+  type        = string
+  default     = "nats:2.10-alpine"
+}
+
+variable "nats_server_name" {
+  description = "Server name advertised by NATS (visible in /varz, used for cluster identity if multi-node later)"
+  type        = string
+  default     = "abc-experimental-nats-1"
+}
+
+variable "nats_client_port" {
+  description = "Static host port for NATS protocol (TCP). Clients use nats://<aither-tailnet-ip>:<this>"
+  type        = number
+  default     = 4222
+}
+
+variable "nats_monitoring_port" {
+  description = "Static host port for the NATS monitoring HTTP API (/varz, /jsz, /healthz, /connz)"
+  type        = number
+  default     = 8222
+}
+
+variable "nats_jetstream_max_memory" {
+  description = "JetStream in-memory store cap (size suffix accepted, e.g. 256MB, 1GB)"
+  type        = string
+  default     = "256MB"
+}
+
+variable "nats_jetstream_max_file" {
+  description = "JetStream disk-store cap (size suffix accepted)"
+  type        = string
+  default     = "10GB"
+}
+
+# ── GitRiver configuration ──────────────────────────────────────────────────
+
+variable "gitriver_image" {
+  description = "GitRiver container image. Pin to a specific tag once one is published; latest tracks main."
+  type        = string
+  default     = "gitriver/gitriver:latest"
+}
+
+variable "gitriver_db_user" {
+  description = "Postgres user owning the GitRiver database (created on first start)"
+  type        = string
+  default     = "gitriver"
+}
+
+variable "gitriver_db_name" {
+  description = "Postgres database name for GitRiver"
+  type        = string
+  default     = "gitriver"
+}
+
+variable "gitriver_base_url" {
+  description = "External URL of the GitRiver instance — used for email links, CI variables, webhooks"
+  type        = string
+  default     = "http://gitriver.aither"
+}
+
+variable "gitriver_ssh_host_port" {
+  description = "Static host port for git-over-SSH on aither's Tailscale interface — clients use ssh -p <this> git@<aither-ts-ip>"
+  type        = number
+  default     = 2222
+}
+
+variable "gitriver_postgres_port" {
+  description = "Static host port for GitRiver's dedicated Postgres (distinct from the experimental shared 5432)"
+  type        = number
+  default     = 5433
+}
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Service Images — Enhanced Tier
 # ═══════════════════════════════════════════════════════════════════════════

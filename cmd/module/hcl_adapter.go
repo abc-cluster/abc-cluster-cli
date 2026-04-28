@@ -11,9 +11,11 @@ func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) 
 		Module:             spec.Module,
 		Profile:            spec.Profile,
 		WorkDir:            spec.WorkDir,
+		HostVolume:         spec.HostVolume,
 		OutputPrefix:       spec.OutputPrefix,
 		PipelineGenRepo:    spec.PipelineGenRepo,
 		PipelineGenVersion: spec.PipelineGenVersion,
+		PipelineGenURLBase: spec.PipelineGenURLBase,
 		ModuleRevision:     spec.ModuleRevision,
 		GitHubToken:        spec.GitHubToken,
 		CPU:                spec.CPU,
@@ -22,9 +24,10 @@ func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) 
 		NfPluginVersion:    spec.NfPluginVersion,
 		Namespace:          spec.Namespace,
 		Datacenters:        spec.Datacenters,
-		MinioEndpoint:      spec.MinioEndpoint,
+		S3Endpoint:         spec.S3Endpoint,
 		ParamsYAMLContent:        spec.ParamsYAMLContent,
 		ConfigYAMLContent:        spec.ConfigYAMLContent,
 		PipelineGenNoRunManifest: spec.PipelineGenNoRunManifest,
+		TestMode:                 spec.TestMode,
 	}, nomadAddr, nomadToken, runUUID)
 }

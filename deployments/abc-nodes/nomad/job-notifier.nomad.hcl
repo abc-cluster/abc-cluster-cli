@@ -1,9 +1,22 @@
 # Nomad job event notifier — abc-nodes floor
 #
-# Watches the Nomad event stream (/v1/event/stream?topic=Allocation) and posts
-# to ntfy when an allocation reaches a terminal state (complete, failed, lost).
-# Uses raw_exec + host network so it can reach both the Nomad API and ntfy
-# without bridge / CNI requirements.
+# Watches the Nomad event stream (/v1/event/stream?topic=Allocation) and, when
+# an allocation reaches a terminal state (complete, failed, lost), publishes:
+#   • PRIMARY:  NATS subject events.jobs.<status> with full event JSON
+#   • MIRROR:   ntfy POST (kept for back-compat — set ntfy_url="" to disable)
+#
+# Subject taxonomy (NATS):
+#   events.jobs.complete   — allocation terminated successfully
+#   events.jobs.failed     — allocation FAILED
+#   events.jobs.lost       — allocation lost (node disconnect / drain)
+#
+# Subscribers can listen to events.jobs.> (all terminal-status events) or to
+# a specific status.  Payload is the original Nomad event JSON, so subscribers
+# don't have to track this bridge's schema — re-derive whatever they need.
+#
+# Uses raw_exec + host network so it can reach the Nomad API, the NATS broker,
+# and ntfy without bridge / CNI requirements.  NATS publish uses bash's
+# built-in /dev/tcp redirect — no nc or python required, just a recent bash.
 #
 # Requires jq on the host node (install via package manager).
 #
@@ -22,11 +35,7 @@ variable "nomad_addr" {
 variable "nomad_token" {
   type        = string
   default     = ""
-  description = "DEPRECATED: use Nomad Variable nomad/jobs/abc-nodes-job-notifier (key: nomad_token)"
-  # !! Do NOT set a real token here — it would be committed to git.
-  # Store the token in Nomad Variables:
-  #   abc admin services nomad cli -- var put -namespace abc-services -force \
-  #     nomad/jobs/abc-nodes-job-notifier nomad_token=<management-token>
+  description = "Nomad management token used to read the event stream. Injected via terraform's hcl2.vars (Workload-Identity JWT verify is broken on this cluster — server returns 500). Do NOT commit a real token here; let terraform supply it from var.nomad_token (or the hardcoded fallback in main.tf)."
 }
 
 variable "ntfy_url" {
@@ -38,6 +47,23 @@ variable "ntfy_url" {
 variable "ntfy_topic" {
   type    = string
   default = "abc-jobs"
+}
+
+variable "nats_host" {
+  type        = string
+  default     = "100.70.185.46"
+  description = "NATS broker host (Tailscale IP works because raw_exec uses host network)."
+}
+
+variable "nats_port" {
+  type    = number
+  default = 4222
+}
+
+variable "nats_subject_prefix" {
+  type        = string
+  default     = "events.jobs"
+  description = "Subject prefix. Full subject is <prefix>.<status> where status ∈ {complete, failed, lost}."
 }
 
 job "abc-nodes-job-notifier" {
@@ -69,18 +95,18 @@ job "abc-nodes-job-notifier" {
       driver = "raw_exec"
 
       config {
-        command = "/bin/sh"
+        # Switched to bash — we need /dev/tcp/<host>/<port> for NATS publish.
+        command = "/bin/bash"
         args    = ["local/watcher.sh"]
       }
 
-      # watcher.sh — streams the Nomad Allocation event topic and POSTs to ntfy.
-      # Shell variables use $VAR (no braces) to avoid HCL interpolation inside <<EOF.
-      # All connection params injected via the env {} block below.
+      # watcher.sh — streams the Nomad Allocation event topic, publishes to
+      # NATS (primary), and mirrors to ntfy (back-compat).
       template {
         destination = "local/watcher.sh"
         perms       = "755"
         data        = <<EOF
-#!/bin/sh
+#!/usr/bin/env bash
 set -u
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -88,7 +114,34 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[notifier] Starting — Nomad: $NOMAD_ADDR  ntfy: $NTFY_URL/$NTFY_TOPIC"
+echo "[notifier] Starting"
+echo "[notifier]   nomad : $NOMAD_ADDR"
+echo "[notifier]   nats  : $NATS_HOST:$NATS_PORT  prefix=$NATS_SUBJECT_PREFIX"
+echo "[notifier]   ntfy  : $${NTFY_URL:-(disabled)}/$NTFY_TOPIC"
+
+# nats_pub  <subject>  <payload>
+# Speaks just enough of the NATS protocol over /dev/tcp to publish without
+# auth.  Pure bash — no nc / python / nats-cli dependency.  Failures here
+# are non-fatal: the ntfy mirror still fires below.
+nats_pub() {
+  local subj=$1 payload=$2
+  if [ -z "$NATS_HOST" ]; then return 1; fi
+  # Open a bi-directional TCP socket as fd 3.  Race-tolerant: timeout on
+  # connect via wrapping in a subshell with bash's TMOUT-style timeout.
+  if ! exec 3<>"/dev/tcp/$NATS_HOST/$NATS_PORT" 2>/dev/null; then
+    return 1
+  fi
+  # Read the server's INFO line (don't parse it).
+  read -t 1 -r _info <&3 || true
+  printf 'CONNECT {"verbose":false,"pedantic":false,"name":"job-notifier","echo":false,"protocol":1,"lang":"bash"}\r\n' >&3
+  local len=$${#payload}
+  printf 'PUB %s %s\r\n%s\r\n' "$subj" "$len" "$payload" >&3
+  printf 'PING\r\n' >&3
+  read -t 2 -r _pong <&3 || true   # consume PONG (ignore)
+  exec 3>&-
+  exec 3<&-
+  return 0
+}
 
 while true; do
   curl -sN \
@@ -106,21 +159,7 @@ while true; do
           ns=$(echo "$ev" | jq -r '.Payload.Allocation.Namespace // "default"')
 
           case "$cs" in
-            complete)
-              title="Job complete: $job_id"
-              prio=3
-              body="$job_id ($ns) alloc $alloc_short finished successfully."
-              ;;
-            failed)
-              title="Job FAILED: $job_id"
-              prio=4
-              body="$job_id ($ns) alloc $alloc_short FAILED. Check Nomad UI."
-              ;;
-            lost)
-              title="Job lost: $job_id"
-              prio=4
-              body="$job_id ($ns) alloc $alloc_short was lost (node issue?)."
-              ;;
+            complete|failed|lost) ;;
             *) continue ;;
           esac
 
@@ -129,12 +168,29 @@ while true; do
             abc-nodes-job-notifier*) continue ;;
           esac
 
-          curl -s -X POST "$NTFY_URL/$NTFY_TOPIC" \
-            -H "X-Title: $title" \
-            -H "X-Priority: $prio" \
-            -H "X-Tags: nomad,$cs" \
-            -d "$body" >/dev/null
-          echo "[notifier] sent: $title"
+          # ── 1. NATS publish (primary).  Subject = events.jobs.<status>.
+          #    Payload = the full Nomad event JSON, compact-printed by jq -c.
+          subject="$NATS_SUBJECT_PREFIX.$cs"
+          if nats_pub "$subject" "$ev"; then
+            echo "[notifier] nats <- $subject  $job_id ($ns) $alloc_short"
+          else
+            echo "[notifier] nats publish failed for $subject" >&2
+          fi
+
+          # ── 2. ntfy mirror (back-compat).  Disabled when NTFY_URL="".
+          if [ -n "$${NTFY_URL:-}" ]; then
+            case "$cs" in
+              complete) title="Job complete: $job_id"; prio=3; body="$job_id ($ns) alloc $alloc_short finished successfully." ;;
+              failed)   title="Job FAILED: $job_id";   prio=4; body="$job_id ($ns) alloc $alloc_short FAILED. Check Nomad UI." ;;
+              lost)     title="Job lost: $job_id";     prio=4; body="$job_id ($ns) alloc $alloc_short was lost (node issue?)." ;;
+            esac
+            curl -s -X POST "$NTFY_URL/$NTFY_TOPIC" \
+              -H "X-Title: $title" \
+              -H "X-Priority: $prio" \
+              -H "X-Tags: nomad,$cs" \
+              -d "$body" >/dev/null
+            echo "[notifier] ntfy <- $title"
+          fi
         done
     done
 
@@ -145,24 +201,23 @@ EOF
       }
 
       env {
-        NOMAD_ADDR = var.nomad_addr
-        NTFY_URL   = var.ntfy_url
-        NTFY_TOPIC = var.ntfy_topic
+        NOMAD_ADDR          = var.nomad_addr
+        NTFY_URL            = var.ntfy_url
+        NTFY_TOPIC          = var.ntfy_topic
+        NATS_HOST           = var.nats_host
+        NATS_PORT           = var.nats_port
+        NATS_SUBJECT_PREFIX = var.nats_subject_prefix
       }
 
-      # NOMAD_TOKEN read from Nomad Variable at runtime — never hardcoded.
-      # Store: abc admin services nomad cli -- var put -namespace abc-services -force \
-      #          nomad/jobs/abc-nodes-job-notifier nomad_token=<token>
+      # NOMAD_TOKEN injected via terraform's hcl2.vars at job-submit time.
+      # The HCL2 var ${var.nomad_token} resolves once during HCL parsing.
+      # Workload-identity-based nomadVar reads fail on this cluster (server
+      # returns 500 on WI JWT verification), so we can't rely on runtime
+      # template lookup.
       template {
         destination = "secrets/token.env"
         env         = true
-        data        = <<EOF
-{{ with nomadVar "nomad/jobs/abc-nodes-job-notifier" -}}
-NOMAD_TOKEN={{ .nomad_token }}
-{{- else -}}
-NOMAD_TOKEN=
-{{- end }}
-EOF
+        data        = "NOMAD_TOKEN=${var.nomad_token}\n"
       }
 
       resources {

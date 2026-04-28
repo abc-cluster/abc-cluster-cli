@@ -218,6 +218,25 @@ http://garage-webui.aither {
   reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
+# ── NATS — messaging + JetStream (abc-experimental) ──────────────────────────
+# Monitoring HTTP on port 8222 only.  The NATS protocol port 4222 is TCP
+# (not HTTP), so clients connect direct to the Tailscale/LAN IP at :4222 —
+# Caddy doesn't proxy it.  This vhost is the dashboard / /jsz / /healthz
+# surface, registered in Consul with a Traefik tag in the nats jobspec.
+http://nats.aither {
+  import ts_bind
+  reverse_proxy abc-nodes-traefik.service.consul:8081
+}
+
+# ── GitRiver — self-hosted Git platform (abc-experimental) ────────────────────
+# HTTP on port 3030 (NOT 3000 — that's Grafana).  Tailscale surface only.
+# Routed direct to the Tailscale IP, bypassing Traefik — same pattern as
+# consul.aither / nomad.aither.
+http://gitriver.aither {
+  import ts_bind
+  reverse_proxy 100.70.185.46:3030
+}
+
 http://docs.aither {
   import ts_bind
   reverse_proxy abc-nodes-traefik.service.consul:8081
@@ -550,8 +569,23 @@ http://100.70.185.46 {
     reverse_proxy abc-nodes-traefik-dashboard.service.consul:8888
   }
 
-  # Docs (Docusaurus — serves at root, no prefix strip needed)
+  # Docs (Docusaurus — built with baseUrl=/, so its HTML references
+  # absolute asset paths /assets/* and /img/*, which are NOT under /docs/*.
+  # We forward all four roots to the docs job so the LAN subpath link
+  # /docs/ renders fully styled (CSS, JS, favicon, logo).  The proper
+  # long-term fix is to rebuild Docusaurus with baseUrl=/docs/ — at which
+  # point the /assets and /img handlers below can be removed.
   handle /docs/* {
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host docs.aither
+    }
+  }
+  handle /assets/* {
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host docs.aither
+    }
+  }
+  handle /img/* {
     reverse_proxy abc-nodes-traefik.service.consul:8081 {
       header_up Host docs.aither
     }
@@ -902,7 +936,7 @@ CADDYFILE
       <span class="brand-name">abc<span class="dim">-cluster</span></span>
     </a>
     <div class="top-spacer"></div>
-    <a class="top-link" href="http://docs.aither/docs/">
+    <a class="top-link" href="/docs/">
       <svg class="top-link-ico" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M5 4h6a3 3 0 0 1 3 3v13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M19 4h-6a3 3 0 0 0-3 3v13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1216,6 +1250,45 @@ CADDYFILE
             </div>
           </a>
 
+          <a class="svc-card" href="http://gitriver.aither/" target="_blank" rel="noreferrer"
+             data-aud="operator" data-name="gitriver" data-desc="gitriver private git hosting releases artifacts container registry"
+             data-mode-only="domain">
+            <div class="svc-card-head">
+              <span class="svc-card-glyph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+                  <circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/>
+                  <path d="M6 8v8"/><path d="M8 6h6a4 4 0 0 1 4 4v0"/>
+                </svg>
+              </span>
+              <span class="svc-card-name">gitriver <span class="arrow">→</span></span>
+            </div>
+            <p class="svc-card-desc">Private git hosting — push projects, distribute releases &amp; container images, pull repos into Nomad job prestart tasks. SSH on tailnet :2222.</p>
+            <div class="svc-card-foot">
+              <span class="svc-card-host">gitriver.aither</span>
+              <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
+            </div>
+          </a>
+
+          <a class="svc-card" href="http://nats.aither/" target="_blank" rel="noreferrer"
+             data-aud="operator" data-name="nats" data-desc="nats jetstream messaging pubsub streams kv durable"
+             data-mode-only="domain">
+            <div class="svc-card-head">
+              <span class="svc-card-glyph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+                  <circle cx="12" cy="12" r="2"/>
+                  <path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/>
+                  <path d="M5 5l3 3"/><path d="M16 16l3 3"/><path d="M19 5l-3 3"/><path d="M8 16l-3 3"/>
+                </svg>
+              </span>
+              <span class="svc-card-name">nats <span class="arrow">→</span></span>
+            </div>
+            <p class="svc-card-desc">Pub/sub + JetStream durable streams &amp; KV for cluster events. Clients connect to nats://&lt;tailnet-ip&gt;:4222; this dashboard is the monitoring API.</p>
+            <div class="svc-card-foot">
+              <span class="svc-card-host">nats.aither</span>
+              <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
+            </div>
+          </a>
+
         </div>
 
         <div class="svc-mini">
@@ -1307,7 +1380,7 @@ CADDYFILE
           Service vhosts are at <code data-domain-glob>*.aither</code> — add
           <span class="mono-ip" data-ts-ip>100.70.185.46</span> as a split-DNS nameserver for
           <code data-domain-suffix>.aither</code> in the Tailscale admin console to resolve them on any
-          tailnet device. <a href="http://docs.aither/docs/">abc CLI docs →</a>
+          tailnet device. <a href="/docs/">abc CLI docs →</a>
         </p>
         <div style="color:var(--text-mute);font-size:11.5px;line-height:1.7;border-top:1px solid var(--rule-soft);padding-top:12px;">
           <b style="color:var(--text-dim);">Stack</b>

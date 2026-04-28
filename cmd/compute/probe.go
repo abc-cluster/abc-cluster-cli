@@ -16,21 +16,21 @@ import (
 )
 
 const (
-	// nodeProbeInstalledPath is the fallback location of abc-node-probe on cluster nodes.
+	// NodeProbeInstalledPath is the fallback location of abc-node-probe on cluster nodes.
 	// The CLI will first attempt to download the latest release from GitHub, then fall back
 	// to this path if download fails or the network is unavailable.
-	nodeProbeInstalledPath  = "/opt/nomad/abc-node-probe"
-	nodeProbeJobID          = "abc-node-probe-system"
-	defaultProbeWaitTimeout = 5 * time.Minute
-	defaultProbeWatchDelay  = 2 * time.Second
+	NodeProbeInstalledPath  = "/opt/nomad/abc-node-probe"
+	NodeProbeJobID          = "abc-node-probe-system"
+	DefaultProbeWaitTimeout = 5 * time.Minute
+	DefaultProbeWatchDelay  = 2 * time.Second
 
 	// GitHub release details for abc-node-probe
-	probeGitHubOwner = "abc-cluster"
-	probeGitHubRepo  = "abc-node-probe"
-	probeBinaryName  = "abc-node-probe"
+	ProbeGitHubOwner = "abc-cluster"
+	ProbeGitHubRepo  = "abc-node-probe"
+	ProbeBinaryName  = "abc-node-probe"
 )
 
-var nodeProbeJobTemplate = template.Must(template.New("node_probe_job").Parse(`job {{printf "%q" .JobID}} {
+var NodeProbeJobTemplate = template.Must(template.New("node_probe_job").Parse(`job {{printf "%q" .JobID}} {
 	type        = "sysbatch"
 	datacenters = [{{printf "%q" .Datacenter}}]
 
@@ -146,7 +146,7 @@ for probe flags that are not mirrored on "abc" (see abc-node-probe --help).
 	cmd.Flags().Bool("json", false, "Pass --json to probe for JSON-only output")
 	cmd.Flags().Bool("fail-fast", false, "Pass --fail-fast to probe")
 	cmd.Flags().Bool("detach", false, "Submit probe and return without waiting for logs")
-	cmd.Flags().Duration("wait-timeout", defaultProbeWaitTimeout,
+	cmd.Flags().Duration("wait-timeout", DefaultProbeWaitTimeout,
 		"Maximum time to wait while streaming probe results")
 	cmd.Flags().String("platform", "",
 		"Override OS/arch for the downloaded probe binary (e.g. linux/arm64); default is inferred from Nomad node fingerprints")
@@ -199,12 +199,12 @@ func runProbe(cmd *cobra.Command, args []string) error {
 
 	nc := nomadClientFromCmd(cmd)
 	nodeRef, probePassthrough := probeSplitNodeAndPassthrough(cmd, args)
-	node, err := resolveNodeRef(cmd, nc, nodeRef)
+	node, err := ResolveNodeRef(cmd, nc, nodeRef)
 	if err != nil {
 		return err
 	}
 
-	goos, goarch, err := resolveProbePlatform(cmd, node)
+	goos, goarch, err := ResolveProbePlatform(cmd, node)
 	if err != nil {
 		return err
 	}
@@ -217,12 +217,12 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	} else {
 		var errGH error
 		downloadURL, version, errGH = utils.GetLatestReleaseAssetURLForPlatform(
-			probeGitHubOwner, probeGitHubRepo, probeBinaryName, goos, goarch)
+			ProbeGitHubOwner, ProbeGitHubRepo, ProbeBinaryName, goos, goarch)
 		if errGH != nil {
 			return fmt.Errorf("resolve GitHub release asset for probe (%s/%s): %w\n\n"+
 				"Hints: export GITHUB_TOKEN or GH_TOKEN if rate-limited; check --platform=os/arch; "+
 				"or use --installed-binary-only when %q is already on the node",
-				goos, goarch, errGH, nodeProbeInstalledPath)
+				goos, goarch, errGH, NodeProbeInstalledPath)
 		}
 	}
 	if version == "" {
@@ -251,10 +251,10 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	}
 	probeArgs = append(probeArgs, probePassthrough...)
 
-	probeHCL := buildNodeProbeJobHCL(node.Datacenter, node.ID, nodeProbeInstalledPath, downloadURL, probeArgs)
+	probeHCL := BuildNodeProbeJobHCL(node.Datacenter, node.ID, NodeProbeInstalledPath, downloadURL, probeArgs)
 	jobJSON, err := nc.ParseHCL(cmd.Context(), probeHCL)
 	if err != nil {
-		return fmt.Errorf("nomad HCL parse for %q: %w", nodeProbeJobID, err)
+		return fmt.Errorf("nomad HCL parse for %q: %w", NodeProbeJobID, err)
 	}
 
 	if err := nc.PreflightJobTaskDrivers(cmd.Context(), jobJSON, cmd.ErrOrStderr()); err != nil {
@@ -262,21 +262,21 @@ func runProbe(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := nc.RegisterJob(cmd.Context(), jobJSON); err != nil {
-		return fmt.Errorf("registering probe job %q: %w", nodeProbeJobID, err)
+		return fmt.Errorf("registering probe job %q: %w", NodeProbeJobID, err)
 	}
 
 	meta := map[string]string{}
 	// Note: parameterized job metadata is still accepted for backward compatibility,
 	// but is no longer used since we invoke the binary directly with args.
 
-	resp, err := nc.DispatchJob(cmd.Context(), nodeProbeJobID, meta, nil)
+	resp, err := nc.DispatchJob(cmd.Context(), NodeProbeJobID, meta, nil)
 	if err != nil {
 		return fmt.Errorf("dispatching probe job for node %q: %w", node.ID, err)
 	}
 
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "  ✓ Probe dispatched\n")
-	fmt.Fprintf(out, "  Node           %s (%s)\n", node.Name, shortID(node.ID))
+	fmt.Fprintf(out, "  Node           %s (%s)\n", node.Name, ShortID(node.ID))
 	fmt.Fprintf(out, "  Node platform  %s/%s\n", goos, goarch)
 	fmt.Fprintf(out, "  Nomad job ID   %s\n", resp.DispatchedJobID)
 	fmt.Fprintf(out, "  Evaluation ID  %s\n", resp.EvalID)
@@ -289,16 +289,16 @@ func runProbe(cmd *cobra.Command, args []string) error {
 
 	waitTimeout, _ := cmd.Flags().GetDuration("wait-timeout")
 	fmt.Fprintf(out, "\n  Streaming probe output...\n\n")
-	if err := utils.WatchJobLogsForTaskBoth(cmd.Context(), nc, resp.DispatchedJobID, "", "probe", out, defaultProbeWatchDelay, waitTimeout); err != nil {
+	if err := utils.WatchJobLogsForTaskBoth(cmd.Context(), nc, resp.DispatchedJobID, "", "probe", out, DefaultProbeWatchDelay, waitTimeout); err != nil {
 		return fmt.Errorf("streaming probe output: %w", err)
 	}
-	if err := reportProbeTaskOutcome(cmd.Context(), nc, cmd.ErrOrStderr(), resp.DispatchedJobID, "probe"); err != nil {
+	if err := ReportProbeTaskOutcome(cmd.Context(), nc, cmd.ErrOrStderr(), resp.DispatchedJobID, "probe"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func resolveProbePlatform(cmd *cobra.Command, node *utils.NomadNode) (goos, goarch string, err error) {
+func ResolveProbePlatform(cmd *cobra.Command, node *utils.NomadNode) (goos, goarch string, err error) {
 	if p, _ := cmd.Flags().GetString("platform"); strings.TrimSpace(p) != "" {
 		parts := strings.SplitN(strings.TrimSpace(p), "/", 2)
 		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
@@ -309,7 +309,7 @@ func resolveProbePlatform(cmd *cobra.Command, node *utils.NomadNode) (goos, goar
 	return utils.NomadNodeReleasePlatform(node)
 }
 
-func reportProbeTaskOutcome(ctx context.Context, nc *utils.NomadClient, errOut io.Writer, jobID, task string) error {
+func ReportProbeTaskOutcome(ctx context.Context, nc *utils.NomadClient, errOut io.Writer, jobID, task string) error {
 	allocs, err := nc.GetJobAllocs(ctx, jobID, "", false)
 	if err != nil {
 		return fmt.Errorf("fetch allocations after probe: %w", err)
@@ -343,7 +343,7 @@ func reportProbeTaskOutcome(ctx context.Context, nc *utils.NomadClient, errOut i
 	return fmt.Errorf("probe task %q failed (state=%s)", task, ts.State)
 }
 
-func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*utils.NomadNode, error) {
+func ResolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*utils.NomadNode, error) {
 	n, err := nc.GetNode(cmd.Context(), ref)
 	if err == nil {
 		return n, nil
@@ -367,7 +367,7 @@ func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*uti
 	if len(matches) > 1 {
 		ids := make([]string, 0, len(matches))
 		for _, m := range matches {
-			ids = append(ids, fmt.Sprintf("%s (%s)", m.Name, shortID(m.ID)))
+			ids = append(ids, fmt.Sprintf("%s (%s)", m.Name, ShortID(m.ID)))
 		}
 		sort.Strings(ids)
 		return nil, fmt.Errorf("node %q is ambiguous: %s", ref, strings.Join(ids, ", "))
@@ -380,7 +380,7 @@ func resolveNodeRef(cmd *cobra.Command, nc *utils.NomadClient, ref string) (*uti
 	return resolved, nil
 }
 
-func buildNodeProbeJobHCL(datacenter, nodeID, fallbackProbePath, downloadURL string, probeArgs []string) string {
+func BuildNodeProbeJobHCL(datacenter, nodeID, fallbackProbePath, downloadURL string, probeArgs []string) string {
 	datacenter = strings.TrimSpace(datacenter)
 	if datacenter == "" {
 		datacenter = "dc1"
@@ -388,7 +388,7 @@ func buildNodeProbeJobHCL(datacenter, nodeID, fallbackProbePath, downloadURL str
 	nodeID = strings.TrimSpace(nodeID)
 	fallbackProbePath = strings.TrimSpace(fallbackProbePath)
 	if fallbackProbePath == "" {
-		fallbackProbePath = nodeProbeInstalledPath
+		fallbackProbePath = NodeProbeInstalledPath
 	}
 
 	argsHCL := "[]"
@@ -406,7 +406,7 @@ func buildNodeProbeJobHCL(datacenter, nodeID, fallbackProbePath, downloadURL str
 		DownloadURL  string
 		FallbackPath string
 	}{
-		JobID:        nodeProbeJobID,
+		JobID:        NodeProbeJobID,
 		Datacenter:   datacenter,
 		NodeID:       nodeID,
 		ArgsHCL:      argsHCL,
@@ -415,14 +415,14 @@ func buildNodeProbeJobHCL(datacenter, nodeID, fallbackProbePath, downloadURL str
 	}
 
 	var b bytes.Buffer
-	if err := nodeProbeJobTemplate.Execute(&b, data); err != nil {
+	if err := NodeProbeJobTemplate.Execute(&b, data); err != nil {
 		// Template is statically validated with Must; keep a defensive fallback.
 		panic(err)
 	}
 	return b.String()
 }
 
-func shortID(id string) string {
+func ShortID(id string) string {
 	if len(id) <= 8 {
 		return id
 	}

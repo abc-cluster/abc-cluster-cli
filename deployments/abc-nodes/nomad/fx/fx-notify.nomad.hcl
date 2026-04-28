@@ -1,18 +1,32 @@
 # fx-notify.nomad.hcl
 #
-# Phase 1 PoC — MinIO bucket events → notify function → ntfy notification.
+# Phase 2 — MinIO/RustFS bucket events → NATS event bus (+ optional ntfy mirror).
 #
 # Architecture
 # ────────────
-#   MinIO (webhook POST)
+#   MinIO/RustFS (webhook POST)
 #     → notify.aither  (Traefik vhost)
 #       → this job, port 14001 (raw_exec Python HTTP server on docker_node)
-#         → ntfy.aither/minio-events
+#         ├─ NATS publish to subject events.uploads.<class>      (primary)
+#         └─ ntfy POST to $NTFY_URL                              (mirror, kept for back-compat)
 #
-# The task embeds a Python 3 HTTP server as a Nomad template.  The server
-# parses the MinIO S3-event JSON payload and POSTs a human-readable message
-# to an ntfy topic.  No Docker, no compiled binary — Python 3 is available
-# on all cluster nodes.
+# Subject taxonomy (NATS):
+#   events.uploads.created   — ObjectCreated:* (Put / Copy / CompleteMultipartUpload …)
+#   events.uploads.removed   — ObjectRemoved:*
+#   events.uploads.accessed  — ObjectAccessed:*
+#   events.uploads.other     — anything else
+#
+# Subscribers can listen to events.uploads.> (all upload activity), or to a
+# specific class.  Payload is the original S3 event record JSON, so subscribers
+# don't have to resync schema with this bridge — re-derive whatever they need.
+#
+# The ntfy mirror stays on by default so existing alerts (humans + tasks
+# subscribed to that ntfy topic) keep working.  Set NTFY_URL="" to disable.
+#
+# The Python HTTP server speaks the NATS wire protocol over a fresh TCP
+# socket per publish — no client library, no install step, no dependencies
+# beyond the stdlib.  This keeps the raw_exec model intact (Python 3 is on
+# every cluster node by default).
 #
 # Note on fx: the original implementation used metrue/fx to wrap a Go
 # function as a Docker container.  That approach ran into a Docker-host
@@ -58,7 +72,24 @@ variable "docker_node" {
 variable "ntfy_url" {
   type        = string
   default     = "http://ntfy.aither/minio-events"
-  description = "ntfy topic URL that receives MinIO event notifications."
+  description = "ntfy topic URL for the human-readable mirror. Set to \"\" to disable the ntfy mirror entirely (NATS-only)."
+}
+
+variable "nats_host" {
+  type        = string
+  default     = "100.70.185.46"
+  description = "NATS broker host. raw_exec uses host network so the Tailscale IP works directly; bridge mode would need consul-DNS resolution instead."
+}
+
+variable "nats_port" {
+  type    = number
+  default = 4222
+}
+
+variable "nats_subject_prefix" {
+  type        = string
+  default     = "events.uploads"
+  description = "Subject prefix for upload events. Full subject is <prefix>.<class> where class ∈ {created, removed, accessed, other}."
 }
 
 variable "port" {
@@ -130,8 +161,11 @@ job "fx-notify" {
       }
 
       env {
-        NTFY_URL = var.ntfy_url
-        PORT     = var.port
+        NTFY_URL            = var.ntfy_url
+        NATS_HOST           = var.nats_host
+        NATS_PORT           = var.nats_port
+        NATS_SUBJECT_PREFIX = var.nats_subject_prefix
+        PORT                = var.port
       }
 
       # ── Python HTTP server ──────────────────────────────────────────────────
@@ -145,21 +179,32 @@ job "fx-notify" {
         data = <<-PYEOF
 #!/usr/bin/env python3
 """
-notify.py — MinIO webhook → ntfy bridge.
+notify.py — MinIO/RustFS webhook → NATS event bus (+ optional ntfy mirror).
 
-Listens on $PORT (default 14001) for MinIO S3 event POSTs and forwards
-a human-readable notification to the ntfy topic at $NTFY_URL.
+Listens on $PORT (default 14001) for S3 event POSTs.  Each record is:
+  • PUBLISHED to NATS subject  $NATS_SUBJECT_PREFIX.<class>  (primary path)
+  • POSTED to ntfy at $NTFY_URL                              (mirror; opt-out by setting NTFY_URL="")
+
+Class is derived from the eventName: ObjectCreated:* → "created",
+ObjectRemoved:* → "removed", ObjectAccessed:* → "accessed", else "other".
+
+NATS publish uses the wire protocol over a fresh TCP socket per call (no
+client library needed — keeps the raw_exec / stdlib-only deploy model).
 """
 
 import json
 import os
+import socket
 import sys
 import urllib.request
 import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-NTFY_URL = os.environ.get("NTFY_URL", "http://ntfy.aither/minio-events")
-PORT = int(os.environ.get("PORT", "14001"))
+NTFY_URL            = os.environ.get("NTFY_URL", "http://ntfy.aither/minio-events")
+NATS_HOST           = os.environ.get("NATS_HOST", "100.70.185.46")
+NATS_PORT           = int(os.environ.get("NATS_PORT", "4222"))
+NATS_SUBJECT_PREFIX = os.environ.get("NATS_SUBJECT_PREFIX", "events.uploads")
+PORT                = int(os.environ.get("PORT", "14001"))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -196,25 +241,36 @@ class Handler(BaseHTTPRequestHandler):
             ctype = obj.get("contentType", "")
             etime = rec.get("eventTime", "")
 
-            title = _event_title(event_name)
-            tags = _event_tags(event_name)
-            msg = (
-                f"{bucket}/{key}\n"
-                f"Size: {_fmt_size(size)}\n"
-                f"Type: {ctype}\n"
-                f"Time: {etime}"
-            )
+            cls = _event_class(event_name)
+            subject = f"{NATS_SUBJECT_PREFIX}.{cls}"
+            payload = json.dumps(rec, separators=(",", ":")).encode()
 
-            err = _post_ntfy(NTFY_URL, title, tags, msg)
-            if err:
-                print(f"[notify] ntfy error: {err}", flush=True)
-                self._respond(500, b"ntfy delivery failed\n")
-                return
+            # 1. NATS publish — primary path.  Failure is non-fatal so the
+            #    bridge stays available even if NATS hiccups; the ntfy mirror
+            #    will still fire below.
+            nats_err = _pub_nats(NATS_HOST, NATS_PORT, subject, payload)
+            if nats_err:
+                print(f"[notify] nats error on {subject}: {nats_err}", flush=True)
+            else:
+                print(f"[notify] nats <- {subject}  {bucket}/{key}", flush=True)
 
-            print(
-                f"[notify] notified: {event_name} {bucket}/{key}",
-                flush=True,
-            )
+            # 2. ntfy mirror — kept for back-compat with existing operator
+            #    alerting.  Set NTFY_URL="" to disable.  Errors are logged
+            #    but don't fail the request (the source of truth is NATS).
+            if NTFY_URL:
+                title = _event_title(event_name)
+                tags = _event_tags(event_name)
+                msg = (
+                    f"{bucket}/{key}\n"
+                    f"Size: {_fmt_size(size)}\n"
+                    f"Type: {ctype}\n"
+                    f"Time: {etime}"
+                )
+                ntfy_err = _post_ntfy(NTFY_URL, title, tags, msg)
+                if ntfy_err:
+                    print(f"[notify] ntfy error: {ntfy_err}", flush=True)
+                else:
+                    print(f"[notify] ntfy <- {event_name} {bucket}/{key}", flush=True)
 
         self._respond(200, b"ok\n")
 
@@ -232,6 +288,52 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # ── Event helpers ─────────────────────────────────────────────────────────────
+
+def _event_class(name):
+    """Map MinIO/RustFS eventName → NATS subject suffix."""
+    if "ObjectCreated" in name:
+        return "created"
+    if "ObjectRemoved" in name:
+        return "removed"
+    if "ObjectAccessed" in name:
+        return "accessed"
+    return "other"
+
+
+def _pub_nats(host, port, subject, payload):
+    """One-shot NATS publish — opens a TCP socket, sends CONNECT + PUB, closes.
+
+    Implements just enough of the NATS wire protocol
+    (https://docs.nats.io/reference/reference-protocols/nats-protocol)
+    to publish without auth.  No-op for the INFO / +OK responses.
+    Returns None on success, error string on failure.
+    """
+    if not host:
+        return "NATS_HOST unset"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(5)
+            s.connect((host, port))
+            # Read the server's INFO line — we don't parse it.
+            _ = s.recv(4096)
+            # Minimal CONNECT — no auth, no TLS, no echo back.
+            connect = (
+                b'CONNECT {"verbose":false,"pedantic":false,"name":"fx-notify",'
+                b'"echo":false,"protocol":1,"lang":"python","version":"stdlib"}\r\n'
+            )
+            s.sendall(connect)
+            # PUB <subject> <#bytes>\r\n<payload>\r\n
+            header = f"PUB {subject} {len(payload)}\r\n".encode()
+            s.sendall(header + payload + b"\r\n")
+            # PING/PONG to confirm the publish reached the server before we
+            # close — without this the kernel may drop the buffer on close.
+            s.sendall(b"PING\r\n")
+            s.settimeout(2)
+            _ = s.recv(64)
+        return None
+    except Exception as e:
+        return str(e)
+
 
 def _event_title(name):
     # HTTP headers are sent as Latin-1 by Python's urllib; use ASCII only
@@ -298,7 +400,12 @@ def _post_ntfy(url, title, tags, msg):
 
 if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"[notify] listening on 0.0.0.0:{PORT}  ntfy={NTFY_URL}", flush=True)
+    print(
+        f"[notify] listening on 0.0.0.0:{PORT}"
+        f"  nats={NATS_HOST}:{NATS_PORT}/{NATS_SUBJECT_PREFIX}.*"
+        f"  ntfy={NTFY_URL or '(disabled)'}",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
