@@ -26,8 +26,8 @@ func stripInlineComment(s string) string {
 }
 
 // parsePreamble reads lines from r until the first non-comment, non-blank line
-// and returns directive strings from #ABC, #NOMAD, and #SBATCH comment lines.
-func parsePreamble(r io.Reader) (abcDirs, nomadDirs, slurmDirs []string, err error) {
+// and returns directive strings from #ABC, #NOMAD, #SBATCH, and #PBS comment lines.
+func parsePreamble(r io.Reader) (abcDirs, nomadDirs, slurmDirs, pbsDirs []string, err error) {
 	scanner := bufio.NewScanner(r)
 	first := true
 	for scanner.Scan() {
@@ -61,12 +61,127 @@ func parsePreamble(r io.Reader) (abcDirs, nomadDirs, slurmDirs []string, err err
 			if rest != "" {
 				slurmDirs = append(slurmDirs, rest)
 			}
+		case strings.HasPrefix(trimmed, "#PBS"):
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "#PBS"))
+			rest = stripInlineComment(rest)
+			if rest != "" {
+				pbsDirs = append(pbsDirs, rest)
+			}
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
-		return nil, nil, nil, fmt.Errorf("error reading script: %w", scanErr)
+		return nil, nil, nil, nil, fmt.Errorf("error reading script: %w", scanErr)
 	}
-	return abcDirs, nomadDirs, slurmDirs, nil
+	return abcDirs, nomadDirs, slurmDirs, pbsDirs, nil
+}
+
+// applyPBSDirective parses a single #PBS directive string (short-flag style) and
+// mutates spec. PBS uses single-letter flags: -q queue, -A account, -l resource=val,
+// -N name, -o stdout, -e stderr, -v vars, -W extra.
+func applyPBSDirective(spec *jobSpec, directive string) error {
+	fields := strings.Fields(directive)
+	for i := 0; i < len(fields); i++ {
+		f := fields[i]
+		if !strings.HasPrefix(f, "-") {
+			continue // bare value; skip
+		}
+		// Handle -flag=value and -flag value forms.
+		var flag, val string
+		if strings.Contains(f, "=") {
+			parts := strings.SplitN(f, "=", 2)
+			flag = strings.TrimPrefix(parts[0], "-")
+			val = strings.Trim(parts[1], "'\"")
+		} else {
+			flag = strings.TrimPrefix(f, "-")
+			if i+1 < len(fields) && !strings.HasPrefix(fields[i+1], "-") {
+				i++
+				val = strings.Trim(fields[i], "'\"")
+			}
+		}
+
+		switch flag {
+		case "N": // job name
+			if val != "" {
+				spec.Name = val
+			}
+		case "q": // queue → SlurmPartition (shared field for queue/partition)
+			if val != "" {
+				spec.SlurmPartition = val
+			}
+		case "A": // account
+			if val != "" {
+				spec.SlurmAccount = val
+			}
+		case "o": // stdout file
+			if val != "" {
+				spec.SlurmStdoutFile = val
+			}
+		case "e": // stderr file
+			if val != "" {
+				spec.SlurmStderrFile = val
+			}
+		case "l": // resource list: select=N:ncpus=C:mem=Mmb OR walltime=HH:MM:SS
+			if val == "" {
+				continue
+			}
+			// May be comma-separated: -l select=1:ncpus=2:mem=512mb,walltime=01:00:00
+			for _, res := range strings.Split(val, ",") {
+				kv := strings.SplitN(res, "=", 2)
+				if len(kv) != 2 {
+					continue
+				}
+				rkey := strings.TrimSpace(kv[0])
+				rval := strings.TrimSpace(kv[1])
+				switch rkey {
+				case "walltime":
+					secs, err := walltimeToSeconds(rval)
+					if err != nil {
+						return fmt.Errorf("#PBS -l walltime: %w", err)
+					}
+					spec.WalltimeSecs = secs
+				case "select":
+					// select=N:ncpus=C:mem=Mmb — parse inline key=value pairs
+					for _, chunk := range strings.Split(rval, ":") {
+						kv2 := strings.SplitN(chunk, "=", 2)
+						if len(kv2) != 2 {
+							continue
+						}
+						switch kv2[0] {
+						case "ncpus":
+							n, err := strconv.Atoi(kv2[1])
+							if err == nil && n > 0 {
+								spec.Cores = n
+							}
+						case "mem":
+							mb, err := parseMemoryMB(kv2[1])
+							if err == nil {
+								spec.MemoryMB = mb
+							}
+						}
+					}
+				case "ncpus":
+					n, err := strconv.Atoi(rval)
+					if err == nil && n > 0 {
+						spec.Cores = n
+					}
+				case "mem":
+					mb, err := parseMemoryMB(rval)
+					if err == nil {
+						spec.MemoryMB = mb
+					}
+				}
+			}
+		case "W": // extra directives — append to SlurmExtraArgs for passthrough
+			if val != "" {
+				spec.SlurmExtraArgs = append(spec.SlurmExtraArgs, "-W "+val)
+			}
+		case "v", "V", "r", "m", "M", "j", "k", "p", "R", "S":
+			// silently accepted but not mapped (mail, signal, restart, etc.)
+		default:
+			fmt.Fprintf(os.Stderr, "warning: unsupported #PBS directive -%s ignored\n", flag)
+		}
+	}
+	return nil
 }
 
 // applySBATCHDirective parses a single #SBATCH directive string and mutates spec.
@@ -165,16 +280,17 @@ func applySBATCHDirective(spec *jobSpec, directive string) error {
 type preambleMode int
 
 const (
-	preambleModeAuto  preambleMode = iota // default: use #SBATCH if present, else #ABC/#NOMAD
-	preambleModeABC                       // only honour #ABC and #NOMAD; ignore #SBATCH
+	preambleModeAuto  preambleMode = iota // default: use #SBATCH/#PBS if present, else #ABC/#NOMAD
+	preambleModeABC                       // only honour #ABC and #NOMAD; ignore #SBATCH and #PBS
 	preambleModeSlurm                     // only honour #SBATCH; require at least one
+	preambleModePBS                       // only honour #PBS; require at least one
 )
 
 // resolveSpec applies NOMAD then ABC directives (ABC has higher priority) and
-// fills in defaults. slurmDirs contains raw #SBATCH directive strings; mode
-// controls which sets are active. The defaultName is used when no --name is found.
-func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mode preambleMode) (*jobSpec, error) {
-	spec, useSBATCH, err := resolveSpecRaw(abcDirs, nomadDirs, slurmDirs, mode)
+// fills in defaults. slurmDirs contains raw #SBATCH strings, pbsDirs contains
+// raw #PBS strings; mode controls which sets are active.
+func resolveSpec(abcDirs, nomadDirs, slurmDirs, pbsDirs []string, defaultName string, mode preambleMode) (*jobSpec, error) {
+	spec, useSBATCH, err := resolveSpecRaw(abcDirs, nomadDirs, slurmDirs, pbsDirs, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -184,24 +300,43 @@ func resolveSpec(abcDirs, nomadDirs, slurmDirs []string, defaultName string, mod
 	return spec, nil
 }
 
-func resolveSpecRaw(abcDirs, nomadDirs, slurmDirs []string, mode preambleMode) (*jobSpec, bool, error) {
+func resolveSpecRaw(abcDirs, nomadDirs, slurmDirs, pbsDirs []string, mode preambleMode) (*jobSpec, bool, error) {
 	spec := &jobSpec{}
 
-	// Determine whether to honour SBATCH directives.
+	// Determine whether to honour SBATCH / PBS directives.
 	useSBATCH := false
+	usePBS := false
 	switch mode {
 	case preambleModeSlurm:
 		if len(slurmDirs) == 0 {
 			return nil, false, fmt.Errorf("--preamble-mode slurm requires at least one #SBATCH directive in the script")
 		}
 		useSBATCH = true
+	case preambleModePBS:
+		if len(pbsDirs) == 0 {
+			return nil, false, fmt.Errorf("--preamble-mode pbs requires at least one #PBS directive in the script")
+		}
+		usePBS = true
 	case preambleModeAuto:
 		useSBATCH = len(slurmDirs) > 0
+		// Only honour PBS if no SBATCH directives present (SBATCH takes precedence in auto mode).
+		usePBS = !useSBATCH && len(pbsDirs) > 0
 	case preambleModeABC:
 		useSBATCH = false
+		usePBS = false
 	}
 
-	// Apply SBATCH first (lowest priority among preamble sources).
+	// Apply PBS first (lowest priority; SBATCH takes precedence in auto mode).
+	if usePBS {
+		spec.pbsDetected = true
+		for _, d := range pbsDirs {
+			if err := applyPBSDirective(spec, d); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+
+	// Apply SBATCH (overrides PBS when both present, though auto mode prevents that).
 	if useSBATCH {
 		for _, d := range slurmDirs {
 			if err := applySBATCHDirective(spec, d); err != nil {
@@ -210,8 +345,8 @@ func resolveSpecRaw(abcDirs, nomadDirs, slurmDirs []string, mode preambleMode) (
 		}
 	}
 
-	// NOMAD overrides SBATCH.
-	if mode != preambleModeSlurm {
+	// NOMAD overrides SBATCH/PBS.
+	if mode != preambleModeSlurm && mode != preambleModePBS {
 		for _, d := range nomadDirs {
 			if err := applyDirective(spec, d, "NOMAD"); err != nil {
 				return nil, false, err
@@ -239,10 +374,14 @@ func applySpecDefaults(spec *jobSpec, defaultName string, useSBATCH bool) error 
 		spec.Nodes = 1
 	}
 	if spec.Driver == "" {
-		// Auto-select slurm driver when #SBATCH directives are present and the
-		// caller has not explicitly overridden the driver via #ABC --driver=...
+		// Auto-select driver when scheduler-specific preamble is present.
+		// Caller signals PBS via a negative useSBATCH sentinel: useSBATCH==false
+		// and the spec already has SlurmPartition or SlurmAccount set from PBS
+		// parsing. We detect PBS via spec.pbsDetected set by resolveSpecRaw.
 		if useSBATCH {
 			spec.Driver = "slurm"
+		} else if spec.pbsDetected {
+			spec.Driver = "pbs"
 		} else {
 			spec.Driver = "exec"
 		}

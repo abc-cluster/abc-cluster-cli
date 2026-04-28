@@ -45,7 +45,7 @@ func BuildScriptHCL(scriptPath string, opts ScriptHCLOptions) (*ScriptHCLResult,
 		return nil, fmt.Errorf("cannot read script %q: %w", scriptPath, err)
 	}
 
-	abcDirs, nomadDirs, slurmDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
+	abcDirs, nomadDirs, slurmDirs, pbsDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
 	if err != nil {
 		return nil, fmt.Errorf("parsing preamble in %q: %w", scriptPath, err)
 	}
@@ -53,7 +53,7 @@ func BuildScriptHCL(scriptPath string, opts ScriptHCLOptions) (*ScriptHCLResult,
 	scriptBase := filepath.Base(scriptPath)
 	defaultName := strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
 
-	scriptSpec, err := resolveSpec(abcDirs, nomadDirs, slurmDirs, defaultName, preambleModeAuto)
+	scriptSpec, err := resolveSpec(abcDirs, nomadDirs, slurmDirs, pbsDirs, defaultName, preambleModeAuto)
 	if err != nil {
 		return nil, err
 	}
