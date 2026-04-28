@@ -66,6 +66,10 @@ type jobSpec struct {
 	SlurmReservation string
 	SlurmExtraArgs  []string
 
+	// pbsDetected is set by resolveSpecRaw when #PBS directives were found and
+	// applied; used by applySpecDefaults to auto-select the "pbs" driver.
+	pbsDetected bool
+
 	// ── Placement spread ─────────────────────────────────────────────────────
 	// Spread emits a Nomad spread stanza on ${node.unique.id} requesting
 	// at-most-one allocation per node (best-effort; Nomad may still bin-pack
@@ -269,6 +273,9 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if len(override.SlurmExtraArgs) > 0 {
 		base.SlurmExtraArgs = append([]string(nil), override.SlurmExtraArgs...)
+	}
+	if override.pbsDetected {
+		base.pbsDetected = true
 	}
 	if override.Spread {
 		base.Spread = true

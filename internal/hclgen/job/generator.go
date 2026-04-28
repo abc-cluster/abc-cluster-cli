@@ -270,7 +270,7 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 	scriptArg := filepath.ToSlash(filepath.Join("local", scriptName))
 	scriptArg = ociTaskScriptArg(spec.Driver, scriptArg)
 	sh := taskScriptShell(spec.Driver)
-	if spec.Driver == "slurm" {
+	if spec.Driver == "slurm" || spec.Driver == "pbs" {
 		inlineScript := escapeNomadInterpolation(scriptContent)
 		cfgBody.SetAttributeValue("command", cty.StringVal("/bin/bash"))
 		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{

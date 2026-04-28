@@ -206,8 +206,8 @@ func runShow(cmd *cobra.Command, args []string) error {
 		}
 		if len(slurmRows) > 0 {
 			fmt.Fprintln(out)
-			fmt.Fprintf(out, "  SLURM JOB IDS\n")
-			fmt.Fprintf(out, "  %-12s %s\n", "ALLOC ID", "SLURM JOB ID")
+			fmt.Fprintf(out, "  HPC JOB IDS\n")
+			fmt.Fprintf(out, "  %-12s %s\n", "ALLOC ID", "HPC JOB ID")
 			fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 28))
 			for _, r := range slurmRows {
 				fmt.Fprintf(out, "  %-12s %s\n", r.allocShort, r.slurmID)

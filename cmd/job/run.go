@@ -458,7 +458,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 		defaultName = strings.TrimSuffix(scriptBase, filepath.Ext(scriptBase))
 	}
 
-	abcDirs, nomadDirs, slurmDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
+	abcDirs, nomadDirs, slurmDirs, pbsDirs, err := parsePreamble(bytes.NewReader(scriptBytes))
 	if err != nil {
 		return fmt.Errorf("failed to parse script preamble: %w", err)
 	}
@@ -472,12 +472,14 @@ func runJob(cmd *cobra.Command, args []string) error {
 			mode = preambleModeABC
 		case "slurm":
 			mode = preambleModeSlurm
+		case "pbs":
+			mode = preambleModePBS
 		default:
-			return fmt.Errorf("unknown --preamble-mode %q: must be auto, abc, or slurm", modeStr)
+			return fmt.Errorf("unknown --preamble-mode %q: must be auto, abc, slurm, or pbs", modeStr)
 		}
 	}
 
-	scriptSpec, useSBATCH, err := resolveSpecRaw(abcDirs, nomadDirs, slurmDirs, mode)
+	scriptSpec, useSBATCH, err := resolveSpecRaw(abcDirs, nomadDirs, slurmDirs, pbsDirs, mode)
 	if err != nil {
 		return err
 	}
