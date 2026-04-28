@@ -291,6 +291,7 @@ func TestJobRun_DriverConfigDirective(t *testing.T) {
 #ABC --driver=docker
 #ABC --driver.config.image="docker.io/library/nginx:1.27-alpine"
 #ABC --driver.config.volumes=["local/index.html:/usr/share/nginx/html/index.html"]
+#ABC --driver.config.dns_servers=["1.1.1.1","8.8.8.8"]
 exit 0
 `
 	p := writeTempScript(t, "driver_config.sh", script)
@@ -301,11 +302,56 @@ exit 0
 	if !strings.Contains(out, `driver = "docker"`) {
 		t.Fatalf("expected docker driver, got:\n%s", out)
 	}
-	if !strings.Contains(out, `image   = "docker.io/library/nginx:1.27-alpine"`) {
+	if !strings.Contains(out, `"docker.io/library/nginx:1.27-alpine"`) {
 		t.Fatalf("expected driver.image directive in output, got:\n%s", out)
 	}
-	if !strings.Contains(out, `volumes = "[\"local/index.html:/usr/share/nginx/html/index.html\"]"`) {
-		t.Fatalf("expected driver.volumes directive in output, got:\n%s", out)
+	// JSON-array driver.config values render as real HCL lists, not stringified JSON.
+	if !strings.Contains(out, `["local/index.html:/usr/share/nginx/html/index.html"]`) {
+		t.Fatalf("expected driver.volumes as HCL list, got:\n%s", out)
+	}
+	if !strings.Contains(out, `["1.1.1.1", "8.8.8.8"]`) {
+		t.Fatalf("expected driver.dns_servers as HCL list, got:\n%s", out)
+	}
+	// command and args must NOT be rendered from driver.config — those are
+	// owned by the script-wrap path. The script-wrap-set command should win.
+	if !strings.Contains(out, `"/bin/bash"`) {
+		t.Fatalf("expected script-wrap command='/bin/bash', got:\n%s", out)
+	}
+}
+
+func TestJobRun_DriverConfigArgsRejected(t *testing.T) {
+	// --driver.config.args would shadow the submitted script — must error at
+	// parse time, not silently override.
+	script := `#!/bin/bash
+#ABC --driver=docker
+#ABC --driver.config.image=alpine:3.19
+#ABC --driver.config.args=["--cpu","1"]
+exit 0
+`
+	p := writeTempScript(t, "driver_config_args.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatalf("expected error for --driver.config.args, got none")
+	}
+	if !strings.Contains(err.Error(), "--driver.config.args is not allowed") {
+		t.Fatalf("expected explanatory error mentioning args, got: %v", err)
+	}
+}
+
+func TestJobRun_DriverConfigCommandRejected(t *testing.T) {
+	script := `#!/bin/bash
+#ABC --driver=docker
+#ABC --driver.config.image=alpine:3.19
+#ABC --driver.config.command=stress-ng
+exit 0
+`
+	p := writeTempScript(t, "driver_config_command.sh", script)
+	_, err := executeCmd(t, p)
+	if err == nil {
+		t.Fatalf("expected error for --driver.config.command, got none")
+	}
+	if !strings.Contains(err.Error(), "--driver.config.command is not allowed") {
+		t.Fatalf("expected explanatory error mentioning command, got: %v", err)
 	}
 }
 

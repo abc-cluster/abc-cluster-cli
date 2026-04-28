@@ -40,6 +40,7 @@ All cluster operations require --cloud and an infrastructure-tier token.
 		newProvisionCmd(),
 		newDecommissionCmd(),
 		newCapabilitiesCmd(),
+		newConfigurationCmd(),
 	)
 	return cmd
 }

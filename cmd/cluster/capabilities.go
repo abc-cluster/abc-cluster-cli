@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -440,17 +441,30 @@ func syncNodeCapabilities(ctx context.Context, nc *utils.NomadClient) ([]config.
 		if err != nil {
 			return nil, fmt.Errorf("get node %s: %w", stub.ID, err)
 		}
+
 		var drivers []string
 		for name, info := range node.Drivers {
 			if info.Detected && info.Healthy {
 				drivers = append(drivers, name)
 			}
 		}
+		sort.Strings(drivers)
+
+		var volumes []string
+		for name, vol := range node.HostVolumes {
+			entry := name + ":" + vol.Path
+			if vol.ReadOnly {
+				entry += " (ro)"
+			}
+			volumes = append(volumes, entry)
+		}
+		sort.Strings(volumes)
+
 		result = append(result, config.NodeCapability{
 			ID:       node.ID,
 			Hostname: node.Name,
 			Drivers:  drivers,
-			Volumes:  nil, // Phase 2
+			Volumes:  volumes,
 		})
 	}
 	return result, nil
@@ -480,7 +494,19 @@ func printCapabilities(cmd *cobra.Command, caps *config.Capabilities) {
 	if len(caps.Nodes) > 0 {
 		fmt.Fprintf(w, "  nodes:\n")
 		for _, n := range caps.Nodes {
-			fmt.Fprintf(w, "    - %s (%s): %s\n", n.Hostname, n.ID[:8], strings.Join(n.Drivers, ", "))
+			shortID := n.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			driverStr := strings.Join(n.Drivers, ", ")
+			if driverStr == "" {
+				driverStr = "(none)"
+			}
+			fmt.Fprintf(w, "    - %s (%s)\n", n.Hostname, shortID)
+			fmt.Fprintf(w, "        drivers: %s\n", driverStr)
+			if len(n.Volumes) > 0 {
+				fmt.Fprintf(w, "        volumes: %s\n", strings.Join(n.Volumes, ", "))
+			}
 		}
 	}
 }

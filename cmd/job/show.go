@@ -185,7 +185,8 @@ func runShow(cmd *cobra.Command, args []string) error {
 				shortID, node, a.TaskGroup, a.ClientStatus, started, allocDur)
 		}
 
-		// Surface native SLURM job IDs when the hpc-bridge or slurm driver stored them.
+		// Surface native SLURM job IDs when the slurm/hpc-bridge driver emitted them.
+		// The ID lives in a "Driver" task event's Details["job_id"], not DriverAttributes.
 		type slurmIDRow struct {
 			allocShort string
 			slurmID    string
@@ -193,7 +194,7 @@ func runShow(cmd *cobra.Command, args []string) error {
 		var slurmRows []slurmIDRow
 		for _, a := range shown {
 			for _, ts := range a.TaskStates {
-				if id, ok := ts.DriverAttributes["slurm_job_id"]; ok && id != "" {
+				if id := ts.SlurmJobID(); id != "" {
 					shortID := a.ID
 					if len(shortID) > 8 {
 						shortID = shortID[:8]

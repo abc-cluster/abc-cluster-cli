@@ -1,6 +1,7 @@
 package job
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,28 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+// parseDriverConfigList recognises a JSON-array-of-strings value (e.g.
+// `["--cpu","1","--timeout","5s"]`) used in #ABC/#NOMAD driver.config
+// directives for list-typed fields like docker's `args` or `volumes`.
+//
+// The directive parser splits on whitespace via strings.Fields, so the value
+// must not contain spaces — JSON arrays with quoted elements work because
+// `["a","b"]` is a single whitespace-free token.
+//
+// Returns the parsed list and ok=true on success; ok=false means the value
+// is not a JSON array and the caller should fall back to a string value.
+func parseDriverConfigList(v string) ([]string, bool) {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "[") || !strings.HasSuffix(v, "]") {
+		return nil, false
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(v), &out); err != nil {
+		return nil, false
+	}
+	return out, true
+}
 
 type Constraint struct {
 	Attribute string
@@ -333,9 +356,35 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 	}
 
 	for _, k := range utils.SortedKeys(spec.DriverConfig) {
+		// `command` and `args` are managed by the script-wrap path above —
+		// they invoke the user's submitted script INSIDE the container so
+		// `abc job run` keeps its HPC-script-like UX (write a shell script,
+		// it runs against the container's filesystem). Driver-config
+		// `command`/`args` would silently shadow the script and produce
+		// confusing failures (image entrypoint runs the wrong thing, args
+		// list looks like script args but isn't). Reserve `--driver.config`
+		// for *container-shaped* settings (image, volumes, mounts, ports,
+		// network_mode, ulimits, …); ignore command/args here.
+		if k == "command" || k == "args" {
+			continue
+		}
 		v := strings.TrimSpace(spec.DriverConfig[k])
+		// JSON-array form: `key=["a","b","c"]` → HCL list(string).
+		// Used for docker/containerd `volumes`, `mount`, `dns_servers`, etc.
+		if items, ok := parseDriverConfigList(v); ok {
+			if len(items) == 0 {
+				cfgBody.SetAttributeValue(k, cty.ListValEmpty(cty.String))
+				continue
+			}
+			vals := make([]cty.Value, len(items))
+			for i, p := range items {
+				vals[i] = cty.StringVal(p)
+			}
+			cfgBody.SetAttributeValue(k, cty.ListVal(vals))
+			continue
+		}
 		if k == "extra_args" {
-			// hpc-bridge/slurm expect list(string); split whitespace-delimited args.
+			// hpc-bridge/slurm convenience: whitespace-split into list(string).
 			parts := strings.Fields(v)
 			if len(parts) == 0 {
 				parts = []string{v}
@@ -345,9 +394,9 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 				vals[i] = cty.StringVal(p)
 			}
 			cfgBody.SetAttributeValue(k, cty.ListVal(vals))
-		} else {
-			cfgBody.SetAttributeValue(k, cty.StringVal(v))
+			continue
 		}
+		cfgBody.SetAttributeValue(k, cty.StringVal(v))
 	}
 	if spec.Driver != "slurm" && spec.ChDir != "" {
 		cfgBody.SetAttributeValue("work_dir", cty.StringVal(spec.ChDir))
