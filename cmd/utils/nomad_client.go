@@ -166,12 +166,34 @@ type NomadAllocation struct {
 	} `json:"AllocatedResources"`
 }
 
+// NomadTaskEvent is one entry in the TaskState.Events array.
+type NomadTaskEvent struct {
+	Type           string            `json:"Type"`
+	DisplayMessage string            `json:"DisplayMessage"`
+	Details        map[string]string `json:"Details"`
+}
+
 type NomadTaskState struct {
 	State            string            `json:"State"`
 	StartedAt        string            `json:"StartedAt"`
 	FinishedAt       string            `json:"FinishedAt"`
 	Failed           bool              `json:"Failed"`
 	DriverAttributes map[string]string `json:"DriverAttributes"`
+	Events           []NomadTaskEvent  `json:"Events"`
+}
+
+// SlurmJobID returns the native SLURM job ID emitted by the slurm/hpc-bridge
+// driver, or "" if none was found. The ID is stored in a "Driver" event's
+// Details["job_id"] field (not in DriverAttributes).
+func (ts *NomadTaskState) SlurmJobID() string {
+	for _, ev := range ts.Events {
+		if ev.Type == "Driver" {
+			if id, ok := ev.Details["job_id"]; ok && id != "" {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
 type NomadEvaluation struct {
@@ -339,18 +361,19 @@ type NomadNodeStub struct {
 
 // NomadNode represents full node details from GET /v1/node/<id>.
 type NomadNode struct {
-	ID                    string                     `json:"ID"`
-	Name                  string                     `json:"Name"`
-	Datacenter            string                     `json:"Datacenter"`
-	Region                string                     `json:"Region"`
-	NodeClass             string                     `json:"NodeClass"`
-	Status                string                     `json:"Status"`
-	Drain                 bool                       `json:"Drain"`
-	SchedulingEligibility string                     `json:"SchedulingEligibility"`
-	Attributes            map[string]string          `json:"Attributes"`
-	NodeResources         *NomadNodeResource         `json:"NodeResources"`
-	ReservedResources     *NomadNodeResource         `json:"ReservedResources"`
-	Drivers               map[string]NomadDriverInfo `json:"Drivers"`
+	ID                    string                          `json:"ID"`
+	Name                  string                          `json:"Name"`
+	Datacenter            string                          `json:"Datacenter"`
+	Region                string                          `json:"Region"`
+	NodeClass             string                          `json:"NodeClass"`
+	Status                string                          `json:"Status"`
+	Drain                 bool                            `json:"Drain"`
+	SchedulingEligibility string                          `json:"SchedulingEligibility"`
+	Attributes            map[string]string               `json:"Attributes"`
+	NodeResources         *NomadNodeResource              `json:"NodeResources"`
+	ReservedResources     *NomadNodeResource              `json:"ReservedResources"`
+	Drivers               map[string]NomadDriverInfo      `json:"Drivers"`
+	HostVolumes           map[string]NomadHostVolumeConfig `json:"HostVolumes"`
 }
 
 // NomadDriverInfo is a simplified driver status entry.
@@ -358,6 +381,13 @@ type NomadDriverInfo struct {
 	Detected          bool   `json:"Detected"`
 	Healthy           bool   `json:"Healthy"`
 	HealthDescription string `json:"HealthDescription,omitempty"`
+}
+
+// NomadHostVolumeConfig is the host-volume configuration block from a Nomad
+// client node (HostVolumes map in GET /v1/node/<id>).
+type NomadHostVolumeConfig struct {
+	Path     string `json:"Path"`
+	ReadOnly bool   `json:"ReadOnly"`
 }
 
 // NomadNamespace is a Nomad namespace with optional metadata.

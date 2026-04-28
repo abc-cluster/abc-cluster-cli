@@ -61,7 +61,17 @@ CLASS 1 — SCHEDULER  (configure HCL stanza fields)
                                Example: --affinity=datacenter==c1,weight=75
   --no-network                 Disable network access (Nomad mode = "none")
   --port=<label>               Dynamic port; injects NOMAD_IP/PORT/ADDR_<label>
-  --driver.config.<key>=<val>  Pass arbitrary driver config fields
+  --driver.config.<key>=<val>  Pass *container-shaped* driver config (image,
+                               volumes, mounts, network_mode, ports, ulimits,
+                               privileged, …). Two forms:
+                                 Scalars: --driver.config.image=alpine:3.19
+                                 Lists  : --driver.config.volumes=["host:/c"]
+                                          (JSON-array; no spaces inside the value)
+                               NOT allowed: command, args. The submitted script
+                               body is what runs inside the container — abc wraps
+                               it so your shell script gets the HPC-script-like
+                               UX (driver-default-bash invokes script_path). Put
+                               command-line arguments INSIDE the script body.
 
 SOFTWARE STACK  (orthogonal to --driver; see USAGE.md job run / Software stack)
   --runtime=<kind>             Stack provisioner: pixi-exec (alias: pixi)
@@ -322,6 +332,19 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 		}
 	}
 	if dc, _ := cmd.Flags().GetStringToString("driver.config"); len(dc) > 0 {
+		// Reject command/args here for the same reason as the #ABC directive
+		// path: they would shadow the submitted script.
+		for k := range dc {
+			if k == "command" || k == "args" {
+				return fmt.Errorf(
+					"--driver.config %s=… is not allowed: this would shadow the "+
+						"submitted script. Reserve --driver.config for container-shaped "+
+						"settings (image, volumes, mounts, network_mode, …); write the "+
+						"actual command + arguments in the script body.",
+					k,
+				)
+			}
+		}
 		if spec.DriverConfig == nil {
 			spec.DriverConfig = map[string]string{}
 		}

@@ -322,10 +322,25 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			if !hasValue || strings.TrimSpace(val) == "" {
 				return fmt.Errorf("#%s --%s requires a value", marker, key)
 			}
+			subKey := strings.TrimPrefix(key, "driver.config.")
+			// `command` and `args` would shadow the user's submitted script
+			// (which abc wraps as the task command + args to preserve the
+			// HPC-script UX). Reject at parse time with an explanatory
+			// message rather than silently dropping at HCL-render time.
+			if subKey == "command" || subKey == "args" {
+				return fmt.Errorf(
+					"#%s --driver.config.%s is not allowed: this would shadow the "+
+						"submitted script. The script body is what runs inside the "+
+						"container; reserve --driver.config for image/volumes/mounts/"+
+						"network/etc. To pass arguments TO your script, write them in "+
+						"the script body itself.",
+					marker, subKey,
+				)
+			}
 			if spec.DriverConfig == nil {
 				spec.DriverConfig = make(map[string]string)
 			}
-			spec.DriverConfig[strings.TrimPrefix(key, "driver.config.")] = val
+			spec.DriverConfig[subKey] = val
 			continue
 		}
 

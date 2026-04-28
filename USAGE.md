@@ -2039,6 +2039,8 @@ The command requires at minimum `namespace:list-jobs` (service registry requires
 | `capabilities.secrets` | `nomad` (default), `vault`, or `vault+sealed` (probed from Vault `/v1/sys/health`) |
 | `capabilities.proxy` | `true` if `abc-nodes-traefik` is running |
 | `capabilities.last_synced` | RFC 3339 timestamp of the sync run |
+| `capabilities.nodes[*].drivers` | Healthy, detected Nomad task drivers on each ready+eligible node |
+| `capabilities.nodes[*].volumes` | Host volumes declared in each node's Nomad client config (`name:/path`, `name:/path (ro)` for read-only) |
 | `admin.services.<svc>.http` / `.endpoint` | URL discovered from service instances or allocation ports (never overwrites an existing non-empty value) |
 
 ```bash
@@ -2055,13 +2057,21 @@ Capabilities synced for context "my-cluster":
   secrets:       vault
   proxy:         true
   last_synced:   2026-04-19T10:30:00Z
+  nodes:
+    - nomad00 (a1b2c3d4)
+        drivers: exec, raw_exec
+        volumes: scratch:/mnt/scratch, data:/mnt/data (ro)
+    - nomad01 (e5f6a7b8)
+        drivers: exec, raw_exec, docker
 ```
 
 > **abc-nodes upload integration:** once `capabilities.uploads == true` and `admin.services.tusd.http` is populated, `abc data upload` automatically uses `<tusd_http>/files/` as the endpoint without any extra flags.
 
+> **Host volumes in job scripts:** use `#ABC --constraint=...` (or `--constraint=` on the CLI) to target a node that has the required volume. The volume name can then be referenced in the Nomad job HCL `volume` block.
+
 ### `cluster capabilities show`
 
-Print the stored capabilities for the active context.
+Print the stored capabilities for the active context, including per-node drivers and host volumes.
 
 ```bash
 abc cluster capabilities show
