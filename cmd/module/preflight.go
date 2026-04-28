@@ -23,8 +23,12 @@ func runPreflight(ctx context.Context, stderr io.Writer, spec *RunSpec, nomadAdd
 	if err := preflightNomad(ctx, stderr, nomadAddr, nomadToken); err != nil {
 		return err
 	}
-	if err := preflightGitHub(ctx, stderr, spec.PipelineGenRepo, spec.GitHubToken); err != nil {
-		return err
+	if spec.PipelineGenURLBase == "" {
+		if err := preflightGitHub(ctx, stderr, spec.PipelineGenRepo, spec.GitHubToken); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(stderr, "  Preflight  GitHub       skipped (using --pipeline-gen-url-base %s)\n", spec.PipelineGenURLBase)
 	}
 	preflightOutputCreds(stderr, spec)
 	return nil
@@ -102,17 +106,16 @@ func preflightOutputCreds(stderr io.Writer, spec *RunSpec) {
 	if !strings.HasPrefix(spec.OutputPrefix, "s3://") {
 		return
 	}
-	if spec.MinioEndpoint != "" {
+	if spec.S3Endpoint != "" {
 		return
 	}
 	hasAWS := os.Getenv("AWS_ACCESS_KEY_ID") != "" || os.Getenv("AWS_PROFILE") != "" || os.Getenv("AWS_ROLE_ARN") != ""
-	hasMinio := os.Getenv("MINIO_ACCESS_KEY") != "" || os.Getenv("MINIO_ROOT_USER") != ""
-	if hasAWS || hasMinio {
+	if hasAWS {
 		return
 	}
 	fmt.Fprintf(stderr,
 		"  Preflight  Output       warn: --output-prefix is %s but no S3 credentials detected locally\n"+
-			"             (the prestart task will rely on cluster-side credentials; set AWS_* or use --minio-endpoint if needed)\n",
+			"             (the prestart task will rely on cluster-side credentials; set AWS_* or use --s3-endpoint if needed)\n",
 		spec.OutputPrefix,
 	)
 }

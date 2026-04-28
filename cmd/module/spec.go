@@ -9,10 +9,17 @@ type RunSpec struct {
 
 	Profile      string
 	WorkDir      string
+	HostVolume   string
 	OutputPrefix string
 
 	PipelineGenRepo    string
 	PipelineGenVersion string
+	// PipelineGenURLBase, when set, makes the prestart fetch the JAR from
+	// <base>/<version>/pipeline-gen.jar (with sha256 verification against
+	// <base>/<version>/sha256sums.txt) instead of GitHub releases. Mirrors the
+	// abc-node-probe RustFS-mirror pattern; lets the cluster avoid GitHub rate
+	// limits and lets devs ship local builds without cutting a release.
+	PipelineGenURLBase string
 	ModuleRevision     string
 	GitHubToken        string
 
@@ -25,13 +32,18 @@ type RunSpec struct {
 	Namespace   string
 	Datacenters []string
 
-	MinioEndpoint string
+	S3Endpoint string
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
 
 	// PipelineGenNoRunManifest passes --no-run-manifest to nf-pipeline-gen in the Nomad prestart script.
 	PipelineGenNoRunManifest bool
+
+	// TestMode runs the module against its own bundled tests/main.nf.test fixtures,
+	// staged from nf-core/test-datasets at runtime. Forces the "test" profile and
+	// suppresses placeholder params (the JAR's generated test profile drives inputs).
+	TestMode bool
 }
 
 func (s *RunSpec) defaults() {
@@ -39,13 +51,30 @@ func (s *RunSpec) defaults() {
 		s.JobName = defaultJobName(s.Module)
 	}
 	if s.Profile == "" {
-		s.Profile = "nomad,test"
+		s.Profile = "test"
+	}
+	if s.TestMode && !profileContains(s.Profile, "test") {
+		s.Profile = s.Profile + ",test"
+	}
+	if s.HostVolume == "" {
+		// `scratch` is registered on every node by `abc compute add` defaults
+		// (path /opt/nomad/scratch). The legacy `nextflow-work` volume only
+		// existed on one GCP node. Defaulting to scratch lets module runs
+		// schedule anywhere in the cluster.
+		s.HostVolume = "scratch"
 	}
 	if s.WorkDir == "" {
-		s.WorkDir = "/work/nextflow-work"
+		s.WorkDir = "/opt/nomad/scratch/nextflow-work"
 	}
 	if s.OutputPrefix == "" {
-		s.OutputPrefix = "s3://user-output/nextflow"
+		if s.TestMode {
+			// Test mode: keep outputs on the shared host volume so the run
+			// works against any cluster without requiring a pre-existing
+			// S3 bucket or S3 endpoint configuration.
+			s.OutputPrefix = s.WorkDir + "/test-outputs"
+		} else {
+			s.OutputPrefix = "s3://user-output/nextflow"
+		}
 	}
 	if s.PipelineGenRepo == "" {
 		s.PipelineGenRepo = "abc-cluster/nf-pipeline-gen"
@@ -71,6 +100,15 @@ func (s *RunSpec) defaults() {
 	if len(s.Datacenters) == 0 {
 		s.Datacenters = []string{"dc1"}
 	}
+}
+
+func profileContains(profileList, profile string) bool {
+	for _, p := range strings.Split(profileList, ",") {
+		if strings.TrimSpace(p) == profile {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultJobName(moduleName string) string {

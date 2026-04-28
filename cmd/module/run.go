@@ -34,6 +34,14 @@ The generated job has two phases:
      (module … --outdir … --force; add --pipeline-gen-no-run-manifest to pass --no-run-manifest)
   2) main task: runs the generated driver with Nextflow
 
+EXAMPLES
+
+  # Run the module's bundled tests (fixtures staged from nf-core/test-datasets)
+  abc module run nf-core/seqkit/stats --test
+
+  # Run with your own params and config
+  abc module run nf-core/fastqc --params-file params.yml --config-file fastqc.config
+
 For several drivers from one params/config (tool comparison), use nf-pipeline-gen's matrix
 subcommand locally or in CI; each abc module run still targets a single module.`,
 		Args: cobra.ExactArgs(1),
@@ -41,8 +49,9 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	}
 
 	cmd.Flags().String("name", "", "Override Nomad job name (default: module-<module-slug>)")
-	cmd.Flags().String("profile", "nomad,test", "Nextflow profile(s) for generated driver run")
-	cmd.Flags().String("work-dir", "", "Shared host volume path (default: /work/nextflow-work)")
+	cmd.Flags().String("profile", "test", "Nextflow profile(s) for generated driver run (auto-includes 'test' when --test is set)")
+	cmd.Flags().String("work-dir", "", "Mount path inside the alloc for the shared work dir (default: /opt/nomad/scratch/nextflow-work)")
+	cmd.Flags().String("host-volume", "", "Name of the Nomad host volume to mount as the shared work dir (default: scratch — registered on every abc-managed node)")
 	cmd.Flags().String("output-prefix", "", "Output prefix for generated module runs (default: s3://user-output/nextflow)")
 
 	cmd.Flags().String("params-file", "", "Optional params.yml to pass to nf-pipeline-gen (default: auto-generated from module meta.yml)")
@@ -51,6 +60,7 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 
 	cmd.Flags().String("pipeline-gen-repo", "abc-cluster/nf-pipeline-gen", "GitHub repository for nf-pipeline-gen release assets (owner/repo)")
 	cmd.Flags().String("pipeline-gen-version", "latest", "nf-pipeline-gen release to use: latest or a specific tag")
+	cmd.Flags().String("pipeline-gen-url-base", "", "Direct URL base for the JAR (e.g. http://rustfs.aither/releases/nf-pipeline-gen). When set, prestart fetches <base>/<version>/pipeline-gen.jar and skips GitHub")
 	cmd.Flags().String("github-token", utils.EnvOrDefault("GITHUB_TOKEN", "GH_TOKEN"), "GitHub token for release API/download access (or set GITHUB_TOKEN/GH_TOKEN)")
 
 	cmd.Flags().String("nf-version", "", "Nextflow Docker image tag for generate/run tasks (default: 25.10.4)")
@@ -58,8 +68,9 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().Int("cpu", 0, "Main Nextflow task CPU in MHz (default: 1500)")
 	cmd.Flags().Int("memory", 0, "Main Nextflow task memory in MB (default: 4096)")
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
-	cmd.Flags().String("minio-endpoint", "", "Optional NF_MINIO_ENDPOINT value for generated driver execution")
+	cmd.Flags().String("s3-endpoint", "", "S3 endpoint URL for the generated driver (sets NF_S3_ENDPOINT in the run task; e.g. http://rustfs.aither:9900)")
 
+	cmd.Flags().Bool("test", false, "Run the module's bundled tests/main.nf.test fixtures (staged from nf-core/test-datasets); forces the 'test' profile and ignores --params-file inputs")
 	cmd.Flags().Bool("wait", false, "Block until module run job completes")
 	cmd.Flags().Bool("logs", false, "Stream module run logs after submit")
 	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
@@ -77,7 +88,7 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 		"cpu",
 		"memory",
 		"datacenter",
-		"minio-endpoint",
+		"s3-endpoint",
 		"pipeline-gen-no-run-manifest",
 	})
 
@@ -101,6 +112,9 @@ func runModule(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("work-dir"); v != "" {
 		spec.WorkDir = v
 	}
+	if v, _ := cmd.Flags().GetString("host-volume"); v != "" {
+		spec.HostVolume = v
+	}
 	if v, _ := cmd.Flags().GetString("output-prefix"); v != "" {
 		spec.OutputPrefix = v
 	}
@@ -112,6 +126,9 @@ func runModule(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("pipeline-gen-version"); v != "" {
 		spec.PipelineGenVersion = v
+	}
+	if v, _ := cmd.Flags().GetString("pipeline-gen-url-base"); v != "" {
+		spec.PipelineGenURLBase = v
 	}
 	if v, _ := cmd.Flags().GetString("github-token"); v != "" {
 		spec.GitHubToken = v
@@ -131,11 +148,14 @@ func runModule(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetStringSlice("datacenter"); len(v) > 0 {
 		spec.Datacenters = v
 	}
-	if v, _ := cmd.Flags().GetString("minio-endpoint"); v != "" {
-		spec.MinioEndpoint = v
+	if v, _ := cmd.Flags().GetString("s3-endpoint"); v != "" {
+		spec.S3Endpoint = v
 	}
 	if v, _ := cmd.Flags().GetBool("pipeline-gen-no-run-manifest"); v {
 		spec.PipelineGenNoRunManifest = true
+	}
+	if v, _ := cmd.Flags().GetBool("test"); v {
+		spec.TestMode = true
 	}
 	if ns != "" {
 		spec.Namespace = ns
@@ -158,8 +178,8 @@ func runModule(cmd *cobra.Command, args []string) error {
 
 	spec.defaults()
 
-	if spec.GitHubToken == "" {
-		return fmt.Errorf("missing GitHub token: set GITHUB_TOKEN or GH_TOKEN env var (see --help --advanced for --github-token)")
+	if spec.GitHubToken == "" && spec.PipelineGenURLBase == "" {
+		return fmt.Errorf("missing GitHub token: set GITHUB_TOKEN or GH_TOKEN env var, or pass --pipeline-gen-url-base to fetch the JAR from a mirror (see --help --advanced)")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")

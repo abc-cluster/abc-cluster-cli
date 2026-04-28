@@ -42,7 +42,33 @@ func TestModuleRunDryRun_EmitsGenerateAndRunTasks(t *testing.T) {
 		`task "nextflow"`,
 		`nf-core/fastqc`,
 		`nextflow run main.nf`,
-		`nomad,test`,
+		`-profile "test"`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in dry-run output\n%s", want, out)
+		}
+	}
+}
+
+func TestModuleRunDryRun_TestModeForcesTestProfileAndEnv(t *testing.T) {
+	out, err := executeModuleCmd(
+		t,
+		"nf-core/seqkit/stats",
+		"--test",
+		"--dry-run",
+		"--github-token", "ghp_test_token",
+		"--nomad-token", "nomad_test_token",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	checks := []string{
+		`job "module-nf-core-seqkit-stats"`,
+		`ABC_MODULE_TEST_MODE = "1"`,
+		`-profile "test"`,
+		`nf-core/seqkit/stats`,
 	}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {
@@ -82,7 +108,7 @@ func TestModuleRunHelp_DefaultHidesAdvanced(t *testing.T) {
 		}
 	}
 
-	mustNotContain := []string{"--nf-version", "--cpu", "--memory", "--minio-endpoint", "--github-token", "--module-revision"}
+	mustNotContain := []string{"--nf-version", "--cpu", "--memory", "--s3-endpoint", "--github-token", "--module-revision"}
 	for _, banned := range mustNotContain {
 		if strings.Contains(out, banned) {
 			t.Fatalf("default help unexpectedly contains %q:\n%s", banned, out)
@@ -99,7 +125,7 @@ func TestModuleRunHelp_AdvancedShowsAll(t *testing.T) {
 	mustContain := []string{
 		"--params-file", "--wait",
 		"--nf-version", "--nf-plugin-version", "--cpu", "--memory",
-		"--minio-endpoint", "--github-token", "--module-revision",
+		"--s3-endpoint", "--github-token", "--module-revision",
 		"--pipeline-gen-repo", "--pipeline-gen-version", "--pipeline-gen-no-run-manifest",
 		"--work-dir", "--output-prefix", "--datacenter",
 	}

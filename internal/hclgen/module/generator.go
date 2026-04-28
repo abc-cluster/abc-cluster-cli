@@ -19,10 +19,15 @@ type Spec struct {
 
 	Profile      string
 	WorkDir      string
+	HostVolume   string
 	OutputPrefix string
 
 	PipelineGenRepo    string
 	PipelineGenVersion string
+	// PipelineGenURLBase, when set, makes the prestart fetch the JAR directly
+	// from <base>/<version>/pipeline-gen.jar instead of resolving via the
+	// GitHub releases API. Mirrors the abc-node-probe RustFS-mirror pattern.
+	PipelineGenURLBase string
 	ModuleRevision     string
 	GitHubToken        string
 
@@ -35,13 +40,19 @@ type Spec struct {
 	Namespace   string
 	Datacenters []string
 
-	MinioEndpoint string
+	S3Endpoint string
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
 
 	// PipelineGenNoRunManifest, when true, passes --no-run-manifest to nf-pipeline-gen.
 	PipelineGenNoRunManifest bool
+
+	// TestMode runs the module against its bundled tests/main.nf.test fixtures
+	// (staged from nf-core/test-datasets). Sets ABC_MODULE_TEST_MODE=1 in the
+	// prestart task so the script emits a minimal valid params stub and lets the
+	// generated test profile drive inputs at Nextflow runtime.
+	TestMode bool
 }
 
 // ---------------------------------------------------------------------------
@@ -71,9 +82,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	groupBody := jobBody.AppendNewBlock("group", []string{"run"}).Body()
 
-	volBody := groupBody.AppendNewBlock("volume", []string{"nextflow-work"}).Body()
+	volBody := groupBody.AppendNewBlock("volume", []string{spec.HostVolume}).Body()
 	volBody.SetAttributeValue("type", cty.StringVal("host"))
-	volBody.SetAttributeValue("source", cty.StringVal("nextflow-work"))
+	volBody.SetAttributeValue("source", cty.StringVal(spec.HostVolume))
 
 	// ---- prestart: generate module driver with nf-pipeline-gen ----
 	genTaskBody := groupBody.AppendNewBlock("task", []string{"generate"}).Body()
@@ -84,7 +95,7 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	lifecycle.SetAttributeValue("sidecar", cty.BoolVal(false))
 
 	genMount := genTaskBody.AppendNewBlock("volume_mount", nil).Body()
-	genMount.SetAttributeValue("volume", cty.StringVal("nextflow-work"))
+	genMount.SetAttributeValue("volume", cty.StringVal(spec.HostVolume))
 	genMount.SetAttributeValue("destination", cty.StringVal(spec.WorkDir))
 	genMount.SetAttributeValue("read_only", cty.BoolVal(false))
 
@@ -100,6 +111,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	genEnv := genTaskBody.AppendNewBlock("env", nil).Body()
 	genEnv.SetAttributeValue("GITHUB_TOKEN", cty.StringVal(spec.GitHubToken))
+	if spec.PipelineGenURLBase != "" {
+		genEnv.SetAttributeValue("ABC_PIPELINE_GEN_URL_BASE", cty.StringVal(spec.PipelineGenURLBase))
+	}
 	if spec.ModuleRevision != "" {
 		genEnv.SetAttributeValue("ABC_MODULE_REVISION", cty.StringVal(spec.ModuleRevision))
 	}
@@ -108,6 +122,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	}
 	if spec.ConfigYAMLContent != "" {
 		genEnv.SetAttributeValue("ABC_MODULE_CONFIG_B64", cty.StringVal(base64.StdEncoding.EncodeToString([]byte(spec.ConfigYAMLContent))))
+	}
+	if spec.TestMode {
+		genEnv.SetAttributeValue("ABC_MODULE_TEST_MODE", cty.StringVal("1"))
 	}
 
 	genRes := genTaskBody.AppendNewBlock("resources", nil).Body()
@@ -119,7 +136,7 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	runTaskBody.SetAttributeValue("driver", cty.StringVal("docker"))
 
 	runMount := runTaskBody.AppendNewBlock("volume_mount", nil).Body()
-	runMount.SetAttributeValue("volume", cty.StringVal("nextflow-work"))
+	runMount.SetAttributeValue("volume", cty.StringVal(spec.HostVolume))
 	runMount.SetAttributeValue("destination", cty.StringVal(spec.WorkDir))
 	runMount.SetAttributeValue("read_only", cty.BoolVal(false))
 
@@ -149,8 +166,8 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	runEnv.SetAttributeValue("NOMAD_ADDR", cty.StringVal(nomadAddr))
 	runEnv.SetAttributeValue("NOMAD_TOKEN", cty.StringVal(nomadToken))
 	runEnv.SetAttributeValue("NXF_ANSI_LOG", cty.StringVal("false"))
-	if spec.MinioEndpoint != "" {
-		runEnv.SetAttributeValue("NF_MINIO_ENDPOINT", cty.StringVal(spec.MinioEndpoint))
+	if spec.S3Endpoint != "" {
+		runEnv.SetAttributeValue("NF_S3_ENDPOINT", cty.StringVal(spec.S3Endpoint))
 	}
 
 	runRes := runTaskBody.AppendNewBlock("resources", nil).Body()
@@ -191,6 +208,32 @@ MODULE_NAME={{ shellQuote .Module }}
 OUTPUT_PREFIX={{ shellQuote .OutputPrefix }}
 
 rm -rf "$OUTDIR" "$MODULES_DIR" "$JAR_PATH" "$MODULES_TGZ"
+
+if [ -n "${ABC_PIPELINE_GEN_URL_BASE:-}" ]; then
+  # Direct-URL mode: fetch JAR from a mirror (e.g. RustFS) instead of GitHub.
+  # No release-API call, no GitHub auth required for the JAR itself. The
+  # nf-core/modules tarball below still uses GitHub (which is anonymous-read).
+  JAR_URL="${ABC_PIPELINE_GEN_URL_BASE%/}/${PIPELINE_GEN_VERSION}/pipeline-gen.jar"
+  SHA_URL="${ABC_PIPELINE_GEN_URL_BASE%/}/${PIPELINE_GEN_VERSION}/sha256sums.txt"
+  echo ">> Fetching pipeline-gen.jar from mirror: $JAR_URL"
+  curl -fsSL -L -o "$JAR_PATH" "$JAR_URL"
+  test -s "$JAR_PATH"
+  if curl -fsSL -L -o /local/sha256sums.txt "$SHA_URL" 2>/dev/null; then
+    EXPECTED="$(awk '$2 == "pipeline-gen.jar" {print $1; exit}' /local/sha256sums.txt)"
+    if [ -n "$EXPECTED" ]; then
+      ACTUAL="$(sha256sum "$JAR_PATH" | awk '{print $1}')"
+      if [ "$ACTUAL" != "$EXPECTED" ]; then
+        echo "pipeline-gen.jar sha256 mismatch: got $ACTUAL want $EXPECTED" >&2
+        exit 1
+      fi
+      echo ">> JAR sha256 verified ($EXPECTED)"
+    else
+      echo ">> sha256sums.txt fetched but did not contain pipeline-gen.jar entry; skipping verify"
+    fi
+  else
+    echo ">> No sha256sums.txt at mirror; skipping JAR integrity check"
+  fi
+else
 
 if [ "$PIPELINE_GEN_VERSION" = "latest" ]; then
   RELEASE_URL="https://api.github.com/repos/${PIPELINE_GEN_REPO}/releases/latest"
@@ -233,6 +276,8 @@ test -n "$ASSET_ID"
 curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/octet-stream" -L -o "$JAR_PATH" \
   "https://api.github.com/repos/${PIPELINE_GEN_REPO}/releases/assets/$ASSET_ID"
 test -s "$JAR_PATH"
+
+fi  # end direct-URL mode branch
 
 MODULES_COMMIT="$(python3 - <<'PY'
 import json
@@ -287,6 +332,13 @@ META_FILE="$MODULE_DIR/meta.yml"
 if [ ! -f "$META_FILE" ]; then
   echo "Missing meta.yml for $MODULE_NAME" >&2
   exit 1
+fi
+
+if [ "${ABC_MODULE_TEST_MODE:-}" = "1" ]; then
+  echo ">> Test mode: bundled module tests will run; fixtures are staged from nf-core/test-datasets at runtime."
+  if [ ! -d "$MODULE_DIR/tests" ]; then
+    echo "WARNING: $MODULE_NAME has no tests/ directory; test profile will be empty." >&2
+  fi
 fi
 
 if [ -n "${ABC_MODULE_PARAMS_B64:-}" ]; then
@@ -356,10 +408,9 @@ java -jar "$JAR_PATH" module \
   --config-file "$MODULE_CONFIG" \
   --revision "$MODULES_REVISION" \
   --outdir "$OUTDIR" \
-  --force \
-{{ if .PipelineGenNoRunManifest }}
+{{- if .PipelineGenNoRunManifest }}
   --no-run-manifest \
-{{ end }}
+{{- end }}
   "$MODULE_NAME"
 test -d "$OUTDIR"
 test -f "$OUTDIR/main.nf"
@@ -424,16 +475,18 @@ process {
 
 workDir = "{{.WorkDir}}"
 
-def minioEndpoint = System.getenv("NF_MINIO_ENDPOINT") ?: "http://localhost:9000"
-def minioProtocol = minioEndpoint.startsWith("https://") ? "https" : "http"
+def s3Endpoint = System.getenv("NF_S3_ENDPOINT") ?: ""
+def s3Protocol = s3Endpoint.startsWith("https://") ? "https" : "http"
 
 aws {
   accessKey = System.getenv("AWS_ACCESS_KEY_ID") ?: ""
   secretKey = System.getenv("AWS_SECRET_ACCESS_KEY") ?: ""
   client {
-    endpoint          = minioEndpoint
     s3PathStyleAccess = true
-    protocol          = minioProtocol
+    protocol          = s3Protocol
+    if (s3Endpoint) {
+      endpoint = s3Endpoint
+    }
   }
 }
 
@@ -450,7 +503,7 @@ nomad {
     cpuMode                = "cores"
     failOnPlacementFailure = true
     placementFailureTimeout = "5m"
-    volumes = [{ type "host" name "nextflow-work" path "{{.WorkDir}}" }]
+    volumes = [{ type "host" name "{{.HostVolume}}" path "{{.WorkDir}}" workDir true }]
   }
 }
 `))
@@ -458,6 +511,7 @@ nomad {
 type clusterConfigData struct {
 	NfPluginVersion string
 	WorkDir         string
+	HostVolume      string
 }
 
 func buildClusterNextflowConfig(spec Spec) string {
@@ -465,6 +519,7 @@ func buildClusterNextflowConfig(spec Spec) string {
 	if err := clusterNextflowConfigTmpl.Execute(&buf, clusterConfigData{
 		NfPluginVersion: spec.NfPluginVersion,
 		WorkDir:         spec.WorkDir,
+		HostVolume:      spec.HostVolume,
 	}); err != nil {
 		panic("clusterNextflowConfigTmpl: " + err.Error())
 	}
@@ -476,21 +531,95 @@ func buildClusterNextflowConfig(spec Spec) string {
 var runScriptTmpl = template.Must(
 	template.New("run").Funcs(tmplFuncs).Parse(
 		`#!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 OUTDIR="$(cat {{ shellQuote .StateFile }})"
 cd "$OUTDIR"
 LOG_FILE="$OUTDIR/nextflow-run.log"
+DIAG_LOG="$OUTDIR/abc-module-run-diag.log"
+
+{
+  echo "===== abc module run diagnostic ====="
+  echo "date_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "outdir:   $OUTDIR"
+  echo "profile:  {{ .Profile }}"
+  echo
+  echo "----- ls -la $OUTDIR -----"
+  ls -la "$OUTDIR" || true
+  echo
+  for f in params.yml module.config nextflow.config main.nf test-profile-samplesheet.csv; do
+    if [ -f "$OUTDIR/$f" ]; then
+      echo "----- $f -----"
+      head -c 8192 "$OUTDIR/$f"
+      echo
+    fi
+  done
+  echo "----- /local/module-run.nextflow.config -----"
+  cat /local/module-run.nextflow.config 2>/dev/null || echo "(missing)"
+  echo
+  echo "----- nextflow -version -----"
+  nextflow -version 2>&1 || true
+} > "$DIAG_LOG" 2>&1
+
+set +e
 nextflow run main.nf \
   -profile {{ shellQuote .Profile }} \
   -params-file params.yml \
   -c module.config \
   -c /local/module-run.nextflow.config \
   -ansi-log false \
-  2>&1 | tee "$LOG_FILE"
+  > "$LOG_FILE" 2>&1
+NF_EXIT=$?
+set -e
+
 if [ -f .nextflow.log ]; then
-  echo "----- .nextflow.log (tail) -----" | tee -a "$LOG_FILE"
-  tail -n 200 .nextflow.log | tee -a "$LOG_FILE"
+  {
+    echo "----- .nextflow.log (tail 200) -----"
+    tail -n 200 .nextflow.log
+  } >> "$LOG_FILE"
 fi
+
+# Self-report: stash the diagnostic + tail of the run log into a Nomad Variable
+# so the cluster's /v1/client/fs/* ACL doesn't matter — Variables are readable
+# from anywhere with the same token used to submit the job.
+if [ -n "${NOMAD_ADDR:-}" ] && [ -n "${NOMAD_TOKEN:-}" ]; then
+  VAR_PATH="nomad/jobs/${NOMAD_JOB_NAME:-module-run}/diag/last-run"
+  COMBINED_FILE="$(mktemp)"
+  {
+    cat "$DIAG_LOG" 2>/dev/null
+    echo
+    echo "----- nextflow-run.log (tail 200) -----"
+    tail -n 200 "$LOG_FILE" 2>/dev/null
+    echo
+    echo "----- .nextflow.log (tail 200) -----"
+    tail -n 200 .nextflow.log 2>/dev/null
+    echo
+    echo "----- nf_exit: $NF_EXIT -----"
+  } | tail -c 250000 > "$COMBINED_FILE"
+
+  # Build JSON payload by hand to avoid needing python/jq in the runtime image.
+  PAYLOAD_FILE="$(mktemp)"
+  {
+    printf '{"Path":"%s","Items":{"exit_code":"%d","log":' "$VAR_PATH" "$NF_EXIT"
+    # Use awk to JSON-escape the body (covers \, ", control chars, newlines, tabs).
+    awk 'BEGIN{ printf "\"" }
+         { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, "\\r"); printf "%s\\n", $0 }
+         END  { printf "\"" }' "$COMBINED_FILE"
+    printf '}}'
+  } > "$PAYLOAD_FILE"
+
+  if curl -fsSL -X PUT \
+       -H "X-Nomad-Token: $NOMAD_TOKEN" \
+       -H "Content-Type: application/json" \
+       --data-binary "@$PAYLOAD_FILE" \
+       "${NOMAD_ADDR%/}/v1/var/$VAR_PATH" > /dev/null; then
+    echo "Diag log stored in Nomad Variable: $VAR_PATH" >&2
+  else
+    echo "Diag log upload to Nomad Variable failed" >&2
+  fi
+  rm -f "$COMBINED_FILE" "$PAYLOAD_FILE"
+fi
+
+exit "$NF_EXIT"
 `))
 
 type runScriptData struct {

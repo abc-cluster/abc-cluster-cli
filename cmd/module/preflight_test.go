@@ -59,8 +59,6 @@ func TestPreflightOutputCreds_WarnsWhenNoCreds(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_PROFILE", "")
 	t.Setenv("AWS_ROLE_ARN", "")
-	t.Setenv("MINIO_ACCESS_KEY", "")
-	t.Setenv("MINIO_ROOT_USER", "")
 
 	var buf bytes.Buffer
 	preflightOutputCreds(&buf, &RunSpec{OutputPrefix: "s3://bucket/x"})
@@ -78,9 +76,9 @@ func TestPreflightOutputCreds_QuietWhenAWSEnvSet(t *testing.T) {
 	}
 }
 
-func TestPreflightOutputCreds_QuietWhenMinioEndpointSet(t *testing.T) {
+func TestPreflightOutputCreds_QuietWhenS3EndpointSet(t *testing.T) {
 	var buf bytes.Buffer
-	preflightOutputCreds(&buf, &RunSpec{OutputPrefix: "s3://bucket/x", MinioEndpoint: "http://minio:9000"})
+	preflightOutputCreds(&buf, &RunSpec{OutputPrefix: "s3://bucket/x", S3Endpoint: "http://rustfs.aither:9900"})
 	if buf.Len() != 0 {
 		t.Fatalf("expected no warning, got %q", buf.String())
 	}
