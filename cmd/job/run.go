@@ -153,6 +153,13 @@ EXAMPLES
   # Built-in sanity workload (no local script file needed)
   abc job run hello-world
 
+  # Built-in chaos/stress workload — random stress-ng parameters each run
+  abc job run hello-chaos
+
+  # Inject a debug sleep so you can exec into the alloc before work begins
+  abc job run hello-chaos --sleep=120s
+  abc job run myscript.sh  --sleep=5m
+
   # Preview generated HCL without submitting
   abc job run bwa-align.sh --no-submit
 
@@ -227,6 +234,11 @@ EXAMPLES
 		"Emit a Nomad spread stanza on ${node.unique.id} for 1-per-node distribution (best-effort)")
 
 	// SLURM passthrough
+	cmd.Flags().String("sleep", "",
+		"Inject a sleep at the start of the job script for interactive debugging via exec\n"+
+			"    (e.g. --sleep=60s, --sleep=5m, --sleep=120). The allocation stays alive\n"+
+			"    and running so you can use 'nomad alloc exec' or the portal exec feature\n"+
+			"    to log in and inspect the environment before the workload begins.")
 	cmd.Flags().StringArray("slurm-extra", nil,
 		"Extra sbatch argument(s) (repeatable); e.g. --slurm-extra='--qos=high'")
 	cmd.Flags().String("reservation", "", "SLURM reservation name (maps to #SBATCH --reservation)")
@@ -391,6 +403,17 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	if v, _ := cmd.Flags().GetBool("spread"); v {
 		spec.Spread = true
 	}
+	if v, _ := cmd.Flags().GetString("sleep"); v != "" {
+		secs, err := parseSleepDuration(v)
+		if err != nil {
+			return fmt.Errorf("--sleep: %w", err)
+		}
+		spec.DebugSleepSecs = secs
+		if spec.Meta == nil {
+			spec.Meta = map[string]string{}
+		}
+		spec.Meta["abc_debug_sleep"] = fmt.Sprintf("%ds", secs)
+	}
 	if vs, _ := cmd.Flags().GetStringArray("slurm-extra"); len(vs) > 0 {
 		spec.SlurmExtraArgs = append(spec.SlurmExtraArgs, vs...)
 	}
@@ -418,7 +441,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 	// Resolve --format (shell | hcl); auto-detect from extension when omitted.
 	format, _ := cmd.Flags().GetString("format")
 	if format == "" {
-		if scriptPath != "hello-world" {
+		if scriptPath != "hello-world" && scriptPath != "hello-chaos" {
 			format = detectJobFormat(scriptPath)
 		} else {
 			format = "shell"
@@ -434,6 +457,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 
 	isBuiltInHelloWorld := scriptPath == "hello-world"
+	isBuiltInHelloChaos := scriptPath == "hello-chaos"
 	var (
 		scriptBytes []byte
 		scriptBase  string
@@ -444,6 +468,10 @@ func runJob(cmd *cobra.Command, args []string) error {
 		scriptBase = helloWorldScriptBase
 		defaultName = "hello-world"
 		scriptBytes = []byte(helloWorldScriptBody)
+	} else if isBuiltInHelloChaos {
+		scriptBase = helloChaosScriptBase
+		defaultName = "hello-chaos"
+		scriptBytes = []byte(helloChaosScriptBody)
 	} else {
 		f, openErr := os.Open(scriptPath)
 		if openErr != nil {
@@ -489,6 +517,9 @@ func runJob(cmd *cobra.Command, args []string) error {
 	if isBuiltInHelloWorld {
 		spec = mergeSpec(spec, buildHelloWorldSpec())
 	}
+	if isBuiltInHelloChaos {
+		spec = mergeSpec(spec, buildHelloChaosSpec())
+	}
 
 	if paramsFile, _ := cmd.Flags().GetString("params-file"); paramsFile != "" {
 		params, err := loadParamsFile(paramsFile)
@@ -521,6 +552,11 @@ func runJob(cmd *cobra.Command, args []string) error {
 	var scriptBody string
 	if isBuiltInHelloWorld {
 		scriptBody, err = finalizeHelloWorld(spec)
+		if err != nil {
+			return err
+		}
+	} else if isBuiltInHelloChaos {
+		scriptBody, err = finalizeHelloChaos(spec)
 		if err != nil {
 			return err
 		}

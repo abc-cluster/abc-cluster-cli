@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
 const (
@@ -24,10 +25,30 @@ echo "done"
 `
 )
 
+// helloWorldDefaultNamespace returns the Nomad namespace the built-in
+// hello-world workload should target. Picks (in order):
+//   1. active abc context's admin.abc_nodes.nomad_namespace (so a member
+//      whose context is scoped to "demo-presentation" gets a job that
+//      lands there without needing --namespace=…)
+//   2. "default" — the historical fallback for clusters where the operator
+//      hasn't pinned a namespace.
+//
+// CLI flags (--namespace) and #ABC preamble (none in the built-in script)
+// still win via spec merging.
+func helloWorldDefaultNamespace() string {
+	cfg, err := config.Load()
+	if err == nil && cfg != nil {
+		if ns := strings.TrimSpace(cfg.ActiveCtx().AbcNodesNomadNamespaceForCLI()); ns != "" {
+			return ns
+		}
+	}
+	return "default"
+}
+
 func buildHelloWorldSpec() *jobSpec {
 	return &jobSpec{
 		Name:         "hello-world",
-		Namespace:    "default",
+		Namespace:    helloWorldDefaultNamespace(),
 		Driver:       utils.NormalizeNomadTaskDriver("containerd"),
 		DriverConfig: map[string]string{"image": "community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8"},
 		Cores:        1,

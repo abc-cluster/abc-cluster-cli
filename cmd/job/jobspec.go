@@ -92,6 +92,12 @@ type jobSpec struct {
 	// TaskTmp enables task-local temp defaults (TMPDIR under NOMAD_TASK_DIR/tmp).
 	TaskTmp bool
 
+	// ── Debug / interactive directives ───────────────────────────────────────
+	// DebugSleepSecs injects a `sleep N` at the start of the job script so the
+	// user can exec into the running allocation to inspect state or attach a
+	// debugger before the real workload begins.  Set via --sleep on the CLI.
+	DebugSleepSecs int
+
 	// ── Network directives ────────────────────────────────────────────────────
 	Ports []string
 
@@ -249,6 +255,9 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if len(override.Ports) > 0 {
 		base.Ports = append([]string(nil), override.Ports...)
+	}
+	if override.DebugSleepSecs != 0 {
+		base.DebugSleepSecs = override.DebugSleepSecs
 	}
 	if override.SlurmPartition != "" {
 		base.SlurmPartition = override.SlurmPartition

@@ -11,10 +11,10 @@ variable "loki_image" {
   default = "grafana/loki:3.3.2"
 }
 
-variable "minio_endpoint" {
+variable "s3_service_name" {
   type        = string
-  description = "MinIO host:port without scheme, e.g. 100.70.185.46:9000"
-  default     = "100.70.185.46:9000"
+  description = "Consul service name for the S3 backend (resolved at template time, follows whichever node it's scheduled on)."
+  default     = "abc-nodes-minio-s3"
 }
 
 variable "minio_access_key" {
@@ -65,7 +65,10 @@ job "abc-nodes-loki" {
       }
 
       template {
-        data = <<EOF
+        # change_mode=restart so a re-scheduling of the S3 backend re-renders
+        # the endpoint and Loki picks up the new address.
+        change_mode = "restart"
+        data        = <<EOF
 auth_enabled: false
 
 server:
@@ -96,7 +99,11 @@ storage_config:
     cache_location: /loki/tsdb-cache
   aws:
     bucketnames: ${var.loki_bucket}
-    endpoint: ${var.minio_endpoint}
+    # S3 endpoint resolved from Consul — follows whichever node MinIO/RustFS
+    # is scheduled onto. Multi-node-tolerant with no jobspec edits.
+{{- range service "${var.s3_service_name}" }}
+    endpoint: {{ .Address }}:{{ .Port }}
+{{- end }}
     access_key_id: ${var.minio_access_key}
     secret_access_key: ${var.minio_secret_key}
     insecure: true
@@ -121,6 +128,8 @@ EOF
         provider = "consul"
         tags = [
           "abc-nodes", "loki", "logs",
+          # Loki exposes Prometheus metrics on /metrics on the same HTTP port.
+          "prometheus.scrape=true",
           "traefik.enable=true",
           "traefik.http.routers.loki.rule=Host(`loki.aither`)",
           "traefik.http.routers.loki.entrypoints=web",

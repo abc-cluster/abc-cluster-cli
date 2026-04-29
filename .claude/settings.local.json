@@ -9,7 +9,8 @@
       "Bash(NOMAD_ADDR=http://100.77.21.36:4646 nomad alloc status 2e689894)",
       "Bash(NOMAD_ADDR=http://100.77.21.36:4646 nomad alloc status -json 2e689894)",
       "Bash(python3 -c ' *)",
-      "Bash(grep -v \"slurm$\")"
+      "Bash(grep -v \"slurm$\")",
+      "Bash(abc admin *)"
     ]
   }
 }

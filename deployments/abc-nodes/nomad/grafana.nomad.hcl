@@ -43,16 +43,17 @@ job "abc-nodes-grafana" {
   group "grafana" {
     count = 1
 
-    # Pin to aither: Grafana data lives on aither's scratch host volume.
-    # Nomad's built-in host-volume placement (volume "scratch") already prevents
-    # scheduling on nodes that don't declare the volume, but this constraint
-    # makes the intent explicit and guards against accidentally declaring the
-    # volume on a new node.
-    # Verify with: nomad node status -self  (check "Name" field on aither)
-    constraint {
-      attribute = "${attr.unique.hostname}"
-      value     = "aither"
-    }
+    # Placement: any Nomad client that exposes the "scratch" host_volume.
+    # Operators control which node is grafana-eligible by declaring/removing
+    # that host_volume in the client's nomad config — no jobspec edit needed.
+    # The volume "scratch" stanza below already enforces this via the
+    # scheduler; no hostname constraint required.
+    #
+    # CAUTION: Grafana stores SQLite data on this volume.  If multiple nodes
+    # declare "scratch" you'll want to either (a) move data to S3-backed
+    # storage, or (b) add a `node_class` constraint to pin to one specific
+    # node.  With count=1 the scheduler will pick deterministically but the
+    # data will be stranded on whichever node it lands on first.
 
     network {
       mode = "bridge"
@@ -130,14 +131,21 @@ EOF
       }
 
       # ── Datasources ──────────────────────────────────────────────────────────
+      # URLs are rendered from Consul service discovery at template time, so the
+      # IP follows whichever node Prometheus / Loki are scheduled onto — no
+      # hardcoded Tailscale IP, works across multi-node + multi-DC.
+      # change_mode=restart so a Prometheus/Loki rescheduling re-renders this.
       template {
+        change_mode = "restart"
         data        = <<EOF
 apiVersion: 1
 datasources:
   - name: Prometheus
     type: prometheus
     uid: prometheus
-    url: http://100.70.185.46:9090
+{{- range service "abc-nodes-prometheus" }}
+    url: http://{{ .Address }}:{{ .Port }}
+{{- end }}
     access: proxy
     isDefault: true
     editable: false
@@ -147,7 +155,9 @@ datasources:
     uid: loki
     # Grafana appends /loki/api/v1/... to this URL. Do NOT include a trailing
     # /loki here — that becomes /loki/loki/... and every query returns 404.
-    url: http://100.70.185.46:3100
+{{- range service "abc-nodes-loki" }}
+    url: http://{{ .Address }}:{{ .Port }}
+{{- end }}
     access: proxy
     isDefault: false
     editable: false
@@ -374,6 +384,8 @@ EOF
         provider = "consul"
         tags = [
           "abc-nodes", "grafana", "ui",
+          # Opt into Prometheus auto-discovery (Grafana exposes /metrics by default).
+          "prometheus.scrape=true",
           # Traefik Consul catalog tags — Traefik reads these and builds the route.
           "traefik.enable=true",
           "traefik.http.routers.grafana.rule=Host(`grafana.aither`)",
