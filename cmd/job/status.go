@@ -38,7 +38,7 @@ Exit codes:
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	jobID := args[0]
-	ns, _ := cmd.Flags().GetString("namespace")
+	ns := namespaceFromCmd(cmd)
 	nc := nomadClientFromCmd(cmd)
 
 	job, err := nc.GetJob(cmd.Context(), jobID, ns)

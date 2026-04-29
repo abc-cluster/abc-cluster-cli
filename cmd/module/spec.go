@@ -12,6 +12,19 @@ type RunSpec struct {
 	HostVolume   string
 	OutputPrefix string
 
+	// TaskDriver is the Nomad task driver for both prestart and run tasks.
+	// Default: docker. Use "containerd-driver" to run on nodes that have
+	// nomad-driver-containerd registered (e.g. the aither lab node). The same
+	// driver is also written into the generated cluster nextflow.config so
+	// nf-nomad emits child Nomad jobs with the matching driver.
+	TaskDriver string
+
+	// NfPluginZipURL: when set, the run task downloads this zip and unpacks
+	// it into NXF_PLUGINS_DIR before invoking nextflow. Used to inject a
+	// custom-built nf-nomad plugin (e.g. one with a taskDriver patch) without
+	// going through the public Nextflow plugin registry.
+	NfPluginZipURL string
+
 	PipelineGenRepo    string
 	PipelineGenVersion string
 	// PipelineGenURLBase, when set, makes the prestart fetch the JAR from
@@ -33,6 +46,12 @@ type RunSpec struct {
 	Datacenters []string
 
 	S3Endpoint string
+	// S3AccessKey / S3SecretKey are written into the run task's env block
+	// (alongside NF_S3_ENDPOINT) and consumed by the cluster nextflow.config.
+	// No Nomad Variable lookup, no hardcoded defaults in the driver — every
+	// run is explicit about what creds it ships with.
+	S3AccessKey string
+	S3SecretKey string
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
@@ -46,6 +65,11 @@ type RunSpec struct {
 	TestMode bool
 }
 
+// PublicTestBucketURL is the cluster-side anonymous-RW S3 bucket for module
+// test outputs. Allows --test runs to publishDir using a single shared key
+// pair shipped via the run task's env block.
+const PublicTestBucketURL = "s3://nf-modules-tests"
+
 func (s *RunSpec) defaults() {
 	if s.JobName == "" {
 		s.JobName = defaultJobName(s.Module)
@@ -55,6 +79,9 @@ func (s *RunSpec) defaults() {
 	}
 	if s.TestMode && !profileContains(s.Profile, "test") {
 		s.Profile = s.Profile + ",test"
+	}
+	if s.TaskDriver == "" {
+		s.TaskDriver = "docker"
 	}
 	if s.HostVolume == "" {
 		// `scratch` is registered on every node by `abc compute add` defaults
@@ -68,10 +95,10 @@ func (s *RunSpec) defaults() {
 	}
 	if s.OutputPrefix == "" {
 		if s.TestMode {
-			// Test mode: keep outputs on the shared host volume so the run
-			// works against any cluster without requiring a pre-existing
-			// S3 bucket or S3 endpoint configuration.
-			s.OutputPrefix = s.WorkDir + "/test-outputs"
+			// Test mode: publish to the cluster's anonymous-RW public test
+			// bucket so no AWS credentials are required and outputs are
+			// inspectable by anyone with cluster network reach.
+			s.OutputPrefix = PublicTestBucketURL + "/" + s.JobName
 		} else {
 			s.OutputPrefix = "s3://user-output/nextflow"
 		}
@@ -83,10 +110,13 @@ func (s *RunSpec) defaults() {
 		s.PipelineGenVersion = "latest"
 	}
 	if s.CPU == 0 {
-		s.CPU = 1500
+		s.CPU = 1000
 	}
 	if s.MemoryMB == 0 {
-		s.MemoryMB = 4096
+		// 2 GB is enough for the Nextflow head process driving a single nf-core
+		// module — child processes get their own Nomad allocs via nf-nomad.
+		// Was 4096; lowering to 2048 ~3x's the per-cluster job concurrency.
+		s.MemoryMB = 2048
 	}
 	if s.NfVersion == "" {
 		s.NfVersion = "25.10.4"

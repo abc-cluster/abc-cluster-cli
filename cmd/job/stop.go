@@ -27,7 +27,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 	jobID := args[0]
 	purge, _ := cmd.Flags().GetBool("purge")
 	yes, _ := cmd.Flags().GetBool("yes")
-	ns, _ := cmd.Flags().GetString("namespace")
+	ns := namespaceFromCmd(cmd)
 
 	if !yes {
 		purgeNote := ""

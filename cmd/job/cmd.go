@@ -1,7 +1,10 @@
 package job
 
 import (
+	"strings"
+
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -87,3 +90,27 @@ func nomadAddrFromCmd(cmd *cobra.Command) string {
 
 // sleepCh delegates to the shared utility.
 func sleepCh(n int) <-chan struct{} { return utils.SleepCh(n) }
+
+// namespaceFromCmd returns the Nomad namespace to use for a command:
+// 1. --namespace flag (explicit)
+// 2. Active abc context admin.abc_nodes.nomad_namespace (config fallback)
+// 3. Empty string (Nomad server default)
+func namespaceFromCmd(cmd *cobra.Command) string {
+	ns, _ := cmd.Flags().GetString("namespace")
+	if strings.TrimSpace(ns) != "" {
+		return ns
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	ctx := cfg.ActiveCtx()
+	// Prefer explicit admin.abc_nodes.nomad_namespace (works regardless of cluster_type).
+	if ctx.Admin.ABCNodes != nil {
+		if v := strings.TrimSpace(ctx.Admin.ABCNodes.NomadNamespace); v != "" {
+			return v
+		}
+	}
+	// Fall back to the derived namespace for abc-nodes cluster types.
+	return strings.TrimSpace(ctx.AbcNodesNomadNamespaceForCLI())
+}

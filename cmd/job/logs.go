@@ -52,7 +52,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	allocPrefix, _ := cmd.Flags().GetString("alloc")
 	task, _ := cmd.Flags().GetString("task")
 	logType, _ := cmd.Flags().GetString("type")
-	ns, _ := cmd.Flags().GetString("namespace")
+	ns := namespaceFromCmd(cmd)
 	sinceStr, _ := cmd.Flags().GetString("since")
 
 	if logType != "stdout" && logType != "stderr" {
