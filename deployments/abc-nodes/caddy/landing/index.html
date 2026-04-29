@@ -5,7 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>abc-cluster · gateway</title>
   <meta name="description" content="African Bioinformatics Computing Cluster — install the abc CLI, explore services, submit jobs.">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cline x1='3' y1='11' x2='19' y2='11' stroke='%23c8a84c' stroke-width='1.3' opacity='.5'/%3E%3Ccircle cx='5' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='11' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='17' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
+
+  <!-- Theme-aware favicon: dark variant when the user's OS is in dark mode,
+       light variant otherwise. Browsers that ignore `media` fall back to the
+       last-declared link, so we put the light variant last. -->
+  <link rel="icon" type="image/svg+xml" href="favicon-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg"      media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+
+  <!-- Open Graph social card -->
+  <meta property="og:title"       content="abc-cluster · gateway">
+  <meta property="og:description" content="African Bioinformatics Computing Cluster — install the abc CLI, explore services, submit jobs.">
+  <meta property="og:image"       content="og-image.png">
+  <meta property="og:type"        content="website">
+  <meta name="twitter:card"       content="summary_large_image">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -125,6 +140,7 @@
   .abc-landing .cmd pre .flag{color:var(--text-dim);}
   .abc-landing .cmd pre .str{color:var(--accent);}
   .abc-landing .cmd pre .cont{color:var(--text-mute);}
+  .abc-landing .cmd pre .comment{color:var(--text-mute);font-style:italic;}
   .abc-landing .post-install{margin-top:18px;color:var(--text-dim);font-size:13px;}
   .abc-landing .kbd{display:inline-block;border:1px solid var(--rule);border-bottom-width:2px;background:var(--bg-1);padding:1px 6px;border-radius:3px;color:var(--ink);font-size:12px;}
   .abc-landing section.block{padding:56px 0;border-bottom:1px solid var(--rule);}
@@ -286,6 +302,106 @@
     .abc-landing .svc-mini{grid-template-columns:1fr;}
     .abc-landing .svc-pivot{position:static;}
   }
+  .abc-landing .view-toggle-block{padding-bottom:32px;}
+  .abc-landing .view-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
+  .abc-landing .view-toggle{flex-wrap:wrap;}
+  .abc-landing .view-toggle-label{font-size:11px;letter-spacing:.1em;color:var(--text-mute);text-transform:uppercase;min-width:56px;}
+  .abc-landing .view-toggle button{padding:9px 16px;font-size:11px;letter-spacing:.12em;}
+  .abc-landing .view-toggle-sep{width:1px;height:24px;background:var(--rule);margin:0 4px;}
+  .abc-landing .view-toggle-status{margin:14px 0 0;color:var(--text-mute);font-size:12px;}
+  .abc-landing .view-toggle-status b{color:var(--text-dim);}
+  /* ─── Do-next actions block (post-install primer) ─────────────────── */
+  .abc-landing .do-next{
+    padding:48px 0 56px;border-bottom:1px solid var(--rule);
+    background:
+      linear-gradient(var(--rule-soft),var(--rule-soft)) top left/24px 1px no-repeat,
+      linear-gradient(var(--rule-soft),var(--rule-soft)) top left/1px 24px no-repeat,
+      linear-gradient(var(--rule-soft),var(--rule-soft)) top right/24px 1px no-repeat,
+      linear-gradient(var(--rule-soft),var(--rule-soft)) top right/1px 24px no-repeat;
+  }
+  .abc-landing .do-next-head{
+    display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:18px;
+    margin-bottom:26px;
+  }
+  .abc-landing .do-next-eyebrow{
+    color:var(--ink);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+    display:flex;align-items:center;gap:10px;
+  }
+  .abc-landing .do-next-eyebrow .dot{
+    width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;
+    box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+    animation:dn-pulse 2s ease-in-out infinite;
+  }
+  @keyframes dn-pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+  .abc-landing .do-next-title{
+    color:var(--ink);font-size:26px;font-weight:600;letter-spacing:-.015em;margin:6px 0 0;
+    text-wrap:balance;
+  }
+  .abc-landing .do-next-sub{
+    color:var(--text-dim);font-size:13.5px;margin:8px 0 0;max-width:62ch;
+  }
+  .abc-landing .do-next-meta{
+    color:var(--text-mute);font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+    display:flex;align-items:center;gap:8px;
+  }
+  .abc-landing .do-next-meta .kbd{font-size:11px;}
+  .abc-landing .do-grid{
+    display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:14px;
+  }
+  .abc-landing .do-card{
+    position:relative;display:flex;flex-direction:column;
+    border:1px solid var(--rule);background:var(--bg-1);border-radius:4px;
+    padding:18px 18px 16px;color:var(--text);text-decoration:none;
+    transition:border-color .14s, background .14s, transform .14s;
+    overflow:hidden;border-bottom:1px solid var(--rule);
+  }
+  .abc-landing .do-card::before{
+    content:'';position:absolute;left:0;top:0;right:0;height:2px;
+    background:linear-gradient(90deg,transparent, var(--accent), transparent);
+    opacity:0;transition:opacity .14s;
+  }
+  .abc-landing .do-card:hover{
+    border-color:var(--ink-dim);background:var(--bg-2);transform:translateY(-1px);
+  }
+  .abc-landing .do-card:hover::before{opacity:1;}
+  .abc-landing .do-card-head{
+    display:flex;align-items:center;gap:10px;margin-bottom:10px;
+  }
+  .abc-landing .do-step{
+    color:var(--text-mute);font-size:10px;letter-spacing:.18em;
+    border:1px solid var(--rule);padding:2px 8px;border-radius:999px;
+  }
+  .abc-landing .do-card:hover .do-step{color:var(--accent);border-color:var(--accent);}
+  .abc-landing .do-glyph{
+    width:34px;height:34px;flex-shrink:0;
+    border:1px solid var(--rule);border-radius:4px;background:var(--bg-2);
+    display:inline-flex;align-items:center;justify-content:center;color:var(--ink);
+    margin-left:auto;
+  }
+  .abc-landing .do-glyph svg{width:18px;height:18px;}
+  .abc-landing .do-name{
+    color:var(--ink);font-size:17px;font-weight:700;letter-spacing:-.015em;
+    margin:6px 0 6px;display:flex;align-items:center;gap:8px;
+  }
+  .abc-landing .do-name .arrow{
+    color:var(--text-mute);font-weight:500;font-size:15px;
+    transition:color .14s, transform .14s;
+  }
+  .abc-landing .do-card:hover .arrow{color:var(--accent);transform:translateX(3px);}
+  .abc-landing .do-desc{
+    color:var(--text-dim);font-size:12.5px;line-height:1.55;margin:0 0 14px;
+  }
+  .abc-landing .do-cmd{
+    margin-top:auto;padding:10px 12px;border:1px solid var(--rule-soft);
+    background:var(--bg);border-radius:3px;
+    font-size:12px;color:var(--text);overflow-x:auto;white-space:nowrap;
+    display:flex;align-items:center;gap:8px;
+  }
+  .abc-landing .do-cmd .pr{color:var(--ink-dim);user-select:none;flex-shrink:0;}
+  .abc-landing .do-cmd .vb{color:var(--accent);font-weight:600;}
+  .abc-landing .do-cmd .ar{color:var(--text-mute);}
+  @media(max-width:860px){.abc-landing .do-grid{grid-template-columns:1fr;}}
+
   .abc-landing footer.foot{padding:36px 0 56px;color:var(--text-mute);font-size:12px;line-height:1.7;}
   .abc-landing footer.foot .row{display:grid;grid-template-columns:200px 1fr;gap:56px;}
   .abc-landing footer.foot b{color:var(--text-dim);}
@@ -429,33 +545,101 @@
     </div>
   </section>
 
+  <!-- ── Do-next: post-install action primer ─────────────────────────────
+       Surfaces the four canonical researcher actions immediately after the
+       install commands. Each card pairs a verb with its abc CLI invocation
+       and links to the matching console for the GUI-inclined.
+  ── -->
+  <section class="do-next" id="do-next" aria-labelledby="do-next-title">
+    <div class="page" style="max-width:none;padding:0;">
+      <div class="do-next-head">
+        <div>
+          <div class="do-next-eyebrow"><span class="dot"></span>After install · what you can do</div>
+          <h2 class="do-next-title" id="do-next-title">Three consoles cover 90% of day-to-day work.</h2>
+          <p class="do-next-sub">Click straight into the web UIs. Or drive everything from the <code>abc</code> CLI you just installed — see the quick-start below.</p>
+        </div>
+        <div class="do-next-meta">
+          <span class="kbd">abc&nbsp;--help</span>
+          <span>for the full surface</span>
+        </div>
+      </div>
+
+      <div class="do-grid">
+        <a class="do-card" href="http://nomad.aither/ui/jobs" target="_blank" rel="noreferrer">
+          <div class="do-card-head">
+            <span class="do-step">01</span>
+            <span class="do-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+                <path d="M3 12h4l2-6 4 12 2-6h6"/>
+              </svg>
+            </span>
+          </div>
+          <div class="do-name">Monitor Jobs <span class="arrow">→</span></div>
+          <p class="do-desc">Submit batches, track allocations, tail logs, and re-run failures. Live status from the Nomad scheduler.</p>
+        </a>
+
+        <a class="do-card" href="http://uppy.aither/" target="_blank" rel="noreferrer">
+          <div class="do-card-head">
+            <span class="do-step">02</span>
+            <span class="do-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+                <path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 17v3h16v-3"/>
+              </svg>
+            </span>
+          </div>
+          <div class="do-name">Upload Data <span class="arrow">→</span></div>
+          <p class="do-desc">Resumable, chunked transfers straight into your bucket. Works for terabyte-scale FASTQs.</p>
+        </a>
+
+        <a class="do-card" href="http://rustfs.aither/rustfs/console/" target="_blank" rel="noreferrer">
+          <div class="do-card-head">
+            <span class="do-step">03</span>
+            <span class="do-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+                <ellipse cx="12" cy="6" rx="8" ry="2.5"/><path d="M4 6v12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V6"/>
+                <path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/>
+              </svg>
+            </span>
+          </div>
+          <div class="do-name">Browse Data <span class="arrow">→</span></div>
+          <p class="do-desc">List buckets, preview objects, and grab presigned URLs to share results across the lab.</p>
+        </a>
+      </div>
+    </div>
+  </section>
+
   <section class="block" id="cli">
     <div class="block-head">
-      <div class="block-eyebrow"><span class="num">01</span>CLI</div>
+      <div class="block-eyebrow"><span class="num">02</span>CLI</div>
       <div>
-        <h2 class="block-title">Quick-start</h2>
-        <p class="block-desc">Once <code>abc</code> is on <code>$PATH</code>, set the active context and shell out to underlying CLIs through <code>abc admin services …</code>.</p>
+        <h2 class="block-title">First run — three steps</h2>
+        <p class="block-desc">If you just installed <code>abc</code>, walk through this once. You need a credentials file from your workspace lead (handed out at the talk, or pasted from a DM); everything else is on this page.</p>
       </div>
     </div>
     <div class="block-body">
       <div></div>
       <div class="cmd">
         <div class="cmd-head">
-          <div class="cmd-title">nomad &amp; service operations</div>
-          <button class="cmd-copy" data-copy="cmd-quickstart">Copy</button>
+          <div class="cmd-title">first run<span class="path">~/.abc/config.yaml</span></div>
+          <button class="cmd-copy" data-copy="cmd-firstrun">Copy</button>
         </div>
-<pre id="cmd-quickstart"><span class="prompt">$ </span>export ABC_ACTIVE_CONTEXT=abc-bootstrap
-<span class="prompt">$ </span>abc admin services nomad cli -- job status
-<span class="prompt">$ </span>abc admin services nomad cli -- job status abc-nodes-grafana
-<span class="prompt">$ </span>abc admin services nomad cli -- job run -detach <span class="cont">\\</span>
-    deployments/abc-nodes/nomad/uppy.nomad.hcl</pre>
+<pre id="cmd-firstrun"><span class="comment"># 1. bootstrap a placeholder config</span>
+<span class="prompt">$ </span>abc config init
+
+<span class="comment"># 2. drop in the credentials you were handed (your name, token, bucket)</span>
+<span class="prompt">$ </span>cp ~/Downloads/<span class="str">&lt;your-name&gt;.yaml</span> ~/.abc/config.yaml
+<span class="prompt">$ </span>abc context show
+
+<span class="comment"># 3. verify — randomised stress-ng across CPU / VM / I/O</span>
+<span class="prompt">$ </span>abc job run hello-abc
+<span class="prompt">$ </span>abc job run hello-abc <span class="flag">--sleep=120s</span></pre>
       </div>
     </div>
   </section>
 
   <section class="block" id="services">
     <div class="block-head">
-      <div class="block-eyebrow"><span class="num">02</span>Services</div>
+      <div class="block-eyebrow"><span class="num">03</span>Services</div>
       <div>
         <h2 class="block-title">Consoles &amp; endpoints</h2>
         <p class="block-desc">
@@ -523,15 +707,15 @@
               </span>
               <span class="svc-card-name">uppy <span class="arrow">→</span></span>
             </div>
-            <p class="svc-card-desc">Browser-based, resumable file upload. tusd backend; chunks straight into MinIO.</p>
+            <p class="svc-card-desc">Browser-based, resumable file upload. tusd backend; chunks straight into RustFS.</p>
             <div class="svc-card-foot">
               <span class="svc-card-host">uppy.aither</span>
               <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
             </div>
           </a>
 
-          <a class="svc-card" href="http://minio-console.aither/" target="_blank" rel="noreferrer"
-             data-aud="researcher" data-name="minio-console" data-desc="s3 object storage buckets files">
+          <a class="svc-card" href="http://rustfs.aither/rustfs/console/" target="_blank" rel="noreferrer"
+             data-aud="researcher" data-name="rustfs-s3" data-desc="s3 object storage buckets files rustfs">
             <div class="svc-card-head">
               <span class="svc-card-glyph">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
@@ -539,22 +723,31 @@
                   <path d="M4 12v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"/>
                 </svg>
               </span>
-              <span class="svc-card-name">minio-console <span class="arrow">→</span></span>
+              <span class="svc-card-name">rustfs <span class="arrow">→</span></span>
             </div>
             <p class="svc-card-desc">S3 object storage — browse buckets, manage policies, share files with users.</p>
             <div class="svc-card-foot">
-              <span class="svc-card-host">minio-console.aither</span>
+              <span class="svc-card-host">rustfs.aither/rustfs/console</span>
               <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
             </div>
           </a>
-        </div>
 
-        <div class="svc-mini">
-          <a class="svc-mini-row" href="http://ntfy.aither/" target="_blank" rel="noreferrer"
-             data-aud="researcher" data-name="ntfy" data-desc="job event notifications push pub sub">
-            <span class="status-dot up"></span>
-            <span><span class="name">ntfy</span><span class="desc">job event notifications</span></span>
-            <span class="svc-mini-host">ntfy.aither</span>
+          <a class="svc-card" href="http://ntfy.aither/" target="_blank" rel="noreferrer"
+             data-aud="researcher" data-name="ntfy" data-desc="job event notifications push pub sub topic subscribe"
+             data-mode-only="domain">
+            <div class="svc-card-head">
+              <span class="svc-card-glyph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+                  <path d="M18 16v-5a6 6 0 0 0-12 0v5l-2 2h16z"/><path d="M10 20a2 2 0 0 0 4 0"/>
+                </svg>
+              </span>
+              <span class="svc-card-name">ntfy <span class="arrow">→</span></span>
+            </div>
+            <p class="svc-card-desc">Job event notifications — subscribe to topics, receive push alerts when batch runs finish or fail. <em style="color:var(--text-mute);">(Tailscale only — generated links use the *.aither origin.)</em></p>
+            <div class="svc-card-foot">
+              <span class="svc-card-host">ntfy.aither</span>
+              <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
+            </div>
           </a>
         </div>
       </div>
@@ -605,24 +798,25 @@
             </div>
           </a>
 
-          <a class="svc-card" href="http://rustfs.aither/" target="_blank" rel="noreferrer"
-             data-aud="operator" data-name="rustfs" data-desc="alternate s3 compatible store experimental">
+          <a class="svc-card" href="http://garage-webui.aither/" target="_blank" rel="noreferrer"
+             data-aud="operator" data-name="garage" data-desc="garage long-term archive backups compression dedup s3"
+             data-mode-only="domain">
             <div class="svc-card-head">
               <span class="svc-card-glyph">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
-                  <rect x="3" y="5" width="18" height="6" rx="1"/><rect x="3" y="13" width="18" height="6" rx="1"/>
-                  <circle cx="7" cy="8" r=".7" fill="currentColor"/><circle cx="7" cy="16" r=".7" fill="currentColor"/>
-                  <line x1="11" y1="8" x2="18" y2="8"/><line x1="11" y1="16" x2="18" y2="16"/>
+                  <path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/>
+                  <path d="M9 20v-6h6v6"/>
                 </svg>
               </span>
-              <span class="svc-card-name">rustfs <span class="arrow">→</span></span>
+              <span class="svc-card-name">garage <span class="arrow">→</span></span>
             </div>
-            <p class="svc-card-desc">Alternate S3-compatible store. Cross-vendor parity testing &amp; failover target.</p>
+            <p class="svc-card-desc">Long-term archive + cluster backups. zstd compression, block-level dedup, geo-replicable. Restic repo lives here.</p>
             <div class="svc-card-foot">
-              <span class="svc-card-host">rustfs.aither</span>
-              <span class="svc-card-status"><span class="status-dot degraded"></span>Degraded</span>
+              <span class="svc-card-host">garage-webui.aither</span>
+              <span class="svc-card-status"><span class="status-dot up"></span>Up</span>
             </div>
           </a>
+
         </div>
 
         <div class="svc-mini">
@@ -671,25 +865,50 @@
     </div>
   </section>
 
+  <!-- ── URL view toggle ─────────────────────────────────────────────────────
+       Lets you preview both surfaces from one page — switch between LAN
+       (subpath via aither.mb.sun.ac.za) and Tailscale (domain via *.aither)
+       without having to open two landing pages.
+  ── -->
+  <section class="block view-toggle-block">
+    <div class="block-head">
+      <div class="block-eyebrow"><span class="num">99</span>Preview</div>
+      <div>
+        <h2 class="block-title">URL view</h2>
+        <p class="block-desc">
+          All cards above adapt to the network you're on. Use these toggles to preview
+          links for any surface — handy for testing without opening a second browser.
+        </p>
+      </div>
+    </div>
+    <div class="view-controls">
+      <span class="view-toggle-label">Network</span>
+      <div class="seg view-toggle" data-control="network" role="tablist" aria-label="Network surface">
+        <button data-network="auto" class="active" role="tab">Auto</button>
+        <button data-network="lan" role="tab">LAN</button>
+        <button data-network="tailscale" role="tab">Tailscale</button>
+      </div>
+      <div class="view-toggle-sep"></div>
+      <span class="view-toggle-label">Format</span>
+      <div class="seg view-toggle" data-control="format" role="tablist" aria-label="URL format">
+        <button data-fmt="dns" class="active" role="tab">DNS</button>
+        <button data-fmt="ip" role="tab">IP</button>
+      </div>
+    </div>
+    <p class="view-toggle-status" id="view-mode-status"></p>
+  </section>
+
   <footer class="foot">
     <div class="row">
       <div class="block-eyebrow">colophon</div>
       <div>
         <p style="margin:0 0 14px;">
-          <span data-mode-subpath style="display:none">
-            Traffic enters via <b data-lan-host>aither.mb.sun.ac.za</b> (LAN) and is proxied by Caddy
-            through Traefik to backend services. All services are reachable at subpaths of the LAN
-            gateway — no split-DNS or Tailscale required.
-          </span>
-          <span data-mode-domain>
-            Traffic enters via <b data-lan-host>aither.mb.sun.ac.za</b> (LAN) and is proxied by Caddy
-            through Traefik to backend services on private / Tailscale addresses.
-            Service vhosts are at <code data-domain-glob>*.aither</code> — add
-            <span class="mono-ip" data-ts-ip>100.70.185.46</span> as a split-DNS nameserver for
-            <code data-domain-suffix>.aither</code> in the Tailscale admin console to resolve them on any
-            tailnet device.
-          </span>
-          <a href="http://docs.aither/docs/">abc CLI docs →</a>
+          Traffic enters via <b data-lan-host>aither.mb.sun.ac.za</b> (LAN) and is proxied by Caddy
+          through Traefik to backend services on private / Tailscale addresses.
+          Service vhosts are at <code data-domain-glob>*.aither</code> — add
+          <span class="mono-ip" data-ts-ip>100.70.185.46</span> as a split-DNS nameserver for
+          <code data-domain-suffix>.aither</code> in the Tailscale admin console to resolve them on any
+          tailnet device. <a href="http://docs.aither/docs/">abc CLI docs →</a>
         </p>
         <div style="color:var(--text-mute);font-size:11.5px;line-height:1.7;border-top:1px solid var(--rule-soft);padding-top:12px;">
           <b style="color:var(--text-dim);">Stack</b>
@@ -713,73 +932,153 @@
 
 (function() {
   /* ── Single-source network config ─────────────────────────────────────────
-     Set mode + three values; all service links, host labels, and footer text
-     update automatically.
-     mode 'subpath' (LAN) : links → aither.mb.sun.ac.za/<svc>/...  (no split-DNS)
-     mode 'domain'  (TS)  : links → <svc>.aither/...  (Tailscale split-DNS)
+     Change these three values once and all service links, host labels,
+     and footer references update automatically.
+     LAN deploy  : domain='aither', lanHost='aither.mb.sun.ac.za', tsIP='146.232.174.77'
+     Tailscale   : domain='aither', lanHost='aither.mb.sun.ac.za', tsIP='100.70.185.46'
   ── */
+  // Auto-detect network surface and URL format from the hostname this page was served on.
+  //   tailscale + dns : *.aither   e.g. grafana.aither
+  //   tailscale + ip  : 100.70.185.46             bare Tailscale IP
+  //   lan + dns       : aither.mb.sun.ac.za           institutional hostname
+  //   lan + ip        : 146.232.174.77             bare LAN IP
+  function detectState() {
+    var h = window.location.hostname;
+    if (/\.aither$/.test(h)) return { network: 'tailscale', format: 'dns' };
+    if (h === '100.70.185.46')               return { network: 'tailscale', format: 'ip'  };
+    if (h === '146.232.174.77')              return { network: 'lan',       format: 'ip'  };
+    return                                         { network: 'lan',       format: 'dns' };
+  }
+
+  var DETECTED = detectState();
+
   var CONFIG = {
-    mode:    'subpath',              // 'subpath' | 'domain'
+    network: DETECTED.network,        // 'tailscale' | 'lan'
+    format:  DETECTED.format,         // 'dns' | 'ip'
+    viewNetwork: 'auto',              // toggle state: 'auto' | 'lan' | 'tailscale'
     domain:  'aither',
     lanHost: 'aither.mb.sun.ac.za',
-    tsIP:    '146.232.174.77',
+    lanIP:   '146.232.174.77',
+    tsIP:    '100.70.185.46',
   };
+
+  // ── URL computation helpers ───────────────────────────────────────────────
+  // Returns the effective host string for subpath-mode URLs given current config.
+  function subpathHost() {
+    if (CONFIG.network === 'tailscale') return CONFIG.tsIP;       // 100.70.185.46
+    return CONFIG.format === 'ip' ? CONFIG.lanIP : CONFIG.lanHost; // 146.x or hostname
+  }
+
+  // True when Tailscale domain-vhost URLs (*.aither) should be used.
+  function isDomainMode() {
+    return CONFIG.network === 'tailscale' && CONFIG.format === 'dns';
+  }
+
+  // Rewrite a canonical *.aither href into subpath form for the given host.
+  // Services whose path ALREADY contains the svc segment (nomad, docs, rustfs)
+  // are kept as-is to avoid doubling the prefix (e.g. /rustfs/rustfs/console/).
+  function toSubpathHref(origHref, host) {
+    return origHref.replace(/^http:\/\/([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
+      if (svc === 'nomad' || svc === 'docs' || svc === 'rustfs') {
+        return 'http://' + host + (path || '/');
+      }
+      return 'http://' + host + '/' + svc + (path || '/');
+    });
+  }
+
+  // Rewrite a canonical *.aither host label into subpath label.
+  function toSubpathLabel(origText, host) {
+    return origText.replace(/^([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
+      if (svc === 'nomad')  return host + (path || '/ui');
+      if (svc === 'docs')   return host + (path || '/docs');
+      if (svc === 'rustfs') return host + (path || '/');
+      return host + '/' + svc + (path || '');
+    });
+  }
 
   function applyConfig() {
     var d    = CONFIG.domain;
-    var host = CONFIG.lanHost;
-    var sub  = CONFIG.mode === 'subpath';
+    var dom  = isDomainMode();
+    var host = subpathHost();
 
     // ── Rewrite service link hrefs ────────────────────────────────────────
     document.querySelectorAll('a[href]').forEach(function(a) {
-      var h = a.getAttribute('href');
-      if (!h || h.indexOf('.aither') < 0) return;
-      if (sub) {
-        // http://svc.aither/path  →  http://lanHost/svc/path
-        // Special case: Nomad SPA has rootURL=/ui/ hardcoded; serve it at /ui/ directly
-        // so the SPA boots at the right root without double-prefixing.
-        h = h.replace(/^http:\/\/([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
-          if (svc === 'nomad') return 'http://' + host + (path || '/');
-          return 'http://' + host + '/' + svc + (path || '/');
-        });
-      } else {
-        h = h.replace(/\.aither/g, '.' + d);
+      if (!a.dataset.origHref) {
+        var cur = a.getAttribute('href');
+        if (!cur || cur.indexOf('.aither') < 0) return;
+        a.dataset.origHref = cur;
       }
+      var h = dom
+        ? a.dataset.origHref.replace(/\.aither/g, '.' + d)
+        : toSubpathHref(a.dataset.origHref, host);
       a.setAttribute('href', h);
     });
 
     // ── Rewrite host labels in service cards ──────────────────────────────
     document.querySelectorAll('.svc-card-host, .svc-mini-host').forEach(function(el) {
-      if (sub) {
-        // "svc.aither/path"  →  "lanHost/svc/path"   (or "lanHost/svc" if no path)
-        // Nomad special case: keep path as-is (rootURL=/ui/)
-        el.textContent = el.textContent.replace(/^([^./]+)\.aither(\/[^]*)?$/, function(_, svc, path) {
-          if (svc === 'nomad') return host + (path || '/ui');
-          return host + '/' + svc + (path || '');
-        });
-      } else {
-        el.textContent = el.textContent.replace(/\.aither/g, '.' + d);
-      }
+      if (!el.dataset.origText) el.dataset.origText = el.textContent;
+      var t = dom
+        ? el.dataset.origText.replace(/\.aither/g, '.' + d)
+        : toSubpathLabel(el.dataset.origText, host);
+      el.textContent = t;
     });
 
     // ── Footer / description data-tagged nodes ────────────────────────────
-    document.querySelectorAll('[data-lan-host]').forEach(function(el){ el.textContent = host; });
+    document.querySelectorAll('[data-lan-host]').forEach(function(el){ el.textContent = CONFIG.lanHost; });
     document.querySelectorAll('[data-ts-ip]').forEach(function(el){ el.textContent = CONFIG.tsIP; });
-    if (sub) {
-      document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = host + '/<service>'; });
-      document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '/<service>'; });
-    } else {
+    if (dom) {
       document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = '*.' + d; });
       document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '.' + d; });
+    } else {
+      document.querySelectorAll('[data-domain-glob]').forEach(function(el){ el.textContent = host + '/<service>'; });
+      document.querySelectorAll('[data-domain-suffix]').forEach(function(el){ el.textContent = '/<service>'; });
     }
 
     // ── Show/hide mode-specific content blocks ────────────────────────────
     document.querySelectorAll('[data-mode-subpath]').forEach(function(el){
-      el.style.display = sub ? '' : 'none';
+      el.style.display = dom ? 'none' : '';
     });
     document.querySelectorAll('[data-mode-domain]').forEach(function(el){
-      el.style.display = sub ? 'none' : '';
+      el.style.display = dom ? '' : 'none';
     });
+
+    // ── Hide network-specific service cards in the opposite network ───────
+    // data-mode-only="domain" = Tailscale only; data-mode-only="subpath" = LAN only.
+    var netMode = (CONFIG.network === 'tailscale') ? 'domain' : 'subpath';
+    document.querySelectorAll('[data-mode-only]').forEach(function(el){
+      el.style.display = (el.dataset.modeOnly === netMode) ? '' : 'none';
+    });
+
+    // ── Update active button states ───────────────────────────────────────
+    document.querySelectorAll('[data-control="network"] button').forEach(function(b){
+      b.classList.toggle('active', b.dataset.network === CONFIG.viewNetwork);
+    });
+    document.querySelectorAll('[data-control="format"] button').forEach(function(b){
+      b.classList.toggle('active', b.dataset.fmt === CONFIG.format);
+    });
+
+    // ── Update status line ────────────────────────────────────────────────
+    var statusEl = document.getElementById('view-mode-status');
+    if (statusEl) {
+      var netLabel  = CONFIG.network === 'tailscale' ? 'Tailscale' : 'LAN';
+      var fmtLabel  = dom ? '*.' + d : host + '/<service>';
+      var autoNote  = CONFIG.viewNetwork === 'auto'
+        ? ' (auto-detected from this hostname)'
+        : '';
+      statusEl.innerHTML = 'Showing <b>' + netLabel + ' — ' + fmtLabel + '</b>' + autoNote + '.';
+    }
+  }
+
+  function setNetwork(net) {
+    CONFIG.viewNetwork = net;
+    CONFIG.network = (net === 'auto') ? DETECTED.network : net;
+    // When switching networks, preserve format unless format is incompatible.
+    applyConfig();
+  }
+
+  function setFormat(fmt) {
+    CONFIG.format = fmt;
+    applyConfig();
   }
 
   var TWEAK_DEFAULTS = { theme: 'dark', system: 'grid' };
@@ -839,6 +1138,17 @@
     var next=document.documentElement.dataset.theme==='dark'?'light':'dark';
     setTheme(next);
   });
+
+  // Network toggle (Auto / LAN / Tailscale).
+  document.querySelectorAll('[data-control="network"] button').forEach(function(btn){
+    btn.addEventListener('click', function(){ setNetwork(btn.dataset.network); });
+  });
+  // Format toggle (DNS / IP).
+  document.querySelectorAll('[data-control="format"] button').forEach(function(btn){
+    btn.addEventListener('click', function(){ setFormat(btn.dataset.fmt); });
+  });
+  // Initial render — paint status line, sync active buttons.
+  applyConfig();
 
   (function rotateAcronym(){
     var track=document.getElementById('ac-track');

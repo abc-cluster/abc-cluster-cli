@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -114,10 +113,10 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 
 		cfg.NodeConfig.DataDir = dataDir
 		hclContent := GenerateClientHCL(cfg.NodeConfig)
-		if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, 0640); err != nil {
+		if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, 0644); err != nil {
 			return fmt.Errorf("upload config to %s: %w", cfgPath, err)
 		}
-		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 640 %s", cfgPath, cfgPath), io.Discard)
+		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 644 %s", cfgPath, cfgPath), io.Discard)
 		fmt.Fprintf(w, "    ✓ Config written to %s\n", cfgPath)
 
 		return registerPackageManagerNomadService(ctx, ex, goos, cfg.DevMode, cfg.SkipEnable, cfg.SkipStart, w)
@@ -215,11 +214,11 @@ func InstallNomad(ctx context.Context, ex Executor, cfg NomadInstallConfig, w io
 	// Generate and upload Nomad client config HCL
 	cfg.NodeConfig.DataDir = dataDir
 	hclContent := GenerateClientHCL(cfg.NodeConfig)
-	if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, 0640); err != nil {
+	if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, 0644); err != nil {
 		return fmt.Errorf("upload config to %s: %w", cfgPath, err)
 	}
 	if goos != "windows" {
-		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 640 %s", cfgPath, cfgPath), io.Discard)
+		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 644 %s", cfgPath, cfgPath), io.Discard)
 	}
 	fmt.Fprintf(w, "    ✓ Config written to %s\n", cfgPath)
 
@@ -248,15 +247,11 @@ func ApplyNomadConfig(ctx context.Context, ex Executor, cfg NomadInstallConfig, 
 	cfg.NodeConfig.DataDir = dataDir
 	hclContent := GenerateClientHCL(cfg.NodeConfig)
 
-	mode := os.FileMode(0640)
-	if goos == "windows" {
-		mode = 0644
-	}
-	if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, mode); err != nil {
+	if err := ex.Upload(ctx, strings.NewReader(hclContent), cfgPath, 0644); err != nil {
 		return fmt.Errorf("upload config to %s: %w", cfgPath, err)
 	}
 	if goos != "windows" {
-		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 640 %s", cfgPath, cfgPath), io.Discard)
+		_ = ex.Run(ctx, fmt.Sprintf("sudo chown root:root %s && sudo chmod 644 %s", cfgPath, cfgPath), io.Discard)
 	}
 	fmt.Fprintf(w, "    ✓ Config written to %s\n", cfgPath)
 

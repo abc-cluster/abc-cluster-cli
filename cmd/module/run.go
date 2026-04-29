@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/module/samplesheet"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
@@ -59,6 +62,7 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 
 	cmd.Flags().String("params-file", "", "Optional params.yml to pass to nf-pipeline-gen (default: auto-generated from module meta.yml)")
 	cmd.Flags().String("config-file", "", "Optional module.config to pass to nf-pipeline-gen (default: empty config file)")
+	cmd.Flags().String("samplesheet", "", "Local CSV samplesheet for the run; staged into the prestart task and validated against the module's meta.yml via nf-pipeline-gen --validate-samplesheet before driver generation. Use 'abc module samplesheet emit' to scaffold one.")
 	cmd.Flags().String("module-revision", "", "Override module revision recorded in generated driver (default: current nf-core/modules commit prefix)")
 
 	cmd.Flags().String("pipeline-gen-repo", "abc-cluster/nf-pipeline-gen", "GitHub repository for nf-pipeline-gen release assets (owner/repo)")
@@ -140,6 +144,13 @@ func runModule(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("pipeline-gen-url-base"); v != "" {
 		spec.PipelineGenURLBase = v
+		// Auto-resolve hostname locally so the prestart container can reach
+		// the URL even when its DNS doesn't include Tailscale magicDNS
+		// (rustfs.aither, etc.). Skipped silently if URL is malformed or
+		// hostname is already an IP.
+		if r := autoResolveCurlOverride(v); r != "" {
+			spec.PipelineGenURLResolve = r
+		}
 	}
 	if v, _ := cmd.Flags().GetString("github-token"); v != "" {
 		spec.GitHubToken = v
@@ -196,8 +207,24 @@ func runModule(cmd *cobra.Command, args []string) error {
 		}
 		spec.ConfigYAMLContent = string(data)
 	}
+	if sheetPath, _ := cmd.Flags().GetString("samplesheet"); sheetPath != "" {
+		// Local pre-flight: catches obvious shape problems before submitting
+		// the alloc. The authoritative validation runs cluster-side via
+		// `pipeline-gen --validate-samplesheet`.
+		pre, err := samplesheet.Preflight(sheetPath)
+		if err != nil {
+			return fmt.Errorf("samplesheet pre-flight: %w", err)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), pre.HumanReport)
+		spec.SamplesheetCSVContent = string(pre.CSVBytes)
+		spec.SamplesheetSourcePath = pre.Path
+	}
 
 	spec.defaults()
+
+	if slug := utils.ActiveWhoamiSlug(); slug != "" {
+		spec.JobName = slug + "-" + spec.JobName
+	}
 
 	if spec.GitHubToken == "" && spec.PipelineGenURLBase == "" {
 		return fmt.Errorf("missing GitHub token: set GITHUB_TOKEN or GH_TOKEN env var, or pass --pipeline-gen-url-base to fetch the JAR from a mirror (see --help --advanced)")
@@ -247,6 +274,36 @@ func runModule(cmd *cobra.Command, args []string) error {
 
 func stdoutIsTTY() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// autoResolveCurlOverride returns a curl --resolve override string
+// (host:port:ip) for the given URL by performing a local DNS lookup. Returns
+// "" when the URL's host is already an IP literal, the URL is malformed, or
+// the lookup fails. The CLI runs on a host with Tailscale magicDNS, so names
+// like rustfs.aither resolve here but not inside containerd-driver containers.
+func autoResolveCurlOverride(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	if net.ParseIP(host) != nil {
+		return "" // already an IP, no override needed
+	}
+	port := u.Port()
+	if port == "" {
+		switch u.Scheme {
+		case "https":
+			port = "443"
+		default:
+			port = "80"
+		}
+	}
+	ips, err := net.LookupHost(host)
+	if err != nil || len(ips) == 0 {
+		return ""
+	}
+	return host + ":" + port + ":" + ips[0]
 }
 
 func maskKey(k string) string {

@@ -265,9 +265,14 @@ resource "nomad_job" "prometheus" {
   # Pass datacenters through so adding a new DC in variables.tf propagates
   # without touching the jobspec.  Service discovery (consul_sd_configs)
   # picks up new nodes automatically once they register in Consul.
+  # Pass the Consul agent endpoint through as a plain string. The jobspec's
+  # var.datacenters default ("dc1", "default") already covers the current
+  # cluster — extend that default in the jobspec when adding a DC name that
+  # isn't one of those two. (Nomad provider's hcl2.vars only accepts strings,
+  # so list-typed vars can't round-trip through it.)
   hcl2 {
     vars = {
-      datacenters = jsonencode(var.datacenters)
+      consul_address = "${var.cluster_tailscale_ip}:8500"
     }
   }
 
@@ -279,12 +284,6 @@ resource "nomad_job" "loki" {
 
   jobspec = file("${path.module}/../nomad/loki.nomad.hcl")
   detach  = false
-
-  hcl2 {
-    vars = {
-      datacenters = jsonencode(var.datacenters)
-    }
-  }
 
   # Loki stores logs in MinIO — basic-tier minio assumed present.
   depends_on = [nomad_namespace.abc_services]
@@ -313,14 +312,12 @@ resource "nomad_job" "grafana" {
       file("${path.module}/../nomad/grafana-dashboard-bucket-usage.json"),
       format("%s{", "$"), format("%s%s{", "$", "$")
     )
+    dashboard_public = replace(
+      file("${path.module}/../nomad/grafana-dashboard-public.json"),
+      format("%s{", "$"), format("%s%s{", "$", "$")
+    )
   })
   detach = false
-
-  hcl2 {
-    vars = {
-      datacenters = jsonencode(var.datacenters)
-    }
-  }
 
   depends_on = [
     nomad_job.prometheus,
@@ -334,11 +331,15 @@ resource "nomad_job" "alloy" {
   jobspec = file("${path.module}/../nomad/alloy.nomad.hcl")
   detach  = false
 
-  # Alloy is a `system` job (one per node) and reaches Prometheus / Loki via
-  # Consul service discovery, so it just needs the datacenters list.
+  # Alloy is a `system` job (one per node) and runs on every Nomad client,
+  # including those without a Consul agent.  Pin Prometheus / Loki endpoints
+  # statically so the consul-template render step doesn't fail on those
+  # nodes.  Both URLs use the cluster's primary Tailscale IP, which is
+  # reachable from every node in every datacenter.
   hcl2 {
     vars = {
-      datacenters = jsonencode(var.datacenters)
+      prometheus_url = "http://${var.cluster_tailscale_ip}:9090/api/v1/write"
+      loki_url       = "http://${var.cluster_tailscale_ip}:3100/loki/api/v1/push"
     }
   }
 

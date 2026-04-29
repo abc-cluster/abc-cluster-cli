@@ -40,6 +40,12 @@ type Spec struct {
 	// from <base>/<version>/pipeline-gen.jar instead of resolving via the
 	// GitHub releases API. Mirrors the abc-node-probe RustFS-mirror pattern.
 	PipelineGenURLBase string
+
+	// PipelineGenURLResolve: optional `host:port:ip` override passed to curl
+	// via `--resolve`. Useful when the URL hostname only resolves via
+	// Tailscale magicDNS on the host but containerd-driver containers don't
+	// have the Tailscale resolver in their /etc/resolv.conf.
+	PipelineGenURLResolve string
 	ModuleRevision     string
 	GitHubToken        string
 
@@ -58,6 +64,11 @@ type Spec struct {
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
+
+	// SamplesheetCSVContent is the user's local samplesheet (CSV bytes), to
+	// be staged into the prestart task and validated against the module's
+	// meta.yml before driver generation. Empty disables the validation step.
+	SamplesheetCSVContent string
 
 	// PipelineGenNoRunManifest, when true, passes --no-run-manifest to nf-pipeline-gen.
 	PipelineGenNoRunManifest bool
@@ -97,6 +108,28 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	groupBody := jobBody.AppendNewBlock("group", []string{"run"}).Body()
 
+	// Eviction tolerance — overrides Nomad batch defaults (1 reschedule, 3
+	// restarts in fail mode). When a task lands on a spot node that gets
+	// reclaimed mid-run, the batch default would fail the whole job after
+	// the local restarts ran out. With these settings:
+	//   - up to 5 fresh allocations (rescheduling) over 1h, attempting a
+	//     completely new placement each time;
+	//   - 2 in-place restarts before each reschedule (covers transient
+	//     OOM / image-pull / network blips).
+	rescheduleBody := groupBody.AppendNewBlock("reschedule", nil).Body()
+	rescheduleBody.SetAttributeValue("attempts", cty.NumberIntVal(5))
+	rescheduleBody.SetAttributeValue("interval", cty.StringVal("1h"))
+	rescheduleBody.SetAttributeValue("delay", cty.StringVal("30s"))
+	rescheduleBody.SetAttributeValue("delay_function", cty.StringVal("exponential"))
+	rescheduleBody.SetAttributeValue("max_delay", cty.StringVal("5m"))
+	rescheduleBody.SetAttributeValue("unlimited", cty.BoolVal(false))
+
+	restartBody := groupBody.AppendNewBlock("restart", nil).Body()
+	restartBody.SetAttributeValue("attempts", cty.NumberIntVal(2))
+	restartBody.SetAttributeValue("interval", cty.StringVal("30m"))
+	restartBody.SetAttributeValue("delay", cty.StringVal("30s"))
+	restartBody.SetAttributeValue("mode", cty.StringVal("fail"))
+
 	volBody := groupBody.AppendNewBlock("volume", []string{spec.HostVolume}).Body()
 	volBody.SetAttributeValue("type", cty.StringVal("host"))
 	volBody.SetAttributeValue("source", cty.StringVal(spec.HostVolume))
@@ -129,6 +162,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	if spec.PipelineGenURLBase != "" {
 		genEnv.SetAttributeValue("ABC_PIPELINE_GEN_URL_BASE", cty.StringVal(spec.PipelineGenURLBase))
 	}
+	if spec.PipelineGenURLResolve != "" {
+		genEnv.SetAttributeValue("ABC_PIPELINE_GEN_URL_RESOLVE", cty.StringVal(spec.PipelineGenURLResolve))
+	}
 	if spec.ModuleRevision != "" {
 		genEnv.SetAttributeValue("ABC_MODULE_REVISION", cty.StringVal(spec.ModuleRevision))
 	}
@@ -137,6 +173,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	}
 	if spec.ConfigYAMLContent != "" {
 		genEnv.SetAttributeValue("ABC_MODULE_CONFIG_B64", cty.StringVal(base64.StdEncoding.EncodeToString([]byte(spec.ConfigYAMLContent))))
+	}
+	if spec.SamplesheetCSVContent != "" {
+		genEnv.SetAttributeValue("ABC_SAMPLESHEET_B64", cty.StringVal(base64.StdEncoding.EncodeToString([]byte(spec.SamplesheetCSVContent))))
 	}
 	if spec.TestMode {
 		genEnv.SetAttributeValue("ABC_MODULE_TEST_MODE", cty.StringVal("1"))
@@ -206,7 +245,12 @@ func shellQuote(s string) string { return fmt.Sprintf("%q", s) }
 var tmplFuncs = template.FuncMap{"shellQuote": shellQuote}
 
 // generateScriptTmpl is the prestart bash script that downloads nf-pipeline-gen,
-// fetches the nf-core/modules tarball, and generates the driver pipeline.
+// fetches the nf-core/modules tarball, optionally validates a user-supplied
+// samplesheet, and then generates the driver pipeline.
+//
+// `{{ .JarFetch }}` and `{{ .ModulesFetch }}` are filled in from
+// PipelineGenJarFetchScript / NfCoreModulesFetchScript so the same fetch
+// logic can be reused by the `samplesheet emit` job (jarfetch.go).
 var generateScriptTmpl = template.Must(
 	template.New("generate").Funcs(tmplFuncs).Parse(
 		`#!/usr/bin/env bash
@@ -218,6 +262,7 @@ JAR_PATH="/local/pipeline-gen.jar"
 MODULES_TGZ="/local/modules.tgz"
 PARAMS_FILE="/local/params.yml"
 MODULE_CONFIG="/local/module.config"
+SAMPLESHEET_FILE="/local/samplesheet.csv"
 OUTDIR={{ shellQuote .GenOutdirExpr }}
 STATE_FILE={{ shellQuote .StateFile }}
 PIPELINE_GEN_REPO={{ shellQuote .PipelineGenRepo }}
@@ -225,132 +270,10 @@ PIPELINE_GEN_VERSION={{ shellQuote .PipelineGenVersion }}
 MODULE_NAME={{ shellQuote .Module }}
 OUTPUT_PREFIX={{ shellQuote .OutputPrefix }}
 
-rm -rf "$OUTDIR" "$MODULES_DIR" "$JAR_PATH" "$MODULES_TGZ"
+rm -rf "$OUTDIR" "$MODULES_DIR" "$JAR_PATH" "$MODULES_TGZ" "$SAMPLESHEET_FILE"
 
-if [ -n "${ABC_PIPELINE_GEN_URL_BASE:-}" ]; then
-  # Direct-URL mode: fetch JAR from a mirror (e.g. RustFS) instead of GitHub.
-  # No release-API call, no GitHub auth required for the JAR itself. The
-  # nf-core/modules tarball below still uses GitHub (which is anonymous-read).
-  JAR_URL="${ABC_PIPELINE_GEN_URL_BASE%/}/${PIPELINE_GEN_VERSION}/pipeline-gen.jar"
-  SHA_URL="${ABC_PIPELINE_GEN_URL_BASE%/}/${PIPELINE_GEN_VERSION}/sha256sums.txt"
-  echo ">> Fetching pipeline-gen.jar from mirror: $JAR_URL"
-  curl -fsSL -L -o "$JAR_PATH" "$JAR_URL"
-  test -s "$JAR_PATH"
-  if curl -fsSL -L -o /local/sha256sums.txt "$SHA_URL" 2>/dev/null; then
-    EXPECTED="$(awk '$2 == "pipeline-gen.jar" {print $1; exit}' /local/sha256sums.txt)"
-    if [ -n "$EXPECTED" ]; then
-      ACTUAL="$(sha256sum "$JAR_PATH" | awk '{print $1}')"
-      if [ "$ACTUAL" != "$EXPECTED" ]; then
-        echo "pipeline-gen.jar sha256 mismatch: got $ACTUAL want $EXPECTED" >&2
-        exit 1
-      fi
-      echo ">> JAR sha256 verified ($EXPECTED)"
-    else
-      echo ">> sha256sums.txt fetched but did not contain pipeline-gen.jar entry; skipping verify"
-    fi
-  else
-    echo ">> No sha256sums.txt at mirror; skipping JAR integrity check"
-  fi
-else
-
-if [ "$PIPELINE_GEN_VERSION" = "latest" ]; then
-  RELEASE_URL="https://api.github.com/repos/${PIPELINE_GEN_REPO}/releases/latest"
-else
-  RELEASE_URL="https://api.github.com/repos/${PIPELINE_GEN_REPO}/releases/tags/${PIPELINE_GEN_VERSION}"
-fi
-
-ASSET_ID="$(python3 - "$RELEASE_URL" <<'PY'
-import json
-import os
-import sys
-import urllib.request
-
-token = os.environ.get("GITHUB_TOKEN", "")
-if not token:
-    raise SystemExit("Missing GITHUB_TOKEN for nf-pipeline-gen release download")
-
-release_url = sys.argv[1] if len(sys.argv) > 1 else ""
-if not release_url:
-    raise SystemExit("Missing RELEASE_URL")
-
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "abc-module-run"
-}
-req = urllib.request.Request(release_url, headers=headers)
-with urllib.request.urlopen(req) as r:
-    release = json.load(r)
-assets = release.get("assets", [])
-jar_assets = [a for a in assets if a.get("name", "").endswith(".jar") or "standalone" in a.get("name", "").lower()]
-asset = jar_assets[0] if jar_assets else (assets[0] if assets else None)
-if not asset:
-    raise SystemExit("No nf-pipeline-gen release assets found")
-print(asset["id"])
-PY
-)"
-test -n "$ASSET_ID"
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/octet-stream" -L -o "$JAR_PATH" \
-  "https://api.github.com/repos/${PIPELINE_GEN_REPO}/releases/assets/$ASSET_ID"
-test -s "$JAR_PATH"
-
-fi  # end direct-URL mode branch
-
-MODULES_COMMIT="$(python3 - <<'PY'
-import json
-import os
-import urllib.request
-headers = {
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "abc-module-run"
-}
-# Use GITHUB_TOKEN if available — anonymous github.com is rate-limited at
-# 60 req/hr per IP, and the cluster pulls many modules concurrently.
-tok = os.environ.get("GITHUB_TOKEN", "")
-if tok:
-    headers["Authorization"] = f"Bearer {tok}"
-req = urllib.request.Request(
-    "https://api.github.com/repos/nf-core/modules/commits/master",
-    headers=headers,
-)
-with urllib.request.urlopen(req) as r:
-    data = json.load(r)
-sha = data.get("sha")
-if not sha:
-    raise SystemExit("Unable to resolve nf-core/modules master commit")
-print(sha)
-PY
-)"
-MODULES_REVISION="$(printf '%s' "$MODULES_COMMIT" | cut -c1-12)"
-if [ -n "${ABC_MODULE_REVISION:-}" ]; then
-  MODULES_REVISION="$ABC_MODULE_REVISION"
-fi
-# Tarball download — also auth when token present (github.com codeload uses
-# the same rate-limit bucket as the API).
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -L -o "$MODULES_TGZ" "https://github.com/nf-core/modules/archive/${MODULES_COMMIT}.tar.gz"
-else
-  curl -fsSL -L -o "$MODULES_TGZ" "https://github.com/nf-core/modules/archive/${MODULES_COMMIT}.tar.gz"
-fi
-test -s "$MODULES_TGZ"
-
-mkdir -p "$MODULES_DIR"
-python3 - <<'PY'
-import tarfile
-src = '/local/modules.tgz'
-dst = '/local/modules-src'
-with tarfile.open(src, 'r:gz') as tf:
-    members = tf.getmembers()
-    root = members[0].name.split('/')[0]
-    for m in members:
-        if m.name.startswith(root + '/'):
-            m.name = m.name[len(root)+1:]
-            if m.name:
-                tf.extract(m, dst)
-PY
-
+{{ .JarFetch }}
+{{ .ModulesFetch }}
 MODULE_DIR="$MODULES_DIR/modules/$MODULE_NAME"
 if [ ! -d "$MODULE_DIR" ]; then
   MODULE_DIR="$MODULES_DIR/$MODULE_NAME"
@@ -433,6 +356,30 @@ else
   : > "$MODULE_CONFIG"
 fi
 
+# Cluster-side samplesheet validation. Decoded from ABC_SAMPLESHEET_B64 (set
+# by the CLI when the user passed --samplesheet). The JAR's
+# --validate-samplesheet re-reads meta.yml and re-checks every cell — the Go
+# side only does a shallow shape check before submission. If we're here and
+# the sheet is bad, fail the alloc fast before driver gen / Nextflow.
+if [ -n "${ABC_SAMPLESHEET_B64:-}" ]; then
+  python3 - "$SAMPLESHEET_FILE" <<'PY'
+import base64
+import os
+import sys
+raw = os.environ.get("ABC_SAMPLESHEET_B64", "")
+with open(sys.argv[1], "wb") as fh:
+    fh.write(base64.b64decode(raw))
+PY
+  echo ">> Validating samplesheet against $MODULE_NAME meta.yml..."
+  if ! java -jar "$JAR_PATH" module "$MODULE_NAME" \
+        --modules-dir "$MODULES_DIR" \
+        --validate-samplesheet "$SAMPLESHEET_FILE"; then
+    echo "Samplesheet validation failed; aborting before driver generation." >&2
+    exit 1
+  fi
+  echo ">> Samplesheet OK"
+fi
+
 java -jar "$JAR_PATH" module \
   --modules-dir "$MODULES_DIR" \
   --params-file "$PARAMS_FILE" \
@@ -459,6 +406,8 @@ type generateScriptData struct {
 	Module                   string
 	OutputPrefix             string
 	PipelineGenNoRunManifest bool
+	JarFetch                 string
+	ModulesFetch             string
 }
 
 func buildGenerateScript(spec Spec) string {
@@ -477,6 +426,8 @@ func buildGenerateScript(spec Spec) string {
 		Module:                   spec.Module,
 		OutputPrefix:             outputPrefix,
 		PipelineGenNoRunManifest: spec.PipelineGenNoRunManifest,
+		JarFetch:                 PipelineGenJarFetchScript(),
+		ModulesFetch:             NfCoreModulesFetchScript(),
 	}
 	var buf bytes.Buffer
 	if err := generateScriptTmpl.Execute(&buf, data); err != nil {

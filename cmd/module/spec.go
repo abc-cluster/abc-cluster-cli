@@ -33,6 +33,13 @@ type RunSpec struct {
 	// abc-node-probe RustFS-mirror pattern; lets the cluster avoid GitHub rate
 	// limits and lets devs ship local builds without cutting a release.
 	PipelineGenURLBase string
+
+	// PipelineGenURLResolve is a curl --resolve override (host:port:ip) used
+	// when the URL hostname is only resolvable via Tailscale magicDNS on the
+	// host but the container's resolv.conf doesn't include 100.100.100.100.
+	// Auto-populated by the CLI from a local DNS lookup if the URL hostname
+	// is non-numeric.
+	PipelineGenURLResolve string
 	ModuleRevision     string
 	GitHubToken        string
 
@@ -55,6 +62,18 @@ type RunSpec struct {
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
+
+	// SamplesheetCSVContent is the user-supplied CSV (read from the path
+	// passed to --samplesheet on `module run`). When non-empty, the prestart
+	// task validates it against the module's meta.yml via
+	// `pipeline-gen --validate-samplesheet` BEFORE generating a driver, so
+	// a malformed sheet fails the alloc fast instead of after a long
+	// driver-gen + Nextflow pull-through.
+	SamplesheetCSVContent string
+	// SamplesheetSourcePath is the local path the CSV came from — kept on
+	// the spec only for human-readable status output. Not propagated to the
+	// cluster; the bytes travel via the spec's CSV content field.
+	SamplesheetSourcePath string
 
 	// PipelineGenNoRunManifest passes --no-run-manifest to nf-pipeline-gen in the Nomad prestart script.
 	PipelineGenNoRunManifest bool

@@ -1,6 +1,7 @@
 package module
 
 import (
+	"github.com/abc-cluster/abc-cluster-cli/cmd/module/samplesheet"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,7 @@ Examples:
 		"Nomad namespace for job submission (or set ABC_NAMESPACE/NOMAD_NAMESPACE)")
 
 	cmd.AddCommand(newRunCmd())
+	cmd.AddCommand(samplesheet.NewCmd())
 	return cmd
 }
 

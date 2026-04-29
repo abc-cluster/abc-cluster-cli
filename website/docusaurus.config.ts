@@ -28,6 +28,38 @@ const config: Config = {
     format: 'md',
   },
 
+  // Browser-theme-aware favicon: dark variant when the user's OS is in dark
+  // mode, light variant otherwise. The plain `favicon: 'img/favicon.svg'`
+  // above still applies as a fallback for browsers that ignore `media`.
+  headTags: [
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'icon',
+        type: 'image/svg+xml',
+        href: '/img/favicon.svg',
+        media: '(prefers-color-scheme: light)',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'icon',
+        type: 'image/svg+xml',
+        href: '/img/favicon-dark.svg',
+        media: '(prefers-color-scheme: dark)',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'apple-touch-icon',
+        sizes: '180x180',
+        href: '/img/apple-touch-icon.png',
+      },
+    },
+  ],
+
   presets: [
     [
       'classic',
@@ -47,7 +79,7 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/docusaurus-social-card.jpg',
+    image: 'img/social-card.png',
     colorMode: {
       defaultMode: 'dark',
       disableSwitch: false,
@@ -88,7 +120,7 @@ const config: Config = {
         {
           title: 'Docs',
           items: [
-            {label: 'Installation',  to: '/docs/installation'},
+            {label: 'Overview',      to: '/docs/'},
             {label: 'Quick start',   to: '/docs/quickstart'},
             {label: 'Command reference', to: '/docs/reference'},
             {label: 'Tutorials',     to: '/docs/tutorials'},

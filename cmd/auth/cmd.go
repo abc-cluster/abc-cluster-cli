@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -209,8 +210,12 @@ func newWhoamiCmd() *cobra.Command {
 		Short: "Show the current authenticated identity",
 		Long: `Display the current user identity and active context details.
 
-This is a stub implementation that displays context information.
-Full user details (name, role, plan, etc.) require API contact.`,
+Contacts the Nomad API to resolve the token identity (name, type, accessor ID)
+and saves the result to auth.whoami in the active context so it appears in
+'abc config show' and other identity-aware commands.
+
+If the Nomad endpoint is unreachable, the cached auth.whoami value is shown
+instead (with a warning).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -223,27 +228,72 @@ Full user details (name, role, plan, etc.) require API contact.`,
 				return nil
 			}
 
-			ctx, _ := cfg.ContextNamed(cfg.ActiveContext)
-			fmt.Printf("Context      %s\n", cfg.ActiveContext)
-			if canon := cfg.ResolveContextName(cfg.ActiveContext); canon != "" && canon != cfg.ActiveContext {
-				fmt.Printf("Canonical    %s\n", canon)
+			canon := cfg.ResolveContextName(cfg.ActiveContext)
+			if canon == "" {
+				canon = cfg.ActiveContext
 			}
-			if canon := cfg.ResolveContextName(cfg.ActiveContext); canon != "" {
-				if als := config.AliasesResolvingToCanon(cfg, canon); len(als) > 0 {
-					fmt.Printf("Aliases      %s\n", strings.Join(als, ", "))
+			activeCtx, _ := cfg.ContextNamed(canon)
+
+			// --- Nomad identity resolution ---
+			addr, tok, region := activeCtx.NomadAddr(), activeCtx.NomadToken(), activeCtx.NomadRegion()
+			var nomadTok *utils.NomadACLToken
+			if addr != "" && tok != "" {
+				nc := utils.NewNomadClient(addr, tok, region)
+				nomadTok, err = nc.GetACLTokenSelf(context.Background())
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[abc] Warning: could not reach Nomad to resolve identity: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[abc] Showing cached identity (if any).\n")
 				}
 			}
-			fmt.Printf("Endpoint     %s\n", ctx.Endpoint)
-			if ctx.OrgID != "" {
-				fmt.Printf("Organization %s\n", ctx.OrgID)
+
+			// Persist the resolved label to auth.whoami.
+			if nomadTok != nil {
+				label := utils.NomadWhoamiLabelFromACLToken(nomadTok)
+				if label != "" {
+					activeCtx.SetAuthWhoami(label)
+					cfg.Contexts[canon] = activeCtx
+					if saveErr := cfg.Save(); saveErr != nil {
+						fmt.Fprintf(os.Stderr, "[abc] Warning: could not save auth.whoami: %v\n", saveErr)
+					}
+				}
 			}
-			if ctx.WorkspaceID != "" {
-				fmt.Printf("Workspace    %s\n", ctx.WorkspaceID)
+
+			// --- Display ---
+			fmt.Printf("Context      %s\n", cfg.ActiveContext)
+			if canon != cfg.ActiveContext {
+				fmt.Printf("Canonical    %s\n", canon)
 			}
-			if ctx.Region != "" {
-				fmt.Printf("Region       %s\n", ctx.Region)
+			if als := config.AliasesResolvingToCanon(cfg, canon); len(als) > 0 {
+				fmt.Printf("Aliases      %s\n", strings.Join(als, ", "))
 			}
-			fmt.Printf("Token        %s (first 8 chars)\n", maskToken(ctx.AccessToken))
+			fmt.Printf("Endpoint     %s\n", activeCtx.Endpoint)
+			if activeCtx.OrgID != "" {
+				fmt.Printf("Organization %s\n", activeCtx.OrgID)
+			}
+			if activeCtx.WorkspaceID != "" {
+				fmt.Printf("Workspace    %s\n", activeCtx.WorkspaceID)
+			}
+			if activeCtx.Region != "" {
+				fmt.Printf("Region       %s\n", activeCtx.Region)
+			}
+			fmt.Printf("Token        %s\n", maskToken(activeCtx.AccessToken))
+
+			if nomadTok != nil {
+				fmt.Printf("\nNomad identity\n")
+				fmt.Printf("  Name         %s\n", nomadTok.Name)
+				fmt.Printf("  Type         %s\n", nomadTok.Type)
+				fmt.Printf("  Accessor ID  %s\n", nomadTok.AccessorID)
+				if len(nomadTok.Policies) > 0 {
+					fmt.Printf("  Policies     %s\n", strings.Join(nomadTok.Policies, ", "))
+				}
+				label := utils.NomadWhoamiLabelFromACLToken(nomadTok)
+				if label != "" {
+					fmt.Printf("  auth.whoami  %s  ✓ synced\n", label)
+				}
+			} else if activeCtx.Auth != nil && activeCtx.Auth.Whoami != "" {
+				fmt.Printf("\nNomad identity  %s  (cached — Nomad unreachable)\n", activeCtx.Auth.Whoami)
+			}
+
 			return nil
 		},
 	}

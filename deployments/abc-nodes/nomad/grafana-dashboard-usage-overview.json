@@ -69,7 +69,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum(nomad_client_allocated_cpu * on(host) group_left() (count by (host) (nomad_client_host_cpu_total) / on(host) (nomad_client_allocated_cpu + nomad_client_unallocated_cpu)))",
+          "expr": "sum(nomad_client_allocated_cpu{datacenter=~\"$datacenter\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total{datacenter=~\"$datacenter\"}) / on(host) (nomad_client_allocated_cpu{datacenter=~\"$datacenter\"} + nomad_client_unallocated_cpu{datacenter=~\"$datacenter\"})))",
           "legendFormat": "allocated"
         }
       ],
@@ -109,7 +109,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum(nomad_client_unallocated_cpu * on(host) group_left() (count by (host) (nomad_client_host_cpu_total) / on(host) (nomad_client_allocated_cpu + nomad_client_unallocated_cpu)))",
+          "expr": "sum(nomad_client_unallocated_cpu{datacenter=~\"$datacenter\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total{datacenter=~\"$datacenter\"}) / on(host) (nomad_client_allocated_cpu{datacenter=~\"$datacenter\"} + nomad_client_unallocated_cpu{datacenter=~\"$datacenter\"})))",
           "legendFormat": "free"
         }
       ],
@@ -149,7 +149,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum(nomad_client_allocated_memory)",
+          "expr": "sum(nomad_client_allocated_memory{datacenter=~\"$datacenter\"})",
           "legendFormat": "allocated"
         }
       ],
@@ -189,7 +189,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum(nomad_client_unallocated_memory)",
+          "expr": "sum(nomad_client_unallocated_memory{datacenter=~\"$datacenter\"})",
           "legendFormat": "free"
         }
       ],
@@ -233,14 +233,14 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "nomad_client_allocated_cpu{host=~\"$node\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total) / on(host) (nomad_client_allocated_cpu + nomad_client_unallocated_cpu))",
+          "expr": "nomad_client_allocated_cpu{datacenter=~\"$datacenter\", host=~\"$node\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total{datacenter=~\"$datacenter\"}) / on(host) (nomad_client_allocated_cpu{datacenter=~\"$datacenter\"} + nomad_client_unallocated_cpu{datacenter=~\"$datacenter\"}))",
           "legendFormat": "allocated {{host}}"
         },
         {
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "nomad_client_unallocated_cpu{host=~\"$node\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total) / on(host) (nomad_client_allocated_cpu + nomad_client_unallocated_cpu))",
+          "expr": "nomad_client_unallocated_cpu{datacenter=~\"$datacenter\", host=~\"$node\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total{datacenter=~\"$datacenter\"}) / on(host) (nomad_client_allocated_cpu{datacenter=~\"$datacenter\"} + nomad_client_unallocated_cpu{datacenter=~\"$datacenter\"}))",
           "legendFormat": "free {{host}}"
         }
       ],
@@ -284,14 +284,14 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (host) (nomad_client_allocated_memory{host=~\"$node\"})",
+          "expr": "sum by (host) (nomad_client_allocated_memory{datacenter=~\"$datacenter\", host=~\"$node\"})",
           "legendFormat": "allocated {{host}}"
         },
         {
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (host) (nomad_client_unallocated_memory{host=~\"$node\"})",
+          "expr": "sum by (host) (nomad_client_unallocated_memory{datacenter=~\"$datacenter\", host=~\"$node\"})",
           "legendFormat": "free {{host}}"
         }
       ],
@@ -351,7 +351,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_client_allocs_cpu_allocated * on(host) group_left() (count by (host) (nomad_client_host_cpu_total) / on(host) (nomad_client_allocated_cpu + nomad_client_unallocated_cpu)))",
+          "expr": "sum by (namespace) (nomad_client_allocs_cpu_allocated{datacenter=~\"$datacenter\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total{datacenter=~\"$datacenter\"}) / on(host) (nomad_client_allocated_cpu{datacenter=~\"$datacenter\"} + nomad_client_unallocated_cpu{datacenter=~\"$datacenter\"})))",
           "legendFormat": "{{namespace}}"
         }
       ],
@@ -399,7 +399,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_client_allocs_memory_allocated) / 1048576",
+          "expr": "sum by (namespace) (nomad_client_allocs_memory_allocated{datacenter=~\"$datacenter\"}) / 1048576",
           "legendFormat": "{{namespace}}"
         }
       ],
@@ -447,7 +447,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_nomad_job_summary_running)",
+          "expr": "sum by (namespace) (nomad_nomad_job_summary_running{datacenter=~\"$datacenter\"})",
           "legendFormat": "{{namespace}}"
         }
       ],
@@ -492,7 +492,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_client_allocs_cpu_allocated{namespace=~\"$namespace\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total) / on(host) (nomad_client_allocated_cpu + nomad_client_unallocated_cpu)))",
+          "expr": "sum by (namespace) (nomad_client_allocs_cpu_allocated{datacenter=~\"$datacenter\", namespace=~\"$namespace\"} * on(host) group_left() (count by (host) (nomad_client_host_cpu_total{datacenter=~\"$datacenter\"}) / on(host) (nomad_client_allocated_cpu{datacenter=~\"$datacenter\"} + nomad_client_unallocated_cpu{datacenter=~\"$datacenter\"})))",
           "legendFormat": "{{namespace}}"
         }
       ],
@@ -537,7 +537,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_client_allocs_memory_allocated{namespace=~\"$namespace\"}) / 1048576",
+          "expr": "sum by (namespace) (nomad_client_allocs_memory_allocated{datacenter=~\"$datacenter\", namespace=~\"$namespace\"}) / 1048576",
           "legendFormat": "{{namespace}}"
         }
       ],
@@ -581,7 +581,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_nomad_job_summary_queued{namespace=~\"$namespace\"})",
+          "expr": "sum by (namespace) (nomad_nomad_job_summary_queued{datacenter=~\"$datacenter\", namespace=~\"$namespace\"})",
           "legendFormat": "{{namespace}} queued"
         }
       ],
@@ -625,7 +625,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "increase(nomad_nomad_plan_preemption_eval_count[5m])",
+          "expr": "increase(nomad_nomad_plan_preemption_eval_count{datacenter=~\"$datacenter\"}[5m])",
           "legendFormat": "preemptions / 5m"
         }
       ],
@@ -682,7 +682,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"$job\"}) / 100",
+          "expr": "sum by (namespace) (nomad_client_allocs_cpu_total_percent{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"}) / 100",
           "legendFormat": "{{namespace}} used CPU%"
         }
       ],
@@ -726,7 +726,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"$job\"})",
+          "expr": "sum by (namespace) (nomad_client_allocs_memory_rss{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"})",
           "legendFormat": "{{namespace}} rss"
         }
       ],
@@ -771,7 +771,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "clamp_max(sum by (namespace) (nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"$job\"}) / (sum by (namespace) (nomad_client_allocs_cpu_allocated{namespace=~\"$namespace\", exported_job=~\"$job\"}) / 100), 1)",
+          "expr": "clamp_max(sum by (namespace) (nomad_client_allocs_cpu_total_percent{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"}) / (sum by (namespace) (nomad_client_allocs_cpu_allocated{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"}) / 100), 1)",
           "legendFormat": "{{namespace}} cpu efficiency"
         }
       ],
@@ -814,14 +814,14 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_nomad_job_summary_complete{namespace=~\"$namespace\", exported_job=~\"$job\"})",
+          "expr": "sum by (namespace) (nomad_nomad_job_summary_complete{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"})",
           "legendFormat": "{{namespace}} complete"
         },
         {
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace) (nomad_nomad_job_summary_failed{namespace=~\"$namespace\", exported_job=~\"$job\"})",
+          "expr": "sum by (namespace) (nomad_nomad_job_summary_failed{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"})",
           "legendFormat": "{{namespace}} failed"
         }
       ],
@@ -879,7 +879,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (institute) (label_replace(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.*\", exported_job=~\"$job\"}, \"institute\", \"$1\", \"exported_job\", \"^script-job-([^-]+)-.*\")) / 100",
+          "expr": "sum by (institute) (label_replace(nomad_client_allocs_cpu_total_percent{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-.+--.*\", exported_job=~\"$job\"}, \"institute\", \"$1\", \"exported_job\", \"^script-job-([^-]+)-.*\")) / 100",
           "legendFormat": "{{institute}}"
         }
       ],
@@ -924,7 +924,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (institute) (label_replace(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.*\", exported_job=~\"$job\"}, \"institute\", \"$1\", \"exported_job\", \"^script-job-([^-]+)-.*\"))",
+          "expr": "sum by (institute) (label_replace(nomad_client_allocs_memory_rss{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-.+--.*\", exported_job=~\"$job\"}, \"institute\", \"$1\", \"exported_job\", \"^script-job-([^-]+)-.*\"))",
           "legendFormat": "{{institute}}"
         }
       ],
@@ -970,7 +970,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (research_group) (label_replace(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"$job\"}, \"research_group\", \"$1\", \"namespace\", \"(.+)\")) / 100",
+          "expr": "sum by (research_group) (label_replace(nomad_client_allocs_cpu_total_percent{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"}, \"research_group\", \"$1\", \"namespace\", \"(.+)\")) / 100",
           "legendFormat": "{{research_group}}"
         }
       ],
@@ -1015,7 +1015,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (research_group) (label_replace(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"$job\"}, \"research_group\", \"$1\", \"namespace\", \"(.+)\"))",
+          "expr": "sum by (research_group) (label_replace(nomad_client_allocs_memory_rss{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"$job\"}, \"research_group\", \"$1\", \"namespace\", \"(.+)\"))",
           "legendFormat": "{{research_group}}"
         }
       ],
@@ -1072,7 +1072,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace, research_user) (label_replace(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"script-job-($research_user)--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\")) / 100",
+          "expr": "sum by (namespace, research_user) (label_replace(nomad_client_allocs_cpu_total_percent{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-($research_user)--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\")) / 100",
           "legendFormat": "{{namespace}}/{{research_user}}"
         }
       ],
@@ -1116,7 +1116,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (namespace, research_user) (label_replace(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"script-job-($research_user)--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
+          "expr": "sum by (namespace, research_user) (label_replace(nomad_client_allocs_memory_rss{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-($research_user)--.*\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
           "legendFormat": "{{namespace}}/{{research_user}}"
         }
       ],
@@ -1219,7 +1219,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (research_user) (label_replace(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\")) / 100",
+          "expr": "sum by (research_user) (label_replace(nomad_client_allocs_cpu_total_percent{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\")) / 100",
           "legendFormat": "{{research_user}}"
         }
       ]
@@ -1271,7 +1271,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (research_user) (label_replace(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
+          "expr": "sum by (research_user) (label_replace(nomad_client_allocs_memory_rss{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
           "legendFormat": "{{research_user}}"
         }
       ]
@@ -1318,7 +1318,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum by (research_user) (label_replace(nomad_nomad_job_summary_running{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
+          "expr": "sum by (research_user) (label_replace(nomad_nomad_job_summary_running{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}, \"research_user\", \"$1\", \"exported_job\", \"^script-job-(.+?)--.*\"))",
           "legendFormat": "{{research_user}}"
         }
       ]
@@ -1367,7 +1367,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum(nomad_client_allocs_cpu_total_percent{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}) / 100",
+          "expr": "sum(nomad_client_allocs_cpu_total_percent{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"}) / 100",
           "legendFormat": "cluster (tagged)"
         }
       ]
@@ -1415,7 +1415,7 @@
           "datasource": {
             "uid": "prometheus"
           },
-          "expr": "sum(nomad_client_allocs_memory_rss{namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"})",
+          "expr": "sum(nomad_client_allocs_memory_rss{datacenter=~\"$datacenter\", namespace=~\"$namespace\", exported_job=~\"script-job-.+--.+\", exported_job=~\"$job\"})",
           "legendFormat": "cluster (tagged)"
         }
       ]
@@ -1433,6 +1433,39 @@
   ],
   "templating": {
     "list": [
+      {
+        "name": "datacenter",
+        "label": "Datacenter",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "type": "query",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(nomad_client_uptime, datacenter)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "definition": "label_values(nomad_client_uptime, datacenter)",
+        "refresh": 1,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "regex": "",
+        "skipUrlSync": false,
+        "hide": 0
+      },
       {
         "name": "namespace",
         "label": "Group / Namespace",
@@ -1457,14 +1490,14 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(nomad_nomad_job_summary_running{namespace=~\"$namespace\"}, exported_job)",
+        "definition": "label_values(nomad_nomad_job_summary_running{datacenter=~\"$datacenter\",namespace=~\"$namespace\"},exported_job)",
         "includeAll": true,
         "label": "Job",
         "multi": true,
         "name": "job",
         "options": [],
         "query": {
-          "query": "label_values(nomad_nomad_job_summary_running{namespace=~\"$namespace\"}, exported_job)",
+          "query": "label_values(nomad_nomad_job_summary_running{datacenter=~\"$datacenter\",namespace=~\"$namespace\"},exported_job)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
@@ -1495,14 +1528,14 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(nomad_client_uptime, host)",
+        "definition": "label_values(nomad_client_uptime{datacenter=~\"$datacenter\" },host)",
         "includeAll": true,
         "label": "Node",
         "multi": false,
         "name": "node",
         "options": [],
         "query": {
-          "query": "label_values(nomad_client_uptime, host)",
+          "query": "label_values(nomad_client_uptime{datacenter=~\"$datacenter\" },host)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,

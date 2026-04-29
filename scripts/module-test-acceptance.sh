@@ -30,6 +30,15 @@ ALL_TOOLS_ORDERED=(samtools gatk4 bcftools picard bedtools seqkit plink mmseqs p
 ALL_TOOL_COUNTS=(35       64    28      27     23       17     13    13     12         11)
 DEFAULT_TOOLS="samtools"
 
+# Toolkits that require special hardware / drivers and are EXCLUDED from
+# `--all` unless explicitly named via `--enable parabricks` / `--only parabricks`.
+# parabricks needs CUDA GPUs; none of our docker-driver Nomad nodes have them
+# yet, so leaving it in --all just produces noise (10/12 modules fail with
+# missing-CUDA / OOM signatures).
+SPECIAL_TOOLS=" parabricks "
+
+is-special() { case "$SPECIAL_TOOLS" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
 tool_count() {
   local t="$1" i=0
   for n in "${ALL_TOOLS_ORDERED[@]}"; do
@@ -94,11 +103,13 @@ list_tools() {
   for t in "${ALL_TOOLS_ORDERED[@]}"; do
     marker=" "
     [ "$t" = "samtools" ] && marker="*"
+    if is-special "$t"; then marker="!"; fi
     printf "%s %-10s %5d\n" "$marker" "$t" "${ALL_TOOL_COUNTS[$i]}"
     i=$((i+1))
   done
   echo
   echo "* = enabled by default"
+  echo "! = excluded from --all (special hardware required); enable explicitly with --enable / --only"
 }
 
 # ── arg parsing ───────────────────────────────────────────────────────────────
@@ -150,6 +161,10 @@ else
   SELECTED=" samtools "
   if [ "$USE_ALL" = "1" ]; then
     for t in "${ALL_TOOLS_ORDERED[@]}"; do
+      # Skip special toolkits (e.g. parabricks needs GPUs) unless explicitly
+      # enabled below via --enable. They stay in the catalog so --tools and
+      # --only still see them.
+      if is-special "$t"; then continue; fi
       case "$SELECTED" in *" $t "*) ;; *) SELECTED="$SELECTED$t " ;; esac
     done
   fi

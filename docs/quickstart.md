@@ -1,79 +1,63 @@
 ---
-sidebar_position: 3
+sidebar_position: 2
 ---
 
 # Quick start
 
-Five minutes to your first job. You need `abc` on your `$PATH` ([Installation](./installation)) and values from your cluster operator.
+Three steps from a fresh install to a real Nomad job. You need `abc` on your `$PATH` ([Overview](./)) and a pre-configured `~/.abc/config.yaml` handed out by your workspace lead.
 
-## 1. Initialize config
+## 1. Bootstrap the config directory
 
 ```bash
-abc config init          # creates ~/.abc/config.yaml if not present
+abc config init          # creates ~/.abc/config.yaml with a placeholder context
 ```
 
-## 2. Add a context
-
-A **context** holds the API endpoint, tokens, and workspace label for one cluster.
+Then replace the placeholder with the YAML your workspace lead gave you:
 
 ```bash
-abc context add dev \
-  --url https://api.abc-cluster.io \
-  --access-token <your-token> \
-  --workspace  <workspace-id>
+cp ~/Downloads/<your-name>.yaml ~/.abc/config.yaml
 ```
 
-Make it active:
+## 2. Activate the aither context
 
 ```bash
-export ABC_ACTIVE_CONTEXT=dev
-# or set it persistently:
-abc config set active_context dev
-```
+abc context use aither
 
-Verify:
-
-```bash
+# Confirm the active context and your identity:
+abc context show
 abc auth whoami
 ```
 
-## 3. Initialize local secrets
+## 3. Verify your workspace
 
-Local crypt material lets `abc secrets` and `abc data encrypt` work without exporting a password every time:
-
-```bash
-abc secrets init
-abc secrets set MY_KEY "hunter2"
-abc secrets get MY_KEY          # → hunter2
-```
-
-## 4. Upload a file
+One workload is baked into the CLI — no script file required:
 
 ```bash
-echo "hello abc" > sample.txt
-abc data upload sample.txt
+# Randomised stress-ng job: exercises CPU, VM, and I/O stressors
+abc job run hello-abc
+
+# Add a debug sleep to exec into the running allocation before work begins
+abc job run hello-abc --sleep=120s
 ```
 
-The upload uses TUS (resumable). Large files survive network interruptions and resume where they left off.
-
-## 5. Submit a job
-
-Annotate a shell script with `#ABC` directives and submit it:
+Check that the job was submitted and watch it appear:
 
 ```bash
-cat > hello.sh << 'EOF'
-#!/bin/bash
-#ABC job_name=hello
-#ABC image=ubuntu:24.04
-echo "Hello from Nomad!"
-EOF
-
-abc job run hello.sh
-abc job logs hello
+abc job list --status running
+abc job show <job-id>
 ```
+
+## Trouble?
+
+| Symptom | Try |
+|---|---|
+| `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
+| `403 Forbidden` on submit | `abc context show` — confirm the **aither** context is active and your token is set |
+| Job goes to wrong namespace | `abc context show` — the `nomad_namespace` field in your config controls the default |
+| `unknown command` | `abc --help`, then `abc <verb> --help` |
 
 ## Next steps
 
-- [Tutorials](./tutorials) — full hands-on walkthrough with 8 exercises
-- [Reference → job run](./reference/jobs) — all `#ABC` directives and flags
-- [Reference → data](./reference/data) — encrypt, upload, download
+- [Tutorials → Hands-on walkthrough](./tutorials/demo) — five exercises covering jobs, data, pipelines, and modules.
+- [Reference → job run](./reference/jobs) — every `#ABC` directive and CLI flag.
+- [Reference → data](./reference/data) — `data upload`, `data download`, and object storage commands.

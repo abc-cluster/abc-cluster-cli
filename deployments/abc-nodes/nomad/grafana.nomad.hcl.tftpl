@@ -15,7 +15,7 @@
 
 variable "datacenters" {
   type    = list(string)
-  default = ["dc1", "default"]
+  default = ["*"]
 }
 
 variable "grafana_image" {
@@ -110,7 +110,19 @@ job "abc-nodes-grafana" {
         GF_PATHS_LOGS         = "/scratch/grafana-data/logs"
         GF_PATHS_PLUGINS      = "/scratch/grafana-data/plugins"
         # Allow provisioned dashboards to be edited in the UI (lab convenience)
-        GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH = "/local/provisioning/dashboards/files/nomad-loki-logs.json"
+        GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH = "/local/provisioning/dashboards/files/public-overview.json"
+
+        # Anonymous (read-only) viewer access — so grafana.aither/ shows the
+        # public cluster overview without forcing a login.  Admin/edit still
+        # requires the bootstrap password.  Hide the Grafana version footer
+        # so the unauthenticated landing doesn't leak it.
+        GF_AUTH_ANONYMOUS_ENABLED        = "true"
+        GF_AUTH_ANONYMOUS_ORG_NAME       = "Main Org."
+        GF_AUTH_ANONYMOUS_ORG_ROLE       = "Viewer"
+        GF_AUTH_ANONYMOUS_HIDE_VERSION   = "true"
+        # Don't require login to see ANY page — the anonymous role decides
+        # what's visible. (Without this Grafana redirects /d/<uid> to /login.)
+        GF_AUTH_DISABLE_LOGIN_FORM       = "false"
       }
 
       # Bootstrap mode: always use HCL default admin password.
@@ -136,7 +148,7 @@ datasources:
     type: prometheus
     uid: prometheus
 {{- range service "abc-nodes-prometheus" }}
-    url: http://{{ .Address }}:{{ .Port }}
+    url: http://{{ .NodeAddress }}:{{ .Port }}
 {{- end }}
     access: proxy
     isDefault: true
@@ -148,7 +160,7 @@ datasources:
     # Grafana appends /loki/api/v1/... to this URL. Do NOT include a trailing
     # /loki here — that becomes /loki/loki/... and every query returns 404.
 {{- range service "abc-nodes-loki" }}
-    url: http://{{ .Address }}:{{ .Port }}
+    url: http://{{ .NodeAddress }}:{{ .Port }}
 {{- end }}
     access: proxy
     isDefault: false
@@ -369,6 +381,17 @@ DASHBOARD_USAGE_OVERVIEW
         data            = <<DASHBOARD_BUCKET_USAGE
 ${dashboard_bucket_usage}
 DASHBOARD_BUCKET_USAGE
+      }
+
+      # ── Dashboard: public cluster overview (no per-user/per-job detail) ────
+      # Safe to share read-only — only headline cluster numbers and trends.
+      template {
+        destination     = "local/provisioning/dashboards/files/public-overview.json"
+        left_delimiter  = "[["
+        right_delimiter = "]]"
+        data            = <<DASHBOARD_PUBLIC
+${dashboard_public}
+DASHBOARD_PUBLIC
       }
 
       resources {

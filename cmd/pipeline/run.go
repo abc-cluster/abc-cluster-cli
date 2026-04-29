@@ -277,6 +277,9 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 	if spec.Name != "" {
 		jobName = spec.Name
 	}
+	if slug := utils.ActiveWhoamiSlug(); slug != "" {
+		jobName = slug + "-" + jobName
+	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting pipeline head job to Nomad...\n")
 	t = time.Now()

@@ -250,7 +250,7 @@ func printSetupScript(
 	fmt.Fprint(w, hclContent)
 	fmt.Fprintf(w, "HCL\n")
 	fmt.Fprintf(w, "sudo chown root:root \"%s\"\n", cfgPath)
-	fmt.Fprintf(w, "sudo chmod 640 \"%s\"\n", cfgPath)
+	fmt.Fprintf(w, "sudo chmod 644 \"%s\"\n", cfgPath)
 	fmt.Fprintln(w)
 
 	// ── 5. Service registration ────────────────────────────────────────────────
@@ -431,7 +431,7 @@ func printPostSetupNomadConfigRewriteAndRestart(w io.Writer, cfgPath, finalHCL s
 	fmt.Fprint(w, finalHCL)
 	fmt.Fprintln(w, "HCL")
 	fmt.Fprintf(w, "sudo chown root:root \"%s\"\n", cfgPath)
-	fmt.Fprintf(w, "sudo chmod 640 \"%s\"\n", cfgPath)
+	fmt.Fprintf(w, "sudo chmod 644 \"%s\"\n", cfgPath)
 	fmt.Fprintln(w, "sudo systemctl restart nomad || sudo systemctl start nomad")
 	fmt.Fprintln(w, "echo 'Waiting for Nomad agent after post-setup restart...'")
 	fmt.Fprintln(w, "for i in $(seq 1 20); do")

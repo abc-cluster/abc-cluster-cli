@@ -181,6 +181,21 @@ func Generate(cfg NodeConfig) string {
 		root.AppendNewline()
 	}
 
+	// Telemetry — always emit Prometheus metrics + alloc/node publication.
+	// These power the abc-nodes Grafana dashboards (job summary, allocation
+	// utilisation, node usage breakdown). Off-by-default in Nomad means
+	// nomad_nomad_job_summary_*, nomad_client_allocs_*, etc. never reach
+	// Prometheus — switch them on for every client.  Cost is negligible
+	// (a single extra in-process metrics sink); revoke by setting the
+	// individual flags to false in a hand-written drop-in if undesired.
+	telemetryBody := root.AppendNewBlock("telemetry", nil).Body()
+	telemetryBody.SetAttributeValue("collection_interval", cty.StringVal("15s"))
+	telemetryBody.SetAttributeValue("disable_hostname", cty.BoolVal(true))
+	telemetryBody.SetAttributeValue("prometheus_metrics", cty.BoolVal(true))
+	telemetryBody.SetAttributeValue("publish_allocation_metrics", cty.BoolVal(true))
+	telemetryBody.SetAttributeValue("publish_node_metrics", cty.BoolVal(true))
+	root.AppendNewline()
+
 	// TLS — populated from --ca-file / --cert-file / --key-file
 	if cfg.CAFile != "" || cfg.CertFile != "" || cfg.KeyFile != "" {
 		tlsBody := root.AppendNewBlock("tls", nil).Body()

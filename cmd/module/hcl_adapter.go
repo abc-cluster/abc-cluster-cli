@@ -17,7 +17,8 @@ func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) 
 		OutputPrefix:       spec.OutputPrefix,
 		PipelineGenRepo:    spec.PipelineGenRepo,
 		PipelineGenVersion: spec.PipelineGenVersion,
-		PipelineGenURLBase: spec.PipelineGenURLBase,
+		PipelineGenURLBase:    spec.PipelineGenURLBase,
+		PipelineGenURLResolve: spec.PipelineGenURLResolve,
 		ModuleRevision:     spec.ModuleRevision,
 		GitHubToken:        spec.GitHubToken,
 		CPU:                spec.CPU,
@@ -31,6 +32,7 @@ func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) 
 		S3SecretKey:        spec.S3SecretKey,
 		ParamsYAMLContent:        spec.ParamsYAMLContent,
 		ConfigYAMLContent:        spec.ConfigYAMLContent,
+		SamplesheetCSVContent:    spec.SamplesheetCSVContent,
 		PipelineGenNoRunManifest: spec.PipelineGenNoRunManifest,
 		TestMode:                 spec.TestMode,
 	}, nomadAddr, nomadToken, runUUID)

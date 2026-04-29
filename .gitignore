@@ -19,3 +19,11 @@ deployments/abc-nodes/acl/vault-keys.env
 deployments/abc-nodes/experimental/acl/vault-keys.env
 deployments/abc-nodes/experimental/acl/supabase-secrets.env
 .e2e
+docs/assets/
+website/static
+*png
+*svg
+deployments/abc-nodes/userspace/presentation-creds/
+.presentation*
+*presentation*
+.claude
