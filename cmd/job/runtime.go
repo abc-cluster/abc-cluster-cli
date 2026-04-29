@@ -91,6 +91,19 @@ func FinalizeJobScript(spec *jobSpec, scriptName, script string) (string, error)
 		return "", err
 	}
 	var prefix []string
+
+	// --sleep: inject a debug sleep as the very first action after the shebang
+	// so operators can `abc job exec` / `nomad alloc exec` into the running
+	// allocation before the workload begins.
+	if spec != nil && spec.DebugSleepSecs > 0 {
+		prefix = append(prefix,
+			fmt.Sprintf("# DEBUG: sleeping %ds to allow interactive exec (--sleep)", spec.DebugSleepSecs),
+			fmt.Sprintf("echo '[abc] debug sleep: %ds — exec into this alloc now if needed'", spec.DebugSleepSecs),
+			fmt.Sprintf("sleep %d", spec.DebugSleepSecs),
+			"echo '[abc] debug sleep done — starting workload'",
+		)
+	}
+
 	prefix = append(prefix, taskTmpPreambleLines(spec)...)
 	rt := ""
 	if spec != nil {

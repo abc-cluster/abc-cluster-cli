@@ -682,8 +682,9 @@ exit "$NF_EXIT"
 `))
 
 type runScriptData struct {
-	StateFile string
-	Profile   string
+	StateFile      string
+	Profile        string
+	NfPluginZipURL string
 }
 
 func buildRunScript(spec Spec) string {
@@ -693,8 +694,9 @@ func buildRunScript(spec Spec) string {
 	stateFile := filepath.ToSlash(filepath.Join(spec.WorkDir, spec.JobName, "state.txt"))
 	var buf bytes.Buffer
 	if err := runScriptTmpl.Execute(&buf, runScriptData{
-		StateFile: stateFile,
-		Profile:   spec.Profile,
+		StateFile:      stateFile,
+		Profile:        spec.Profile,
+		NfPluginZipURL: spec.NfPluginZipURL,
 	}); err != nil {
 		panic("runScriptTmpl: " + err.Error())
 	}

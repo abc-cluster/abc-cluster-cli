@@ -262,6 +262,15 @@ resource "nomad_job" "prometheus" {
   jobspec = file("${path.module}/../nomad/prometheus.nomad.hcl")
   detach  = false
 
+  # Pass datacenters through so adding a new DC in variables.tf propagates
+  # without touching the jobspec.  Service discovery (consul_sd_configs)
+  # picks up new nodes automatically once they register in Consul.
+  hcl2 {
+    vars = {
+      datacenters = jsonencode(var.datacenters)
+    }
+  }
+
   depends_on = [nomad_namespace.abc_services]
 }
 
@@ -270,6 +279,12 @@ resource "nomad_job" "loki" {
 
   jobspec = file("${path.module}/../nomad/loki.nomad.hcl")
   detach  = false
+
+  hcl2 {
+    vars = {
+      datacenters = jsonencode(var.datacenters)
+    }
+  }
 
   # Loki stores logs in MinIO — basic-tier minio assumed present.
   depends_on = [nomad_namespace.abc_services]
@@ -301,6 +316,12 @@ resource "nomad_job" "grafana" {
   })
   detach = false
 
+  hcl2 {
+    vars = {
+      datacenters = jsonencode(var.datacenters)
+    }
+  }
+
   depends_on = [
     nomad_job.prometheus,
     nomad_job.loki,
@@ -312,6 +333,14 @@ resource "nomad_job" "alloy" {
 
   jobspec = file("${path.module}/../nomad/alloy.nomad.hcl")
   detach  = false
+
+  # Alloy is a `system` job (one per node) and reaches Prometheus / Loki via
+  # Consul service discovery, so it just needs the datacenters list.
+  hcl2 {
+    vars = {
+      datacenters = jsonencode(var.datacenters)
+    }
+  }
 
   depends_on = [
     nomad_job.prometheus,

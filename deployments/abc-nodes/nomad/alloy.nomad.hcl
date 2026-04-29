@@ -19,8 +19,9 @@ variable "alloy_version" {
 }
 
 variable "nomad_addr" {
-  type    = string
-  default = "100.70.185.46:4646"
+  type        = string
+  default     = "127.0.0.1:4646"
+  description = "Nomad agent endpoint each Alloy talks to. Defaults to the local agent: every Nomad client runs an agent on 127.0.0.1, so this scrape is local and works the same on every node in any datacenter."
 }
 
 variable "nomad_token" {
@@ -28,24 +29,19 @@ variable "nomad_token" {
   default = "0ca13634-c413-c24b-627c-f6f1efbff721"
 }
 
-# Full URLs; leave empty to derive from the host part of nomad_addr (same host as
-# Nomad API is typical for single-node or tailnet single-observability-node setups).
-variable "prometheus_url" {
+# Forwarding endpoints — resolved at template time via Consul service discovery.
+# The defaults are Consul service names; if you want to point at an external
+# Prometheus/Loki, set these to literal URLs and the template will use them as-is.
+variable "prometheus_service_name" {
   type        = string
-  description = "Prometheus remote_write URL; empty = http://<nomad_addr host>:9090/api/v1/write"
-  default     = ""
+  default     = "abc-nodes-prometheus"
+  description = "Consul service name for the Prometheus remote_write target."
 }
 
-variable "loki_url" {
+variable "loki_service_name" {
   type        = string
-  description = "Loki push URL; empty = http://<nomad_addr host>:3100/loki/api/v1/push"
-  default     = ""
-}
-
-locals {
-  nomad_http_host = split(":", var.nomad_addr)[0]
-  prometheus_remote_write_url = var.prometheus_url != "" ? var.prometheus_url : "http://${local.nomad_http_host}:9090/api/v1/write"
-  loki_push_url                 = var.loki_url != "" ? var.loki_url : "http://${local.nomad_http_host}:3100/loki/api/v1/push"
+  default     = "abc-nodes-loki"
+  description = "Consul service name for the Loki push target."
 }
 
 job "abc-nodes-alloy" {
@@ -86,6 +82,8 @@ job "abc-nodes-alloy" {
       }
 
       template {
+        # Re-render when Prometheus/Loki get rescheduled to a different node.
+        change_mode = "restart"
         data        = <<EOF
 // ── Host / node metrics ──────────────────────────────────────────────────────
 prometheus.exporter.unix "host" {}
@@ -97,7 +95,7 @@ prometheus.scrape "host_metrics" {
   scrape_interval = "30s"
 }
 
-// ── Nomad /v1/metrics (use nomad_addr; loopback often does not match bind_addr).
+// ── Nomad /v1/metrics — local agent on each node (system job).
 prometheus.scrape "nomad_metrics" {
   targets = [{
     __address__      = "${var.nomad_addr}",
@@ -112,10 +110,12 @@ prometheus.scrape "nomad_metrics" {
   job_name        = "nomad"
 }
 
-// ── Remote write → Prometheus ─────────────────────────────────────────────────
+// ── Remote write → Prometheus (Consul-discovered) ─────────────────────────────
 prometheus.remote_write "local" {
   endpoint {
-    url = "${local.prometheus_remote_write_url}"
+{{- range service "${var.prometheus_service_name}" }}
+    url = "http://{{ .Address }}:{{ .Port }}/api/v1/write"
+{{- end }}
   }
 }
 
@@ -156,7 +156,9 @@ loki.process "add_labels" {
 
 loki.write "local" {
   endpoint {
-    url = "${local.loki_push_url}"
+{{- range service "${var.loki_service_name}" }}
+    url = "http://{{ .Address }}:{{ .Port }}/loki/api/v1/push"
+{{- end }}
   }
 }
 EOF
@@ -174,6 +176,8 @@ EOF
         provider = "consul"
         tags = [
           "abc-nodes", "alloy", "observability",
+          # Alloy exposes Prometheus metrics on /metrics on its UI port.
+          "prometheus.scrape=true",
           "traefik.enable=true",
           "traefik.http.routers.alloy.rule=Host(`alloy.aither`)",
           "traefik.http.routers.alloy.entrypoints=web",
