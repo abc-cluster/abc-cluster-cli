@@ -283,12 +283,22 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, u
 		dest = "/tmp/abc-data-download"
 	}
 
+	// s3:// destinations are handled directly by tools like s5cmd — no local mkdir needed
+	isS3Dest := strings.HasPrefix(dest, "s3://") || strings.HasPrefix(dest, "S3://")
+
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("mkdir -p %s\n", shellEscape(dest)))
+	if !isS3Dest {
+		sb.WriteString(fmt.Sprintf("mkdir -p %s\n", shellEscape(dest)))
+	}
 
 	// Task 1: download using selected tool
-	sb.WriteString("echo '=== TASK 1: Downloading files with chosen tool ==='\n")
+	sb.WriteString("echo '=== Downloading files ==='\n")
 	sb.WriteString(cmdLine + "\n")
+
+	// For s3:// destinations the tool writes directly to object storage — no upload step.
+	if isS3Dest {
+		return sb.String(), nil
+	}
 
 	// Task 2: upload driver behavior
 	if opts.destination == "" {

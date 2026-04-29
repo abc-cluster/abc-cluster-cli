@@ -172,6 +172,9 @@ EOF
         provider = "consul"
         tags = [
           "abc-nodes", "minio", "s3",
+          # Bucket-usage dashboard expects minio_bucket_* metrics on this path.
+          "prometheus.scrape=true",
+          "prometheus.path=/minio/v2/metrics/bucket",
           "traefik.enable=true",
           "traefik.http.routers.minio-s3.rule=Host(`minio.aither`)",
           "traefik.http.routers.minio-s3.entrypoints=web",

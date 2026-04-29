@@ -25,19 +25,29 @@
 
 variable "datacenters" {
   type    = list(string)
-  default = ["dc1", "default"]
+  default = ["*"]
 }
 
 variable "prometheus_image" {
   type    = string
-  default = "prom/prometheus:v2.54.1"
+  # v3.x ships the new Mantine-based browser UI by default.  See
+  # https://prometheus.io/docs/visualization/browser/ — the new graph view,
+  # explorer, and PromQL UI come for free with the version bump.
+  default = "prom/prometheus:v3.5.0"
 }
 
-variable "consul_port" {
-  type        = number
-  default     = 8500
-  description = "Consul agent port. Host IP is taken from attr.unique.network.ip-address at template time."
+variable "external_url" {
+  type        = string
+  default     = "http://prometheus.aither"
+  description = "External URL prometheus thinks it's served at; used to rewrite redirects + UI links so navigation works through the Traefik vhost."
 }
+
+variable "consul_address" {
+  type        = string
+  default     = "100.70.185.46:8500"
+  description = "Consul agent (host:port) to use for Consul-side service discovery. Any Consul agent joined to the cluster works."
+}
+
 
 job "abc-nodes-prometheus" {
   namespace   = "abc-services"
@@ -75,6 +85,10 @@ job "abc-nodes-prometheus" {
           "--storage.tsdb.path=/prometheus",
           "--web.enable-lifecycle",
           "--web.enable-remote-write-receiver",
+          # Tell the new Mantine browser UI which URL it lives at, so its
+          # client-side router builds correct links when accessed through the
+          # Traefik vhost (prometheus.aither) instead of the bare port.
+          "--web.external-url=${var.external_url}",
         ]
       }
 
@@ -92,15 +106,30 @@ scrape_configs:
       - targets: ["127.0.0.1:9090"]
 
   # ── Nomad agents (servers + clients) ──────────────────────────────────────
-  # Both register themselves in Consul; we just follow.
+  # Auto-discovered via Consul. Each agent registers MULTIPLE service entries —
+  # one per port (http=4646, rpc=4647, serf=4648). We only want the http one.
+  #
+  # NOTE — multi-DC coverage requirement: services + Nomad agents are only
+  # discoverable here if their host runs a Consul agent joined to the catalog
+  # at ${var.consul_address}.  In a cluster where Consul is centralised on
+  # one node (current state on aither: only aither shows up in Consul), the
+  # heavy lifting for per-node observability is handled by the Alloy `system`
+  # job — it ships every node's host metrics + local Nomad metrics to
+  # Prometheus via remote_write, so Prometheus doesn't need to *pull* from
+  # nodes that don't have Consul.  Add a Consul agent to a new node to also
+  # let it appear in Prometheus's pull discovery.
   - job_name: nomad
     metrics_path: /v1/metrics
     params:
       format: ["prometheus"]
     consul_sd_configs:
-      - server: "{{ env "attr.unique.network.ip-address" }}:${var.consul_port}"
+      - server: "${var.consul_address}"
         services: ["nomad", "nomad-client"]
     relabel_configs:
+      # Keep only the HTTP-tagged registrations (drop rpc + serf ports).
+      - source_labels: [__meta_consul_tags]
+        regex: ".*,http,.*"
+        action: keep
       - source_labels: [__meta_consul_service]
         target_label: nomad_role
       - source_labels: [__meta_consul_node]
@@ -109,14 +138,20 @@ scrape_configs:
         target_label: dc
 
   # ── Consul agents ─────────────────────────────────────────────────────────
+  # Consul registers itself with the RPC port (8300); we override to hit the
+  # HTTP API port (8500) where /v1/agent/metrics lives.
   - job_name: consul
     metrics_path: /v1/agent/metrics
     params:
       format: ["prometheus"]
     consul_sd_configs:
-      - server: "{{ env "attr.unique.network.ip-address" }}:${var.consul_port}"
+      - server: "${var.consul_address}"
         services: ["consul"]
     relabel_configs:
+      # Rewrite scrape target to <node_address>:8500 (the HTTP API).
+      - source_labels: [__meta_consul_address]
+        target_label: __address__
+        replacement: "$1:8500"
       - source_labels: [__meta_consul_node]
         target_label: instance
       - source_labels: [__meta_consul_dc]
@@ -127,12 +162,19 @@ scrape_configs:
   # Optional tags: prometheus.path=/X, prometheus.scheme=https.
   - job_name: services
     consul_sd_configs:
-      - server: "{{ env "attr.unique.network.ip-address" }}:${var.consul_port}"
+      - server: "${var.consul_address}"
     relabel_configs:
       # Keep only opt-in services.
       - source_labels: [__meta_consul_tags]
         regex: ".*,prometheus\\.scrape=true,.*"
         action: keep
+      # Rewrite scrape target to use the node's address rather than the
+      # service address. Nomad-bridge allocs register their bind IP (often
+      # 127.0.0.1) as ServiceAddress, but the host port is reachable on
+      # the node's primary IP — which is exactly __meta_consul_address.
+      - source_labels: [__meta_consul_address, __meta_consul_service_port]
+        separator: ":"
+        target_label: __address__
       # metrics path override (tag: prometheus.path=/foo)
       - source_labels: [__meta_consul_tags]
         regex: ".*,prometheus\\.path=([^,]+),.*"

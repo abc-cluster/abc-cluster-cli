@@ -53,11 +53,11 @@ func TestJobLogsCommandFlags(t *testing.T) {
 	}
 }
 
-func TestJobHelloWorldCommandDoesNotExist(t *testing.T) {
+func TestJobHelloAbcCommandDoesNotExist(t *testing.T) {
 	cmd := NewCmd()
-	helloCmd, _, err := cmd.Find([]string{"hello-world"})
-	if err == nil && helloCmd != nil && helloCmd.Name() == "hello-world" {
-		t.Fatal("did not expect top-level job hello-world command; use `abc job run hello-world`")
+	helloCmd, _, err := cmd.Find([]string{"hello-abc"})
+	if err == nil && helloCmd != nil && helloCmd.Name() == "hello-abc" {
+		t.Fatal("did not expect top-level job hello-abc command; use `abc job run hello-abc`")
 	}
 }
 

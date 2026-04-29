@@ -10,7 +10,7 @@
 
 variable "datacenters" {
   type    = list(string)
-  default = ["dc1", "default"]
+  default = ["*"]
 }
 
 variable "alloy_version" {
@@ -18,30 +18,32 @@ variable "alloy_version" {
   default = "1.15.1"
 }
 
-variable "nomad_addr" {
-  type        = string
-  default     = "127.0.0.1:4646"
-  description = "Nomad agent endpoint each Alloy talks to. Defaults to the local agent: every Nomad client runs an agent on 127.0.0.1, so this scrape is local and works the same on every node in any datacenter."
-}
+# Note: we don't expose a `nomad_addr` var anymore. Each Alloy uses the host's
+# primary IP via `${attr.unique.network.ip-address}:4646` rendered at task
+# run time (see config.alloy heredoc). Hardcoding 127.0.0.1 doesn't work on
+# this fleet because most Nomad clients bind only to their Tailscale/primary
+# IP, not loopback, and each node's IP is different — this resolves both.
 
 variable "nomad_token" {
   type    = string
   default = "0ca13634-c413-c24b-627c-f6f1efbff721"
 }
 
-# Forwarding endpoints — resolved at template time via Consul service discovery.
-# The defaults are Consul service names; if you want to point at an external
-# Prometheus/Loki, set these to literal URLs and the template will use them as-is.
-variable "prometheus_service_name" {
+# Forwarding endpoints — STATIC URLs.  Alloy is a `system` job that runs on
+# every Nomad client across every datacenter; many of those nodes don't run a
+# Consul agent (Consul is centralised on aither for this cluster), so we
+# can't use consul-template here without breaking placement on Consul-less
+# nodes.  Terraform overrides these defaults with the central cluster IP.
+variable "prometheus_url" {
   type        = string
-  default     = "abc-nodes-prometheus"
-  description = "Consul service name for the Prometheus remote_write target."
+  default     = "http://100.70.185.46:9090/api/v1/write"
+  description = "Prometheus remote_write endpoint reachable from EVERY node (typically the central cluster IP)."
 }
 
-variable "loki_service_name" {
+variable "loki_url" {
   type        = string
-  default     = "abc-nodes-loki"
-  description = "Consul service name for the Loki push target."
+  default     = "http://100.70.185.46:3100/loki/api/v1/push"
+  description = "Loki push endpoint reachable from EVERY node."
 }
 
 job "abc-nodes-alloy" {
@@ -56,7 +58,36 @@ job "abc-nodes-alloy" {
     service          = "alloy"
   }
 
+  # Parallel rollout — the default for system jobs is one-at-a-time, which
+  # takes ~minutes-per-node × N-nodes to finish a config rollout across the
+  # fleet.  Bumping to half-the-fleet at a time keeps the dashboard fresh
+  # during updates without compromising availability (Alloy is idempotent +
+  # push-only, so a brief gap is fine).
+  update {
+    max_parallel      = 6
+    min_healthy_time  = "10s"
+    healthy_deadline  = "2m"
+    progress_deadline = "5m"
+  }
+
   group "alloy" {
+    # Skip spot/preemptible instances. These churn frequently — every
+    # preemption costs a full Alloy restart cycle and creates noise in the
+    # dashboards (a fleet of stuttering host_metrics series). Their workloads
+    # are typically batch and short-lived, so losing per-host visibility is
+    # acceptable for now.
+    #
+    # TODO(observability/spot): revisit if/when spot becomes the dominant
+    # workload tier — at that point we may want Alloy on spot too, with
+    # a different identity convention (e.g. drop the per-instance host label
+    # so series don't fragment on every preemption) and possibly a shorter
+    # remote_write backoff so a 30-second-lived instance still posts data.
+    constraint {
+      attribute = "${node.class}"
+      operator  = "!="
+      value     = "gcp-spot"
+    }
+
     network {
       mode = "host"
       port "ui" {
@@ -72,13 +103,22 @@ job "abc-nodes-alloy" {
         command = "/bin/sh"
         args = [
           "-c",
-          "chmod +x ${NOMAD_TASK_DIR}/alloy-linux-amd64 && exec ${NOMAD_TASK_DIR}/alloy-linux-amd64 run ${NOMAD_TASK_DIR}/config.alloy --server.http.listen-addr=0.0.0.0:12345 --storage.path=${NOMAD_TASK_DIR}/data",
+          "chmod +x ${NOMAD_TASK_DIR}/alloy-linux-${attr.cpu.arch} && exec ${NOMAD_TASK_DIR}/alloy-linux-${attr.cpu.arch} run ${NOMAD_TASK_DIR}/config.alloy --server.http.listen-addr=0.0.0.0:12345 --storage.path=${NOMAD_TASK_DIR}/data",
         ]
       }
 
       artifact {
-        source      = "https://github.com/grafana/alloy/releases/download/v${var.alloy_version}/alloy-linux-amd64.zip"
+        source      = "https://github.com/grafana/alloy/releases/download/v${var.alloy_version}/alloy-linux-${attr.cpu.arch}.zip"
         destination = "local/"
+      }
+
+      # Per-node host IP — used inside the consul-template-rendered config below
+      # to point Alloy's Nomad scrape at THIS node's local agent. Most Nomad
+      # clients in this fleet bind only to their primary IP, not 127.0.0.1, so
+      # we can't hardcode loopback. ${attr.unique.network.ip-address} gets
+      # substituted by Nomad when the task is placed (per-alloc, per-node).
+      env {
+        HOST_IP = "${attr.unique.network.ip-address}"
       }
 
       template {
@@ -96,9 +136,12 @@ prometheus.scrape "host_metrics" {
 }
 
 // ── Nomad /v1/metrics — local agent on each node (system job).
+//   {{ env "HOST_IP" }} is rendered by Nomad's consul-template at template
+//   evaluation time; HOST_IP is set in the task `env` stanza above to
+//   ${attr.unique.network.ip-address} (per-alloc HCL2 interpolation).
 prometheus.scrape "nomad_metrics" {
   targets = [{
-    __address__      = "${var.nomad_addr}",
+    __address__      = "{{ env "HOST_IP" }}:4646",
     __metrics_path__ = "/v1/metrics",
   }]
   params = {
@@ -110,12 +153,10 @@ prometheus.scrape "nomad_metrics" {
   job_name        = "nomad"
 }
 
-// ── Remote write → Prometheus (Consul-discovered) ─────────────────────────────
+// ── Remote write → Prometheus (static URL — works on Consul-less nodes) ─────
 prometheus.remote_write "local" {
   endpoint {
-{{- range service "${var.prometheus_service_name}" }}
-    url = "http://{{ .Address }}:{{ .Port }}/api/v1/write"
-{{- end }}
+    url = "${var.prometheus_url}"
   }
 }
 
@@ -156,9 +197,7 @@ loki.process "add_labels" {
 
 loki.write "local" {
   endpoint {
-{{- range service "${var.loki_service_name}" }}
-    url = "http://{{ .Address }}:{{ .Port }}/loki/api/v1/push"
-{{- end }}
+    url = "${var.loki_url}"
   }
 }
 EOF
@@ -170,19 +209,21 @@ EOF
         memory = 256
       }
 
+      # Service provider = "nomad" (NOT consul) so this job places on every
+      # node in every datacenter regardless of whether the node runs a Consul
+      # agent.  When provider = "consul", Nomad auto-injects an implicit
+      # constraint `attr.consul.version >= 1.8.0` which silently filters out
+      # GCP / OCI / on-prem nodes that don't have Consul — exactly what we
+      # don't want for a `system` observability daemon.
+      #
+      # Alloy is push-only (remote_write to Prometheus, push to Loki) so it
+      # doesn't need to be reachable via discovery from outside; this service
+      # block is just for visibility in `nomad service list`.
       service {
         name     = "abc-nodes-alloy"
         port     = "ui"
-        provider = "consul"
-        tags = [
-          "abc-nodes", "alloy", "observability",
-          # Alloy exposes Prometheus metrics on /metrics on its UI port.
-          "prometheus.scrape=true",
-          "traefik.enable=true",
-          "traefik.http.routers.alloy.rule=Host(`alloy.aither`)",
-          "traefik.http.routers.alloy.entrypoints=web",
-          "traefik.http.services.alloy.loadbalancer.server.port=12345",
-        ]
+        provider = "nomad"
+        tags     = ["abc-nodes", "alloy", "observability"]
 
         check {
           name     = "alloy-health"

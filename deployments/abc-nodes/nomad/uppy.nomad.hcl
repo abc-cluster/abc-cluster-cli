@@ -85,7 +85,10 @@ EOF
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Upload · abc-cluster</title>
   <meta name="description" content="Resumable file uploads to the abc-cluster object store.">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cline x1='3' y1='11' x2='19' y2='11' stroke='%23c8a84c' stroke-width='1.3' opacity='.5'/%3E%3Ccircle cx='5' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='11' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3Ccircle cx='17' cy='11' r='3.2' stroke='%23c8a84c' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
+  <!-- Favicon: africa-dot-grid brand kit, dark variant (uppy renders on a dark
+       surface). Encoded inline so the page is self-contained and survives any
+       Caddy/Traefik path rewriting. Source: docs/assets/africa-dot-grid/favicon-dark.svg -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%20role='img'%20aria-label='abc-cluster%20A'%3E%3Crect%20width='64'%20height='64'%20rx='11.52'%20fill='%23070f0c'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='25.6'%20fill='none'%20stroke='%23c8a84c'%20stroke-width='3.84'/%3E%3Ctext%20x='32'%20y='45.4912'%20text-anchor='middle'%20font-family='JetBrains%20Mono,ui-monospace,Menlo,Consolas,monospace'%20font-weight='700'%20font-size='39.68'%20fill='%23c8a84c'%20letter-spacing='-0.02em'%3EA%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">

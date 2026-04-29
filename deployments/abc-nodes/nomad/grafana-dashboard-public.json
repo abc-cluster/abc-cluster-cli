@@ -1,0 +1,305 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Public-facing cluster resource snapshot — at-a-glance answer to 'is the cluster busy right now?'. No per-user/per-job detail; safe to share read-only.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "title": "Right now",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Online nodes",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 4, "x": 0, "y": 1},
+      "id": 1,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (node_id)(nomad_client_uptime{datacenter=~\"$datacenter\"}))", "legendFormat": "online"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Datacenters",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 4, "x": 4, "y": 1},
+      "id": 2,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (datacenter)(nomad_client_uptime{datacenter=~\"$datacenter\"}))", "legendFormat": "DCs"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Running jobs",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 4, "x": 8, "y": 1},
+      "id": 3,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(nomad_nomad_job_summary_running)", "legendFormat": "running"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Queued",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 4, "x": 12, "y": 1},
+      "id": 4,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "orange", "value": 20}]}
+        }
+      },
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(nomad_nomad_job_summary_queued)", "legendFormat": "queued"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "CPU in use (cluster)",
+      "description": "Average host-CPU busy ratio across every Nomad client. Sourced from the host's per-CPU usage gauge so the number reflects what the OS sees, not what the scheduler thinks it allocated.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 4, "x": 16, "y": 1},
+      "id": 5,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]}
+        }
+      },
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "avg(nomad_client_host_cpu_total_percent{datacenter=~\"$datacenter\"}) / 100", "legendFormat": "cpu used"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Memory in use",
+      "description": "Used host memory across the fleet, ratio. RSS-based, includes cache (matches what `free -h` would show).",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1},
+      "id": 6,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]}
+        }
+      },
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(nomad_client_host_memory_used{datacenter=~\"$datacenter\"}) / sum(nomad_client_host_memory_total{datacenter=~\"$datacenter\"})", "legendFormat": "mem used"}
+      ]
+    },
+    {
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6},
+      "id": 101,
+      "title": "Trend (selected range)",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU usage by datacenter",
+      "description": "Per-DC average host CPU busy ratio. Lines are NOT stacked — each line is its own DC's cluster-wide average, so values are directly comparable across datacenters.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "id": 7,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 12}
+        }
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "avg by (datacenter) (nomad_client_host_cpu_total_percent{datacenter=~\"$datacenter\"}) / 100",
+          "legendFormat": "{{datacenter}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory usage by datacenter",
+      "description": "Per-DC used/total memory ratio across hosts. Each line is one DC's fleet aggregate.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "id": 8,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 12}
+        }
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (datacenter) (nomad_client_host_memory_used{datacenter=~\"$datacenter\"}) / sum by (datacenter) (nomad_client_host_memory_total{datacenter=~\"$datacenter\"})",
+          "legendFormat": "{{datacenter}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Active workload",
+      "description": "Allocations that are actively running or waiting in the scheduler queue. NOTE: we deliberately don't show Nomad's 'failed' status here. That counter includes allocations the scheduler retried-and-recovered, so a job that ultimately succeeded with one transient retry still shows as 'failed' forever — misleading on a public board. The throughput panel to the right (jobs completing per 5m) is the honest 'is the cluster productive?' signal.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "id": 9,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 12}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "running allocs"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+          {"matcher": {"id": "byName", "options": "queued allocs"},  "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]}
+        ]
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(nomad_nomad_job_summary_running)", "legendFormat": "running allocs"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(nomad_nomad_job_summary_queued)",  "legendFormat": "queued allocs"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Per-node CPU usage",
+      "description": "One line per host. Pulled from each node's /proc via Alloy (node_exporter); useful for spotting a single noisy node.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "id": 10,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 5}
+        }
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["abc-nodes", "public", "overview"],
+  "templating": {
+    "list": [
+      {
+        "name": "datacenter",
+        "label": "Datacenter",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "type": "query",
+        "query": {"qryType": 1, "query": "label_values(nomad_client_uptime, datacenter)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "definition": "label_values(nomad_client_uptime, datacenter)",
+        "refresh": 1,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {"selected": true, "text": ["All"], "value": ["$__all"]},
+        "options": [],
+        "regex": "",
+        "skipUrlSync": false,
+        "hide": 0
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "Cluster Resource Overview (public)",
+  "uid": "abc-nodes-public-overview",
+  "version": 1,
+  "weekStart": ""
+}

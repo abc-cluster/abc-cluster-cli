@@ -15,7 +15,7 @@
 
 variable "datacenters" {
   type    = list(string)
-  default = ["dc1", "default"]
+  default = ["*"]
 }
 
 variable "grafana_image" {
@@ -117,7 +117,14 @@ job "abc-nodes-grafana" {
         GF_PATHS_LOGS         = "/scratch/grafana-data/logs"
         GF_PATHS_PLUGINS      = "/scratch/grafana-data/plugins"
         # Allow provisioned dashboards to be edited in the UI (lab convenience)
-        GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH = "/local/provisioning/dashboards/files/nomad-loki-logs.json"
+        GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH = "/local/provisioning/dashboards/files/public-overview.json"
+
+        # Anonymous (read-only) viewer access — so grafana.aither/ shows the
+        # public cluster overview without forcing a login.
+        GF_AUTH_ANONYMOUS_ENABLED      = "true"
+        GF_AUTH_ANONYMOUS_ORG_NAME     = "Main Org."
+        GF_AUTH_ANONYMOUS_ORG_ROLE     = "Viewer"
+        GF_AUTH_ANONYMOUS_HIDE_VERSION = "true"
       }
 
       # Bootstrap mode: always use HCL default admin password.
@@ -144,7 +151,7 @@ datasources:
     type: prometheus
     uid: prometheus
 {{- range service "abc-nodes-prometheus" }}
-    url: http://{{ .Address }}:{{ .Port }}
+    url: http://{{ .NodeAddress }}:{{ .Port }}
 {{- end }}
     access: proxy
     isDefault: true
@@ -156,7 +163,7 @@ datasources:
     # Grafana appends /loki/api/v1/... to this URL. Do NOT include a trailing
     # /loki here — that becomes /loki/loki/... and every query returns 404.
 {{- range service "abc-nodes-loki" }}
-    url: http://{{ .Address }}:{{ .Port }}
+    url: http://{{ .NodeAddress }}:{{ .Port }}
 {{- end }}
     access: proxy
     isDefault: false
@@ -371,6 +378,14 @@ EOF
         left_delimiter  = "[["
         right_delimiter = "]]"
         data            = file(abspath("deployments/abc-nodes/nomad/grafana-dashboard-bucket-usage.json"))
+      }
+
+      # ── Dashboard: public cluster overview (safe to share read-only) ───────
+      template {
+        destination     = "local/provisioning/dashboards/files/public-overview.json"
+        left_delimiter  = "[["
+        right_delimiter = "]]"
+        data            = file(abspath("deployments/abc-nodes/nomad/grafana-dashboard-public.json"))
       }
 
       resources {

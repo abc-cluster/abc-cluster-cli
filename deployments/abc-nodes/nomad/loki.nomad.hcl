@@ -3,7 +3,7 @@
 
 variable "datacenters" {
   type    = list(string)
-  default = ["dc1", "default"]
+  default = ["*"]
 }
 
 variable "loki_image" {
@@ -102,7 +102,7 @@ storage_config:
     # S3 endpoint resolved from Consul — follows whichever node MinIO/RustFS
     # is scheduled onto. Multi-node-tolerant with no jobspec edits.
 {{- range service "${var.s3_service_name}" }}
-    endpoint: {{ .Address }}:{{ .Port }}
+    endpoint: {{ .NodeAddress }}:{{ .Port }}
 {{- end }}
     access_key_id: ${var.minio_access_key}
     secret_access_key: ${var.minio_secret_key}

@@ -150,14 +150,11 @@ INLINE COMMENTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Built-in sanity workload (no local script file needed)
-  abc job run hello-world
-
-  # Built-in chaos/stress workload — random stress-ng parameters each run
-  abc job run hello-chaos
+  # Built-in verification workload — randomised stress-ng across CPU / VM / I/O
+  abc job run hello-abc
 
   # Inject a debug sleep so you can exec into the alloc before work begins
-  abc job run hello-chaos --sleep=120s
+  abc job run hello-abc --sleep=120s
   abc job run myscript.sh  --sleep=5m
 
   # Preview generated HCL without submitting
@@ -232,6 +229,9 @@ EXAMPLES
 		"Nomad placement affinity (repeatable); e.g. --affinity='datacenter==c1,weight=75'")
 	cmd.Flags().Bool("spread", false,
 		"Emit a Nomad spread stanza on ${node.unique.id} for 1-per-node distribution (best-effort)")
+
+	// Script file handling
+	cmd.Flags().Bool("chmod", true, "Mark the script file as executable before submission (chmod +x). Disable with --chmod=false.")
 
 	// SLURM passthrough
 	cmd.Flags().String("sleep", "",
@@ -441,7 +441,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 	// Resolve --format (shell | hcl); auto-detect from extension when omitted.
 	format, _ := cmd.Flags().GetString("format")
 	if format == "" {
-		if scriptPath != "hello-world" && scriptPath != "hello-chaos" {
+		if scriptPath != "hello-abc" {
 			format = detectJobFormat(scriptPath)
 		} else {
 			format = "shell"
@@ -456,28 +456,28 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown --format %q: must be shell or hcl", format)
 	}
 
-	isBuiltInHelloWorld := scriptPath == "hello-world"
-	isBuiltInHelloChaos := scriptPath == "hello-chaos"
+	isBuiltInHelloAbc := scriptPath == "hello-abc"
 	var (
 		scriptBytes []byte
 		scriptBase  string
 		defaultName string
 		err         error
 	)
-	if isBuiltInHelloWorld {
-		scriptBase = helloWorldScriptBase
-		defaultName = "hello-world"
-		scriptBytes = []byte(helloWorldScriptBody)
-	} else if isBuiltInHelloChaos {
-		scriptBase = helloChaosScriptBase
-		defaultName = "hello-chaos"
-		scriptBytes = []byte(helloChaosScriptBody)
+	if isBuiltInHelloAbc {
+		scriptBase = helloAbcScriptBase
+		defaultName = "hello-abc"
+		scriptBytes = []byte(helloAbcScriptBody)
 	} else {
 		f, openErr := os.Open(scriptPath)
 		if openErr != nil {
 			return fmt.Errorf("cannot open script %q: %w", scriptPath, openErr)
 		}
 		defer f.Close()
+		if doChmod, _ := cmd.Flags().GetBool("chmod"); doChmod {
+			if stat, statErr := f.Stat(); statErr == nil && stat.Mode()&0111 == 0 {
+				_ = os.Chmod(scriptPath, stat.Mode()|0111)
+			}
+		}
 		scriptBytes, err = io.ReadAll(f)
 		if err != nil {
 			return fmt.Errorf("cannot read script %q: %w", scriptPath, err)
@@ -514,11 +514,8 @@ func runJob(cmd *cobra.Command, args []string) error {
 
 	// Merge in documented precedence: CLI > preamble > env > params.
 	spec := &jobSpec{}
-	if isBuiltInHelloWorld {
-		spec = mergeSpec(spec, buildHelloWorldSpec())
-	}
-	if isBuiltInHelloChaos {
-		spec = mergeSpec(spec, buildHelloChaosSpec())
+	if isBuiltInHelloAbc {
+		spec = mergeSpec(spec, buildHelloAbcSpec())
 	}
 
 	if paramsFile, _ := cmd.Flags().GetString("params-file"); paramsFile != "" {
@@ -550,13 +547,8 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 
 	var scriptBody string
-	if isBuiltInHelloWorld {
-		scriptBody, err = finalizeHelloWorld(spec)
-		if err != nil {
-			return err
-		}
-	} else if isBuiltInHelloChaos {
-		scriptBody, err = finalizeHelloChaos(spec)
+	if isBuiltInHelloAbc {
+		scriptBody, err = finalizeHelloAbc(spec)
 		if err != nil {
 			return err
 		}
@@ -572,6 +564,9 @@ func runJob(cmd *cobra.Command, args []string) error {
 			base := spec.Name
 			if !strings.HasPrefix(base, "script-job-") {
 				base = "script-job-" + base
+			}
+			if slug := utils.ActiveWhoamiSlug(); slug != "" {
+				base = slug + "-" + base
 			}
 			spec.Name = fmt.Sprintf("%s-%s", base, submissionID[:8])
 		}

@@ -87,6 +87,7 @@ abc <command> <subcommand> [flags]
 |------------------|------------------------------------------------|----------------------------------------------|
 | `pipeline`       | `run`, `add`, `list`, `info`, `update`, `delete`, `export`, `import`, `params` | Submit and manage Nextflow pipeline runs |
 | `job`            | `run`, `list`, `show`, `stop`, `logs`, `status`, `dispatch` | Submit and manage Nomad batch jobs |
+| `module`         | `run`, `samplesheet emit` | Generate and run nf-core module driver pipelines on Nomad (via nf-pipeline-gen) |
 | `data`           | `upload`, `encrypt`, `decrypt`, `download`     | Upload and manage data files                 |
 | `secrets`        | `set`, `get`, `list`, `delete`, `ref`, `backend setup` | Manage secrets (local / Nomad Variables / Vault KV v2) |
 | `cluster`        | `capabilities sync`, `capabilities show`, `list`, `status`, `provision`, `decommission` | Inspect and manage clusters |
@@ -115,6 +116,13 @@ abc data upload ./data.csv.encrypted
 
 # Cluster-side download job (Nomad): --destination is path inside the task; --node pins placement
 abc data download --tool wget --driver containerd --source https://example.com/file.zip --destination /tmp/dl --node my-nomad-node
+
+# nf-core module: scaffold a starter samplesheet from the module's bundled tests
+abc module samplesheet emit nf-core/plink/extract
+# → ./samplesheet-nf-core-plink-extract.csv (downloaded from a one-shot Nomad job)
+
+# Run the module driver against an edited samplesheet — validated cluster-side before driver gen
+abc module run nf-core/plink/extract --samplesheet ./samples.csv
 ```
 
 ### abc-nodes secrets & capabilities

@@ -1,13 +1,12 @@
-// hello_chaos.go — built-in stress-ng workload for chaos/load testing.
-// Invoked via: abc job run hello-chaos [flags]
+// hello_abc.go — built-in stress-ng workload for cluster verification and load testing.
+// Invoked via: abc job run hello-abc [flags]
 //
 // Randomises CPU, VM, and I/O stressor counts and a run duration at CLI time
 // so each submission exercises a different resource profile.  The chosen
 // parameters are stamped into Nomad meta so operators can inspect them via
 // `abc job show` without reading logs.
 //
-// The image already contains both stress-ng and hyperfine and is shared with
-// the hello-world workload:
+// The image already contains both stress-ng and hyperfine:
 //
 //	community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8
 package job
@@ -19,18 +18,39 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
-const (
-	helloChaosScriptBase = "hello-chaos.sh"
+// helloWorldDefaultNamespace returns the Nomad namespace the built-in
+// hello-abc workload should target. Picks (in order):
+//  1. active abc context's admin.abc_nodes.nomad_namespace
+//  2. "default" — fallback for clusters without a pinned namespace.
+func helloWorldDefaultNamespace() string {
+	cfg, err := config.Load()
+	if err == nil && cfg != nil {
+		ctx := cfg.ActiveCtx()
+		if ctx.Admin.ABCNodes != nil {
+			if v := strings.TrimSpace(ctx.Admin.ABCNodes.NomadNamespace); v != "" {
+				return v
+			}
+		}
+		if ns := strings.TrimSpace(ctx.AbcNodesNomadNamespaceForCLI()); ns != "" {
+			return ns
+		}
+	}
+	return "default"
+}
 
-	// helloChaosScriptBody is a template.  The final script is built by
-	// finalizeHelloChaos, which replaces the __STRESS_CMD__ placeholder with
+const (
+	helloAbcScriptBase = "hello-abc.sh"
+
+	// helloAbcScriptBody is a template. The final script is built by
+	// finalizeHelloAbc, which replaces the __STRESS_CMD__ placeholder with
 	// the randomised stress-ng invocation.
-	helloChaosScriptBody = `#!/bin/sh
+	helloAbcScriptBody = `#!/bin/sh
 set -eu
 
-echo "=== hello-chaos ==="
+echo "=== hello-abc ==="
 echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "node=$(hostname)"
 echo "alloc=${NOMAD_ALLOC_ID:-unknown}"
@@ -40,11 +60,11 @@ echo ""
 __STRESS_CMD__
 
 echo ""
-echo "=== hello-chaos done ==="
+echo "=== hello-abc done ==="
 `
 
-	// chaosImage is the container image used by hello-chaos (same as hello-world).
-	chaosImage = "community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8"
+	// helloAbcImage is the container image used by hello-abc.
+	helloAbcImage = "community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8"
 )
 
 // chaosParams holds the randomised stress-ng parameters chosen at CLI time.
@@ -105,23 +125,21 @@ func (p chaosParams) stressCmd() string {
 	return strings.Join(args, " \\\n  ")
 }
 
-// buildHelloChaosSpec returns the default jobSpec for a hello-chaos workload.
+// buildHelloAbcSpec returns the default jobSpec for a hello-abc workload.
 // Resource limits are sized to accommodate 4 CPU stressors + 2 × 512 MB VM
 // stressors in the worst case.
-func buildHelloChaosSpec() *jobSpec {
+func buildHelloAbcSpec() *jobSpec {
 	return &jobSpec{
-		Name:     "hello-chaos",
-		// Namespace resolved the same way as hello-world: from the active abc
-		// context's admin.abc_nodes.nomad_namespace, falling back to "default".
-		Namespace: helloWorldDefaultNamespace(),
+		Name:         "hello-abc",
+		Namespace:    helloWorldDefaultNamespace(),
 		Driver:       utils.NormalizeNomadTaskDriver("containerd"),
-		DriverConfig: map[string]string{"image": chaosImage},
+		DriverConfig: map[string]string{"image": helloAbcImage},
 		Cores:        4,
 		MemoryMB:     1536, // 3 × 512 MB to absorb worst-case VM stressors
 		WalltimeSecs: 10 * 60,
 		Meta: map[string]string{
-			"workload": "hello-chaos",
-			"scenario": "pending", // overwritten by finalizeHelloChaos
+			"workload": "hello-abc",
+			"scenario": "pending", // overwritten by finalizeHelloAbc
 		},
 		ExposeNamespaceEnv: true,
 		ExposeJobName:      true,
@@ -130,11 +148,11 @@ func buildHelloChaosSpec() *jobSpec {
 	}
 }
 
-// finalizeHelloChaos stamps submission metadata and bakes the randomised
+// finalizeHelloAbc stamps submission metadata and bakes the randomised
 // stress-ng command into the script body.
-func finalizeHelloChaos(spec *jobSpec) (string, error) {
+func finalizeHelloAbc(spec *jobSpec) (string, error) {
 	if spec == nil {
-		spec = buildHelloChaosSpec()
+		spec = buildHelloAbcSpec()
 	}
 	if spec.Meta == nil {
 		spec.Meta = map[string]string{}
@@ -165,11 +183,14 @@ func finalizeHelloChaos(spec *jobSpec) (string, error) {
 		if !strings.HasPrefix(base, "script-job-") {
 			base = "script-job-" + base
 		}
+		if slug := utils.ActiveWhoamiSlug(); slug != "" {
+			base = slug + "-" + base
+		}
 		spec.Name = fmt.Sprintf("%s-%s", base, submissionID[:8])
 	}
 
 	// Splice the randomised stress-ng command into the script template.
-	script := strings.ReplaceAll(helloChaosScriptBody, "__STRESS_CMD__", params.stressCmd())
+	script := strings.ReplaceAll(helloAbcScriptBody, "__STRESS_CMD__", params.stressCmd())
 
-	return FinalizeJobScript(spec, helloChaosScriptBase, script)
+	return FinalizeJobScript(spec, helloAbcScriptBase, script)
 }

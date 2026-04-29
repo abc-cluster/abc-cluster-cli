@@ -11,7 +11,7 @@ config:
   minio:minioSsl: "false"
   minio:minioUser: rustfsadmin
   nomad:secretId:
-    secure: AAABAI0Twjkuq1C3eFTIHs98/MwtwMBzSFhdAs0Bn/LqbyFfc7vQt0z1H0kCqWA8Y89cn5uddAXQp+n+9u2/v+9qVkA=
+    secure: AAABAM+8vLwgIA9vW9hp/q5Oug2b1O8xbZRBkBdp18BTB4ahLuzVw+H0UQfal51FwiAIBc3jOyV0gA6JP5Pl7vF1ii4=
   minio:minioPassword:
     secure: AAABAAg4RABlSSql3HNH3QPu5VsBxqjDfOA9El4uAHVhNqZjmcGr4/yz3Q==
   abc-userspace:allowDestroy: "true"

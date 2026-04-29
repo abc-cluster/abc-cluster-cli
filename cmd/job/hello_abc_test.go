@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestHelloChaosGeneratesHCL(t *testing.T) {
-	spec := buildHelloChaosSpec()
+func TestHelloAbcGeneratesHCL(t *testing.T) {
+	spec := buildHelloAbcSpec()
 	if spec.Cores != 4 {
 		t.Errorf("expected 4 cores, got %d", spec.Cores)
 	}
@@ -21,11 +21,11 @@ func TestHelloChaosGeneratesHCL(t *testing.T) {
 	}
 }
 
-func TestHelloChaosScriptContainsStressNG(t *testing.T) {
-	spec := buildHelloChaosSpec()
-	script, err := finalizeHelloChaos(spec)
+func TestHelloAbcScriptContainsStressNG(t *testing.T) {
+	spec := buildHelloAbcSpec()
+	script, err := finalizeHelloAbc(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloChaos error: %v", err)
+		t.Fatalf("finalizeHelloAbc error: %v", err)
 	}
 	if !strings.Contains(script, "stress-ng") {
 		t.Error("expected stress-ng in generated script")
@@ -41,11 +41,11 @@ func TestHelloChaosScriptContainsStressNG(t *testing.T) {
 	}
 }
 
-func TestHelloChaosMetaKeys(t *testing.T) {
-	spec := buildHelloChaosSpec()
-	_, err := finalizeHelloChaos(spec)
+func TestHelloAbcMetaKeys(t *testing.T) {
+	spec := buildHelloAbcSpec()
+	_, err := finalizeHelloAbc(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloChaos error: %v", err)
+		t.Fatalf("finalizeHelloAbc error: %v", err)
 	}
 	required := []string{
 		"abc_submission_id",
@@ -64,29 +64,29 @@ func TestHelloChaosMetaKeys(t *testing.T) {
 	}
 }
 
-func TestHelloChaosJobNameHasSuffix(t *testing.T) {
-	spec := buildHelloChaosSpec()
-	_, err := finalizeHelloChaos(spec)
+func TestHelloAbcJobNameHasSuffix(t *testing.T) {
+	spec := buildHelloAbcSpec()
+	_, err := finalizeHelloAbc(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloChaos error: %v", err)
+		t.Fatalf("finalizeHelloAbc error: %v", err)
 	}
-	if !strings.HasPrefix(spec.Name, "script-job-hello-chaos-") {
+	if !strings.Contains(spec.Name, "script-job-hello-abc-") {
 		t.Errorf("unexpected job name %q", spec.Name)
 	}
 }
 
-func TestHelloChaosScriptNoDuplicatePlaceholder(t *testing.T) {
-	spec := buildHelloChaosSpec()
-	script, err := finalizeHelloChaos(spec)
+func TestHelloAbcScriptNoDuplicatePlaceholder(t *testing.T) {
+	spec := buildHelloAbcSpec()
+	script, err := finalizeHelloAbc(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloChaos error: %v", err)
+		t.Fatalf("finalizeHelloAbc error: %v", err)
 	}
 	if strings.Contains(script, "__STRESS_CMD__") {
 		t.Error("placeholder __STRESS_CMD__ was not replaced in generated script")
 	}
 }
 
-func TestHelloChaosScenarioLabelFormat(t *testing.T) {
+func TestHelloAbcScenarioLabelFormat(t *testing.T) {
 	p := chaosParams{
 		CPUStressors: 2,
 		VMStressors:  1,
@@ -100,7 +100,7 @@ func TestHelloChaosScenarioLabelFormat(t *testing.T) {
 	}
 }
 
-func TestHelloChaosStressCmdCPUOnly(t *testing.T) {
+func TestHelloAbcStressCmdCPUOnly(t *testing.T) {
 	p := chaosParams{
 		CPUStressors: 3,
 		VMStressors:  0,
@@ -123,7 +123,7 @@ func TestHelloChaosStressCmdCPUOnly(t *testing.T) {
 	}
 }
 
-func TestHelloChaosStressCmdAllStressors(t *testing.T) {
+func TestHelloAbcStressCmdAllStressors(t *testing.T) {
 	p := chaosParams{
 		CPUStressors: 2,
 		VMStressors:  2,
@@ -139,12 +139,12 @@ func TestHelloChaosStressCmdAllStressors(t *testing.T) {
 	}
 }
 
-func TestHelloChaosWithDebugSleep(t *testing.T) {
-	spec := buildHelloChaosSpec()
+func TestHelloAbcWithDebugSleep(t *testing.T) {
+	spec := buildHelloAbcSpec()
 	spec.DebugSleepSecs = 30
-	script, err := finalizeHelloChaos(spec)
+	script, err := finalizeHelloAbc(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloChaos error: %v", err)
+		t.Fatalf("finalizeHelloAbc error: %v", err)
 	}
 	if !strings.Contains(script, "sleep 30") {
 		t.Errorf("expected 'sleep 30' in script with DebugSleepSecs=30:\n%s", script)
