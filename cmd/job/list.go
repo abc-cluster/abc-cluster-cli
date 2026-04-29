@@ -24,7 +24,7 @@ func newListCmd() *cobra.Command {
 
 func runList(cmd *cobra.Command, args []string) error {
 	nc := nomadClientFromCmd(cmd)
-	ns, _ := cmd.Flags().GetString("namespace")
+	ns := namespaceFromCmd(cmd)
 	statusFilter, _ := cmd.Flags().GetString("status")
 	regionFilter, _ := cmd.Flags().GetString("region")
 	limit, _ := cmd.Flags().GetInt("limit")

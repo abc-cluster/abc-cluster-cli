@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -52,6 +53,8 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().String("profile", "test", "Nextflow profile(s) for generated driver run (auto-includes 'test' when --test is set)")
 	cmd.Flags().String("work-dir", "", "Mount path inside the alloc for the shared work dir (default: /opt/nomad/scratch/nextflow-work)")
 	cmd.Flags().String("host-volume", "", "Name of the Nomad host volume to mount as the shared work dir (default: scratch — registered on every abc-managed node)")
+	cmd.Flags().String("driver", "", "Nomad task driver for the prestart + run tasks (default: docker; use 'containerd-driver' for containerd-only nodes like aither)")
+	cmd.Flags().String("nf-plugin-zip-url", "", "Optional URL to a Nextflow plugin .zip that the run task fetches before launching nextflow (e.g. a patched nf-nomad)")
 	cmd.Flags().String("output-prefix", "", "Output prefix for generated module runs (default: s3://user-output/nextflow)")
 
 	cmd.Flags().String("params-file", "", "Optional params.yml to pass to nf-pipeline-gen (default: auto-generated from module meta.yml)")
@@ -69,6 +72,8 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().Int("memory", 0, "Main Nextflow task memory in MB (default: 4096)")
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
 	cmd.Flags().String("s3-endpoint", "", "S3 endpoint URL for the generated driver (sets NF_S3_ENDPOINT in the run task; e.g. http://rustfs.aither:9900)")
+	cmd.Flags().String("s3-access-key", "", "S3 access key for the generated driver (sets AWS_ACCESS_KEY_ID; falls back to AWS_ACCESS_KEY_ID env var)")
+	cmd.Flags().String("s3-secret-key", "", "S3 secret key for the generated driver (sets AWS_SECRET_ACCESS_KEY; falls back to AWS_SECRET_ACCESS_KEY env var)")
 
 	cmd.Flags().Bool("test", false, "Run the module's bundled tests/main.nf.test fixtures (staged from nf-core/test-datasets); forces the 'test' profile and ignores --params-file inputs")
 	cmd.Flags().Bool("wait", false, "Block until module run job completes")
@@ -115,6 +120,12 @@ func runModule(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("host-volume"); v != "" {
 		spec.HostVolume = v
 	}
+	if v, _ := cmd.Flags().GetString("driver"); v != "" {
+		spec.TaskDriver = v
+	}
+	if v, _ := cmd.Flags().GetString("nf-plugin-zip-url"); v != "" {
+		spec.NfPluginZipURL = v
+	}
 	if v, _ := cmd.Flags().GetString("output-prefix"); v != "" {
 		spec.OutputPrefix = v
 	}
@@ -150,6 +161,16 @@ func runModule(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("s3-endpoint"); v != "" {
 		spec.S3Endpoint = v
+	}
+	if v, _ := cmd.Flags().GetString("s3-access-key"); v != "" {
+		spec.S3AccessKey = v
+	} else if v := os.Getenv("AWS_ACCESS_KEY_ID"); v != "" {
+		spec.S3AccessKey = v
+	}
+	if v, _ := cmd.Flags().GetString("s3-secret-key"); v != "" {
+		spec.S3SecretKey = v
+	} else if v := os.Getenv("AWS_SECRET_ACCESS_KEY"); v != "" {
+		spec.S3SecretKey = v
 	}
 	if v, _ := cmd.Flags().GetBool("pipeline-gen-no-run-manifest"); v {
 		spec.PipelineGenNoRunManifest = true
@@ -208,6 +229,13 @@ func runModule(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	switch {
+	case spec.S3AccessKey != "" && spec.S3SecretKey != "":
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Preflight  S3 creds     embedded in run task env (key=%s…)\n", maskKey(spec.S3AccessKey))
+	case strings.HasPrefix(spec.OutputPrefix, "s3://"):
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Preflight  S3 creds     none provided — driver will run without keys (works for fully-anonymous buckets)\n")
+	}
+
 	if !cmd.Flags().Changed("wait") && !cmd.Flags().Changed("logs") && stdoutIsTTY() {
 		_ = cmd.Flags().Set("wait", "true")
 		_ = cmd.Flags().Set("logs", "true")
@@ -219,6 +247,13 @@ func runModule(cmd *cobra.Command, args []string) error {
 
 func stdoutIsTTY() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+func maskKey(k string) string {
+	if len(k) <= 4 {
+		return strings.Repeat("*", len(k))
+	}
+	return k[:4] + strings.Repeat("*", len(k)-4)
 }
 
 func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClient, spec *RunSpec, hcl string) error {

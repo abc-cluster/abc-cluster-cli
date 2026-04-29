@@ -23,7 +23,7 @@ func newShowCmd() *cobra.Command {
 func runShow(cmd *cobra.Command, args []string) error {
 	jobID := args[0]
 	nc := nomadClientFromCmd(cmd)
-	ns, _ := cmd.Flags().GetString("namespace")
+	ns := namespaceFromCmd(cmd)
 
 	job, err := nc.GetJob(cmd.Context(), jobID, ns)
 	if err != nil {

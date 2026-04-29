@@ -22,6 +22,18 @@ type Spec struct {
 	HostVolume   string
 	OutputPrefix string
 
+	// TaskDriver controls the Nomad task driver for both prestart and run
+	// tasks. Default "docker"; set to "containerd-driver" to target nodes
+	// like aither that don't run docker. Also propagated into the cluster
+	// nextflow.config as `nomad.jobs.taskDriver` so nf-nomad emits child
+	// Nomad jobs with the matching driver.
+	TaskDriver string
+
+	// NfPluginZipURL: when set, the run task curl-fetches this zip and
+	// unpacks it under NXF_PLUGINS_DIR before nextflow starts. Lets us ship
+	// a patched nf-nomad plugin alongside the JAR mirror.
+	NfPluginZipURL string
+
 	PipelineGenRepo    string
 	PipelineGenVersion string
 	// PipelineGenURLBase, when set, makes the prestart fetch the JAR directly
@@ -40,7 +52,9 @@ type Spec struct {
 	Namespace   string
 	Datacenters []string
 
-	S3Endpoint string
+	S3Endpoint  string
+	S3AccessKey string
+	S3SecretKey string
 
 	ParamsYAMLContent string
 	ConfigYAMLContent string
@@ -53,6 +67,7 @@ type Spec struct {
 	// prestart task so the script emits a minimal valid params stub and lets the
 	// generated test profile drive inputs at Nextflow runtime.
 	TestMode bool
+
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +103,7 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	// ---- prestart: generate module driver with nf-pipeline-gen ----
 	genTaskBody := groupBody.AppendNewBlock("task", []string{"generate"}).Body()
-	genTaskBody.SetAttributeValue("driver", cty.StringVal("docker"))
+	genTaskBody.SetAttributeValue("driver", cty.StringVal(spec.TaskDriver))
 
 	lifecycle := genTaskBody.AppendNewBlock("lifecycle", nil).Body()
 	lifecycle.SetAttributeValue("hook", cty.StringVal("prestart"))
@@ -128,25 +143,22 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	}
 
 	genRes := genTaskBody.AppendNewBlock("resources", nil).Body()
-	genRes.SetAttributeValue("cpu", cty.NumberIntVal(1200))
-	genRes.SetAttributeValue("memory", cty.NumberIntVal(3072))
+	genRes.SetAttributeValue("cpu", cty.NumberIntVal(800))
+	// Prestart just downloads tarballs and runs the JAR; 1 GB is plenty.
+	genRes.SetAttributeValue("memory", cty.NumberIntVal(1024))
 
 	// ---- main: run generated module driver ----
 	runTaskBody := groupBody.AppendNewBlock("task", []string{"nextflow"}).Body()
-	runTaskBody.SetAttributeValue("driver", cty.StringVal("docker"))
+	runTaskBody.SetAttributeValue("driver", cty.StringVal(spec.TaskDriver))
 
 	runMount := runTaskBody.AppendNewBlock("volume_mount", nil).Body()
 	runMount.SetAttributeValue("volume", cty.StringVal(spec.HostVolume))
 	runMount.SetAttributeValue("destination", cty.StringVal(spec.WorkDir))
 	runMount.SetAttributeValue("read_only", cty.BoolVal(false))
 
-	awsVarPath := fmt.Sprintf("nomad/jobs/%s/run/nextflow", spec.JobName)
-	awsTmpl := runTaskBody.AppendNewBlock("template", nil).Body()
-	awsTmpl.SetAttributeValue("destination", cty.StringVal("secrets/aws.env"))
-	awsTmpl.SetAttributeValue("env", cty.BoolVal(true))
-	awsTmpl.SetAttributeValue("data", cty.StringVal(
-		fmt.Sprintf("{{- with nomadVar %q -}}\nAWS_ACCESS_KEY_ID={{ .AWS_ACCESS_KEY_ID }}\nAWS_SECRET_ACCESS_KEY={{ .AWS_SECRET_ACCESS_KEY }}\n{{- end }}\n", awsVarPath),
-	))
+	// S3 creds (if any) are injected directly into the run task env block
+	// below, alongside NF_S3_ENDPOINT. No Nomad Variable lookup, no secrets/
+	// templates. This keeps the credential flow explicit and per-submit.
 
 	runCfgTmpl := runTaskBody.AppendNewBlock("template", nil).Body()
 	runCfgTmpl.SetAttributeValue("destination", cty.StringVal("local/module-run.nextflow.config"))
@@ -168,6 +180,12 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	runEnv.SetAttributeValue("NXF_ANSI_LOG", cty.StringVal("false"))
 	if spec.S3Endpoint != "" {
 		runEnv.SetAttributeValue("NF_S3_ENDPOINT", cty.StringVal(spec.S3Endpoint))
+	}
+	if spec.S3AccessKey != "" {
+		runEnv.SetAttributeValue("AWS_ACCESS_KEY_ID", cty.StringVal(spec.S3AccessKey))
+	}
+	if spec.S3SecretKey != "" {
+		runEnv.SetAttributeValue("AWS_SECRET_ACCESS_KEY", cty.StringVal(spec.S3SecretKey))
 	}
 
 	runRes := runTaskBody.AppendNewBlock("resources", nil).Body()
@@ -281,14 +299,21 @@ fi  # end direct-URL mode branch
 
 MODULES_COMMIT="$(python3 - <<'PY'
 import json
+import os
 import urllib.request
+headers = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "abc-module-run"
+}
+# Use GITHUB_TOKEN if available — anonymous github.com is rate-limited at
+# 60 req/hr per IP, and the cluster pulls many modules concurrently.
+tok = os.environ.get("GITHUB_TOKEN", "")
+if tok:
+    headers["Authorization"] = f"Bearer {tok}"
 req = urllib.request.Request(
     "https://api.github.com/repos/nf-core/modules/commits/master",
-    headers={
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "abc-module-run"
-    }
+    headers=headers,
 )
 with urllib.request.urlopen(req) as r:
     data = json.load(r)
@@ -302,7 +327,13 @@ MODULES_REVISION="$(printf '%s' "$MODULES_COMMIT" | cut -c1-12)"
 if [ -n "${ABC_MODULE_REVISION:-}" ]; then
   MODULES_REVISION="$ABC_MODULE_REVISION"
 fi
-curl -fsSL -L -o "$MODULES_TGZ" "https://github.com/nf-core/modules/archive/${MODULES_COMMIT}.tar.gz"
+# Tarball download — also auth when token present (github.com codeload uses
+# the same rate-limit bucket as the API).
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -L -o "$MODULES_TGZ" "https://github.com/nf-core/modules/archive/${MODULES_COMMIT}.tar.gz"
+else
+  curl -fsSL -L -o "$MODULES_TGZ" "https://github.com/nf-core/modules/archive/${MODULES_COMMIT}.tar.gz"
+fi
 test -s "$MODULES_TGZ"
 
 mkdir -p "$MODULES_DIR"
@@ -415,6 +446,7 @@ java -jar "$JAR_PATH" module \
 test -d "$OUTDIR"
 test -f "$OUTDIR/main.nf"
 test -f "$OUTDIR/nextflow.config"
+mkdir -p "$(dirname "$STATE_FILE")"
 echo "$OUTDIR" > "$STATE_FILE"
 echo "Generated outdir: $OUTDIR"
 `))
@@ -430,7 +462,10 @@ type generateScriptData struct {
 }
 
 func buildGenerateScript(spec Spec) string {
-	stateFile := filepath.ToSlash(filepath.Join(spec.WorkDir, "abc-module-run-outdir.txt"))
+	// Namespace state file by job name — the host volume is shared across all
+	// module-runs landing on the same node, so a flat path collides between
+	// concurrent jobs and one alloc reads another's outdir.
+	stateFile := filepath.ToSlash(filepath.Join(spec.WorkDir, spec.JobName, "state.txt"))
 	genOutPrefix := filepath.ToSlash(filepath.Join(spec.WorkDir, "generated-"+moduleSlug(spec.Module)))
 	outputPrefix := trimTrailingSlash(spec.OutputPrefix)
 
@@ -475,6 +510,9 @@ process {
 
 workDir = "{{.WorkDir}}"
 
+// All S3 connection details come from the run task's env block — set by the
+// CLI from --s3-endpoint/--s3-access-key/--s3-secret-key (or AWS_* env vars).
+// No defaults baked into the driver config, no per-job Nomad Variable lookup.
 def s3Endpoint = System.getenv("NF_S3_ENDPOINT") ?: ""
 def s3Protocol = s3Endpoint.startsWith("https://") ? "https" : "http"
 
@@ -503,6 +541,7 @@ nomad {
     cpuMode                = "cores"
     failOnPlacementFailure = true
     placementFailureTimeout = "5m"
+    taskDriver             = "{{.TaskDriver}}"
     volumes = [{ type "host" name "{{.HostVolume}}" path "{{.WorkDir}}" workDir true }]
   }
 }
@@ -512,6 +551,7 @@ type clusterConfigData struct {
 	NfPluginVersion string
 	WorkDir         string
 	HostVolume      string
+	TaskDriver      string
 }
 
 func buildClusterNextflowConfig(spec Spec) string {
@@ -520,6 +560,7 @@ func buildClusterNextflowConfig(spec Spec) string {
 		NfPluginVersion: spec.NfPluginVersion,
 		WorkDir:         spec.WorkDir,
 		HostVolume:      spec.HostVolume,
+		TaskDriver:      spec.TaskDriver,
 	}); err != nil {
 		panic("clusterNextflowConfigTmpl: " + err.Error())
 	}
@@ -559,6 +600,24 @@ DIAG_LOG="$OUTDIR/abc-module-run-diag.log"
   echo "----- nextflow -version -----"
   nextflow -version 2>&1 || true
 } > "$DIAG_LOG" 2>&1
+
+{{ if .NfPluginZipURL -}}
+# Side-load a custom-built Nextflow plugin (e.g. patched nf-nomad with
+# taskDriver support). We unpack the zip into NXF_PLUGINS_DIR and tell
+# Nextflow to run in offline mode so it does not try the public registry.
+export NXF_PLUGINS_DIR=/local/nfplugins
+export NXF_PLUGINS_MODE=offline
+mkdir -p "$NXF_PLUGINS_DIR"
+PLUGIN_ZIP=/local/nf-plugin.zip
+echo ">> Fetching Nextflow plugin: {{ .NfPluginZipURL }}" | tee -a "$DIAG_LOG"
+curl -fsSL -L -o "$PLUGIN_ZIP" "{{ .NfPluginZipURL }}"
+# Extract <plugin-name>-<version> dir from the zip's first top-level entry
+PLUGIN_DIR_NAME="$(unzip -Z1 "$PLUGIN_ZIP" 2>/dev/null | head -1 | sed 's|/.*||')"
+[ -z "$PLUGIN_DIR_NAME" ] && PLUGIN_DIR_NAME="$(basename "{{ .NfPluginZipURL }}" .zip)"
+mkdir -p "$NXF_PLUGINS_DIR/$PLUGIN_DIR_NAME"
+( cd "$NXF_PLUGINS_DIR/$PLUGIN_DIR_NAME" && unzip -oq "$PLUGIN_ZIP" )
+echo ">> Plugin installed at $NXF_PLUGINS_DIR/$PLUGIN_DIR_NAME" | tee -a "$DIAG_LOG"
+{{ end -}}
 
 set +e
 nextflow run main.nf \
@@ -628,7 +687,10 @@ type runScriptData struct {
 }
 
 func buildRunScript(spec Spec) string {
-	stateFile := filepath.ToSlash(filepath.Join(spec.WorkDir, "abc-module-run-outdir.txt"))
+	// Namespace state file by job name — the host volume is shared across all
+	// module-runs landing on the same node, so a flat path collides between
+	// concurrent jobs and one alloc reads another's outdir.
+	stateFile := filepath.ToSlash(filepath.Join(spec.WorkDir, spec.JobName, "state.txt"))
 	var buf bytes.Buffer
 	if err := runScriptTmpl.Execute(&buf, runScriptData{
 		StateFile: stateFile,
