@@ -370,7 +370,9 @@ exit 0
 	if !strings.Contains(out, "constraint {") {
 		t.Fatalf("expected constraint block in output, got:\n%s", out)
 	}
-	if !strings.Contains(out, "attribute = \"region\"") {
+	// hclwrite escapes ${ to $${ in HCL string literals; Nomad receives ${region}
+	// when it parses the file. We check the raw HCL text form here.
+	if !strings.Contains(out, "attribute = \"$${region}\"") {
 		t.Fatalf("expected constraint attribute in output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "operator  = \"==\"") {
@@ -382,7 +384,7 @@ exit 0
 	if !strings.Contains(out, "affinity {") {
 		t.Fatalf("expected affinity block in output, got:\n%s", out)
 	}
-	if !strings.Contains(out, "attribute = \"datacenter\"") {
+	if !strings.Contains(out, "attribute = \"$${datacenter}\"") {
 		t.Fatalf("expected affinity attribute in output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "weight    = 75") {

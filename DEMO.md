@@ -153,7 +153,7 @@ abc job list --status dead --limit 5
 abc job show <job-id>
 ```
 
-This shows resource allocation, meta keys (including the `chaos_scenario` set by `hello-abc`), and allocation status.
+This shows resource allocation, meta keys (including the `random_scenario` set by `hello-abc`), and allocation status.
 
 ### 3.3 Stop a job
 
@@ -181,18 +181,32 @@ The upload endpoint and token resolve from the active context (`upload_endpoint`
 
 ### 4.2 Download SRA data to cluster storage
 
-`abc data download` runs the transfer **on the cluster** as a Nomad job. Use `--tool s5cmd` to copy from SRA's public S3 bucket directly into your workspace on the cluster:
+`abc data download` runs the transfer **on the cluster** as a Nomad job. The `exec` driver runs on the host filesystem and has direct internet access; tool binaries (`s5cmd`, etc.) are auto-staged via the Nomad artifact stanza from the cluster's `abc-reserved/binary_tools/` mirror, so no per-node install is needed.
+
+Use `--tool s5cmd` with `--tool-args '--no-sign-request'` to fetch from SRA's public S3 bucket (no credentials required):
 
 ```bash
 abc data download \
   --tool s5cmd \
   --tool-args '--no-sign-request' \
   --source 's3://sra-pub-src-10/SRR19090886/*.fastq.gz' \
-  --destination /scratch/<your-namespace>/tb_samples \
-  --driver containerd
+  --driver exec
 ```
 
-Replace `<your-namespace>` with your Nomad namespace (shown by `abc context show`). The files land on the cluster node's scratch volume, not on your laptop.
+Without `--destination`, files land in `/tmp/abc-data-download` on the Nomad allocation's local scratch — accessible during the job's lifetime.
+
+To persist them to your workspace's S3 bucket on the cluster, add `--destination storage`. The CLI resolves your rustfs/MinIO endpoint and credentials from the active context and stores the files under `s3://<your-namespace>/downloads/<your-identity>/` — i.e., a `downloads/<user>/` prefix inside your research-group bucket. The `group-member` IAM policy grants R/W on that prefix via `${aws:username}`, so every workspace member writes to their own folder without any extra setup:
+
+```bash
+abc data download \
+  --tool s5cmd \
+  --tool-args '--no-sign-request' \
+  --source 's3://sra-pub-src-10/SRR19090886/*.fastq.gz' \
+  --destination storage \
+  --driver exec
+```
+
+For HTTPS sources (e.g. NCBI, ENA), use `--tool wget` or `--tool aria2` instead — both also resolve `--destination storage` to the same `<namespace>/downloads/<user>/` location.
 
 `--node` pins the job to a specific Nomad node by name or ID. Supported tools: `wget`, `aria2`, `rclone`, `s5cmd`.
 
@@ -218,11 +232,11 @@ abc job list --status running
 
 ### 5.2 Run a module with your data
 
-`abc module run` generates and submits a Nextflow module-driver pipeline. You need a samplesheet CSV pointing at your input files (for example the FASTQ files downloaded in Exercise 4):
+`abc module run` generates and submits a Nextflow module-driver pipeline. You need a samplesheet CSV pointing at your input files. If you ran the download in Exercise 4 with `--destination storage`, your files are at `s3://<your-namespace>/downloads/<your-identity>/`. Create `samplesheet.csv`:
 
 ```
 sample,fastq_1,fastq_2,strandedness
-SRR19090886,/scratch/<your-namespace>/tb_samples/SRR19090886_1.fastq.gz,/scratch/<your-namespace>/tb_samples/SRR19090886_2.fastq.gz,auto
+SRR19090886,s3://<namespace>/downloads/<your-identity>/SRR19090886_1.fastq.gz,s3://<namespace>/downloads/<your-identity>/SRR19090886_2.fastq.gz,auto
 ```
 
 Save this as `samplesheet.csv`, then run FastQC on your files:
@@ -255,7 +269,8 @@ abc module run nf-core/seqkit/stats \
 | Show job details | `abc job show <job-id>` |
 | Stop a job | `abc job stop <job-id>` |
 | Upload file | `abc data upload <file> [--meta k=v …]` |
-| Download from SRA | `abc data download --tool s5cmd --tool-args '--no-sign-request' --source <s3-url> --destination <path>` |
+| Download from SRA (local scratch) | `abc data download --tool s5cmd --tool-args '--no-sign-request' --source <s3-url> --driver exec` |
+| Download from SRA → research-group bucket | `abc data download --tool s5cmd --tool-args '--no-sign-request' --source <s3-url> --destination storage --driver exec` |
 | Run demo pipeline | `abc pipeline run nextflow-io/hello` |
 | Run a module | `abc module run nf-core/<module> --samplesheet <csv>` |
 

@@ -88,10 +88,11 @@ const config: Config = {
     navbar: {
       title: 'abc',
       logo: {
-        alt: 'abc-cluster mark',
+        alt: 'abc-cluster ABC mark',
         src: 'img/logo.svg',
         srcDark: 'img/logo-dark.svg',
-        style: { width: '22px', height: '22px' },
+        // Trio rings need ~28px to read; 22px crushed the A/B/C glyphs.
+        style: { width: '28px', height: '28px' },
         href: 'http://aither.mb.sun.ac.za/',
         target: '_self',
       },

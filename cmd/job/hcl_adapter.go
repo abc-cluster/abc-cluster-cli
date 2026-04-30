@@ -42,6 +42,15 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		return ""
 	}
 
+	artifacts := make([]jobhcl.ArtifactSpec, 0, len(spec.Artifacts))
+	for _, a := range spec.Artifacts {
+		artifacts = append(artifacts, jobhcl.ArtifactSpec{
+			Source:      a.Source,
+			Destination: a.Destination,
+			Mode:        a.Mode,
+		})
+	}
+
 	constraints := make([]jobhcl.Constraint, 0, len(spec.Constraints))
 	for _, c := range spec.Constraints {
 		constraints = append(constraints, jobhcl.Constraint{
@@ -119,6 +128,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		ExposeTaskDir:       spec.ExposeTaskDir,
 		ExposeSecretsDir:    spec.ExposeSecretsDir,
 		StaticEnv:           staticEnv,
+		Artifacts:           artifacts,
 	}
 	return jobhcl.Generate(hclSpec, scriptName, scriptContent)
 }

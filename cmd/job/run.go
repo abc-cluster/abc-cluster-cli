@@ -233,6 +233,11 @@ EXAMPLES
 	// Script file handling
 	cmd.Flags().Bool("chmod", true, "Mark the script file as executable before submission (chmod +x). Disable with --chmod=false.")
 
+	// Artifact injection (used internally by abc data download for exec driver binaries)
+	cmd.Flags().StringArray("artifact", nil, "Nomad artifact URL to fetch into the task directory before the task starts (repeatable); used by abc data download for exec driver binary staging")
+	cmd.Flags().String("artifact-dest", "", "Destination path for the first --artifact entry (e.g. local/s5cmd to rename the downloaded file); used by abc data download")
+	cmd.Flags().String("artifact-mode", "", "Nomad artifact mode for the first --artifact entry: file, dir, or any (default); use file to save to an exact path")
+
 	// SLURM passthrough
 	cmd.Flags().String("sleep", "",
 		"Inject a sleep at the start of the job script for interactive debugging via exec\n"+
@@ -255,6 +260,9 @@ EXAMPLES
 
 	// Input format
 	cmd.Flags().String("format", "", "Input format: shell (default, #ABC preamble script) or hcl (native Nomad HCL job definition). Auto-detected from file extension when omitted.")
+
+	// HCL variable overrides (--format=hcl only)
+	cmd.Flags().StringArray("var", nil, "HCL job variable override in key=value form (repeatable, --format=hcl only). Example: --var source=s3://my-bucket/data/")
 
 	return cmd
 }
@@ -420,6 +428,33 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	if v, _ := cmd.Flags().GetString("reservation"); v != "" {
 		spec.SlurmReservation = v
 	}
+	if vs, _ := cmd.Flags().GetStringArray("artifact"); len(vs) > 0 {
+		dest, _ := cmd.Flags().GetString("artifact-dest")
+		mode, _ := cmd.Flags().GetString("artifact-mode")
+		for i, raw := range vs {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			// Support inline "url|dest|mode" per-artifact encoding produced by
+			// buildDataDownloadJobRunArgs when multiple artifacts need different paths.
+			u, inlineDest, inlineMode := parseArtifactFlagValue(raw)
+			a := artifactSpec{Source: u}
+			switch {
+			case inlineDest != "" || inlineMode != "":
+				a.Destination = inlineDest
+				a.Mode = inlineMode
+			case i == 0:
+				if strings.TrimSpace(dest) != "" {
+					a.Destination = strings.TrimSpace(dest)
+				}
+				if strings.TrimSpace(mode) != "" {
+					a.Mode = strings.TrimSpace(mode)
+				}
+			}
+			spec.Artifacts = append(spec.Artifacts, a)
+		}
+	}
 	syncStackMetaKeys(spec)
 	syncTaskTmpMeta(spec)
 	return nil
@@ -562,7 +597,18 @@ func runJob(cmd *cobra.Command, args []string) error {
 		spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
 		if spec.Name != "" {
 			base := spec.Name
-			if !strings.HasPrefix(base, "script-job-") {
+			// Recognise category prefixes already supplied by callers
+			// (e.g. abc data download → "data-download") so we do not
+			// double-prefix with script-job-. Match either as a bare name
+			// ("data-download") or as a prefix ("data-download-foo").
+			hasCategoryPrefix := false
+			for _, p := range []string{"script-job", "data-download", "data-upload", "data-transfer", "pipeline", "module"} {
+				if base == p || strings.HasPrefix(base, p+"-") {
+					hasCategoryPrefix = true
+					break
+				}
+			}
+			if !hasCategoryPrefix {
 				base = "script-job-" + base
 			}
 			if slug := utils.ActiveWhoamiSlug(); slug != "" {
@@ -686,11 +732,30 @@ func runJobNativeHCL(cmd *cobra.Command, path string) error {
 		return nil
 	}
 
+	// Build an HCL variable-definition string from --var key=value flags.
+	// Nomad's /v1/jobs/parse endpoint accepts a "Variables" field whose value
+	// is an HCL string containing variable assignments (key = "value").
+	var hclVars string
+	if vars, _ := cmd.Flags().GetStringArray("var"); len(vars) > 0 {
+		var sb strings.Builder
+		for _, kv := range vars {
+			idx := strings.IndexByte(kv, '=')
+			if idx < 1 {
+				return fmt.Errorf("--var %q: expected key=value format", kv)
+			}
+			key := strings.TrimSpace(kv[:idx])
+			val := kv[idx+1:]
+			// Quote the value as an HCL string literal.
+			sb.WriteString(key + " = " + fmt.Sprintf("%q", val) + "\n")
+		}
+		hclVars = sb.String()
+	}
+
 	ctx := cmd.Context()
 	nc := nomadClientFromCmd(cmd)
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Parsing HCL via Nomad (%s)...\n", nomadAddrFromCmd(cmd))
-	jobJSON, err := nc.ParseHCL(ctx, hclStr)
+	jobJSON, err := nc.ParseHCLWithVars(ctx, hclStr, hclVars)
 	if err != nil {
 		return fmt.Errorf("nomad HCL parse: %w", err)
 	}

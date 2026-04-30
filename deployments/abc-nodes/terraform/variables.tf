@@ -123,6 +123,12 @@ variable "enable_alloy" {
   default     = true
 }
 
+variable "enable_victoriatraces" {
+  description = "Deploy VictoriaTraces distributed tracing backend (pre-release; OTLP ingestion only)"
+  type        = bool
+  default     = true
+}
+
 variable "enable_ntfy" {
   description = "Deploy ntfy push-notification broker"
   type        = bool

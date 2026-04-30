@@ -35,6 +35,7 @@
     --rule:#163d32;--rule-soft:#0e2a22;
     --selection:rgba(200,168,76,0.22);
     --brush-grad-start:#c8a84c;--brush-grad-end:#a87c2c;
+    --brand-mark:#c8a84c;            /* gold trio rings on dark */
   }
   :root[data-system="grid"][data-theme="light"] {
     --bg:#f0faf7;--bg-1:#e5f5f0;--bg-2:#d8ede7;
@@ -43,6 +44,7 @@
     --rule:#a8d8cc;--rule-soft:#c8e8e0;
     --selection:rgba(144,112,40,0.22);
     --brush-grad-start:#907028;--brush-grad-end:#c8a84c;
+    --brand-mark:#2d7060;            /* warm-green trio rings on light */
   }
   :root[data-system="brush"][data-theme="dark"] {
     --bg:#100e0b;--bg-1:#1a1610;--bg-2:#231e14;
@@ -51,6 +53,7 @@
     --rule:#3a2e1e;--rule-soft:#2a2218;
     --selection:rgba(212,146,58,0.22);
     --brush-grad-start:#d4923a;--brush-grad-end:#e8b86d;
+    --brand-mark:#d4923a;            /* brush dark — accent gold */
   }
   :root[data-system="brush"][data-theme="light"] {
     --bg:#faf7f0;--bg-1:#f2ece0;--bg-2:#e8deca;
@@ -59,6 +62,7 @@
     --rule:#d8c09a;--rule-soft:#e4d4b8;
     --selection:rgba(192,120,40,0.22);
     --brush-grad-start:#c07828;--brush-grad-end:#d4923a;
+    --brand-mark:#7a5830;            /* brush light — text-dim umber */
   }
   .abc-landing *,
   .abc-landing *::before,
@@ -77,7 +81,7 @@
   .abc-landing .topbar{border-bottom:1px solid var(--rule);background:var(--bg);position:sticky;top:0;z-index:10;backdrop-filter:blur(6px);}
   .abc-landing .topbar-inner{max-width:1180px;margin:0 auto;padding:14px 32px;display:flex;align-items:center;gap:12px;}
   .abc-landing .brand{display:flex;align-items:center;gap:10px;font-weight:600;color:var(--ink);border:none;}
-  .abc-landing .brand-mark{width:22px;height:22px;}
+  .abc-landing .brand-mark{width:28px;height:28px;color:var(--brand-mark);flex-shrink:0;}
   .abc-landing .brand-name{letter-spacing:-0.01em;}
   .abc-landing .brand-name .dim{color:var(--text-dim);}
   .abc-landing .top-spacer{flex:1;}
@@ -426,11 +430,21 @@
 <header class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="/">
-      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true">
-        <line x1="20" y1="50" x2="80" y2="50" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <circle cx="20" cy="50" r="9" fill="var(--bg)" stroke="currentColor" stroke-width="3"/>
-        <circle cx="50" cy="50" r="9" fill="var(--bg)" stroke="currentColor" stroke-width="3"/>
-        <circle cx="80" cy="50" r="9" fill="var(--bg)" stroke="currentColor" stroke-width="3"/>
+      <svg class="brand-mark" viewBox="0 0 64 64" aria-label="abc-cluster ABC" role="img">
+        <!-- Trio rings + A/B/C — colour driven by .brand-mark { color: var(--brand-mark) }
+             so light theme reads warm green and dark theme reads gold,
+             matching the docusaurus navbar mark. -->
+        <g fill="none" stroke="currentColor" stroke-width="2.2">
+          <circle cx="14" cy="32" r="9"/>
+          <circle cx="32" cy="32" r="9"/>
+          <circle cx="50" cy="32" r="9"/>
+        </g>
+        <g fill="currentColor" font-family="'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace"
+           font-weight="700" font-size="11" text-anchor="middle" letter-spacing="-0.02em">
+          <text x="14" y="35.9">A</text>
+          <text x="32" y="35.9">B</text>
+          <text x="50" y="35.9">C</text>
+        </g>
       </svg>
       <span class="brand-name">abc<span class="dim">-cluster</span></span>
     </a>

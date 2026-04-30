@@ -3,6 +3,7 @@ package job
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 // nomadConstraint holds a simple Nomad constraint item.
@@ -10,6 +11,28 @@ type nomadConstraint struct {
 	Attribute string
 	Operator  string
 	Value     string
+}
+
+// artifactSpec mirrors jobhcl.ArtifactSpec without creating a cross-package import in jobspec.go.
+type artifactSpec struct {
+	Source      string
+	Destination string
+	Mode        string
+}
+
+// parseArtifactFlagValue splits the inline "url|dest|mode" encoding used by
+// abc data download to pass per-artifact destination/mode through a single
+// --artifact flag value.  Plain URLs (no pipe) are returned as-is.
+func parseArtifactFlagValue(s string) (url, dest, mode string) {
+	parts := strings.SplitN(s, "|", 3)
+	url = parts[0]
+	if len(parts) > 1 {
+		dest = parts[1]
+	}
+	if len(parts) > 2 {
+		mode = parts[2]
+	}
+	return
 }
 
 // nomadAffinity holds a simple Nomad affinity item.
@@ -120,6 +143,10 @@ type jobSpec struct {
 	ExposeAllocDir     bool
 	ExposeTaskDir      bool
 	ExposeSecretsDir   bool
+
+	// Artifacts lists remote files Nomad should fetch before the task starts.
+	// Populated by the --artifact CLI flag (data download path only).
+	Artifacts []artifactSpec
 }
 
 // readNomadEnvVars seeds a jobSpec from NOMAD_* environment variables present

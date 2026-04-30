@@ -330,12 +330,26 @@ http://100.70.185.46 {
     reverse_proxy abc-nodes-rustfs-s3.service.consul:9900
   }
 
+  # ── abc-reserved public mirror (anonymous GET) ──────────────────────────
+  # The abc-reserved bucket has policy=download (anon read) so cluster nodes
+  # can fetch staged tool binaries (s5cmd etc.) via Nomad artifact stanzas
+  # without baking credentials into job specs. Plain GETs don't carry the
+  # AWS4-HMAC-SHA256 header, so they miss @s3_signed — give them an explicit
+  # path-prefix route that points at the same RustFS backend.
+  handle /abc-reserved/* {
+    reverse_proxy abc-nodes-rustfs-s3.service.consul:9900
+  }
+
   # ── Root landing page ────────────────────────────────────────────────────
+  # Unified surface: the landing HTML now lives inside the docusaurus build
+  # at website/static/index.html, deployed to the abc-nodes-docs Caddy job
+  # alongside /docs/. This vhost reverse-proxies / to that backend so a single
+  # build produces both the landing and the docs under one URL.
   @root path /
   handle @root {
-    root * {{ env "NOMAD_TASK_DIR" }}/landing
-    rewrite * /index.html
-    file_server
+    reverse_proxy abc-nodes-traefik.service.consul:8081 {
+      header_up Host docs.aither
+    }
   }
 
   # ── Nomad UI — SPA rootURL hardcoded to /ui/ ───────────────────────────
@@ -367,7 +381,11 @@ http://100.70.185.46 {
   }
 
   handle /v1/* {
-    reverse_proxy 100.70.185.46:4646
+    # Route to nomad01 (1.11.2) instead of aither (1.11.3): 1.11.3 has a
+    # broken /v1/jobs/parse that returns 403 even for management tokens.
+    # 1.11.2 parses correctly. The cluster is gossip-joined so any server
+    # answers API calls equally.
+    reverse_proxy 100.77.21.36:4646
   }
 
   # ── tusd /files/* ────────────────────────────────────────────────────────
@@ -615,20 +633,9 @@ http://100.70.185.46 {
 CADDYFILE
       }
 
-      # ── Landing page ─────────────────────────────────────────────────────────
-      # Served from /local/landing/index.html by the aither.mb.sun.ac.za vhost.
-      # Source of truth lives in deployments/abc-nodes/caddy/landing/index.html
-      # so we don't have to fight HCL2's heredoc parser (it would otherwise
-      # mis-interpret CSS `@keyframes 100%{...}` as a `%{...}` directive).
-      # Edit the file, re-run the job, Caddy SIGUSR1-reloads.
-      template {
-        destination   = "/local/landing/index.html"
-        change_mode   = "signal"
-        change_signal = "SIGUSR1"
-
-        data = file(abspath("deployments/abc-nodes/caddy/landing/index.html"))
-      }
-
+      # Landing page is now served by the abc-nodes-docs backend
+      # (website/static/index.html in the docusaurus build). The aither.mb
+      # vhost @root handler reverse-proxies to it — see above.
 
       resources {
         cpu    = 200

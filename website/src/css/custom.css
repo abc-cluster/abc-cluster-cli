@@ -182,10 +182,13 @@ hr {
   gap: 10px;
 }
 
-/* Logo mark — match landing page 22×22 */
+/* Logo mark — trio ABC rings render at 28×28; 22px crushed the glyphs.
+   SVGs are transparent (green on light theme, gold on dark theme) so no
+   badge background. The inline `style:` on the docusaurus logo config sets
+   width/height; this rule is a fallback for browsers that strip them. */
 .navbar__logo img {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
 }
 
 /* "abc" in ink, "-cluster" appended in dim/teal via ::after */
@@ -216,14 +219,14 @@ hr {
 /* ─── Sidebar ──────────────────────────────────────────────────────────────── */
 .menu__link {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.01em;
   border-radius: 4px;
 }
 
 .menu__link--active {
   color: var(--abc-ink) !important;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .menu__caret::before {
@@ -239,7 +242,7 @@ hr {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--abc-text-mute) !important;
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .theme-doc-sidebar-item-category .menu__link--active {

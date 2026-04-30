@@ -85,10 +85,10 @@ EOF
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Upload · abc-cluster</title>
   <meta name="description" content="Resumable file uploads to the abc-cluster object store.">
-  <!-- Favicon: africa-dot-grid brand kit, dark variant (uppy renders on a dark
-       surface). Encoded inline so the page is self-contained and survives any
-       Caddy/Traefik path rewriting. Source: docs/assets/africa-dot-grid/favicon-dark.svg -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%20role='img'%20aria-label='abc-cluster%20A'%3E%3Crect%20width='64'%20height='64'%20rx='11.52'%20fill='%23070f0c'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='25.6'%20fill='none'%20stroke='%23c8a84c'%20stroke-width='3.84'/%3E%3Ctext%20x='32'%20y='45.4912'%20text-anchor='middle'%20font-family='JetBrains%20Mono,ui-monospace,Menlo,Consolas,monospace'%20font-weight='700'%20font-size='39.68'%20fill='%23c8a84c'%20letter-spacing='-0.02em'%3EA%3C/text%3E%3C/svg%3E">
+  <!-- Favicon: trio-rings ABC mark, gold on dark (matches landing + docusaurus
+       navbar). Encoded inline so the page is self-contained — the uppy.aither
+       vhost only serves this nginx instance, no /img/ path. -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cg%20fill='none'%20stroke='%23c8a84c'%20stroke-width='2.2'%3E%3Ccircle%20cx='14'%20cy='32'%20r='9'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='9'/%3E%3Ccircle%20cx='50'%20cy='32'%20r='9'/%3E%3C/g%3E%3Cg%20fill='%23c8a84c'%20font-family='JetBrains%20Mono,ui-monospace,Menlo,Consolas,monospace'%20font-weight='700'%20font-size='11'%20text-anchor='middle'%20letter-spacing='-0.02em'%3E%3Ctext%20x='14'%20y='35.9'%3EA%3C/text%3E%3Ctext%20x='32'%20y='35.9'%3EB%3C/text%3E%3Ctext%20x='50'%20y='35.9'%3EC%3C/text%3E%3C/g%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -141,7 +141,7 @@ EOF
       color: var(--ink); text-decoration: none;
       letter-spacing: -0.01em;
     }
-    .brand-mark { width: 22px; height: 22px; color: var(--ink); }
+    .brand-mark { width: 28px; height: 28px; color: var(--accent); flex-shrink: 0; }
     .brand-dim  { color: var(--text-dim); }
     .top-spacer { flex: 1; }
     .top-link {
@@ -162,12 +162,12 @@ EOF
     }
 
     .eyebrow {
-      font-size: 11px; letter-spacing: 0.14em;
+      font-size: 11px; letter-spacing: 0.22em;
       text-transform: uppercase; color: var(--text-mute);
-      margin-bottom: 12px;
+      margin-bottom: 18px;
       display: flex; align-items: center; gap: 8px;
     }
-    .eyebrow .num { color: var(--accent); font-weight: 600; }
+    .eyebrow .num { color: var(--ink); font-weight: 700; margin-right: 4px; }
 
     h1 {
       font-size: clamp(1.4rem, 3vw, 1.9rem);
@@ -254,16 +254,25 @@ EOF
 <div class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="http://aither.mb.sun.ac.za/">
-      <svg class="brand-mark" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <line x1="3" y1="11" x2="19" y2="11" stroke="currentColor" stroke-width="1.3" opacity=".5"/>
-        <circle cx="5"  cy="11" r="3.2" stroke="currentColor" stroke-width="1.4"/>
-        <circle cx="11" cy="11" r="3.2" stroke="currentColor" stroke-width="1.4"/>
-        <circle cx="17" cy="11" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+      <!-- Trio rings + A/B/C, gold on dark — matches landing/docusaurus navbar -->
+      <svg class="brand-mark" viewBox="0 0 64 64" aria-label="abc-cluster ABC" role="img">
+        <g fill="none" stroke="currentColor" stroke-width="2.2">
+          <circle cx="14" cy="32" r="9"/>
+          <circle cx="32" cy="32" r="9"/>
+          <circle cx="50" cy="32" r="9"/>
+        </g>
+        <g fill="currentColor" font-family="'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace"
+           font-weight="700" font-size="11" text-anchor="middle" letter-spacing="-0.02em">
+          <text x="14" y="35.9">A</text>
+          <text x="32" y="35.9">B</text>
+          <text x="50" y="35.9">C</text>
+        </g>
       </svg>
       abc<span class="brand-dim">-cluster</span>
     </a>
     <span class="top-spacer"></span>
-    <a class="top-link" href="/">← Dashboard</a>
+    <a class="top-link" href="http://aither.mb.sun.ac.za/">← Cluster gateway</a>
+    <a class="top-link" href="http://aither.mb.sun.ac.za/docs/">Docs</a>
   </div>
 </div>
 

@@ -138,6 +138,7 @@ agent { policy = "read" }
 //
 // Bucket layout:
 //   users/<username>/            — member private workspace
+//   downloads/<username>/        — member-owned downloaded data (abc data download)
 //   shared/                      — read-only for everyone (references, datasets)
 //   shared/users/<username>/     — member's own contribution to the shared area
 //   collab/<name>/               — collaborator scoped r/w
@@ -206,13 +207,14 @@ export function minioGroupAdminPolicy(bucket: string): string {
  * authorization time the variable is substituted with the requesting user's
  * IAM username, scoping access to that user's own prefixes.
  *
- * R/W:  users/${aws:username}/, shared/users/${aws:username}/
+ * R/W:  users/${aws:username}/, shared/users/${aws:username}/, downloads/${aws:username}/
  * R/O:  shared/, samplesheets/, pipelines/
  * tusd: own uploads/${aws:username}/ put + get
  */
 export function minioMemberPolicy(bucket: string): string {
   const privatePrefix    = `users/\${aws:username}/`;
   const sharedUserPrefix = `shared/users/\${aws:username}/`;
+  const downloadsPrefix  = `downloads/\${aws:username}/`;
 
   return JSON.stringify(
     {
@@ -239,6 +241,7 @@ export function minioMemberPolicy(bucket: string): string {
           Resource: [
             arn(bucket, privatePrefix),
             arn(bucket, sharedUserPrefix),
+            arn(bucket, downloadsPrefix),
           ],
         },
         {

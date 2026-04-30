@@ -36,13 +36,13 @@ variable "nomad_token" {
 # nodes.  Terraform overrides these defaults with the central cluster IP.
 variable "prometheus_url" {
   type        = string
-  default     = "http://100.70.185.46:9090/api/v1/write"
+  default     = "http://100.70.185.46:8428/api/v1/write"
   description = "Prometheus remote_write endpoint reachable from EVERY node (typically the central cluster IP)."
 }
 
 variable "loki_url" {
   type        = string
-  default     = "http://100.70.185.46:3100/loki/api/v1/push"
+  default     = "http://100.70.185.46:9428/insert/loki/api/v1/push"
   description = "Loki push endpoint reachable from EVERY node."
 }
 
@@ -119,6 +119,7 @@ job "abc-nodes-alloy" {
       # substituted by Nomad when the task is placed (per-alloc, per-node).
       env {
         HOST_IP = "${attr.unique.network.ip-address}"
+        HOST_DC = "${node.datacenter}"
       }
 
       template {
@@ -198,6 +199,10 @@ loki.process "add_labels" {
 loki.write "local" {
   endpoint {
     url = "${var.loki_url}"
+  }
+  external_labels = {
+    host       = "{{ env "NOMAD_NODE_NAME" }}",
+    datacenter = "{{ env "HOST_DC" }}",
   }
 }
 EOF

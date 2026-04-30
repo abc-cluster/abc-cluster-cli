@@ -34,7 +34,7 @@
       "type": "stat",
       "title": "Online nodes",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "gridPos": {"h": 5, "w": 4, "x": 0, "y": 1},
+      "gridPos": {"h": 5, "w": 3, "x": 0, "y": 1},
       "id": 1,
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
@@ -57,7 +57,7 @@
       "type": "stat",
       "title": "Datacenters",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "gridPos": {"h": 5, "w": 4, "x": 4, "y": 1},
+      "gridPos": {"h": 5, "w": 3, "x": 3, "y": 1},
       "id": 2,
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
@@ -75,7 +75,7 @@
       "type": "stat",
       "title": "Running jobs",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "gridPos": {"h": 5, "w": 4, "x": 8, "y": 1},
+      "gridPos": {"h": 5, "w": 3, "x": 6, "y": 1},
       "id": 3,
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
@@ -93,7 +93,7 @@
       "type": "stat",
       "title": "Queued",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "gridPos": {"h": 5, "w": 4, "x": 12, "y": 1},
+      "gridPos": {"h": 5, "w": 3, "x": 9, "y": 1},
       "id": 4,
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
@@ -117,7 +117,7 @@
       "title": "CPU in use (cluster)",
       "description": "Average host-CPU busy ratio across every Nomad client. Sourced from the host's per-CPU usage gauge so the number reflects what the OS sees, not what the scheduler thinks it allocated.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "gridPos": {"h": 5, "w": 4, "x": 16, "y": 1},
+      "gridPos": {"h": 5, "w": 3, "x": 12, "y": 1},
       "id": 5,
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
@@ -142,7 +142,7 @@
       "title": "Memory in use",
       "description": "Used host memory across the fleet, ratio. RSS-based, includes cache (matches what `free -h` would show).",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1},
+      "gridPos": {"h": 5, "w": 3, "x": 15, "y": 1},
       "id": 6,
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
@@ -163,10 +163,69 @@
       ]
     },
     {
+      "type": "stat",
+      "title": "Storage used (aither /)",
+      "description": "Root filesystem usage on aither — the central node hosting VictoriaMetrics, VictoriaLogs, Grafana, and MinIO scratch data.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 3, "x": 18, "y": 1},
+      "id": 11,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.85}]}
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "1 - node_filesystem_avail_bytes{instance=\"aither\",mountpoint=\"/\"} / node_filesystem_size_bytes{instance=\"aither\",mountpoint=\"/\"}",
+          "legendFormat": "disk used"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Log ingest rate",
+      "description": "Log rows ingested per second into VictoriaLogs across the fleet. Sourced from vl_rows_ingested_total scraped by VictoriaMetrics.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 3, "x": 21, "y": 1},
+      "id": 12,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "color": {"mode": "fixed", "fixedColor": "purple"}
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum(rate(vl_rows_ingested_total[5m]))",
+          "legendFormat": "rows/s"
+        }
+      ]
+    },
+    {
       "type": "row",
       "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6},
       "id": 101,
-      "title": "Trend (selected range)",
+      "title": "Trends — compute",
       "collapsed": false,
       "panels": []
     },
@@ -268,6 +327,118 @@
           "legendFormat": "{{instance}}"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Per-node memory usage",
+      "description": "One line per host: ratio of used memory (total − available) to total. 'Available' accounts for reclaimable caches, matching the OS perspective on how much is actually free.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "id": 13,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 5}
+        }
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Network I/O per node",
+      "description": "Combined receive + transmit throughput per host (loopback and virtual interfaces excluded). Useful for spotting nodes transferring large datasets or results.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "id": 14,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 5}
+        }
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (instance) (rate(node_network_receive_bytes_total{device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) + rate(node_network_transmit_bytes_total{device!~\"lo|docker.*|veth.*|br-.*\"}[5m]))",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "id": 102,
+      "title": "Trends — observability",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Log ingest rate (rows/s)",
+      "description": "Log rows per second flowing into VictoriaLogs, broken down by stream type (stdout/stderr/etc). A sudden drop means log shipping from Alloy has stalled; a spike suggests a runaway workload printing excessive output.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "id": 15,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 1,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20}
+        }
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum(rate(vl_rows_ingested_total[5m]))",
+          "legendFormat": "rows/s"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Log storage: data size vs compressed",
+      "description": "Raw vs compressed bytes stored in VictoriaLogs on disk. The compression ratio indicates log compressibility — structured/repeated logs compress to 10–30× smaller.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "id": 16,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
+        }
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "vl_data_size_bytes",
+          "legendFormat": "uncompressed"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "vl_compressed_data_size_bytes",
+          "legendFormat": "compressed on disk"
+        }
+      ]
     }
   ],
   "refresh": "30s",
@@ -300,6 +471,6 @@
   "timezone": "",
   "title": "Cluster Resource Overview (public)",
   "uid": "abc-nodes-public-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

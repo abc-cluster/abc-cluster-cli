@@ -2,6 +2,36 @@ package config
 
 import "strings"
 
+// ToolArchitectures returns the os/arch list to use for `abc admin tools fetch/push`.
+// Reads admin.tools.architectures from the context; falls back to the package default
+// (linux/amd64, linux/arm64) when not configured.
+func (c Context) ToolArchitectures() []string {
+	if c.Admin.Tools != nil && len(c.Admin.Tools.Architectures) > 0 {
+		return c.Admin.Tools.Architectures
+	}
+	return DefaultToolArchitectures()
+}
+
+// ToolPushContextService returns the admin.services.<name> key to use for
+// `abc admin tools push` S3 credentials. Defaults to "rustfs".
+func (c Context) ToolPushContextService() string {
+	if c.Admin.Tools != nil {
+		if v := strings.TrimSpace(c.Admin.Tools.ContextService); v != "" {
+			return v
+		}
+	}
+	return "rustfs"
+}
+
+// ToolPushEndpoint returns the resolved S3 endpoint written back after the
+// first successful `abc admin tools push`, or empty string if not yet set.
+func (c Context) ToolPushEndpoint() string {
+	if c.Admin.Tools != nil {
+		return strings.TrimSpace(c.Admin.Tools.Endpoint)
+	}
+	return ""
+}
+
 // IsABCNodesCluster reports whether this context is treated as the abc-nodes tier
 // (including legacy cluster_type "abc-node").
 func (c Context) IsABCNodesCluster() bool {

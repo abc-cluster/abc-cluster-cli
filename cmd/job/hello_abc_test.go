@@ -50,12 +50,12 @@ func TestHelloAbcMetaKeys(t *testing.T) {
 	required := []string{
 		"abc_submission_id",
 		"abc_submission_time",
-		"chaos_scenario",
-		"chaos_cpu",
-		"chaos_vm",
-		"chaos_vm_bytes",
-		"chaos_io",
-		"chaos_timeout_secs",
+		"random_scenario",
+		"random_cpu",
+		"random_vm",
+		"random_vm_bytes",
+		"random_io",
+		"random_timeout_secs",
 	}
 	for _, k := range required {
 		if _, ok := spec.Meta[k]; !ok {
@@ -87,7 +87,7 @@ func TestHelloAbcScriptNoDuplicatePlaceholder(t *testing.T) {
 }
 
 func TestHelloAbcScenarioLabelFormat(t *testing.T) {
-	p := chaosParams{
+	p := randomParams{
 		CPUStressors: 2,
 		VMStressors:  1,
 		VMBytes:      "256M",
@@ -101,7 +101,7 @@ func TestHelloAbcScenarioLabelFormat(t *testing.T) {
 }
 
 func TestHelloAbcStressCmdCPUOnly(t *testing.T) {
-	p := chaosParams{
+	p := randomParams{
 		CPUStressors: 3,
 		VMStressors:  0,
 		VMBytes:      "128M",
@@ -124,7 +124,7 @@ func TestHelloAbcStressCmdCPUOnly(t *testing.T) {
 }
 
 func TestHelloAbcStressCmdAllStressors(t *testing.T) {
-	p := chaosParams{
+	p := randomParams{
 		CPUStressors: 2,
 		VMStressors:  2,
 		VMBytes:      "512M",

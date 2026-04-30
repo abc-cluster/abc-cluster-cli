@@ -1,0 +1,110 @@
+# abc admin tools — default tool manifest
+# Bundled with CLI source; written to ~/.abc/binaries/tools.toml by: abc admin tools init
+#
+# Edit the copy at ~/.abc/binaries/tools.toml to customise your cluster.
+# Restore this default:  abc admin tools init --reset
+# View this default:     abc admin tools init --show
+#
+# Push credentials and target endpoint are NOT stored here — they come from
+# your active context (config.yaml):
+#
+#   admin.tools.context_service: rustfs   # which admin.services.<name> to use
+#   admin.tools.endpoint: ""              # written back by abc admin tools push
+#   admin.tools.architectures:            # os/arch pairs to fetch
+#     - linux/amd64
+#     - linux/arm64
+#
+# Set via:
+#   abc config set contexts.<name>.admin.tools.context_service rustfs
+#   abc config set contexts.<name>.admin.tools.endpoint http://rustfs.aither
+
+# ── Fetch engine ──────────────────────────────────────────────────────────────
+#
+# eget bootstraps all other tool downloads.
+# abc downloads it for the host arch only (pure Go HTTP + tar, no shell needed).
+# eget is never pushed to cluster storage — it is an operator-side tool only.
+
+[engine]
+repo    = "zyedidia/eget"
+version = "v1.3.3"
+
+# ── Push settings ─────────────────────────────────────────────────────────────
+#
+# Only bucket and prefix live here. Credentials, endpoint, and context_service
+# are read from the active context (config.yaml admin.tools.*).
+#
+# Remote path pattern:
+#   <endpoint>/<bucket>/<prefix>/<binary>-<os>-<arch>
+#   e.g. http://rustfs.aither/abc-reserved/binary_tools/s5cmd-linux-amd64
+
+[push]
+bucket = "abc-reserved"
+prefix = "binary_tools"
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
+#
+# repo: GitHub owner/repo (used by eget).
+#
+# version: explicit tag (e.g. "v2.1.0") or "latest" to resolve at fetch time.
+#   When "latest" is used, the resolved tag is written back into this file
+#   after a successful fetch so the manifest stays pinned to what is on disk.
+#
+# disabled: set to true to skip a tool without removing its block.
+#
+# Binaries are stored flat in ~/.abc/assets/ as <tool>-<os>-<arch>.
+# The push command uploads them to <endpoint>/<bucket>/<prefix>/<tool>-<os>-<arch>.
+
+# eget is listed here so cross-arch binaries land in assets/ and get pushed to
+# S3 alongside the other tools. The host-platform bootstrap copy (~/.abc/binaries/eget)
+# is managed separately by `abc admin tools fetch` and is never pushed.
+# Keep this version in sync with [engine].version above.
+[tools.eget]
+repo    = "zyedidia/eget"
+version = "v1.3.3"
+
+[tools.s5cmd]
+repo    = "peak/s5cmd"
+version = "latest"
+
+[tools.rclone]
+repo    = "rclone/rclone"
+version = "latest"
+
+[tools.restic]
+repo     = "restic/restic"
+version  = "latest"
+disabled = true
+
+[tools.pixi]
+repo    = "prefix-dev/pixi"
+version = "latest"
+
+[tools.micromamba]
+repo    = "mamba-org/micromamba-releases"
+version = "latest"
+
+# ── Locally built artifacts ────────────────────────────────────────────────────
+#
+# [local.<name>] entries push locally built binaries or JARs to the cluster S3
+# bucket alongside the GitHub-sourced tools. No `fetch` step — the files must
+# already exist at the given path(s).
+#
+# Two modes:
+#
+#   paths  — architecture-specific binaries (Go, Rust, C, …).
+#             Map key is "<os>-<arch>" (e.g. "linux-amd64").
+#             Remote key: <prefix>/<name>-<os>-<arch>
+#
+#   path   — architecture-agnostic artifact (JAR, Python wheel, …).
+#             Remote key: <prefix>/<basename of path>
+#
+# disabled = true skips the entry without removing it.
+#
+# Examples (remove the leading # to activate):
+#
+# [local.abc-node-probe]
+# paths."linux-amd64" = "/Users/me/projects/abc-node-probe/dist/abc-node-probe-linux-amd64"
+# paths."linux-arm64" = "/Users/me/projects/abc-node-probe/dist/abc-node-probe-linux-arm64"
+#
+# [local.nf-pipeline-gen]
+# path = "/Users/me/projects/nf-pipeline-gen/build/libs/nf-pipeline-gen-1.0.0-all.jar"
