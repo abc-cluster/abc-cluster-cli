@@ -54,7 +54,7 @@ echo "=== hello-abc ==="
 echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "node=$(hostname)"
 echo "alloc=${NOMAD_ALLOC_ID:-unknown}"
-echo "scenario=${NOMAD_META_chaos_scenario:-unknown}"
+echo "scenario=${NOMAD_META_random_scenario:-unknown}"
 echo ""
 
 __STRESS_CMD__
@@ -67,8 +67,8 @@ echo "=== hello-abc done ==="
 	helloAbcImage = "community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8"
 )
 
-// chaosParams holds the randomised stress-ng parameters chosen at CLI time.
-type chaosParams struct {
+// randomParams holds the randomised stress-ng parameters chosen at CLI time.
+type randomParams struct {
 	CPUStressors int    // --cpu N
 	VMStressors  int    // --vm N
 	VMBytes      string // --vm-bytes <size>
@@ -76,9 +76,9 @@ type chaosParams struct {
 	TimeoutSecs  int    // --timeout Ns
 }
 
-// newChaosParams returns randomly chosen stress-ng parameters.
+// newRandomParams returns randomly chosen stress-ng parameters.
 // Uses a seeded local RNG so the same seed always produces the same scenario.
-func newChaosParams(r *rand.Rand) chaosParams {
+func newRandomParams(r *rand.Rand) randomParams {
 	// CPU stressors: 1–4
 	cpu := r.Intn(4) + 1
 
@@ -93,7 +93,7 @@ func newChaosParams(r *rand.Rand) chaosParams {
 	// Duration: 30–180 seconds
 	timeout := 30 + r.Intn(151)
 
-	return chaosParams{
+	return randomParams{
 		CPUStressors: cpu,
 		VMStressors:  vm,
 		VMBytes:      vmBytes,
@@ -104,13 +104,13 @@ func newChaosParams(r *rand.Rand) chaosParams {
 
 // scenarioLabel returns a compact human-readable label for the chosen params,
 // e.g. "cpu:2,vm:1:128M,io:0,t:90s".  Stored in Nomad meta.
-func (p chaosParams) scenarioLabel() string {
+func (p randomParams) scenarioLabel() string {
 	return fmt.Sprintf("cpu:%d,vm:%d:%s,io:%d,t:%ds",
 		p.CPUStressors, p.VMStressors, p.VMBytes, p.IOStressors, p.TimeoutSecs)
 }
 
 // stressCmd builds the stress-ng shell command for the chosen params.
-func (p chaosParams) stressCmd() string {
+func (p randomParams) stressCmd() string {
 	var args []string
 	args = append(args, "stress-ng")
 	args = append(args, fmt.Sprintf("--cpu %d", p.CPUStressors))
@@ -167,16 +167,16 @@ func finalizeHelloAbc(spec *jobSpec) (string, error) {
 	for i, b := range []byte(submissionID) {
 		seed ^= int64(b) << (uint(i%8) * 8)
 	}
-	//nolint:gosec // non-cryptographic RNG intentional for chaos parameter selection
+	//nolint:gosec // non-cryptographic RNG intentional for random parameter selection
 	r := rand.New(rand.NewSource(seed))
-	params := newChaosParams(r)
+	params := newRandomParams(r)
 
-	spec.Meta["chaos_scenario"] = params.scenarioLabel()
-	spec.Meta["chaos_cpu"] = fmt.Sprintf("%d", params.CPUStressors)
-	spec.Meta["chaos_vm"] = fmt.Sprintf("%d", params.VMStressors)
-	spec.Meta["chaos_vm_bytes"] = params.VMBytes
-	spec.Meta["chaos_io"] = fmt.Sprintf("%d", params.IOStressors)
-	spec.Meta["chaos_timeout_secs"] = fmt.Sprintf("%d", params.TimeoutSecs)
+	spec.Meta["random_scenario"] = params.scenarioLabel()
+	spec.Meta["random_cpu"] = fmt.Sprintf("%d", params.CPUStressors)
+	spec.Meta["random_vm"] = fmt.Sprintf("%d", params.VMStressors)
+	spec.Meta["random_vm_bytes"] = params.VMBytes
+	spec.Meta["random_io"] = fmt.Sprintf("%d", params.IOStressors)
+	spec.Meta["random_timeout_secs"] = fmt.Sprintf("%d", params.TimeoutSecs)
 
 	if spec.Name != "" {
 		base := spec.Name

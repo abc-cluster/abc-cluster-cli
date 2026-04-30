@@ -259,17 +259,9 @@ resource "nomad_job" "abc_backups" {
 resource "nomad_job" "prometheus" {
   count = local.prometheus_count
 
-  jobspec = file("${path.module}/../nomad/prometheus.nomad.hcl")
+  jobspec = file("${path.module}/../nomad/victoriametrics.nomad.hcl")
   detach  = false
 
-  # Pass datacenters through so adding a new DC in variables.tf propagates
-  # without touching the jobspec.  Service discovery (consul_sd_configs)
-  # picks up new nodes automatically once they register in Consul.
-  # Pass the Consul agent endpoint through as a plain string. The jobspec's
-  # var.datacenters default ("dc1", "default") already covers the current
-  # cluster — extend that default in the jobspec when adding a DC name that
-  # isn't one of those two. (Nomad provider's hcl2.vars only accepts strings,
-  # so list-typed vars can't round-trip through it.)
   hcl2 {
     vars = {
       consul_address = "${var.cluster_tailscale_ip}:8500"
@@ -282,10 +274,18 @@ resource "nomad_job" "prometheus" {
 resource "nomad_job" "loki" {
   count = local.loki_count
 
-  jobspec = file("${path.module}/../nomad/loki.nomad.hcl")
+  jobspec = file("${path.module}/../nomad/victorialogs.nomad.hcl")
   detach  = false
 
-  # Loki stores logs in MinIO — basic-tier minio assumed present.
+  depends_on = [nomad_namespace.abc_services]
+}
+
+resource "nomad_job" "victoriatraces" {
+  count = var.enable_victoriatraces ? 1 : 0
+
+  jobspec = file("${path.module}/../nomad/victoriatraces.nomad.hcl")
+  detach  = false
+
   depends_on = [nomad_namespace.abc_services]
 }
 
@@ -338,8 +338,8 @@ resource "nomad_job" "alloy" {
   # reachable from every node in every datacenter.
   hcl2 {
     vars = {
-      prometheus_url = "http://${var.cluster_tailscale_ip}:9090/api/v1/write"
-      loki_url       = "http://${var.cluster_tailscale_ip}:3100/loki/api/v1/push"
+      prometheus_url = "http://${var.cluster_tailscale_ip}:8428/api/v1/write"
+      loki_url       = "http://${var.cluster_tailscale_ip}:9428/insert/loki/api/v1/push"
     }
   }
 

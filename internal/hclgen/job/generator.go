@@ -7,9 +7,23 @@ import (
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+// setAttributeRawString emits a string attribute that preserves runtime
+// `${...}` interpolations literally. cty.StringVal escapes `${` to `$${`,
+// which Nomad reads as the literal sequence and skips interpolation —
+// breaking artifact source URLs that depend on `${attr.kernel.name}` etc.
+// Writing raw quoted bytes bypasses the escape pass.
+func setAttributeRawString(body *hclwrite.Body, name, value string) {
+	body.SetAttributeRaw(name, hclwrite.Tokens{
+		{Type: hclsyntax.TokenOQuote, Bytes: []byte(`"`)},
+		{Type: hclsyntax.TokenQuotedLit, Bytes: []byte(value)},
+		{Type: hclsyntax.TokenCQuote, Bytes: []byte(`"`)},
+	})
+}
 
 // parseDriverConfigList recognises a JSON-array-of-strings value (e.g.
 // `["--cpu","1","--timeout","5s"]`) used in #ABC/#NOMAD driver.config
@@ -44,6 +58,17 @@ type Affinity struct {
 	Operator  string
 	Value     string
 	Weight    int
+}
+
+// ArtifactSpec describes a single Nomad artifact stanza: a remote file that
+// Nomad fetches into the task directory before the task starts.
+type ArtifactSpec struct {
+	// Source is the URL of the file to fetch (http/https/s3/etc.).
+	Source string
+	// Destination is relative to the task directory; defaults to "local/" when empty.
+	Destination string
+	// Mode is "file", "dir", or "any"; empty uses Nomad's default.
+	Mode string
 }
 
 type Spec struct {
@@ -116,6 +141,35 @@ type Spec struct {
 	// StaticEnv is merged into the task env block as literal strings (no Nomad
 	// interpolation). Used for abc-nodes enhanced floor wiring (Loki, Prometheus, Alloy).
 	StaticEnv map[string]string
+
+	// Artifacts lists remote files Nomad fetches into the task directory before
+	// the task starts (Nomad artifact stanza). Used by the data download path
+	// to stage tool binaries (e.g. s5cmd) on exec driver tasks.
+	Artifacts []ArtifactSpec
+}
+
+// nomadHCLOperator converts CLI shorthand operators to the operator strings
+// that Nomad's HCL job spec accepts. Only =~ needs translation (→ regexp);
+// all other operators (==, !=, <, <=, >, >=) are accepted as-is by Nomad.
+func nomadHCLOperator(op string) string {
+	if op == "=~" {
+		return "regexp"
+	}
+	return op
+}
+
+// nomadConstraintAttr ensures a constraint/affinity attribute is wrapped in
+// Nomad's interpolation syntax ${...}. Nomad evaluates the attribute string
+// as a runtime variable reference; without the ${ } markers it is treated as
+// a literal string that never matches any node property.
+//
+// Examples: "node.unique.name" → "${node.unique.name}"
+//           "${attr.cpu.arch}" → "${attr.cpu.arch}"  (already wrapped, no-op)
+func nomadConstraintAttr(attr string) string {
+	if strings.HasPrefix(attr, "${") {
+		return attr
+	}
+	return "${" + attr + "}"
 }
 
 func Generate(spec Spec, scriptName, scriptContent string) string {
@@ -141,14 +195,14 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 	}
 	for _, c := range spec.Constraints {
 		b := jobBody.AppendNewBlock("constraint", nil).Body()
-		b.SetAttributeValue("attribute", cty.StringVal(c.Attribute))
-		b.SetAttributeValue("operator", cty.StringVal(c.Operator))
+		b.SetAttributeValue("attribute", cty.StringVal(nomadConstraintAttr(c.Attribute)))
+		b.SetAttributeValue("operator", cty.StringVal(nomadHCLOperator(c.Operator)))
 		b.SetAttributeValue("value", cty.StringVal(c.Value))
 	}
 	for _, a := range spec.Affinities {
 		b := jobBody.AppendNewBlock("affinity", nil).Body()
-		b.SetAttributeValue("attribute", cty.StringVal(a.Attribute))
-		b.SetAttributeValue("operator", cty.StringVal(a.Operator))
+		b.SetAttributeValue("attribute", cty.StringVal(nomadConstraintAttr(a.Attribute)))
+		b.SetAttributeValue("operator", cty.StringVal(nomadHCLOperator(a.Operator)))
 		b.SetAttributeValue("value", cty.StringVal(a.Value))
 		b.SetAttributeValue("weight", cty.NumberIntVal(int64(a.Weight)))
 	}
@@ -219,6 +273,21 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 		if spec.GPUs > 0 {
 			resBody.AppendNewBlock("device", []string{"nvidia/gpu"}).Body().
 				SetAttributeValue("count", cty.NumberIntVal(int64(spec.GPUs)))
+		}
+	}
+
+	for _, art := range spec.Artifacts {
+		artBody := mainBody.AppendNewBlock("artifact", nil).Body()
+		// Use raw-string emission so `${attr.kernel.name}` etc. survive into
+		// Nomad's interpolation pass (cty.StringVal would escape it to `$${`).
+		setAttributeRawString(artBody, "source", art.Source)
+		dst := art.Destination
+		if dst == "" {
+			dst = "local/"
+		}
+		artBody.SetAttributeValue("destination", cty.StringVal(dst))
+		if art.Mode != "" {
+			artBody.SetAttributeValue("mode", cty.StringVal(art.Mode))
 		}
 	}
 

@@ -445,6 +445,19 @@ func (c *Config) Get(key string) (string, bool) {
 			v, ok := GetAdminFloorField(&ctx.Admin.Services, parts[4], parts[5])
 			return v, ok
 		}
+		// contexts.<name>.admin.tools.<field>
+		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "tools" {
+			if ctx.Admin.Tools == nil {
+				return "", false
+			}
+			switch parts[4] {
+			case "context_service":
+				return ctx.Admin.Tools.ContextService, true
+			case "endpoint":
+				return ctx.Admin.Tools.Endpoint, true
+			}
+			return "", false
+		}
 		// contexts.<name>.admin.abc_nodes.<field>
 		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "abc_nodes" {
 			if parts[4] == "nomad_namespace" {
@@ -572,6 +585,21 @@ func (c *Config) Set(key, value string) error {
 				return err
 			}
 			NormalizeFloorServices(&ctx)
+			c.Contexts[canon] = ctx
+			return nil
+		}
+		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "tools" {
+			if ctx.Admin.Tools == nil {
+				ctx.Admin.Tools = &AdminTools{}
+			}
+			switch parts[4] {
+			case "context_service":
+				ctx.Admin.Tools.ContextService = strings.TrimSpace(value)
+			case "endpoint":
+				ctx.Admin.Tools.Endpoint = strings.TrimSpace(value)
+			default:
+				return fmt.Errorf("unknown admin.tools field %q (supported: context_service, endpoint)", parts[4])
+			}
 			c.Contexts[canon] = ctx
 			return nil
 		}
@@ -763,6 +791,23 @@ func (c *Config) Unset(key string) error {
 				return err
 			}
 			NormalizeFloorServices(&ctx)
+			c.Contexts[canon] = ctx
+			return nil
+		}
+		if len(parts) == 5 && parts[2] == "admin" && parts[3] == "tools" {
+			if ctx.Admin.Tools != nil {
+				switch parts[4] {
+				case "context_service":
+					ctx.Admin.Tools.ContextService = ""
+				case "endpoint":
+					ctx.Admin.Tools.Endpoint = ""
+				default:
+					return fmt.Errorf("unknown admin.tools field %q (supported: context_service, endpoint)", parts[4])
+				}
+				if ctx.Admin.Tools.ContextService == "" && ctx.Admin.Tools.Endpoint == "" && len(ctx.Admin.Tools.Architectures) == 0 {
+					ctx.Admin.Tools = nil
+				}
+			}
 			c.Contexts[canon] = ctx
 			return nil
 		}

@@ -76,13 +76,32 @@ job "abc-nodes-grafana" {
         sidecar = false
       }
       driver = "raw_exec"
+
+      # Nomad downloads artifacts via the CLIENT's host network — not the task's
+      # network namespace.  Bridge-mode containers have broken DNS on this cluster
+      # so GF_INSTALL_PLUGINS and curl-inside-task both fail with NXDOMAIN.
+      # Using artifact {} sidesteps that entirely: the Nomad client process
+      # fetches the zip (same mechanism Alloy uses for its binary), extracts it
+      # into NOMAD_TASK_DIR, then the shell script below copies it into place.
+      artifact {
+        source      = "https://github.com/VictoriaMetrics/victorialogs-datasource/releases/download/v0.26.3/victoriametrics-logs-datasource-v0.26.3.zip"
+        destination = "local/"
+        # Nomad auto-extracts zip archives by default. The zip unpacks to
+        # local/victoriametrics-logs-datasource/ inside the task directory.
+      }
+
       config {
         command = "/bin/sh"
-        args    = ["-c", "mkdir -p /opt/nomad/scratch/grafana-data && chown -R 472:472 /opt/nomad/scratch/grafana-data && echo OK"]
+        args = [
+          "-c",
+          # $${NOMAD_TASK_DIR} is escaped for Terraform; Nomad expands it at runtime.
+          "mkdir -p /opt/nomad/scratch/grafana-data/plugins && (test -d /opt/nomad/scratch/grafana-data/plugins/victoriametrics-logs-datasource || cp -r $${NOMAD_TASK_DIR}/victoriametrics-logs-datasource /opt/nomad/scratch/grafana-data/plugins/) && chown -R 472:472 /opt/nomad/scratch/grafana-data && echo OK",
+        ]
       }
+
       resources {
-        cpu    = 50
-        memory = 32
+        cpu    = 200
+        memory = 128
       }
     }
 
@@ -155,10 +174,8 @@ datasources:
     editable: false
 
   - name: Loki
-    type: loki
+    type: victoriametrics-logs-datasource
     uid: loki
-    # Grafana appends /loki/api/v1/... to this URL. Do NOT include a trailing
-    # /loki here — that becomes /loki/loki/... and every query returns 404.
 {{- range service "abc-nodes-loki" }}
     url: http://{{ .NodeAddress }}:{{ .Port }}
 {{- end }}
@@ -187,162 +204,6 @@ providers:
       path: /local/provisioning/dashboards/files
 EOF
         destination = "local/provisioning/dashboards/dashboard.yaml"
-      }
-
-      # ── Dashboard: Nomad allocation logs ────────────────────────────────────
-      template {
-        destination = "local/provisioning/dashboards/files/nomad-loki-logs.json"
-        data        = <<EOF
-{
-  "annotations": { "list": [] },
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "links": [],
-  "liveNow": false,
-  "panels": [
-    {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 22, "w": 24, "x": 0, "y": 0 },
-      "id": 1,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
-      },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "editorMode": "code",
-          "expr": "{stream=~\"stdout|stderr\"}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Nomad allocation logs (Alloy file tail → Loki)",
-      "type": "logs"
-    }
-  ],
-  "refresh": "30s",
-  "schemaVersion": 39,
-  "tags": ["abc-nodes", "nomad", "loki"],
-  "templating": { "list": [] },
-  "time": { "from": "now-3h", "to": "now" },
-  "timepicker": {},
-  "timezone": "",
-  "title": "Nomad allocation logs",
-  "uid": "abc-nodes-nomad-loki-logs",
-  "version": 1,
-  "weekStart": ""
-}
-EOF
-      }
-
-      # ── Dashboard: Pipeline Jobs Monitor ────────────────────────────────────
-      # Uses labels that are currently present in Alloy->Loki streams on abc-nodes:
-      # alloc_id, filename, stream, task, service_name.
-      template {
-        destination = "local/provisioning/dashboards/files/pipeline-monitor.json"
-        data        = <<EOF
-{
-  "annotations": { "list": [] },
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "links": [],
-  "liveNow": false,
-  "panels": [
-    {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
-      "id": 1,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
-      },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "editorMode": "code",
-          "expr": "{task=~\"main|test\", stream=~\"stdout|stderr\"}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Recent Workload Logs (main/test tasks)",
-      "type": "logs"
-    },
-    {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
-      "id": 2,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
-      },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "editorMode": "code",
-          "expr": "{task=~\"notifier|traefik|tusd|grafana|loki|prometheus|minio\", stream=~\"stdout|stderr\"}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Core Service Logs (selected tasks)",
-      "type": "logs"
-    },
-    {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
-      "id": 3,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "showLabels": false,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": false
-      },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "editorMode": "code",
-          "expr": "{task=\"notifier\", stream=~\"stdout|stderr\"} |~ \"sent:\"",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Job Status Notifications (sent by job-notifier → ntfy)",
-      "type": "logs"
-    }
-  ],
-  "refresh": "30s",
-  "schemaVersion": 39,
-  "tags": ["abc-nodes", "pipeline", "nextflow", "bioinformatics"],
-  "templating": { "list": [] },
-  "time": { "from": "now-6h", "to": "now" },
-  "timepicker": {},
-  "timezone": "",
-  "title": "Pipeline Jobs Monitor",
-  "uid": "abc-nodes-pipeline-monitor",
-  "version": 1,
-  "weekStart": ""
-}
-EOF
       }
 
       # ── Dashboard: multi-group Nomad overview (Prometheus + fixed Loki) ────

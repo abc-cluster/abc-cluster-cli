@@ -112,6 +112,30 @@ func FetchLatestReleaseWithContext(ctx context.Context, owner, repo string) (*Gi
 	return &release, nil
 }
 
+// FetchReleaseByTagWithContext fetches a specific GitHub release by tag name.
+func FetchReleaseByTagWithContext(ctx context.Context, owner, repo, tag string) (*GitHubRelease, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", GitHubAPIURL, owner, repo, tag)
+	req, err := newGETRequest(url)
+	if err != nil {
+		return nil, fmt.Errorf("building release request: %w", err)
+	}
+	req = req.WithContext(ctx)
+	resp, err := doRequestWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching release info: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API error: %d - %s", resp.StatusCode, string(body))
+	}
+	var release GitHubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, fmt.Errorf("decoding release: %w", err)
+	}
+	return &release, nil
+}
+
 // FetchLatestReleaseAllowPrereleasesWithContext fetches the newest GitHub release
 // including prereleases by querying the release list when the /latest endpoint
 // does not return a stable release.

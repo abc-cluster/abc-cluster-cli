@@ -46,11 +46,56 @@ job "abc-nodes-loki" {
   group "loki" {
     count = 1
 
+    # Pin to aither: Loki TSDB index + WAL lives on aither's scratch host volume.
+    # Without this, Loki can be rescheduled to a node that doesn't have the
+    # volume and all on-disk index state is lost. Mirrors the MinIO placement
+    # strategy so both storage services co-locate on the same node.
+    constraint {
+      attribute = "${attr.unique.hostname}"
+      value     = "aither"
+    }
+
     network {
       mode = "bridge"
       port "http" {
         static = 3100
         to     = 3100
+      }
+    }
+
+    volume "scratch" {
+      type      = "host"
+      read_only = false
+      source    = "scratch"
+    }
+
+    # Pre-create /scratch/loki with permissive perms before Loki starts.
+    # Loki writes its TSDB index, WAL, and chunk cache under path_prefix.
+    # If the directory is missing or owned by a different UID, Loki errors on
+    # startup. Mirrors the MinIO/RustFS ensure-data-dir pattern.
+    task "ensure-data-dir" {
+      driver = "containerd-driver"
+
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
+
+      config {
+        image      = "alpine:3.19"
+        entrypoint = ["/bin/sh", "-c"]
+        args       = ["mkdir -p /scratch/loki && chmod 0777 /scratch/loki"]
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
+      }
+
+      resources {
+        cpu    = 50
+        memory = 32
       }
     }
 
@@ -76,7 +121,7 @@ server:
   grpc_listen_port: 9095
 
 common:
-  path_prefix: /loki
+  path_prefix: /scratch/loki
   replication_factor: 1
   ring:
     instance_addr: 127.0.0.1
@@ -95,8 +140,8 @@ schema_config:
 
 storage_config:
   tsdb_shipper:
-    active_index_directory: /loki/tsdb-index
-    cache_location: /loki/tsdb-cache
+    active_index_directory: /scratch/loki/tsdb-index
+    cache_location: /scratch/loki/tsdb-cache
   aws:
     bucketnames: ${var.loki_bucket}
     # S3 endpoint resolved from Consul — follows whichever node MinIO/RustFS
@@ -115,6 +160,12 @@ limits_config:
   reject_old_samples_max_age: 168h
 EOF
         destination = "local/loki.yaml"
+      }
+
+      volume_mount {
+        volume      = "scratch"
+        destination = "/scratch"
+        read_only   = false
       }
 
       resources {

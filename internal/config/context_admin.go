@@ -144,6 +144,35 @@ type AdminABCNodes struct {
 	MinioRootPassword string `yaml:"minio_root_password,omitempty"`
 }
 
+// AdminTools holds operator-side tool management settings for a context.
+// These drive `abc admin tools fetch` and `abc admin tools push`.
+//
+// YAML path: contexts.<name>.admin.tools
+// Settable via: abc config set contexts.<name>.admin.tools.<field> <value>
+type AdminTools struct {
+	// Architectures is the list of os/arch pairs to fetch for each managed tool
+	// (e.g. ["linux/amd64", "linux/arm64"]). When empty, defaults to
+	// ["linux/amd64", "linux/arm64"]. Add "darwin/arm64", "windows/amd64" etc.
+	// to extend coverage to operator machines or non-Linux cluster nodes.
+	Architectures []string `yaml:"architectures,omitempty"`
+
+	// ContextService names the admin.services.<name> entry that supplies S3
+	// credentials and endpoint for `abc admin tools push`.
+	// Typical values: "rustfs" or "minio". Defaults to "rustfs".
+	ContextService string `yaml:"context_service,omitempty"`
+
+	// Endpoint is the resolved S3 base URL written back by `abc admin tools push`
+	// after the first successful upload. Job definitions can reference this value
+	// directly instead of hardcoding the cluster storage URL.
+	Endpoint string `yaml:"endpoint,omitempty"`
+}
+
+// DefaultToolArchitectures returns the fallback architecture list used when
+// admin.tools.architectures is unset in the active context.
+func DefaultToolArchitectures() []string {
+	return []string{"linux/amd64", "linux/arm64"}
+}
+
 // Admin holds optional admin-plane settings for a context.
 type Admin struct {
 	// Whoami is an optional operator persona label for abc-nodes contexts (e.g. su-mbhg-bioinformatics_admin).
@@ -152,6 +181,7 @@ type Admin struct {
 	Whoami   string         `yaml:"whoami,omitempty"`
 	Services AdminServices  `yaml:"services,omitempty"`
 	ABCNodes *AdminABCNodes `yaml:"abc_nodes,omitempty"`
+	Tools    *AdminTools    `yaml:"tools,omitempty"`
 }
 
 // Services is the deprecated YAML shape under contexts.<name>.services (migrated on load).

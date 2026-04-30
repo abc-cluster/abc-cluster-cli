@@ -50,6 +50,7 @@ job "abc-nodes-rustfs" {
   meta {
     abc_cluster_type = "abc-nodes"
     service          = "rustfs"
+    restart_nonce    = "2026-04-29-tusd-multipart"
   }
 
   group "rustfs" {

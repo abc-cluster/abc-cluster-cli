@@ -26,6 +26,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tailscale"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/pulumi"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/terraform"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/traefik"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/vault"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
@@ -97,6 +98,9 @@ func NewCmd() *cobra.Command {
 
 	// Aggregate health check.
 	cmd.AddCommand(newHealthCmd())
+
+	// tools sub-group — operator-side binary cache + cluster S3 push.
+	cmd.AddCommand(tools.NewCmd())
 
 	// app sub-group — application-level entity management.
 	cmd.AddCommand(newAppCmd())

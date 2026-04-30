@@ -568,9 +568,19 @@ func (c *NomadClient) GetJobEvals(ctx context.Context, jobID, namespace string) 
 }
 
 func (c *NomadClient) ParseHCL(ctx context.Context, hcl string) (json.RawMessage, error) {
+	return c.ParseHCLWithVars(ctx, hcl, "")
+}
+
+// ParseHCLWithVars is like ParseHCL but accepts an optional HCL variable-definition
+// string (e.g. `source = "s3://..."` ) that overrides variable defaults in the job.
+// Pass an empty string to use the job's own defaults.
+func (c *NomadClient) ParseHCLWithVars(ctx context.Context, hcl, variables string) (json.RawMessage, error) {
 	body := map[string]interface{}{
 		"JobHCL":       hcl,
 		"Canonicalize": true,
+	}
+	if variables != "" {
+		body["Variables"] = variables
 	}
 	var out json.RawMessage
 	return out, c.post(ctx, "/v1/jobs/parse", body, &out)

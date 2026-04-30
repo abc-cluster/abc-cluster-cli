@@ -3,6 +3,7 @@ package utils
 import (
 	"archive/tar"
 	"archive/zip"
+	"compress/bzip2"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 const (
 	defaultManagedBinaryDir = ".abc/binaries"
+	defaultAssetDir         = ".abc/assets"
 )
 
 type BinarySetupResult struct {
@@ -48,6 +50,40 @@ func ManagedBinaryDir() (string, error) {
 
 func ManagedBinaryPath(name string) (string, error) {
 	dir, err := ManagedBinaryDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
+}
+
+// AssetDir returns the directory for cross-arch distribution artifacts
+// (~/.abc/assets/ by default, overridable via ABC_ASSETS_DIR).
+//
+// This directory holds arch-suffixed binaries (<tool>-<os>-<arch>), JARs, and
+// tools.toml — everything that gets fetched for cluster-node distribution and
+// pushed to S3. It is separate from ManagedBinaryDir() (~/.abc/binaries/),
+// which holds only plain-named host-platform executables safe to add to $PATH.
+func AssetDir() (string, error) {
+	if v := strings.TrimSpace(os.Getenv("ABC_ASSETS_DIR")); v != "" {
+		if err := os.MkdirAll(v, 0o755); err != nil {
+			return "", fmt.Errorf("create asset dir %q: %w", v, err)
+		}
+		return v, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	dir := filepath.Join(home, defaultAssetDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create asset dir %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// AssetPath returns the full path for a named file inside AssetDir().
+func AssetPath(name string) (string, error) {
+	dir, err := AssetDir()
 	if err != nil {
 		return "", err
 	}
@@ -620,6 +656,25 @@ func findArchiveAssetForPlatform(release *GitHubRelease, archiveExts []string) (
 	return nil, fmt.Errorf("matching asset not found")
 }
 
+// DownloadExtractBinary downloads an archive from downloadURL, extracts the
+// binary named binaryName from it, and writes it as an executable to dest.
+// Supported formats: .tar.gz / .tgz, .tar.bz2, .zip.
+func DownloadExtractBinary(_ context.Context, downloadURL, assetName, binaryName, dest string) error {
+	name := strings.ToLower(assetName)
+	var mode string
+	switch {
+	case strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz"):
+		mode = "tar.gz"
+	case strings.HasSuffix(name, ".tar.bz2"):
+		mode = "tar.bz2"
+	case strings.HasSuffix(name, ".zip"):
+		mode = "zip"
+	default:
+		return fmt.Errorf("unsupported archive format %q (want .tar.gz, .tar.bz2, or .zip)", assetName)
+	}
+	return downloadAndExtractAsset(downloadURL, assetName, mode, binaryName, dest)
+}
+
 func downloadAndExtractAsset(downloadURL, assetName, extractMode, binaryName, dest string) error {
 	req, err := newGETRequest(downloadURL)
 	if err != nil {
@@ -654,6 +709,8 @@ func downloadAndExtractAsset(downloadURL, assetName, extractMode, binaryName, de
 		return extractBinaryFromZip(tmpPath, binaryName, dest)
 	case "tar.gz":
 		return extractBinaryFromTarGz(tmpPath, binaryName, dest)
+	case "tar.bz2":
+		return extractBinaryFromTarBz2(tmpPath, binaryName, dest)
 	default:
 		return fmt.Errorf("unsupported extract mode %q", extractMode)
 	}
@@ -708,6 +765,67 @@ func extractBinaryFromTarGz(archivePath, binaryName, dest string) error {
 		return writeExecutable(tr, dest)
 	}
 	return fmt.Errorf("binary %q not found in tar.gz", binaryName)
+}
+
+// DownloadAndExtractWithEget downloads an archive from downloadURL using the
+// managed eget binary (~/.abc/binaries/eget), extracts binaryName from it, and
+// writes the result as an executable to dest.
+//
+// Eget handles all archive formats (tar.gz, tar.bz2, zip, bare binaries)
+// transparently, so no format-specific extraction code is needed here.
+// The GitHub API is used upstream to select the right asset URL; eget receives
+// that direct URL so it never has to guess between multiple release assets.
+func DownloadAndExtractWithEget(ctx context.Context, downloadURL, binaryName, dest string) error {
+	egetBin, err := ManagedBinaryPath("eget")
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(egetBin); err != nil {
+		return fmt.Errorf("eget not found at %s — run: abc admin tools fetch first", egetBin)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "abc-eget-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Pass the direct download URL; eget extracts into tmpDir.
+	// --file <binaryName> tells eget which binary to pull from the archive.
+	args := []string{downloadURL, "--to", tmpDir + "/", "--file", binaryName}
+	if err := RunExternalCLI(ctx, args, egetBin, []string{"eget"}, nil, io.Discard, io.Discard); err != nil {
+		return fmt.Errorf("eget extract %q: %w", downloadURL, err)
+	}
+
+	extracted, err := findExtractedBinary(tmpDir, binaryName)
+	if err != nil {
+		return err
+	}
+	return copyExecutable(extracted, dest)
+}
+
+func extractBinaryFromTarBz2(archivePath, binaryName, dest string) error {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open tar.bz2: %w", err)
+	}
+	defer f.Close()
+
+	tr := tar.NewReader(bzip2.NewReader(f))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read tar entry: %w", err)
+		}
+		if filepath.Base(hdr.Name) != binaryName {
+			continue
+		}
+		return writeExecutable(tr, dest)
+	}
+	return fmt.Errorf("binary %q not found in tar.bz2", binaryName)
 }
 
 func writeExecutable(src io.Reader, dest string) error {
