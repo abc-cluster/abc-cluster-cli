@@ -1,0 +1,23 @@
+[workspace]
+name = "bio"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "linux-aarch64"]
+
+[dependencies]
+# sequence QC + trimming
+fastqc   = ">=0.12"
+fastp    = ">=0.23"
+multiqc  = ">=1.21"
+
+# alignment
+bwa-mem2  = ">=2.2"
+minimap2  = ">=2.28"
+samtools  = ">=1.20"
+
+# variant calling + manipulation
+bcftools = ">=1.20"
+htslib   = ">=1.20"
+
+# utilities
+pigz   = ">=2.8"
+seqkit = ">=2.8"

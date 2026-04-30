@@ -156,12 +156,14 @@ func runPush(ctx context.Context, w io.Writer, args []string, dryRun bool, bucke
 			}
 		} else if loc.Path != "" {
 			// Arch-agnostic artifact (e.g. JAR, wheel).
+			// Remote key uses the "<name>-any" convention so artifact-url can
+			// produce a consistent, predictable URL without arch interpolation.
 			localPath := loc.Path
 			if info, err := os.Stat(localPath); err != nil || info.IsDir() || info.Size() == 0 {
 				fmt.Fprintf(w, "  [local/%s]  ✗  not found: %s\n", loc.Name, localPath)
 				continue
 			}
-			remoteName := filepath.Base(localPath)
+			remoteName := loc.Name + "-any"
 			targets = append(targets, uploadTarget{
 				localPath:  localPath,
 				remoteKey:  prefix + "/" + remoteName,

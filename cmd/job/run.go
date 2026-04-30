@@ -74,8 +74,8 @@ CLASS 1 — SCHEDULER  (configure HCL stanza fields)
                                command-line arguments INSIDE the script body.
 
 SOFTWARE STACK  (orthogonal to --driver; see USAGE.md job run / Software stack)
-  --runtime=<kind>             Stack provisioner: pixi-exec (alias: pixi)
-  --from=<path-or-uri>       Backend-native definition (pixi-exec: path to pixi.toml)
+  --runtime=<kind>             Stack provisioner: pixi-exec (alias: pixi), micromamba-exec (aliases: micromamba, mamba)
+  --from=<path-or-uri>       Backend-native definition; pixi-exec: pixi.toml or pixi.lock; micromamba-exec: environment.yml
 
 TASK WORKSPACE
   --task-tmp                   Use ${NOMAD_TASK_DIR}/tmp for TMPDIR/TMP/TEMP (mkdir at start)
@@ -204,8 +204,12 @@ EXAMPLES
 	cmd.Flags().String("output", "", "Tee stdout to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("error", "", "Tee stderr to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
-	cmd.Flags().String("runtime", "", "Software stack runtime: pixi-exec (alias pixi); see USAGE.md")
-	cmd.Flags().String("from", "", "Definition path/URI for --runtime (e.g. pixi.toml on the execution host)")
+	cmd.Flags().String("runtime", "", "Software stack runtime: pixi-exec (alias pixi), micromamba-exec (aliases micromamba/mamba); see USAGE.md")
+	cmd.Flags().String("from", "", "Local path to environment file read at submit time and embedded as a Nomad template:\n"+
+		"    pixi-exec:      pixi.toml (manifest) or pixi.lock (locked reproducible install)\n"+
+		"    micromamba-exec: environment.yml (conda environment file)")
+	cmd.Flags().Bool("pixi-cleanup", false, "Remove the pixi env from the task directory on job exit (pixi-exec)")
+	cmd.Flags().Bool("mamba-cleanup", false, "Remove the micromamba env from the task directory on job exit (micromamba-exec)")
 	cmd.Flags().Bool("task-tmp", false, "Use ${NOMAD_TASK_DIR}/tmp for TMPDIR/TMP/TEMP (see USAGE.md)")
 	cmd.Flags().Bool("no-network", false, "Disable network access for this job")
 	cmd.Flags().StringSlice("port", nil, "Named network ports")
@@ -389,6 +393,12 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if v, _ := cmd.Flags().GetBool("task-tmp"); v {
 		spec.TaskTmp = true
+	}
+	if v, _ := cmd.Flags().GetBool("pixi-cleanup"); v {
+		spec.PixiCleanup = true
+	}
+	if v, _ := cmd.Flags().GetBool("mamba-cleanup"); v {
+		spec.MicromambaCleanup = true
 	}
 	if vs, _ := cmd.Flags().GetStringArray("constraint"); len(vs) > 0 {
 		for _, expr := range vs {
@@ -578,6 +588,13 @@ func runJob(cmd *cobra.Command, args []string) error {
 	applyAbcNodesNomadNamespaceFromConfig(spec)
 
 	if err := resolveAutoDriver(cmd, spec); err != nil {
+		return err
+	}
+
+	if err := resolvePixiLocalMode(spec); err != nil {
+		return err
+	}
+	if err := resolveMicromambaLocalMode(spec); err != nil {
 		return err
 	}
 
@@ -953,6 +970,130 @@ func newSubmissionID() string {
 		return fmt.Sprintf("sub-%d", os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+// resolvePixiLocalMode checks if --from points to a readable local pixi.toml or
+// pixi.lock. If so it reads the file(s), sets the binary download URL, and
+// updates spec.From to the runtime path inside the Nomad task dir.
+//
+// pixi.toml mode: embeds the manifest, runs `pixi install`.
+// pixi.lock mode: embeds both pixi.lock and its companion pixi.toml from the
+// same directory, and runs `pixi install --locked` for bit-for-bit reproducibility.
+//
+// Jobs that specify a remote (non-local) path are left unchanged (legacy mode:
+// pixi must be pre-installed on the execution host).
+func resolvePixiLocalMode(spec *jobSpec) error {
+	if NormalizeRuntimeID(spec.Runtime) != runtimePixiExec {
+		return nil
+	}
+	from := strings.TrimSpace(spec.From)
+	if from == "" || strings.Contains(from, "${") {
+		return nil
+	}
+
+	fromLower := strings.ToLower(from)
+
+	if strings.HasSuffix(fromLower, ".lock") {
+		// pixi.lock mode — embed lock file + companion pixi.toml, use --locked.
+		lockContent, err := os.ReadFile(from)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil // remote path — legacy mode
+			}
+			return fmt.Errorf("--from: cannot read lock file %q: %w", from, err)
+		}
+		tomlPath := filepath.Join(filepath.Dir(from), "pixi.toml")
+		tomlContent, err := os.ReadFile(tomlPath)
+		if err != nil {
+			return fmt.Errorf("--from: pixi.lock requires a companion pixi.toml in the same directory; cannot read %q: %w", tomlPath, err)
+		}
+		pixiURL, err := resolveToolBinaryURL("pixi")
+		if err != nil {
+			return fmt.Errorf("pixi local mode: %w", err)
+		}
+		spec.PixiManifestContent = string(tomlContent)
+		spec.PixiLockContent = string(lockContent)
+		spec.PixiInstallLocked = true
+		spec.From = "${NOMAD_TASK_DIR}/pixi.toml"
+		syncStackMetaKeys(spec)
+		spec.PixiBinaryURL = pixiURL
+		return nil
+	}
+
+	// pixi.toml mode (default).
+	content, err := os.ReadFile(from)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // remote path — legacy mode
+		}
+		return fmt.Errorf("--from: cannot read %q: %w", from, err)
+	}
+	pixiURL, err := resolveToolBinaryURL("pixi")
+	if err != nil {
+		return fmt.Errorf("pixi local mode: %w", err)
+	}
+	spec.PixiManifestContent = string(content)
+	// NOMAD_TASK_DIR in exec mode IS the local/ dir, so templates at
+	// destination="local/pixi.toml" are at ${NOMAD_TASK_DIR}/pixi.toml.
+	spec.From = "${NOMAD_TASK_DIR}/pixi.toml"
+	// Refresh meta so abc_from reflects the runtime path, not the local submit-time path.
+	syncStackMetaKeys(spec)
+	// Store the base URL (without platform suffix); the wrapper downloads pixi
+	// via curl at job start using shell-side uname detection.
+	spec.PixiBinaryURL = pixiURL
+	return nil
+}
+
+// resolveMicromambaLocalMode checks if --from points to a readable local
+// environment.yml. If so it embeds the file as a Nomad template and sets the
+// micromamba binary download URL. Remote paths are left unchanged (legacy mode:
+// micromamba must be pre-installed on the execution host).
+func resolveMicromambaLocalMode(spec *jobSpec) error {
+	if NormalizeRuntimeID(spec.Runtime) != runtimeMicromamba {
+		return nil
+	}
+	from := strings.TrimSpace(spec.From)
+	if from == "" || strings.Contains(from, "${") {
+		return nil
+	}
+	content, err := os.ReadFile(from)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // remote path — legacy mode
+		}
+		return fmt.Errorf("--from: cannot read %q: %w", from, err)
+	}
+	mambaURL, err := resolveToolBinaryURL("micromamba")
+	if err != nil {
+		return fmt.Errorf("micromamba local mode: %w", err)
+	}
+	spec.MicromambaEnvContent = string(content)
+	// NOMAD_TASK_DIR in exec mode IS the local/ dir; templates at
+	// destination="local/environment.yml" are at ${NOMAD_TASK_DIR}/environment.yml.
+	spec.From = "${NOMAD_TASK_DIR}/environment.yml"
+	syncStackMetaKeys(spec)
+	spec.MicromambaBinaryURL = mambaURL
+	return nil
+}
+
+// resolveToolBinaryURL returns the base URL (without platform suffix) for a
+// named tool binary from the cluster tools endpoint. The suffix is appended by
+// the shell wrapper using uname at job execution time.
+func resolveToolBinaryURL(toolName string) (string, error) {
+	c, err := config.Load()
+	if err != nil {
+		return "", fmt.Errorf("load config: %w", err)
+	}
+	ep := strings.TrimRight(c.ActiveCtx().ToolPushEndpoint(), "/")
+	if ep == "" {
+		return "", fmt.Errorf(
+			"no tools endpoint configured for %s binary download\n"+
+				"  Run once: abc admin tools push   (writes endpoint to config)\n"+
+				"  Or set:   abc config set contexts.<name>.admin.tools.endpoint http://<host>:<port>",
+			toolName,
+		)
+	}
+	return ep + "/abc-reserved/binary_tools/" + toolName, nil
 }
 
 // printNtfySubscriptionHint prints the ntfy topic URL so the user can

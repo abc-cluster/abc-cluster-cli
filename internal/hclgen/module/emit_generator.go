@@ -23,7 +23,12 @@ type EmitSpec struct {
 	PipelineGenVersion    string
 	PipelineGenURLBase    string
 	PipelineGenURLResolve string
-	GitHubToken           string
+	// PipelineGenJarURL: complete URL from `abc admin tools push
+	// nf-pipeline-gen`. Highest-priority resolution path in jarfetch.go;
+	// when set, JarFetch skips the versioned URL_BASE branch and the
+	// GitHub releases branch entirely.
+	PipelineGenJarURL string
+	GitHubToken       string
 
 	NfVersion string
 
@@ -107,6 +112,9 @@ func GenerateEmit(spec EmitSpec, nomadAddr, nomadToken, runUUID string) string {
 		envBody.SetAttributeValue("NOMAD_NAMESPACE", cty.StringVal(spec.Namespace))
 	}
 	envBody.SetAttributeValue("GITHUB_TOKEN", cty.StringVal(spec.GitHubToken))
+	if spec.PipelineGenJarURL != "" {
+		envBody.SetAttributeValue("ABC_PIPELINE_GEN_JAR_URL", cty.StringVal(spec.PipelineGenJarURL))
+	}
 	if spec.PipelineGenURLBase != "" {
 		envBody.SetAttributeValue("ABC_PIPELINE_GEN_URL_BASE", cty.StringVal(spec.PipelineGenURLBase))
 	}

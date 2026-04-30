@@ -108,9 +108,35 @@ type jobSpec struct {
 	Pixi  bool
 
 	// Runtime is a software-stack provisioner (orthogonal to Nomad --driver).
-	// From is a backend-native definition path/URI (e.g. pixi.toml on the host).
+	// From is a backend-native definition path/URI (pixi-exec: path to pixi.toml).
 	Runtime string
 	From    string
+
+	// PixiBinaryURL is the base URL for the pixi binary (without platform suffix).
+	// When non-empty, the wrapper downloads pixi via curl at job start instead of
+	// relying on a Nomad artifact stanza.
+	PixiBinaryURL string
+	// PixiManifestContent holds the content of a local pixi.toml read at submit
+	// time. When non-empty, the manifest is embedded as a Nomad template stanza
+	// and pixi is fetched as an artifact from the cluster tools storage.
+	PixiManifestContent string
+	// PixiLockContent holds the content of a pixi.lock file when --from points to
+	// a .lock file. Embedded alongside PixiManifestContent; enables --locked install.
+	PixiLockContent string
+	// PixiInstallLocked passes --locked to `pixi install` for bit-for-bit
+	// reproducibility when a pixi.lock file is embedded.
+	PixiInstallLocked bool
+	// PixiCleanup removes the pixi environment from the task directory on exit.
+	PixiCleanup bool
+
+	// MicromambaEnvContent holds the content of a conda environment.yml read at
+	// submit time. Embedded as a Nomad template at local/environment.yml.
+	MicromambaEnvContent string
+	// MicromambaBinaryURL is the base URL for the micromamba binary (without
+	// platform suffix). The wrapper downloads micromamba via curl at job start.
+	MicromambaBinaryURL string
+	// MicromambaCleanup removes the micromamba env from the task directory on exit.
+	MicromambaCleanup bool
 
 	// TaskTmp enables task-local temp defaults (TMPDIR under NOMAD_TASK_DIR/tmp).
 	TaskTmp bool
@@ -251,6 +277,30 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.From != "" {
 		base.From = override.From
+	}
+	if override.PixiBinaryURL != "" {
+		base.PixiBinaryURL = override.PixiBinaryURL
+	}
+	if override.PixiManifestContent != "" {
+		base.PixiManifestContent = override.PixiManifestContent
+	}
+	if override.PixiLockContent != "" {
+		base.PixiLockContent = override.PixiLockContent
+	}
+	if override.PixiInstallLocked {
+		base.PixiInstallLocked = true
+	}
+	if override.PixiCleanup {
+		base.PixiCleanup = true
+	}
+	if override.MicromambaEnvContent != "" {
+		base.MicromambaEnvContent = override.MicromambaEnvContent
+	}
+	if override.MicromambaBinaryURL != "" {
+		base.MicromambaBinaryURL = override.MicromambaBinaryURL
+	}
+	if override.MicromambaCleanup {
+		base.MicromambaCleanup = true
 	}
 	if override.TaskTmp {
 		base.TaskTmp = true

@@ -1385,3 +1385,186 @@ contexts:
 		t.Errorf("expected no [jurist] lines for concrete driver, got:\n%s", out)
 	}
 }
+
+// ── Pixi local-stage mode ─────────────────────────────────────────────────────
+//
+// These tests exercise the pixi local-stage path: --from points to a real local
+// pixi.toml, which the CLI reads and embeds as a Nomad template stanza while
+// injecting a pixi binary artifact from the configured tools endpoint.
+
+const pixiLocalModeConfig = `version: 1.0
+active_context: local
+contexts:
+  local:
+    cluster_type: abc-nodes
+    admin:
+      tools:
+        endpoint: http://rustfs.test:9000
+`
+
+func TestJobRun_PixiLocalMode_EmbedManifestAndArtifact(t *testing.T) {
+	// Write a real local pixi.toml so resolvePixiLocalMode triggers.
+	manifest := `[project]
+name = "myenv"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = ">=3.11"
+`
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "pixi.toml")
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=pixi-local\necho hi\n"
+	p := writeTempScript(t, "pixi_local.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "pixi",
+		"--from", manifestPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Manifest content should appear as a Nomad template stanza.
+	if !strings.Contains(out, `[project]`) || !strings.Contains(out, `myenv`) {
+		t.Errorf("expected pixi.toml content embedded as template, got:\n%s", out)
+	}
+	if !strings.Contains(out, `destination = "local/pixi.toml"`) {
+		t.Errorf("expected template destination local/pixi.toml, got:\n%s", out)
+	}
+
+	// Pixi binary is downloaded via curl in the wrapper (no Nomad artifact stanza).
+	// The base URL from the tools endpoint should appear in the wrapper's curl command.
+	if !strings.Contains(out, `rustfs.test:9000`) {
+		t.Errorf("expected tools endpoint in curl URL, got:\n%s", out)
+	}
+	if !strings.Contains(out, `curl -fsSL`) {
+		t.Errorf("expected curl download in wrapper, got:\n%s", out)
+	}
+	// No artifact stanza should be emitted for the pixi binary.
+	if strings.Contains(out, `destination = "local/pixi"`) {
+		t.Errorf("pixi binary must not use Nomad artifact stanza (go-getter issues), got:\n%s", out)
+	}
+}
+
+func TestJobRun_PixiLocalMode_WrapperUsesTaskDir(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "pixi.toml")
+	if err := os.WriteFile(manifestPath, []byte("[project]\nname=\"e\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=pixi-wrap\necho hi\n"
+	p := writeTempScript(t, "pixi_wrap.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "pixi",
+		"--from", manifestPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Wrapper must use NOMAD_TASK_DIR paths; original local path must not appear
+	// in either the wrapper lines or the meta (meta is updated to the runtime path).
+	if strings.Contains(out, dir) {
+		t.Errorf("original local path should not appear in generated HCL, got:\n%s", out)
+	}
+	// Inside template data blocks, Nomad escapes ${...} to $${...}.
+	// NOMAD_TASK_DIR is the local/ dir itself, so the binary is at $NOMAD_TASK_DIR/pixi.
+	if !strings.Contains(out, `chmod +x "$${NOMAD_TASK_DIR}/pixi"`) {
+		t.Errorf("expected chmod for staged pixi binary, got:\n%s", out)
+	}
+	if !strings.Contains(out, `PIXI_HOME`) {
+		t.Errorf("expected PIXI_HOME export, got:\n%s", out)
+	}
+	if !strings.Contains(out, `pixi install --manifest-path`) {
+		t.Errorf("expected pixi install step, got:\n%s", out)
+	}
+	if !strings.Contains(out, `exec pixi run --manifest-path`) {
+		t.Errorf("expected exec pixi run, got:\n%s", out)
+	}
+}
+
+func TestJobRun_PixiLocalMode_CleanupFlag(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "pixi.toml")
+	if err := os.WriteFile(manifestPath, []byte("[project]\nname=\"e\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=pixi-cleanup\necho hi\n"
+	p := writeTempScript(t, "pixi_cleanup.sh", script)
+
+	// Without --pixi-cleanup: no trap.
+	outNo, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "pixi", "--from", manifestPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(outNo, "trap") {
+		t.Errorf("expected no cleanup trap without --pixi-cleanup, got:\n%s", outNo)
+	}
+
+	// With --pixi-cleanup: trap present.
+	outYes, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "pixi", "--from", manifestPath, "--pixi-cleanup",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error with --pixi-cleanup: %v", err)
+	}
+	if !strings.Contains(outYes, `trap`) || !strings.Contains(outYes, `.pixi`) {
+		t.Errorf("expected cleanup trap removing .pixi dir, got:\n%s", outYes)
+	}
+}
+
+func TestJobRun_PixiLocalMode_NoEndpointIsError(t *testing.T) {
+	// Config with no tools endpoint → resolvePixiLocalMode should error.
+	cfgNoEp := `version: 1.0
+active_context: noep
+contexts:
+  noep:
+    cluster_type: abc-cloud
+`
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "pixi.toml")
+	if err := os.WriteFile(manifestPath, []byte("[project]\nname=\"e\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\necho hi\n"
+	p := writeTempScript(t, "pixi_noep.sh", script)
+
+	_, err := executeCmdWithABCYAML(t, cfgNoEp, p,
+		"--runtime", "pixi", "--from", manifestPath,
+	)
+	if err == nil {
+		t.Fatal("expected error when no tools endpoint is configured")
+	}
+	if !strings.Contains(err.Error(), "endpoint") {
+		t.Errorf("expected endpoint mention in error, got: %v", err)
+	}
+}
+
+func TestJobRun_PixiRemoteMode_NoLocalFile_UsesLegacyWrapper(t *testing.T) {
+	// --from points to a non-existent local path → legacy mode (pixi on host).
+	script := "#!/bin/bash\n#ABC --name=pixi-remote\necho hi\n"
+	p := writeTempScript(t, "pixi_remote.sh", script)
+
+	out, err := executeCmd(t, p, "--runtime", "pixi", "--from", "/remote/host/pixi.toml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Legacy wrapper: single-quoted remote path, no chmod/PIXI_HOME/pixi install.
+	if !strings.Contains(out, `'/remote/host/pixi.toml'`) {
+		t.Errorf("expected single-quoted remote manifest path, got:\n%s", out)
+	}
+	if strings.Contains(out, "chmod") {
+		t.Errorf("expected no chmod in legacy mode, got:\n%s", out)
+	}
+	if strings.Contains(out, "pixi install") {
+		t.Errorf("expected no pixi install in legacy mode, got:\n%s", out)
+	}
+}

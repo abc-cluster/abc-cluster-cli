@@ -9,15 +9,22 @@ import (
 
 // Supported software-stack runtime identifiers (orthogonal to Nomad --driver).
 const (
-	runtimePixiExec = "pixi-exec"
+	runtimePixiExec   = "pixi-exec"
+	runtimeMicromamba = "micromamba-exec"
 )
 
 // NormalizeRuntimeID returns a canonical runtime token or "" if s is empty.
-// "pixi" is accepted as an alias for pixi-exec.
+// Accepted aliases:
+//
+//	"pixi"                → pixi-exec
+//	"micromamba", "mamba" → micromamba-exec
 func NormalizeRuntimeID(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "pixi" {
+	switch s {
+	case "pixi":
 		return runtimePixiExec
+	case "micromamba", "mamba":
+		return runtimeMicromamba
 	}
 	return s
 }
@@ -34,7 +41,7 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 	from := strings.TrimSpace(spec.From)
 	if rt == "" {
 		if from != "" {
-			return fmt.Errorf("--from requires --runtime (e.g. pixi-exec)")
+			return fmt.Errorf("--from requires --runtime (e.g. pixi-exec, micromamba-exec)")
 		}
 		return nil
 	}
@@ -42,13 +49,14 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 	switch rt {
 	case runtimePixiExec:
 		if from == "" {
-			return fmt.Errorf("runtime %q requires --from=<path-to-pixi.toml>", rt)
+			return fmt.Errorf("runtime %q requires --from=<pixi.toml or pixi.lock>", rt)
 		}
 		if strings.ContainsAny(from, "\r\n\x00") {
 			return fmt.Errorf("runtime %q: --from must be a single-line path (no newline or NUL characters)", rt)
 		}
-		if !strings.HasSuffix(strings.ToLower(from), ".toml") {
-			return fmt.Errorf("runtime %q: --from must end with .toml (path to pixi.toml on the execution host)", rt)
+		fromLower := strings.ToLower(from)
+		if !strings.HasSuffix(fromLower, ".toml") && !strings.HasSuffix(fromLower, ".lock") {
+			return fmt.Errorf("runtime %q: --from must end with .toml (pixi.toml) or .lock (pixi.lock)", rt)
 		}
 		if spec.NoNetwork {
 			return fmt.Errorf("runtime %q needs network access to solve and download packages; remove --no-network or omit --runtime", rt)
@@ -56,8 +64,27 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 		if strings.TrimSpace(spec.Conda) != "" {
 			return fmt.Errorf("runtime %q cannot be combined with conda (--conda / #ABC --conda); use only one stack", rt)
 		}
+
+	case runtimeMicromamba:
+		if from == "" {
+			return fmt.Errorf("runtime %q requires --from=<path-to-environment.yml>", rt)
+		}
+		if strings.ContainsAny(from, "\r\n\x00") {
+			return fmt.Errorf("runtime %q: --from must be a single-line path (no newline or NUL characters)", rt)
+		}
+		fromLower := strings.ToLower(from)
+		if !strings.HasSuffix(fromLower, ".yml") && !strings.HasSuffix(fromLower, ".yaml") {
+			return fmt.Errorf("runtime %q: --from must end with .yml or .yaml (path to conda environment file)", rt)
+		}
+		if spec.NoNetwork {
+			return fmt.Errorf("runtime %q needs network access to download packages; remove --no-network or omit --runtime", rt)
+		}
+		if strings.TrimSpace(spec.Conda) != "" {
+			return fmt.Errorf("runtime %q cannot be combined with --conda; use only one stack", rt)
+		}
+
 	default:
-		return fmt.Errorf("unsupported runtime %q (supported: pixi-exec, alias pixi)", spec.Runtime)
+		return fmt.Errorf("unsupported runtime %q (supported: pixi-exec (alias pixi), micromamba-exec (aliases: micromamba, mamba))", spec.Runtime)
 	}
 
 	return validateDriverForRuntime(strings.TrimSpace(spec.Driver), rt)
@@ -68,15 +95,15 @@ func validateDriverForRuntime(driver, runtime string) error {
 		return fmt.Errorf("internal: task driver is empty before runtime validation")
 	}
 	switch runtime {
-	case runtimePixiExec:
+	case runtimePixiExec, runtimeMicromamba:
 		if driver == "slurm" {
-			return fmt.Errorf(`runtime %q is not supported with task driver "slurm" (the batch script is passed inline to the bridge and is not materialized as a task-local file; use "exec", "docker", "containerd-driver", or "hpc-bridge")`, runtime)
+			return fmt.Errorf(`runtime %q is not supported with task driver "slurm" (use "exec", "raw_exec", "docker", "containerd-driver", or "hpc-bridge")`, runtime)
 		}
 		switch driver {
 		case "exec", "raw_exec", "docker", "containerd-driver", "hpc-bridge":
 			return nil
 		default:
-			return fmt.Errorf("runtime %q is not supported with task driver %q (allowed drivers: exec, raw_exec, docker, containerd-driver, hpc-bridge)",
+			return fmt.Errorf("runtime %q is not supported with task driver %q (allowed: exec, raw_exec, docker, containerd-driver, hpc-bridge)",
 				runtime, driver)
 		}
 	default:
@@ -112,7 +139,21 @@ func FinalizeJobScript(spec *jobSpec, scriptName, script string) (string, error)
 	switch rt {
 	case "":
 	case runtimePixiExec:
-		w, err := pixiWrapperLines(scriptName, strings.TrimSpace(spec.From), spec.Driver)
+		binaryURL := ""
+		if spec != nil {
+			binaryURL = spec.PixiBinaryURL
+		}
+		w, err := pixiWrapperLines(scriptName, strings.TrimSpace(spec.From), spec.Driver, spec.PixiCleanup, binaryURL, spec.PixiInstallLocked)
+		if err != nil {
+			return "", err
+		}
+		prefix = append(prefix, w...)
+	case runtimeMicromamba:
+		binaryURL := ""
+		if spec != nil {
+			binaryURL = spec.MicromambaBinaryURL
+		}
+		w, err := micromambaWrapperLines(scriptName, strings.TrimSpace(spec.From), spec.Driver, spec.MicromambaCleanup, binaryURL)
 		if err != nil {
 			return "", err
 		}
@@ -150,21 +191,69 @@ func insertLinesAfterShebang(script string, insert []string) string {
 	return out
 }
 
-// prependPixiWorkspaceWrapper injects a guard that re-execs the script under
-// `pixi run --manifest-path <manifest>`, so the user's preamble and body run
-// inside the Pixi default environment.
+// pixiWrapperLines builds the guard block that re-execs the script inside pixi.
+//
+// Local mode (manifestPath starts with "${NOMAD_TASK_DIR}"): the pixi.toml is
+// staged as a Nomad template. The wrapper downloads the pixi binary via curl
+// (using shell-side uname detection), sets PIXI_HOME to a job-local directory,
+// runs `pixi install` (optionally with --locked when locked is true), then
+// re-execs under `pixi run`. An optional cleanup trap removes the env dir.
+//
+// Legacy remote mode: pixi is assumed pre-installed on the execution host.
 //
 // Note: Pixi's `exec` subcommand does not support --manifest-path (as of
 // pixi 0.46); workspace-bound execution uses `pixi run --manifest-path`.
-func pixiWrapperLines(scriptName, manifestPath, driver string) ([]string, error) {
+func pixiWrapperLines(scriptName, manifestPath, driver string, cleanup bool, binaryURL string, locked bool) ([]string, error) {
 	if scriptName == "" {
 		return nil, fmt.Errorf("internal: empty script name for pixi wrapper")
 	}
-	qManifest := shellSingleQuote(manifestPath)
 	innerArg := jobhcl.ScriptArgForDriver(driver, scriptName)
 	innerQuoted := bashDoubleQuote(innerArg)
+
+	// Local mode: pixi.toml is staged as a Nomad template; binary is downloaded
+	// via curl in the wrapper using shell uname for platform detection.
+	if strings.HasPrefix(manifestPath, "${NOMAD_TASK_DIR}") {
+		qManifest := bashDoubleQuote(manifestPath)
+		lines := []string{
+			`if [ "${ABC_RUNTIME_PIXI_PHASE:-}" != inner ]; then`,
+			`  export ABC_RUNTIME_PIXI_PHASE=inner`,
+		}
+		if binaryURL != "" {
+			qURL := bashDoubleQuote(binaryURL)
+			lines = append(lines,
+				`  _ABC_KERNEL="$(uname -s | tr '[:upper:]' '[:lower:]')"`,
+				`  _ABC_ARCH="$(uname -m)"`,
+				`  case "${_ABC_ARCH}" in x86_64) _ABC_ARCH=amd64 ;; aarch64) _ABC_ARCH=arm64 ;; esac`,
+				fmt.Sprintf(`  curl -fsSL %s-"${_ABC_KERNEL}-${_ABC_ARCH}" -o "${NOMAD_TASK_DIR}/pixi" || { echo "[abc] pixi download failed" >&2; exit 1; }`, qURL),
+			)
+		}
+		lines = append(lines,
+			`  chmod +x "${NOMAD_TASK_DIR}/pixi"`,
+			`  export PATH="${NOMAD_TASK_DIR}:${PATH}"`,
+			`  export PIXI_HOME="${NOMAD_TASK_DIR}/.pixi"`,
+		)
+		if cleanup {
+			lines = append(lines,
+				`  trap 'rm -rf "${NOMAD_TASK_DIR}/.pixi"' EXIT`,
+			)
+		}
+		installCmd := fmt.Sprintf(`  pixi install --manifest-path %s`, qManifest)
+		if locked {
+			installCmd += " --locked"
+		}
+		lines = append(lines,
+			installCmd,
+			fmt.Sprintf(`  exec pixi run --manifest-path %s -- /bin/bash %s "$@"`, qManifest, innerQuoted),
+			`fi`,
+			``,
+		)
+		return lines, nil
+	}
+
+	// Legacy remote mode: pixi is pre-installed on the execution host.
 	// Inner invocation must match ScriptArgForDriver so docker/containerd do not
 	// resolve .../local/... twice (see internal/hclgen/job ociTaskScriptArg).
+	qManifest := shellSingleQuote(manifestPath)
 	return []string{
 		`if [ "${ABC_RUNTIME_PIXI_PHASE:-}" != inner ]; then`,
 		`  export ABC_RUNTIME_PIXI_PHASE=inner`,
@@ -175,11 +264,75 @@ func pixiWrapperLines(scriptName, manifestPath, driver string) ([]string, error)
 }
 
 func prependPixiWorkspaceWrapper(script, scriptName, manifestPath, driver string) (string, error) {
-	wrapper, err := pixiWrapperLines(scriptName, manifestPath, driver)
+	wrapper, err := pixiWrapperLines(scriptName, manifestPath, driver, false, "", false)
 	if err != nil {
 		return "", err
 	}
 	return insertLinesAfterShebang(script, wrapper), nil
+}
+
+// micromambaWrapperLines builds the guard block that creates a conda environment
+// via micromamba and re-execs the script inside it.
+//
+// Local mode (envPath starts with "${NOMAD_TASK_DIR}"): the environment.yml is
+// staged as a Nomad template. The wrapper downloads micromamba via curl, creates
+// the conda env at ${NOMAD_TASK_DIR}/.mamba/env, then re-execs via `micromamba run`.
+// An optional cleanup trap removes the env dir on exit.
+//
+// Legacy remote mode: micromamba is assumed pre-installed on the execution host.
+func micromambaWrapperLines(scriptName, envPath, driver string, cleanup bool, binaryURL string) ([]string, error) {
+	if scriptName == "" {
+		return nil, fmt.Errorf("internal: empty script name for micromamba wrapper")
+	}
+	innerArg := jobhcl.ScriptArgForDriver(driver, scriptName)
+	innerQuoted := bashDoubleQuote(innerArg)
+	envPrefix := `"${NOMAD_TASK_DIR}/.mamba/env"`
+
+	// Local mode: environment.yml staged as a Nomad template; binary downloaded via curl.
+	if strings.HasPrefix(envPath, "${NOMAD_TASK_DIR}") {
+		qEnvFile := bashDoubleQuote(envPath)
+		lines := []string{
+			`if [ "${ABC_RUNTIME_MAMBA_PHASE:-}" != inner ]; then`,
+			`  export ABC_RUNTIME_MAMBA_PHASE=inner`,
+		}
+		if binaryURL != "" {
+			qURL := bashDoubleQuote(binaryURL)
+			lines = append(lines,
+				`  _ABC_KERNEL="$(uname -s | tr '[:upper:]' '[:lower:]')"`,
+				`  _ABC_ARCH="$(uname -m)"`,
+				`  case "${_ABC_ARCH}" in x86_64) _ABC_ARCH=amd64 ;; aarch64) _ABC_ARCH=arm64 ;; esac`,
+				fmt.Sprintf(`  curl -fsSL %s-"${_ABC_KERNEL}-${_ABC_ARCH}" -o "${NOMAD_TASK_DIR}/micromamba" || { echo "[abc] micromamba download failed" >&2; exit 1; }`, qURL),
+			)
+		}
+		lines = append(lines,
+			`  chmod +x "${NOMAD_TASK_DIR}/micromamba"`,
+			`  export MAMBA_ROOT_PREFIX="${NOMAD_TASK_DIR}/.mamba"`,
+		)
+		if cleanup {
+			lines = append(lines,
+				`  trap 'rm -rf "${NOMAD_TASK_DIR}/.mamba"' EXIT`,
+			)
+		}
+		lines = append(lines,
+			fmt.Sprintf(`  "${NOMAD_TASK_DIR}/micromamba" env create --file %s --prefix %s --yes --quiet || { echo "[abc] micromamba env create failed" >&2; exit 1; }`, qEnvFile, envPrefix),
+			fmt.Sprintf(`  exec "${NOMAD_TASK_DIR}/micromamba" run --prefix %s -- /bin/bash %s "$@"`, envPrefix, innerQuoted),
+			`fi`,
+			``,
+		)
+		return lines, nil
+	}
+
+	// Legacy remote mode: micromamba is pre-installed on the execution host.
+	qEnvFile := shellSingleQuote(envPath)
+	return []string{
+		`if [ "${ABC_RUNTIME_MAMBA_PHASE:-}" != inner ]; then`,
+		`  export ABC_RUNTIME_MAMBA_PHASE=inner`,
+		`  export MAMBA_ROOT_PREFIX="${NOMAD_TASK_DIR}/.mamba"`,
+		fmt.Sprintf(`  micromamba env create --file %s --prefix %s --yes --quiet || { echo "[abc] micromamba env create failed" >&2; exit 1; }`, qEnvFile, envPrefix),
+		fmt.Sprintf(`  exec micromamba run --prefix %s -- /bin/bash %s "$@"`, envPrefix, innerQuoted),
+		`fi`,
+		``,
+	}, nil
 }
 
 func shellSingleQuote(s string) string {

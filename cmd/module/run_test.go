@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -36,7 +37,11 @@ func TestModuleRunDryRun_EmitsGenerateAndRunTasks(t *testing.T) {
 	}
 
 	checks := []string{
-		`job "module-nf-core-fastqc"`,
+		// Job name slug — `module run` may prepend a whoami-derived prefix
+		// from the active context (e.g. `abhad-module-nf-core-fastqc`), so we
+		// only assert the module-derived suffix here. The full `job "<name>"`
+		// HCL line is implicitly covered by the next checks.
+		`module-nf-core-fastqc"`,
 		`task "generate"`,
 		`hook    = "prestart"`,
 		`task "nextflow"`,
@@ -65,8 +70,9 @@ func TestModuleRunDryRun_TestModeForcesTestProfileAndEnv(t *testing.T) {
 	}
 
 	checks := []string{
-		`job "module-nf-core-seqkit-stats"`,
-		`ABC_MODULE_TEST_MODE = "1"`,
+		// See note in TestModuleRunDryRun_EmitsGenerateAndRunTasks: a whoami
+		// prefix may precede the module slug, so we match the suffix only.
+		`module-nf-core-seqkit-stats"`,
 		`-profile "test"`,
 		`nf-core/seqkit/stats`,
 	}
@@ -74,6 +80,13 @@ func TestModuleRunDryRun_TestModeForcesTestProfileAndEnv(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in dry-run output\n%s", want, out)
 		}
+	}
+	// HCL formatter aligns env block keys by the longest key in the block,
+	// so the spacing between `ABC_MODULE_TEST_MODE` and `=` varies as new
+	// env vars get added. Match the assignment with a regex instead of a
+	// literal substring to keep this assertion robust.
+	if !regexp.MustCompile(`ABC_MODULE_TEST_MODE\s*=\s*"1"`).MatchString(out) {
+		t.Fatalf("expected ABC_MODULE_TEST_MODE = \"1\" in dry-run output\n%s", out)
 	}
 }
 

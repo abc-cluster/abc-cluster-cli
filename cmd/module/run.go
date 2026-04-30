@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	admintools "github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module/samplesheet"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
@@ -68,6 +69,7 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().String("pipeline-gen-repo", "abc-cluster/nf-pipeline-gen", "GitHub repository for nf-pipeline-gen release assets (owner/repo)")
 	cmd.Flags().String("pipeline-gen-version", "latest", "nf-pipeline-gen release to use: latest or a specific tag")
 	cmd.Flags().String("pipeline-gen-url-base", "", "Direct URL base for the JAR (e.g. http://rustfs.aither/releases/nf-pipeline-gen). When set, prestart fetches <base>/<version>/pipeline-gen.jar and skips GitHub")
+	cmd.Flags().String("pipeline-gen-jar-url", "", "Complete JAR URL (overrides --pipeline-gen-url-base and GitHub). Auto-resolved from the active context's `abc admin tools push nf-pipeline-gen` artifact URL when unset.")
 	cmd.Flags().String("github-token", utils.EnvOrDefault("GITHUB_TOKEN", "GH_TOKEN"), "GitHub token for release API/download access (or set GITHUB_TOKEN/GH_TOKEN)")
 
 	cmd.Flags().String("nf-version", "", "Nextflow Docker image tag for generate/run tasks (default: 25.10.4)")
@@ -150,6 +152,23 @@ func runModule(cmd *cobra.Command, args []string) error {
 		// hostname is already an IP.
 		if r := autoResolveCurlOverride(v); r != "" {
 			spec.PipelineGenURLResolve = r
+		}
+	}
+	if v, _ := cmd.Flags().GetString("pipeline-gen-jar-url"); v != "" {
+		spec.PipelineGenJarURL = v
+		if r := autoResolveCurlOverride(v); r != "" && spec.PipelineGenURLResolve == "" {
+			spec.PipelineGenURLResolve = r
+		}
+	} else if spec.PipelineGenURLBase == "" {
+		// Auto-resolve from `abc admin tools push nf-pipeline-gen` so
+		// admins who pushed the JAR don't need to repeat the URL on
+		// every invocation. Silent fall-through if not configured —
+		// the prestart's GitHub-releases path still works.
+		if u, err := admintools.ArtifactURL("nf-pipeline-gen", ""); err == nil && u != "" {
+			spec.PipelineGenJarURL = u
+			if r := autoResolveCurlOverride(u); r != "" && spec.PipelineGenURLResolve == "" {
+				spec.PipelineGenURLResolve = r
+			}
 		}
 	}
 	if v, _ := cmd.Flags().GetString("github-token"); v != "" {
@@ -236,12 +255,27 @@ func runModule(cmd *cobra.Command, args []string) error {
 	if nomadAddr == "" {
 		nomadAddr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
 	}
-	if nomadAddr == "" {
-		nomadAddr = "http://127.0.0.1:4646"
-	}
 	nomadToken, _ := cmd.Flags().GetString("nomad-token")
 	if nomadToken == "" {
 		nomadToken, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
+	}
+	// Fall back to the active context's admin.services.nomad config before
+	// the hardcoded localhost. Without this, `module run` against an
+	// abc-bootstrap-style context tries 127.0.0.1:4646 and the preflight
+	// fails before the actual Nomad client (which DOES read the config)
+	// gets a chance to talk to the cluster — i.e. the addr passed to
+	// preflightNomad and the addr embedded into the job spec disagree.
+	if nomadAddr == "" || nomadToken == "" {
+		cfgAddr, cfgToken, _ := utils.NomadDefaultsFromConfig()
+		if nomadAddr == "" {
+			nomadAddr = cfgAddr
+		}
+		if nomadToken == "" {
+			nomadToken = cfgToken
+		}
+	}
+	if nomadAddr == "" {
+		nomadAddr = "http://127.0.0.1:4646"
 	}
 
 	runUUID := newRunUUID()

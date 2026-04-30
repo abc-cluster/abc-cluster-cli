@@ -1,0 +1,7 @@
+[workspace]
+name = "bio-min"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64"]
+
+[dependencies]
+pigz = ">=2.8"

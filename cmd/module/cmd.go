@@ -3,6 +3,7 @@ package module
 import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module/samplesheet"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -66,11 +67,20 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 		WithCloud(utils.CloudFromCmd(cmd))
 }
 
-// namespaceFromCmd reads the --namespace flag, falling back up to the root.
+// namespaceFromCmd reads the --namespace flag, falling back up to the
+// root persistent flag, then to the active context's
+// admin.abc_nodes.nomad_namespace. Without the config-level fallback,
+// `module run` against an abc-bootstrap-style context registers the
+// job in `default` (where there are no nodes) instead of `abc-services`.
 func namespaceFromCmd(cmd *cobra.Command) string {
 	ns, _ := cmd.Flags().GetString("namespace")
 	if ns == "" {
 		ns, _ = cmd.Root().PersistentFlags().GetString("namespace")
+	}
+	if ns == "" {
+		if cfg, err := config.Load(); err == nil && cfg != nil {
+			ns = cfg.ActiveCtx().AbcNodesNomadNamespaceForCLI()
+		}
 	}
 	return ns
 }

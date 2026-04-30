@@ -365,6 +365,42 @@ func findCrossArchAsset(release *utils.GitHubRelease, goos, goarch string) *util
 	}
 
 	if len(candidates) == 0 {
+		// Second pass: accept plain binaries (no archive extension) for repos
+		// like wave-cli that ship bare executables without tarballs.
+		for _, asset := range release.Assets {
+			n := strings.ToLower(asset.Name)
+			skip := false
+			for _, sx := range skipExts {
+				if strings.HasSuffix(n, sx) {
+					skip = true
+					break
+				}
+			}
+			if skip || strings.HasSuffix(n, ".txt") || strings.HasSuffix(n, ".sig") ||
+				strings.HasSuffix(n, ".sha256") || strings.HasSuffix(n, ".sha256sum") ||
+				strings.HasSuffix(n, ".minisig") || strings.HasSuffix(n, ".asc") ||
+				strings.HasSuffix(n, ".jar") {
+				continue
+			}
+			hasOS := false
+			for _, o := range osList {
+				if strings.Contains(n, o) {
+					hasOS = true
+					break
+				}
+			}
+			if !hasOS {
+				continue
+			}
+			for _, a := range archList {
+				if strings.Contains(n, a) {
+					candidates = append(candidates, asset)
+					break
+				}
+			}
+		}
+	}
+	if len(candidates) == 0 {
 		return nil
 	}
 	// Prefer musl (statically linked, most portable on cluster nodes).

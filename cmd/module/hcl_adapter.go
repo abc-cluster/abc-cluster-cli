@@ -17,6 +17,7 @@ func generateModuleRunHCL(spec *RunSpec, nomadAddr, nomadToken, runUUID string) 
 		OutputPrefix:       spec.OutputPrefix,
 		PipelineGenRepo:    spec.PipelineGenRepo,
 		PipelineGenVersion: spec.PipelineGenVersion,
+		PipelineGenJarURL:     spec.PipelineGenJarURL,
 		PipelineGenURLBase:    spec.PipelineGenURLBase,
 		PipelineGenURLResolve: spec.PipelineGenURLResolve,
 		ModuleRevision:     spec.ModuleRevision,

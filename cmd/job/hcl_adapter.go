@@ -51,6 +51,29 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		})
 	}
 
+	var extraTemplates []jobhcl.TemplateSpec
+	if spec.PixiManifestContent != "" {
+		extraTemplates = append(extraTemplates, jobhcl.TemplateSpec{
+			Data:        spec.PixiManifestContent,
+			Destination: "local/pixi.toml",
+			Perms:       "0644",
+		})
+	}
+	if spec.PixiLockContent != "" {
+		extraTemplates = append(extraTemplates, jobhcl.TemplateSpec{
+			Data:        spec.PixiLockContent,
+			Destination: "local/pixi.lock",
+			Perms:       "0644",
+		})
+	}
+	if spec.MicromambaEnvContent != "" {
+		extraTemplates = append(extraTemplates, jobhcl.TemplateSpec{
+			Data:        spec.MicromambaEnvContent,
+			Destination: "local/environment.yml",
+			Perms:       "0644",
+		})
+	}
+
 	constraints := make([]jobhcl.Constraint, 0, len(spec.Constraints))
 	for _, c := range spec.Constraints {
 		constraints = append(constraints, jobhcl.Constraint{
@@ -129,6 +152,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		ExposeSecretsDir:    spec.ExposeSecretsDir,
 		StaticEnv:           staticEnv,
 		Artifacts:           artifacts,
+		ExtraTemplates:      extraTemplates,
 	}
 	return jobhcl.Generate(hclSpec, scriptName, scriptContent)
 }

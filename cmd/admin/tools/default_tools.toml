@@ -83,6 +83,11 @@ version = "latest"
 repo    = "mamba-org/micromamba-releases"
 version = "latest"
 
+[tools.wave]
+repo    = "seqeralabs/wave-cli"
+version = "latest"
+
+
 # ── Locally built artifacts ────────────────────────────────────────────────────
 #
 # [local.<name>] entries push locally built binaries or JARs to the cluster S3
@@ -94,9 +99,11 @@ version = "latest"
 #   paths  — architecture-specific binaries (Go, Rust, C, …).
 #             Map key is "<os>-<arch>" (e.g. "linux-amd64").
 #             Remote key: <prefix>/<name>-<os>-<arch>
+#             artifact-url: …/<name>-${attr.kernel.name}-${attr.cpu.arch}
 #
 #   path   — architecture-agnostic artifact (JAR, Python wheel, …).
-#             Remote key: <prefix>/<basename of path>
+#             Remote key: <prefix>/<name>-any  (consistent, no arch suffix)
+#             artifact-url: …/<name>-any  (fixed URL, no Nomad interpolation)
 #
 # disabled = true skips the entry without removing it.
 #

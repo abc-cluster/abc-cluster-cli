@@ -642,16 +642,38 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 
 	if driver == "exec" || driver == "raw_exec" {
 		var artifacts []downloadArtifact
+		// Track per-artifact (tool name, URL basename) so the prelude can
+		// rename + chmod after Nomad fetches them. We set destination to the
+		// task-local dir (no filename) and mode=file so go-getter saves the
+		// fetched object using the URL's basename — this avoids the Nomad
+		// 1.11.x "readdirent ... not a directory" bug that fires when both
+		// destination *and* mode point to a single-file path.
+		type stagedTool struct{ tool, basename string }
+		var staged []stagedTool
+
+		addArtifact := func(toolName, artURL string) {
+			basename := artURL
+			if i := strings.LastIndex(artURL, "/"); i >= 0 {
+				basename = artURL[i+1:]
+			}
+			// Use a directory destination + auto-detect mode.
+			// Nomad 1.11.x's go-getter has bugs when destination is a single
+			// file path (mode=file → "not a directory"; auto → drops file in
+			// a subdir). With dest=local/ and no mode, the binary lands at
+			// ${NOMAD_TASK_DIR}/<basename> directly, which the prelude renames
+			// to the plain tool name.
+			artifacts = append(artifacts, downloadArtifact{
+				URL:  artURL,
+				Dest: "local/",
+			})
+			staged = append(staged, stagedTool{tool: toolName, basename: basename})
+		}
 
 		// Stage the primary download tool via Nomad artifact stanza when it is
 		// registered in tools.toml (preferred over runtime bash bootstrapping).
 		if tool != "wget" {
 			if artURL := toolNomadArtifactURL(tool); artURL != "" {
-				artifacts = append(artifacts, downloadArtifact{
-					URL:  artURL,
-					Dest: "local/" + tool,
-					Mode: "file",
-				})
+				addArtifact(tool, artURL)
 			}
 		}
 
@@ -659,28 +681,24 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 		// tool is not s5cmd itself (s5cmd is already covered above in that case).
 		if opts.destination == "storage" && tool != "s5cmd" {
 			if artURL := toolNomadArtifactURL("s5cmd"); artURL != "" {
-				artifacts = append(artifacts, downloadArtifact{
-					URL:  artURL,
-					Dest: "local/s5cmd",
-					Mode: "file",
-				})
+				addArtifact("s5cmd", artURL)
 			}
 		}
 
 		if len(artifacts) > 0 {
 			submitOpts.Artifacts = artifacts
-			// Nomad artifact `destination = "local/<name>"` lands the file at
-			// ${NOMAD_TASK_DIR}/<name> because NOMAD_TASK_DIR *is* the task's
-			// local/ directory. Prepend it to PATH and chmod +x so plain-name
-			// invocation works for every artifact-staged tool.
+			// Rename each fetched binary to its plain tool name (s5cmd-linux-amd64
+			// → s5cmd) and chmod +x. NOMAD_TASK_DIR is the task's local/ dir.
 			var prelude strings.Builder
 			prelude.WriteString("export PATH=\"${NOMAD_TASK_DIR}:${PATH}\"\n")
-			for _, art := range artifacts {
-				name := strings.TrimPrefix(art.Dest, "local/")
-				if name == "" {
+			for _, st := range staged {
+				if st.basename == "" || st.tool == "" {
 					continue
 				}
-				prelude.WriteString(fmt.Sprintf("chmod +x \"${NOMAD_TASK_DIR}/%s\" 2>/dev/null || true\n", name))
+				prelude.WriteString(fmt.Sprintf(
+					"if [ -f \"${NOMAD_TASK_DIR}/%s\" ] && [ \"%s\" != \"%s\" ]; then mv \"${NOMAD_TASK_DIR}/%s\" \"${NOMAD_TASK_DIR}/%s\"; fi\n",
+					st.basename, st.basename, st.tool, st.basename, st.tool))
+				prelude.WriteString(fmt.Sprintf("chmod +x \"${NOMAD_TASK_DIR}/%s\" 2>/dev/null || true\n", st.tool))
 			}
 			taskBody = prelude.String() + taskBody
 		} else if needsS5cmdBootstrap(driver, tool, opts.destination) {
@@ -763,6 +781,11 @@ func toolNomadArtifactURL(toolName string) string {
 		return ""
 	}
 
-	return fmt.Sprintf("%s/%s/%s/%s-${attr.kernel.name}-${attr.cpu.arch}",
+	// Nomad 1.11.3 mishandles ${attr.*} substitution in artifact source URLs
+	// (downloads succeed but go-getter then fails with "readdirent ... not a
+	// directory" on the staged file). Hard-code linux-amd64 — matches every
+	// current cluster client — until the upstream issue is fixed. Re-introduce
+	// the template once Nomad's getter handles it reliably.
+	return fmt.Sprintf("%s/%s/%s/%s-linux-amd64",
 		endpoint, bucket, prefix, toolName)
 }

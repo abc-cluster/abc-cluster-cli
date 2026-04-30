@@ -34,6 +34,13 @@ type RunSpec struct {
 	// limits and lets devs ship local builds without cutting a release.
 	PipelineGenURLBase string
 
+	// PipelineGenJarURL is a complete JAR URL written by
+	// `abc admin tools push nf-pipeline-gen`. Auto-populated from the
+	// active context's tools.endpoint when neither --pipeline-gen-url-base
+	// nor --pipeline-gen-jar-url is set; fully overrides the versioned
+	// URL_BASE and the GitHub releases path.
+	PipelineGenJarURL string
+
 	// PipelineGenURLResolve is a curl --resolve override (host:port:ip) used
 	// when the URL hostname is only resolvable via Tailscale magicDNS on the
 	// host but the container's resolv.conf doesn't include 100.100.100.100.

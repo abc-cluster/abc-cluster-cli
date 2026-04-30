@@ -510,20 +510,30 @@ func findExtractedBinary(root, name string) (string, error) {
 	}
 
 	var picked string
+	var prefixMatch string
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		if filepath.Base(path) == want {
+		base := filepath.Base(path)
+		if base == want {
 			picked = path
 			return fs.SkipAll
 		}
+		// Prefix fallback: handles plain-binary releases where the file is named
+		// e.g. wave-1.8.2-linux-x86_64 instead of just wave.
+		if prefixMatch == "" && (strings.HasPrefix(base, name+"-") || strings.HasPrefix(base, name+"_")) {
+			prefixMatch = path
+		}
 		return nil
 	})
-	if picked == "" {
-		return "", fmt.Errorf("binary %q not found under %s", want, root)
+	if picked != "" {
+		return picked, nil
 	}
-	return picked, nil
+	if prefixMatch != "" {
+		return prefixMatch, nil
+	}
+	return "", fmt.Errorf("binary %q not found under %s", want, root)
 }
 
 func findHashiUpAssetForPlatform(release *GitHubRelease) (*GitHubReleaseAsset, error) {

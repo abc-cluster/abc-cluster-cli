@@ -41,6 +41,13 @@ type Spec struct {
 	// GitHub releases API. Mirrors the abc-node-probe RustFS-mirror pattern.
 	PipelineGenURLBase string
 
+	// PipelineGenJarURL is a complete JAR URL written by the
+	// `abc admin tools push nf-pipeline-gen` workflow. Highest-priority
+	// resolution path in jarfetch.go — wins over PipelineGenURLBase and
+	// the GitHub releases path. When set, no sha256sums.txt is fetched
+	// (the artifact identity IS the URL).
+	PipelineGenJarURL string
+
 	// PipelineGenURLResolve: optional `host:port:ip` override passed to curl
 	// via `--resolve`. Useful when the URL hostname only resolves via
 	// Tailscale magicDNS on the host but containerd-driver containers don't
@@ -159,6 +166,9 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	genEnv := genTaskBody.AppendNewBlock("env", nil).Body()
 	genEnv.SetAttributeValue("GITHUB_TOKEN", cty.StringVal(spec.GitHubToken))
+	if spec.PipelineGenJarURL != "" {
+		genEnv.SetAttributeValue("ABC_PIPELINE_GEN_JAR_URL", cty.StringVal(spec.PipelineGenJarURL))
+	}
 	if spec.PipelineGenURLBase != "" {
 		genEnv.SetAttributeValue("ABC_PIPELINE_GEN_URL_BASE", cty.StringVal(spec.PipelineGenURLBase))
 	}

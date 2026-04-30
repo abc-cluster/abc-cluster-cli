@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	admintools "github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	hclgenmodule "github.com/abc-cluster/abc-cluster-cli/internal/hclgen/module"
@@ -61,6 +62,7 @@ Example:
 	cmd.Flags().String("pipeline-gen-repo", defaultPipelineGenRepo, "GitHub repo for nf-pipeline-gen release assets")
 	cmd.Flags().String("pipeline-gen-version", defaultPipelineGenVersion, "nf-pipeline-gen release tag (or 'latest')")
 	cmd.Flags().String("pipeline-gen-url-base", "", "Direct URL base for the JAR (mirror); skips GitHub when set")
+	cmd.Flags().String("pipeline-gen-jar-url", "", "Complete JAR URL (overrides --pipeline-gen-url-base and GitHub). Auto-resolved from the active context's `abc admin tools push nf-pipeline-gen` artifact URL when unset.")
 	cmd.Flags().String("github-token", utils.EnvOrDefault("GITHUB_TOKEN", "GH_TOKEN"), "GitHub token for release download (or set GITHUB_TOKEN/GH_TOKEN)")
 	cmd.Flags().Duration("wait-timeout", defaultWaitTimeout, "Maximum time to wait for the emit job to complete")
 	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
@@ -104,12 +106,23 @@ func runEmit(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("pipeline-gen-url-base"); v != "" {
 		spec.PipelineGenURLBase = v
 	}
+	if v, _ := cmd.Flags().GetString("pipeline-gen-jar-url"); v != "" {
+		spec.PipelineGenJarURL = v
+	} else if spec.PipelineGenURLBase == "" {
+		// Auto-resolve from the active context's
+		// `abc admin tools push nf-pipeline-gen` artifact URL so the
+		// admin doesn't need to repeat the URL on every invocation.
+		// Silent fall-through if not configured.
+		if u, err := admintools.ArtifactURL("nf-pipeline-gen", ""); err == nil && u != "" {
+			spec.PipelineGenJarURL = u
+		}
+	}
 	if v, _ := cmd.Flags().GetString("github-token"); v != "" {
 		spec.GitHubToken = v
 	}
 
-	if spec.GitHubToken == "" && spec.PipelineGenURLBase == "" {
-		return fmt.Errorf("missing GitHub token: set GITHUB_TOKEN or GH_TOKEN env var, or pass --pipeline-gen-url-base")
+	if spec.GitHubToken == "" && spec.PipelineGenURLBase == "" && spec.PipelineGenJarURL == "" {
+		return fmt.Errorf("missing GitHub token: set GITHUB_TOKEN or GH_TOKEN env var, push the JAR via `abc admin tools push nf-pipeline-gen`, or pass --pipeline-gen-url-base / --pipeline-gen-jar-url")
 	}
 
 	output, _ := cmd.Flags().GetString("output")

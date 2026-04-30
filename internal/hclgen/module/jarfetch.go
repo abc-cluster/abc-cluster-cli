@@ -1,18 +1,35 @@
 package module
 
 // PipelineGenJarFetchScript returns the bash fragment that resolves
-// `$JAR_PATH` for the nf-pipeline-gen jar. The caller is responsible for
-// setting `$PIPELINE_GEN_REPO`, `$PIPELINE_GEN_VERSION`, `$JAR_PATH`, and
-// (optionally) `$ABC_PIPELINE_GEN_URL_BASE`, `$ABC_PIPELINE_GEN_URL_RESOLVE`,
-// `$GITHUB_TOKEN` before invoking. Direct-URL mode is preferred when
-// available; otherwise resolves the asset via the GitHub releases API.
+// `$JAR_PATH` for the nf-pipeline-gen jar. Three resolution paths, tried
+// in order:
 //
-// Extracted from `generateScriptTmpl` (the prestart of `abc module run`) so
-// that the new `abc module samplesheet emit` job can share the same fetch
-// logic — a single source of truth for mirror handling, sha256 verification,
-// magicDNS overrides, and GitHub auth.
+//  1. `$ABC_PIPELINE_GEN_JAR_URL`  — single full URL (no version path
+//     concat, no sha256 lookup at the same prefix). This is the
+//     `abc admin tools push nf-pipeline-gen` path: the jar lives at a
+//     fixed `…/<bucket>/<prefix>/nf-pipeline-gen-any` URL written into
+//     the active context after the first push.
+//  2. `$ABC_PIPELINE_GEN_URL_BASE` + `$PIPELINE_GEN_VERSION`  — versioned
+//     mirror layout (`<base>/<version>/pipeline-gen.jar`) with
+//     sha256sums.txt verification.
+//  3. GitHub releases API  — needs `$GITHUB_TOKEN`.
+//
+// Extracted from `generateScriptTmpl` (the prestart of `abc module run`)
+// so that the new `abc module samplesheet emit` job can share the same
+// fetch logic.
 func PipelineGenJarFetchScript() string {
-	return `if [ -n "${ABC_PIPELINE_GEN_URL_BASE:-}" ]; then
+	return `if [ -n "${ABC_PIPELINE_GEN_JAR_URL:-}" ]; then
+  # Single-URL mode: jar lives at a fixed path written by the abc admin
+  # tools push framework. No version concat, no sha256sums.txt — the
+  # path itself is the artifact identity.
+  RESOLVE_OPTS=()
+  if [ -n "${ABC_PIPELINE_GEN_URL_RESOLVE:-}" ]; then
+    RESOLVE_OPTS+=(--resolve "$ABC_PIPELINE_GEN_URL_RESOLVE")
+  fi
+  echo ">> Fetching pipeline-gen.jar from tools mirror: $ABC_PIPELINE_GEN_JAR_URL"
+  curl -fsSL "${RESOLVE_OPTS[@]}" -L -o "$JAR_PATH" "$ABC_PIPELINE_GEN_JAR_URL"
+  test -s "$JAR_PATH"
+elif [ -n "${ABC_PIPELINE_GEN_URL_BASE:-}" ]; then
   # Direct-URL mode: fetch JAR from a mirror (e.g. RustFS) instead of GitHub.
   JAR_URL="${ABC_PIPELINE_GEN_URL_BASE%/}/${PIPELINE_GEN_VERSION}/pipeline-gen.jar"
   SHA_URL="${ABC_PIPELINE_GEN_URL_BASE%/}/${PIPELINE_GEN_VERSION}/sha256sums.txt"

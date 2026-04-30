@@ -71,6 +71,14 @@ type ArtifactSpec struct {
 	Mode string
 }
 
+// TemplateSpec describes an additional Nomad template stanza beyond the job script.
+// Used to stage supporting files (e.g. a pixi.toml manifest) into the task dir.
+type TemplateSpec struct {
+	Data        string
+	Destination string
+	Perms       string // e.g. "0644"; empty uses Nomad's default
+}
+
 type Spec struct {
 	Name               string
 	Namespace          string
@@ -146,6 +154,10 @@ type Spec struct {
 	// the task starts (Nomad artifact stanza). Used by the data download path
 	// to stage tool binaries (e.g. s5cmd) on exec driver tasks.
 	Artifacts []ArtifactSpec
+
+	// ExtraTemplates lists additional Nomad template stanzas to render into the
+	// task directory alongside the job script (e.g. a pixi.toml manifest).
+	ExtraTemplates []TemplateSpec
 }
 
 // nomadHCLOperator converts CLI shorthand operators to the operator strings
@@ -260,6 +272,18 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 		tmplBody.SetAttributeValue("destination", cty.StringVal(
 			filepath.ToSlash(filepath.Join("local", scriptName))))
 		tmplBody.SetAttributeValue("perms", cty.StringVal("0755"))
+	}
+
+	for _, t := range spec.ExtraTemplates {
+		if spec.Driver == "slurm" {
+			continue
+		}
+		tmplBody := mainBody.AppendNewBlock("template", nil).Body()
+		tmplBody.SetAttributeValue("data", cty.StringVal(t.Data))
+		tmplBody.SetAttributeValue("destination", cty.StringVal(t.Destination))
+		if t.Perms != "" {
+			tmplBody.SetAttributeValue("perms", cty.StringVal(t.Perms))
+		}
 	}
 
 	if spec.Cores > 0 || spec.MemoryMB > 0 || spec.GPUs > 0 {
