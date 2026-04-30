@@ -6,6 +6,7 @@
 #ABC --mem=32G
 #ABC --time=08:00:00
 #ABC --task-tmp
+#ABC --mamba-cleanup
 #ABC --alloc_id
 #
 # Align paired-end reads with BWA-MEM2, sort and index with samtools.

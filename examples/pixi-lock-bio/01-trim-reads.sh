@@ -6,6 +6,7 @@
 #ABC --mem=16G
 #ABC --time=04:00:00
 #ABC --task-tmp
+#ABC --pixi-cleanup
 #ABC --alloc_id
 #
 # Trim paired-end reads with fastp + FastQC.

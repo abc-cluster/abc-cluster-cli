@@ -1568,3 +1568,306 @@ func TestJobRun_PixiRemoteMode_NoLocalFile_UsesLegacyWrapper(t *testing.T) {
 		t.Errorf("expected no pixi install in legacy mode, got:\n%s", out)
 	}
 }
+
+// ── pixi.lock mode ────────────────────────────────────────────────────────────
+
+func TestJobRun_PixiLockMode_EmbedsBothFiles(t *testing.T) {
+	dir := t.TempDir()
+	tomlContent := "[workspace]\nname=\"locked-env\"\nchannels=[\"conda-forge\"]\nplatforms=[\"linux-64\"]\n[dependencies]\npigz=\">=2.8\"\n"
+	lockContent := "version: 6\nenvironments:\n  default:\n    channels:\n    - url: https://conda.anaconda.org/conda-forge/\n"
+	if err := os.WriteFile(filepath.Join(dir, "pixi.toml"), []byte(tomlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(dir, "pixi.lock")
+	if err := os.WriteFile(lockPath, []byte(lockContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=pixi-locked\necho hi\n"
+	p := writeTempScript(t, "pixi_locked.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "pixi",
+		"--from", lockPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Both files must be embedded as separate Nomad templates.
+	if !strings.Contains(out, `destination = "local/pixi.toml"`) {
+		t.Errorf("expected pixi.toml template stanza, got:\n%s", out)
+	}
+	if !strings.Contains(out, `destination = "local/pixi.lock"`) {
+		t.Errorf("expected pixi.lock template stanza, got:\n%s", out)
+	}
+	if !strings.Contains(out, "locked-env") {
+		t.Errorf("expected pixi.toml content embedded, got:\n%s", out)
+	}
+	if !strings.Contains(out, "version: 6") {
+		t.Errorf("expected pixi.lock content embedded, got:\n%s", out)
+	}
+}
+
+func TestJobRun_PixiLockMode_UsesLockedInstall(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pixi.toml"), []byte("[workspace]\nname=\"e\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(dir, "pixi.lock")
+	if err := os.WriteFile(lockPath, []byte("version: 6\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=pixi-locked\necho hi\n"
+	p := writeTempScript(t, "pixi_locked2.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "pixi", "--from", lockPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Wrapper must pass --locked to pixi install.
+	if !strings.Contains(out, "pixi install") || !strings.Contains(out, "--locked") {
+		t.Errorf("expected 'pixi install ... --locked' in wrapper, got:\n%s", out)
+	}
+}
+
+func TestJobRun_PixiLockMode_MissingTomlIsError(t *testing.T) {
+	dir := t.TempDir()
+	// Write only the lock file, no companion pixi.toml.
+	lockPath := filepath.Join(dir, "pixi.lock")
+	if err := os.WriteFile(lockPath, []byte("version: 6\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=pixi-noml\necho hi\n"
+	p := writeTempScript(t, "pixi_noml.sh", script)
+
+	_, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "pixi", "--from", lockPath,
+	)
+	if err == nil {
+		t.Fatal("expected error when pixi.toml is missing alongside pixi.lock")
+	}
+	if !strings.Contains(err.Error(), "pixi.toml") {
+		t.Errorf("expected error to mention pixi.toml, got: %v", err)
+	}
+}
+
+func TestJobRun_PixiCleanupDirective_SetsFlag(t *testing.T) {
+	// #ABC --pixi-cleanup in the script body should set PixiCleanup.
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "pixi.toml")
+	if err := os.WriteFile(manifestPath, []byte("[workspace]\nname=\"e\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=pclean\n#ABC --runtime=pixi-exec\n#ABC --from=" + manifestPath + "\n#ABC --pixi-cleanup\necho hi\n"
+	p := writeTempScript(t, "pixi_clean_dir.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `trap`) || !strings.Contains(out, `.pixi`) {
+		t.Errorf("expected cleanup trap in wrapper via directive, got:\n%s", out)
+	}
+}
+
+// ── micromamba-exec runtime ───────────────────────────────────────────────────
+
+func TestJobRun_MicromambaLocalMode_EmbedEnvAndWrapper(t *testing.T) {
+	envContent := "name: bio\nchannels:\n  - conda-forge\ndependencies:\n  - pigz>=2.8\n"
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "environment.yml")
+	if err := os.WriteFile(envPath, []byte(envContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=mamba-local\necho hi\n"
+	p := writeTempScript(t, "mamba_local.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "micromamba",
+		"--from", envPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// environment.yml content should be embedded as a template.
+	if !strings.Contains(out, `destination = "local/environment.yml"`) {
+		t.Errorf("expected environment.yml template stanza, got:\n%s", out)
+	}
+	if !strings.Contains(out, "name: bio") {
+		t.Errorf("expected environment.yml content embedded, got:\n%s", out)
+	}
+
+	// Wrapper must download micromamba via curl and create env.
+	if !strings.Contains(out, "rustfs.test:9000") {
+		t.Errorf("expected tools endpoint in micromamba curl URL, got:\n%s", out)
+	}
+	if !strings.Contains(out, "curl -fsSL") {
+		t.Errorf("expected curl download of micromamba binary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "micromamba") {
+		t.Errorf("expected micromamba in binary URL, got:\n%s", out)
+	}
+}
+
+func TestJobRun_MicromambaLocalMode_WrapperUsesTaskDir(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "environment.yml")
+	if err := os.WriteFile(envPath, []byte("name: e\nchannels:\n  - conda-forge\ndependencies: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=mamba-taskdir\necho hi\n"
+	p := writeTempScript(t, "mamba_td.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "mamba", "--from", envPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Wrapper must use ${NOMAD_TASK_DIR} for binary, env prefix, and env file.
+	if !strings.Contains(out, `${NOMAD_TASK_DIR}/micromamba`) {
+		t.Errorf("expected NOMAD_TASK_DIR path for micromamba binary, got:\n%s", out)
+	}
+	if !strings.Contains(out, `${NOMAD_TASK_DIR}/.mamba/env`) {
+		t.Errorf("expected NOMAD_TASK_DIR/.mamba/env as env prefix, got:\n%s", out)
+	}
+	if !strings.Contains(out, `${NOMAD_TASK_DIR}/environment.yml`) {
+		t.Errorf("expected NOMAD_TASK_DIR/environment.yml path, got:\n%s", out)
+	}
+	// abc_from meta should show runtime path, not local submit-time path.
+	if !strings.Contains(out, `abc_from`) {
+		t.Errorf("expected abc_from meta key, got:\n%s", out)
+	}
+	if strings.Contains(out, dir) {
+		t.Errorf("local submit-time path must not appear in HCL, got:\n%s", out)
+	}
+}
+
+func TestJobRun_MicromambaLocalMode_CleanupFlag(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "environment.yml")
+	if err := os.WriteFile(envPath, []byte("name: e\nchannels: [conda-forge]\ndependencies: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\n#ABC --name=mamba-cleanup\necho hi\n"
+	p := writeTempScript(t, "mamba_cleanup.sh", script)
+
+	// Without --mamba-cleanup: no trap.
+	outNo, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "micromamba", "--from", envPath,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error (no cleanup): %v", err)
+	}
+	if strings.Contains(outNo, "trap") {
+		t.Errorf("expected no cleanup trap without --mamba-cleanup, got:\n%s", outNo)
+	}
+
+	// With --mamba-cleanup: trap removes .mamba dir.
+	outYes, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p,
+		"--runtime", "micromamba", "--from", envPath, "--mamba-cleanup",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error with --mamba-cleanup: %v", err)
+	}
+	if !strings.Contains(outYes, "trap") || !strings.Contains(outYes, ".mamba") {
+		t.Errorf("expected cleanup trap for .mamba dir, got:\n%s", outYes)
+	}
+}
+
+func TestJobRun_MambaCleanupDirective_SetsFlag(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "environment.yml")
+	if err := os.WriteFile(envPath, []byte("name: e\nchannels: [conda-forge]\ndependencies: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Directive in script body: #ABC --mamba-cleanup
+	script := "#!/bin/bash\n#ABC --name=mclean\n#ABC --runtime=micromamba-exec\n#ABC --from=" + envPath + "\n#ABC --mamba-cleanup\necho hi\n"
+	p := writeTempScript(t, "mamba_clean_dir.sh", script)
+
+	out, err := executeCmdWithABCYAML(t, pixiLocalModeConfig, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "trap") || !strings.Contains(out, ".mamba") {
+		t.Errorf("expected cleanup trap via directive, got:\n%s", out)
+	}
+}
+
+func TestJobRun_MicromambaRemoteMode_NoLocalFile_UsesLegacyWrapper(t *testing.T) {
+	// --from points to a non-existent local path → legacy mode (micromamba on host).
+	script := "#!/bin/bash\n#ABC --name=mamba-remote\necho hi\n"
+	p := writeTempScript(t, "mamba_remote.sh", script)
+
+	out, err := executeCmd(t, p,
+		"--runtime", "micromamba",
+		"--from", "/remote/host/environment.yml",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Legacy: single-quoted remote path, no curl download.
+	if !strings.Contains(out, `'/remote/host/environment.yml'`) {
+		t.Errorf("expected single-quoted remote env path, got:\n%s", out)
+	}
+	if strings.Contains(out, "curl") {
+		t.Errorf("expected no curl in legacy mode, got:\n%s", out)
+	}
+	// micromamba env create and run must still appear.
+	if !strings.Contains(out, "micromamba env create") {
+		t.Errorf("expected 'micromamba env create' in legacy wrapper, got:\n%s", out)
+	}
+}
+
+func TestJobRun_MicromambaValidation_RequiresYmlExtension(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=mamba-bad-ext\necho hi\n"
+	p := writeTempScript(t, "mamba_bad.sh", script)
+
+	_, err := executeCmd(t, p, "--runtime", "micromamba", "--from", "/path/to/pixi.toml")
+	if err == nil {
+		t.Fatal("expected error for .toml extension with micromamba-exec")
+	}
+	if !strings.Contains(err.Error(), ".yml") && !strings.Contains(err.Error(), ".yaml") {
+		t.Errorf("expected .yml/.yaml extension error, got: %v", err)
+	}
+}
+
+func TestJobRun_MicromambaValidation_NoNetworkIsError(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=mamba-nonet\necho hi\n"
+	p := writeTempScript(t, "mamba_nonet.sh", script)
+
+	_, err := executeCmd(t, p,
+		"--runtime", "micromamba",
+		"--from", "/host/environment.yml",
+		"--no-network",
+	)
+	if err == nil {
+		t.Fatal("expected error for micromamba + --no-network")
+	}
+	if !strings.Contains(err.Error(), "network") {
+		t.Errorf("expected network mention in error, got: %v", err)
+	}
+}
+
+func TestJobRun_MicromambaAlias_Mamba(t *testing.T) {
+	// "mamba" alias should normalize to micromamba-exec.
+	script := "#!/bin/bash\n#ABC --name=mamba-alias\necho hi\n"
+	p := writeTempScript(t, "mamba_alias.sh", script)
+
+	out, err := executeCmd(t, p,
+		"--runtime", "mamba",
+		"--from", "/host/environment.yml",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_runtime`) || !strings.Contains(out, "micromamba-exec") {
+		t.Errorf("expected abc_runtime=micromamba-exec in meta, got:\n%s", out)
+	}
+}

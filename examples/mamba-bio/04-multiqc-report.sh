@@ -6,6 +6,7 @@
 #ABC --mem=8G
 #ABC --time=01:00:00
 #ABC --task-tmp
+#ABC --mamba-cleanup
 #ABC --alloc_id
 #
 # Aggregate QC metrics from fastp + FastQC + samtools into a MultiQC report.

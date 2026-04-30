@@ -6,6 +6,7 @@
 #ABC --mem=32G
 #ABC --time=12:00:00
 #ABC --task-tmp
+#ABC --pixi-cleanup
 #ABC --alloc_id
 #
 # Merge per-sample VCFs, apply cohort-level filters, compute population stats.

@@ -6,6 +6,7 @@
 #ABC --mem=16G
 #ABC --time=06:00:00
 #ABC --task-tmp
+#ABC --mamba-cleanup
 #ABC --alloc_id
 #
 # Single-sample variant calling with bcftools mpileup | bcftools call.

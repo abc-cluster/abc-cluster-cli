@@ -630,6 +630,16 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --task-tmp does not accept a value", marker)
 			}
 			spec.TaskTmp = true
+		case "pixi-cleanup":
+			if hasValue {
+				return fmt.Errorf("#%s --pixi-cleanup does not accept a value", marker)
+			}
+			spec.PixiCleanup = true
+		case "mamba-cleanup":
+			if hasValue {
+				return fmt.Errorf("#%s --mamba-cleanup does not accept a value", marker)
+			}
+			spec.MicromambaCleanup = true
 		case "runtime":
 			if !hasValue || val == "" {
 				return fmt.Errorf("#%s --runtime requires a value (e.g. pixi-exec)", marker)

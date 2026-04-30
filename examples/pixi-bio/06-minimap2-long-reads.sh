@@ -6,6 +6,7 @@
 #ABC --mem=64G
 #ABC --time=12:00:00
 #ABC --task-tmp
+#ABC --pixi-cleanup
 #ABC --alloc_id
 #
 # Align long reads (Oxford Nanopore or PacBio HiFi) with minimap2.

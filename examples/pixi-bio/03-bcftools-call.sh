@@ -6,6 +6,7 @@
 #ABC --mem=16G
 #ABC --time=06:00:00
 #ABC --task-tmp
+#ABC --pixi-cleanup
 #ABC --alloc_id
 #
 # Call variants with bcftools mpileup + call, then filter and annotate.
