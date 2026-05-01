@@ -70,6 +70,7 @@ EXAMPLES
 	cmd.Flags().String("host-volume", "", "Nomad host volume name for the work dir (default: nextflow-work; use \"-\" to disable)")
 	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (workers spread freely; combine with --pin-workers for single-host runs)")
 	cmd.Flags().Bool("pin-workers", false, "When --node is set, ALSO pin every spawned process to that node (single-host run; needed when there is no shared FS / nf-rclone)")
+	cmd.Flags().String("worker-exclude-host", "", "Force every spawned process OFF this hostname (combine with --node to enforce a true head≠worker distributed test)")
 
 	// Nomad placement
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
@@ -161,6 +162,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 	if pin, _ := cmd.Flags().GetBool("pin-workers"); pin {
 		override.PinWorkers = true
+	}
+	if v, _ := cmd.Flags().GetString("worker-exclude-host"); v != "" {
+		override.WorkerExcludeHost = v
 	}
 	if v, _ := cmd.Flags().GetStringSlice("datacenter"); len(v) > 0 {
 		override.Datacenters = v

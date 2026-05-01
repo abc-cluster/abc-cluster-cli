@@ -52,6 +52,14 @@ type Spec struct {
 	// `--node` only pins the head; workers spread freely across the cluster.
 	PinWorkers bool
 
+	// WorkerExcludeHost, when set, emits a per-process Nomad constraint
+	// `${node.unique.name} != <WorkerExcludeHost>`. Use it to force a true
+	// head≠worker distributed test — workers cannot accidentally co-locate on
+	// the head's node and bypass the no-shared-FS code path (rclone bootstrap,
+	// .exitcode upload via remote, etc.). Typically set to the same host as
+	// NodeConstraint for the canonical "head pinned, workers excluded" pattern.
+	WorkerExcludeHost string
+
 	// PluginBundleURL, when non-empty, makes the head job pull this artifact zip
 	// (typically the nf-abc-cluster-dev meta-plugin bundle) and extract it into
 	// $NXF_HOME/plugins before running Nextflow. Used to ship development plugin
@@ -277,13 +285,25 @@ func buildNextflowConfig(spec Spec) string {
 	// Nextflow's config-file parser converts `constraints { ... }` blocks to Maps,
 	// so we MUST use property-assignment form (`= { ... }`) which preserves the closure.
 	processConstraint := ""
-	if spec.NodeConstraint != "" && spec.PinWorkers {
+	switch {
+	case spec.NodeConstraint != "" && spec.PinWorkers:
+		// Pin workers to the same node as the head (single-host run).
 		processConstraint = fmt.Sprintf(`
 
 process {
   constraints = { node { unique = [name: '%s'] } }
 }
 `, spec.NodeConstraint)
+	case spec.WorkerExcludeHost != "":
+		// Exclude workers from a specific node (forces head≠worker placement).
+		// Uses nf-nomad's JobConstraintsNode.raw() which accepts arbitrary
+		// operators (the typed DSL methods only emit '=', not '!=').
+		processConstraint = fmt.Sprintf(`
+
+process {
+  constraints = { node { raw 'unique.name', '!=', '%s' } }
+}
+`, spec.WorkerExcludeHost)
 	}
 
 	// Build the plugins { ... } block. Default (no spec.Plugins) keeps the

@@ -29,6 +29,10 @@ type PipelineSpec struct {
 	// Nextflow process to the same node (single-host run). Default false:
 	// `--node` only pins the head and workers spread across the cluster.
 	PinWorkers bool `json:"pinWorkers,omitempty" yaml:"pinWorkers,omitempty"`
+	// WorkerExcludeHost forces every spawned Nextflow process OFF the named
+	// hostname. Use with --node to enforce a true head≠worker distributed test
+	// (no accidental co-location that masks shared-FS assumptions).
+	WorkerExcludeHost string `json:"workerExcludeHost,omitempty" yaml:"workerExcludeHost,omitempty"`
 
 	// DevPlugins toggles loading the cluster's nf-abc-cluster-dev meta-plugin
 	// bundle into the head container. When set, run.go resolves PluginBundleURL
@@ -140,6 +144,9 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	}
 	if override.PinWorkers {
 		base.PinWorkers = true
+	}
+	if override.WorkerExcludeHost != "" {
+		base.WorkerExcludeHost = override.WorkerExcludeHost
 	}
 	if override.DevPlugins {
 		base.DevPlugins = true
