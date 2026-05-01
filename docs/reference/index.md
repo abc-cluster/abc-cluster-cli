@@ -13,6 +13,7 @@ Complete flag and option documentation for every `abc` command.
 | [auth](./auth) | Login, logout, token management |
 | [secrets](./secrets) | Encrypted local and remote secrets |
 | [job run](./jobs) | Submit shell scripts as Nomad jobs |
+| [pipeline run](./pipeline) | Run Nextflow pipelines with optional Wave container builds |
 | [data](./data) | Upload, download, encrypt, decrypt |
 | [infra](./infra) | Compute node and storage management |
 | [admin services](./admin) | Proxy into Nomad, Vault, Consul, Tailscale CLIs |

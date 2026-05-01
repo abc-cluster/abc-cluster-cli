@@ -30,6 +30,8 @@ const sidebars: SidebarsConfig = {
         {type: 'doc', id: 'reference/auth',         label: 'auth'},
         {type: 'doc', id: 'reference/secrets',      label: 'secrets'},
         {type: 'doc', id: 'reference/jobs',         label: 'job run'},
+        {type: 'doc', id: 'reference/pipeline',     label: 'pipeline run'},
+        {type: 'doc', id: 'reference/module',       label: 'module run'},
         {type: 'doc', id: 'reference/data',         label: 'data'},
         {type: 'doc', id: 'reference/infra',        label: 'infra'},
         {type: 'doc', id: 'reference/admin',        label: 'admin services'},
