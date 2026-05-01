@@ -11,6 +11,7 @@ import (
 const (
 	runtimePixiExec   = "pixi-exec"
 	runtimeMicromamba = "micromamba-exec"
+	runtimeWaveExec   = "wave-exec"
 )
 
 // NormalizeRuntimeID returns a canonical runtime token or "" if s is empty.
@@ -18,6 +19,7 @@ const (
 //
 //	"pixi"                → pixi-exec
 //	"micromamba", "mamba" → micromamba-exec
+//	"wave"                → wave-exec
 func NormalizeRuntimeID(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	switch s {
@@ -25,6 +27,8 @@ func NormalizeRuntimeID(s string) string {
 		return runtimePixiExec
 	case "micromamba", "mamba":
 		return runtimeMicromamba
+	case "wave":
+		return runtimeWaveExec
 	}
 	return s
 }
@@ -83,8 +87,29 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 			return fmt.Errorf("runtime %q cannot be combined with --conda; use only one stack", rt)
 		}
 
+	case runtimeWaveExec:
+		if from == "" {
+			return fmt.Errorf("runtime %q requires --from=<path-to-environment.yml>", rt)
+		}
+		if strings.ContainsAny(from, "\r\n\x00") {
+			return fmt.Errorf("runtime %q: --from must be a single-line path (no newline or NUL characters)", rt)
+		}
+		fromLower := strings.ToLower(from)
+		if !strings.HasSuffix(fromLower, ".yml") && !strings.HasSuffix(fromLower, ".yaml") {
+			return fmt.Errorf("runtime %q: --from must end with .yml or .yaml (path to conda environment file)", rt)
+		}
+		if spec.NoNetwork {
+			return fmt.Errorf("runtime %q needs network access to build and pull the Wave container; remove --no-network", rt)
+		}
+		if strings.TrimSpace(spec.Conda) != "" {
+			return fmt.Errorf("runtime %q cannot be combined with --conda; use only one stack", rt)
+		}
+		if spec.Pixi {
+			return fmt.Errorf("runtime %q cannot be combined with --pixi; use only one stack", rt)
+		}
+
 	default:
-		return fmt.Errorf("unsupported runtime %q (supported: pixi-exec (alias pixi), micromamba-exec (aliases: micromamba, mamba))", spec.Runtime)
+		return fmt.Errorf("unsupported runtime %q (supported: pixi-exec (alias pixi), micromamba-exec (aliases: micromamba, mamba), wave-exec (alias wave))", spec.Runtime)
 	}
 
 	return validateDriverForRuntime(strings.TrimSpace(spec.Driver), rt)
@@ -105,6 +130,14 @@ func validateDriverForRuntime(driver, runtime string) error {
 		default:
 			return fmt.Errorf("runtime %q is not supported with task driver %q (allowed: exec, raw_exec, docker, containerd-driver, hpc-bridge)",
 				runtime, driver)
+		}
+	case runtimeWaveExec:
+		// Wave builds a container image; the main task must use a container driver.
+		switch driver {
+		case "docker", "containerd-driver":
+			return nil
+		default:
+			return fmt.Errorf("runtime %q requires a container task driver (docker or containerd-driver), got %q", runtime, driver)
 		}
 	default:
 		return nil
@@ -158,6 +191,9 @@ func FinalizeJobScript(spec *jobSpec, scriptName, script string) (string, error)
 			return "", err
 		}
 		prefix = append(prefix, w...)
+	case runtimeWaveExec:
+		// wave-exec: the container is built by the Wave prestart task; the main task
+		// runs inside the pre-built Docker image with no script wrapper needed.
 	default:
 		return "", fmt.Errorf("internal: missing script wrapper for runtime %q", rt)
 	}

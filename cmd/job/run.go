@@ -597,6 +597,9 @@ func runJob(cmd *cobra.Command, args []string) error {
 	if err := resolveMicromambaLocalMode(spec); err != nil {
 		return err
 	}
+	if err := resolveWaveLocalMode(spec); err != nil {
+		return err
+	}
 
 	var scriptBody string
 	if isBuiltInHelloAbc {

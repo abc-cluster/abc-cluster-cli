@@ -42,12 +42,53 @@ type Spec struct {
 
 	// NodeConstraint pins the head job to a specific Nomad node hostname.
 	// When set, a constraint { attribute = "${attr.unique.hostname}" value = "<node>" }
-	// block is added to the group.
+	// block is added to the head group.
 	NodeConstraint string
+
+	// PinWorkers, when true AND NodeConstraint is set, also emits the per-process
+	// nf-nomad constraint `process { constraints = { node { unique = [name: '<node>'] } } }`
+	// — pinning EVERY child Nomad task to the same node. Use this for runs without
+	// a shared filesystem when nf-rclone or similar isn't available. Default false:
+	// `--node` only pins the head; workers spread freely across the cluster.
+	PinWorkers bool
+
+	// PluginBundleURL, when non-empty, makes the head job pull this artifact zip
+	// (typically the nf-abc-cluster-dev meta-plugin bundle) and extract it into
+	// $NXF_HOME/plugins before running Nextflow. Used to ship development plugin
+	// variants that are not on the public registry.
+	PluginBundleURL string
+
+	// Plugins is the ordered list of `id "<id>@<version>"` lines emitted in the
+	// generated nextflow.headjob.config plugins { ... } block. When empty, the
+	// existing single-line "nf-nomad@<NfPluginVersion>" behaviour is preserved
+	// for backwards compatibility.
+	Plugins []PluginRef
+
+	// ExtraBinaries is an ordered list of (name, source URL) pairs for
+	// additional cluster tool binaries the head task needs at runtime —
+	// e.g. `rclone` when the nf-rclone plugin is loaded. Each entry produces
+	// a Nomad `artifact` stanza pulling into local/bin/<name> + chmod +x;
+	// local/bin is prepended to PATH in the entrypoint.
+	ExtraBinaries []ToolBinary
 
 	// StaticEnv is merged into the task env block as literal strings (abc-nodes
 	// enhanced floor: Loki, Prometheus, Grafana Alloy).
 	StaticEnv map[string]string
+}
+
+// PluginRef is one entry in a Nextflow plugins { ... } block.
+type PluginRef struct {
+	ID      string
+	Version string
+}
+
+// ToolBinary is one cluster tool binary pulled into the head container as a
+// Nomad artifact. SourceURL must already include any per-arch interpolation
+// (e.g. `${attr.kernel.name}-${attr.cpu.arch}`); resolved by the caller via
+// `tools.ArtifactURL(name, "")`.
+type ToolBinary struct {
+	Name      string
+	SourceURL string
 }
 
 // generateHeadJobHCL produces a Nomad HCL job spec for a Nextflow head job
@@ -119,18 +160,64 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 		mountBody.SetAttributeValue("read_only", cty.BoolVal(false))
 	}
 
+	// Plugin bundle artifact — pulled and unpacked into local/plugins-bundle/.
+	// The `?archive=zip` query hint forces go-getter (Nomad's artifact engine)
+	// to treat the response as a zip even when the URL lacks a .zip extension
+	// (e.g. our `<name>-any` S3 keys). Avoids needing `unzip` in the head image.
+	if spec.PluginBundleURL != "" {
+		src := spec.PluginBundleURL
+		if !strings.Contains(src, "?archive=") {
+			joiner := "?"
+			if strings.Contains(src, "?") {
+				joiner = "&"
+			}
+			src = src + joiner + "archive=zip"
+		}
+		artBody := taskBody.AppendNewBlock("artifact", nil).Body()
+		artBody.SetAttributeValue("source", cty.StringVal(src))
+		artBody.SetAttributeValue("destination", cty.StringVal("local/plugins-bundle"))
+		artBody.SetAttributeValue("mode", cty.StringVal("any"))
+	}
+
+	// Extra cluster tool binaries (e.g. rclone, when nf-rclone is in the bundle).
+	// Each one pulled as a single file into local/bin/<name>; PATH is updated
+	// in the entrypoint so the head Nextflow process and any spawned
+	// subprocesses can invoke them.
+	for _, tb := range spec.ExtraBinaries {
+		if tb.Name == "" || tb.SourceURL == "" {
+			continue
+		}
+		binArt := taskBody.AppendNewBlock("artifact", nil).Body()
+		binArt.SetAttributeValue("source", cty.StringVal(tb.SourceURL))
+		binArt.SetAttributeValue("destination", cty.StringVal("local/bin/"+tb.Name))
+		binArt.SetAttributeValue("mode", cty.StringVal("file"))
+	}
+
 	// Template: nextflow config
 	nfCfgTmpl := taskBody.AppendNewBlock("template", nil).Body()
 	nfCfgTmpl.SetAttributeValue("destination", cty.StringVal("local/nextflow.headjob.config"))
 	nfCfgTmpl.SetAttributeValue("data", cty.StringVal(buildNextflowConfig(spec)))
 
-	// Template: AWS credentials from Nomad Variables (gracefully absent if not set)
-	awsVarPath := fmt.Sprintf("nomad/jobs/%s/head/nextflow", jobName)
+	// Template: AWS credentials from Nomad Variables.
+	//
+	// Single source of truth shared with the per-process secrets directive that
+	// nf-nomad uses for child tasks (see `nomad.jobs.secrets.path` in extra
+	// configs). Both head and workers read AWS_ACCESS_KEY_ID /
+	// AWS_SECRET_ACCESS_KEY from `nomad/jobs/secrets/<NAME>` — the operator
+	// seeds these once, no per-job-name var seeding required.
+	//
+	// Each `with nomadVar` is independent so the head still starts even when
+	// only one of the two creds is present (e.g. read-only debugging mode).
 	awsTmpl := taskBody.AppendNewBlock("template", nil).Body()
 	awsTmpl.SetAttributeValue("destination", cty.StringVal("secrets/aws.env"))
 	awsTmpl.SetAttributeValue("env", cty.BoolVal(true))
 	awsTmpl.SetAttributeValue("data", cty.StringVal(
-		fmt.Sprintf("{{- with nomadVar %q -}}\nAWS_ACCESS_KEY_ID={{ .AWS_ACCESS_KEY_ID }}\nAWS_SECRET_ACCESS_KEY={{ .AWS_SECRET_ACCESS_KEY }}\n{{- end }}\n", awsVarPath),
+		"{{- with nomadVar \"nomad/jobs/secrets/AWS_ACCESS_KEY_ID\" -}}\n"+
+			"AWS_ACCESS_KEY_ID={{ .AWS_ACCESS_KEY_ID }}\n"+
+			"{{- end }}\n"+
+			"{{- with nomadVar \"nomad/jobs/secrets/AWS_SECRET_ACCESS_KEY\" -}}\n"+
+			"AWS_SECRET_ACCESS_KEY={{ .AWS_SECRET_ACCESS_KEY }}\n"+
+			"{{- end }}\n",
 	))
 
 	// Template: params.json (only when pipeline params are provided)
@@ -190,7 +277,7 @@ func buildNextflowConfig(spec Spec) string {
 	// Nextflow's config-file parser converts `constraints { ... }` blocks to Maps,
 	// so we MUST use property-assignment form (`= { ... }`) which preserves the closure.
 	processConstraint := ""
-	if spec.NodeConstraint != "" {
+	if spec.NodeConstraint != "" && spec.PinWorkers {
 		processConstraint = fmt.Sprintf(`
 
 process {
@@ -199,8 +286,24 @@ process {
 `, spec.NodeConstraint)
 	}
 
+	// Build the plugins { ... } block. Default (no spec.Plugins) keeps the
+	// historical single nf-nomad line so non-dev runs are byte-identical to
+	// pre-bundle behaviour.
+	pluginsBody := fmt.Sprintf(`  id "nf-nomad@%s"`, spec.NfPluginVersion)
+	if len(spec.Plugins) > 0 {
+		var lines []string
+		for _, p := range spec.Plugins {
+			if p.Version != "" {
+				lines = append(lines, fmt.Sprintf(`  id "%s@%s"`, p.ID, p.Version))
+			} else {
+				lines = append(lines, fmt.Sprintf(`  id "%s"`, p.ID))
+			}
+		}
+		pluginsBody = strings.Join(lines, "\n")
+	}
+
 	fmt.Fprintf(&sb, `plugins {
-  id "nf-nomad@%s"
+%s
 }
 
 docker {
@@ -245,7 +348,7 @@ nomad {
     ]
   }
 }
-%s`, spec.NfPluginVersion, spec.WorkDir, spec.Namespace, volumesLine, processConstraint)
+%s`, pluginsBody, spec.WorkDir, spec.Namespace, volumesLine, processConstraint)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")
@@ -264,6 +367,23 @@ func buildEntrypoint(spec Spec) string {
 		nxfHome = "/local/.nxf-home"
 	}
 	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s\n\n", nxfHome)
+
+	// Move the auto-extracted plugin bundle into NXF_HOME/plugins before
+	// invoking nextflow. Nomad's artifact stanza (with ?archive=zip) unpacks
+	// the zip into local/plugins-bundle/<plugin>-<version>/... directly, so
+	// we only need a recursive copy here — no `unzip` dependency in the image.
+	if spec.PluginBundleURL != "" {
+		fmt.Fprintf(&sb, "mkdir -p \"%s/plugins\"\n", nxfHome)
+		fmt.Fprintf(&sb, "cp -r /local/plugins-bundle/. \"%s/plugins/\"\n\n", nxfHome)
+	}
+
+	// Make any tool binaries pulled by ExtraBinaries executable and on PATH.
+	// /local is the task working dir (set in the docker config), so /local/bin
+	// matches the artifact destinations emitted above.
+	if len(spec.ExtraBinaries) > 0 {
+		sb.WriteString("if [ -d /local/bin ]; then chmod +x /local/bin/*; export PATH=\"/local/bin:$PATH\"; fi\n\n")
+	}
+
 	fmt.Fprintf(&sb, "nextflow run %s \\\n", spec.Repository)
 	sb.WriteString("  -c /local/nextflow.headjob.config")
 	if spec.Revision != "" {

@@ -158,6 +158,32 @@ type Spec struct {
 	// ExtraTemplates lists additional Nomad template stanzas to render into the
 	// task directory alongside the job script (e.g. a pixi.toml manifest).
 	ExtraTemplates []TemplateSpec
+
+	// Wave holds configuration for the Wave container build prestart task.
+	// When Wave.Enabled is true, a prestart task is emitted that calls the Wave
+	// CLI with --await, blocking until the container image is pullable before
+	// the main task starts.
+	Wave WaveSpec
+}
+
+// WaveSpec configures the Wave container build prestart task.
+type WaveSpec struct {
+	// Enabled signals that the wave-build prestart task should be emitted.
+	Enabled bool
+	// CondaFileContent is the content of the conda environment.yml to embed as
+	// a template in the prestart task.
+	CondaFileContent string
+	// TokenSecretPath is the Nomad Variables path holding TOWER_ACCESS_TOKEN
+	// (e.g. "nomad/jobs").
+	TokenSecretPath string
+	// TokenSecretKey is the key within TokenSecretPath (e.g. "wave_token").
+	TokenSecretKey string
+	// Platform is the target OCI platform (e.g. "linux/amd64").
+	Platform string
+	// BinarySourceURL is the Nomad artifact source URL for the wave-cli binary,
+	// including the Nomad interpolation suffix for os/arch (e.g.
+	// "http://rustfs/abc-reserved/binary_tools/wave-${attr.kernel.name}-${attr.cpu.arch}").
+	BinarySourceURL string
 }
 
 // nomadHCLOperator converts CLI shorthand operators to the operator strings
@@ -258,6 +284,10 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 			cty.StringVal("-c"),
 			cty.StringVal(fmt.Sprintf("echo Waiting for dependency: %s", spec.Depend)),
 		}))
+	}
+
+	if spec.Wave.Enabled {
+		appendWavePrestartTask(groupBody, spec.Wave)
 	}
 
 	mainBody := groupBody.AppendNewBlock("task", []string{"main"}).Body()
@@ -605,4 +635,86 @@ func hasExplicitRuntimeExposure(spec Spec) bool {
 		spec.ExposeAllocDir ||
 		spec.ExposeTaskDir ||
 		spec.ExposeSecretsDir
+}
+
+// appendWavePrestartTask emits the "wave-build" prestart task that calls the
+// Wave CLI with --await to block until the container image is pullable.
+//
+// Structure:
+//   - driver: exec (runs on the host, not inside a container)
+//   - template (secrets/wave.env): injects TOWER_ACCESS_TOKEN from a Nomad Variable
+//   - template (local/environment.yml): the conda env file embedded at submit time
+//   - template (local/wave-build.sh): downloads the wave binary via curl (using
+//     uname for arch detection, matching the micromamba pattern) then calls wave --await
+//   - resources: minimal (200 MHz CPU, 256 MB memory)
+//
+// Note: the wave binary is downloaded at runtime via curl rather than via a Nomad
+// artifact stanza because Nomad artifact stanzas do not resolve ${attr.*} node
+// attributes in source URLs — they are passed literally to go-getter, which then
+// fails. The curl approach mirrors how micromamba fetches its binary.
+func appendWavePrestartTask(groupBody *hclwrite.Body, w WaveSpec) {
+	taskBody := groupBody.AppendNewBlock("task", []string{"wave-build"}).Body()
+
+	lc := taskBody.AppendNewBlock("lifecycle", nil).Body()
+	lc.SetAttributeValue("hook", cty.StringVal("prestart"))
+	lc.SetAttributeValue("sidecar", cty.BoolVal(false))
+
+	taskBody.SetAttributeValue("driver", cty.StringVal("exec"))
+
+	// TOWER_ACCESS_TOKEN injected from a Nomad Variable, but only when the key
+	// holds a non-empty value. The inner {{ if }} guard prevents an empty string
+	// from being exported as an env var, which would cause the Wave API to return
+	// 401 Unauthorized (it treats any TOWER_ACCESS_TOKEN value as an auth attempt).
+	tokenData := fmt.Sprintf(
+		"{{ with nomadVar %q }}{{ if .%s }}TOWER_ACCESS_TOKEN={{ .%s }}{{ end }}{{ end }}\n",
+		w.TokenSecretPath, w.TokenSecretKey, w.TokenSecretKey,
+	)
+	tokenTmpl := taskBody.AppendNewBlock("template", nil).Body()
+	tokenTmpl.SetAttributeValue("data", cty.StringVal(tokenData))
+	tokenTmpl.SetAttributeValue("destination", cty.StringVal("secrets/wave.env"))
+	tokenTmpl.SetAttributeValue("env", cty.BoolVal(true))
+
+	// Embedded conda environment.yml.
+	if w.CondaFileContent != "" {
+		envTmpl := taskBody.AppendNewBlock("template", nil).Body()
+		envTmpl.SetAttributeValue("data", cty.StringVal(w.CondaFileContent))
+		envTmpl.SetAttributeValue("destination", cty.StringVal("local/environment.yml"))
+		envTmpl.SetAttributeValue("perms", cty.StringVal("0644"))
+		envTmpl.SetAttributeValue("change_mode", cty.StringVal("noop"))
+	}
+
+	// wave-build.sh: downloads wave binary at runtime (arch via uname, matching
+	// the micromamba pattern), then calls wave --await to block until the container
+	// image is pullable.
+	buildScript := fmt.Sprintf(`#!/bin/bash
+set -euo pipefail
+_ABC_KERNEL="$(uname -s | tr '[:upper:]' '[:lower:]')"
+_ABC_ARCH="$(uname -m)"
+case "${_ABC_ARCH}" in x86_64) _ABC_ARCH=amd64 ;; aarch64) _ABC_ARCH=arm64 ;; esac
+curl -fsSL "%s-${_ABC_KERNEL}-${_ABC_ARCH}" -o "${NOMAD_TASK_DIR}/wave" || {
+  echo "[abc] wave: binary download failed" >&2; exit 1
+}
+chmod +x "${NOMAD_TASK_DIR}/wave"
+echo "[abc] wave-exec: waiting for Wave container build (platform: %s)..."
+"${NOMAD_TASK_DIR}/wave" \
+  --conda-file "${NOMAD_TASK_DIR}/environment.yml" \
+  --platform %s \
+  --await
+echo "[abc] wave-exec: container image ready"
+`, w.BinarySourceURL, w.Platform, w.Platform)
+
+	scriptTmpl := taskBody.AppendNewBlock("template", nil).Body()
+	scriptTmpl.SetAttributeValue("data", cty.StringVal(buildScript))
+	scriptTmpl.SetAttributeValue("destination", cty.StringVal("local/wave-build.sh"))
+	scriptTmpl.SetAttributeValue("perms", cty.StringVal("0755"))
+
+	cfgBody := taskBody.AppendNewBlock("config", nil).Body()
+	cfgBody.SetAttributeValue("command", cty.StringVal("/bin/bash"))
+	cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
+		cty.StringVal("local/wave-build.sh"),
+	}))
+
+	resBody := taskBody.AppendNewBlock("resources", nil).Body()
+	resBody.SetAttributeValue("cpu", cty.NumberIntVal(200))
+	resBody.SetAttributeValue("memory", cty.NumberIntVal(256))
 }

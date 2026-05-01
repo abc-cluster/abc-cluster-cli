@@ -97,3 +97,55 @@ func TestScriptArgForDriver(t *testing.T) {
 		t.Fatalf("containerd-driver: got %q", got)
 	}
 }
+
+func TestGenerate_WavePrestartTask(t *testing.T) {
+	spec := Spec{
+		Name:        "samtools-wave",
+		Namespace:   "default",
+		Datacenters: []string{"dc1"},
+		Priority:    50,
+		Nodes:       1,
+		Cores:       4,
+		MemoryMB:    8192,
+		Driver:      "docker",
+		DriverConfig: map[string]string{
+			"image": "wave.seqera.io/wt/abc123/ubuntu:22.04",
+		},
+		Wave: WaveSpec{
+			Enabled:          true,
+			CondaFileContent: "name: env\ndependencies:\n  - samtools=1.21\n",
+			TokenSecretPath:  "nomad/jobs",
+			TokenSecretKey:   "wave_token",
+			Platform:         "linux/amd64",
+			BinarySourceURL:  "http://rustfs/binary_tools/wave-${attr.kernel.name}-${attr.cpu.arch}",
+		},
+	}
+	hcl := Generate(spec, "samtools.sh", "#!/bin/bash\nsamtools view -c input.bam\n")
+
+	checks := []struct {
+		label string
+		want  string
+	}{
+		{"prestart task block", `"wave-build"`},
+		{"lifecycle hook", `"prestart"`},
+		{"exec driver for prestart", `driver = "exec"`},
+		{"wave binary curl download", `curl -fsSL`},
+		{"wave binary base url", `http://rustfs/binary_tools/wave-`},
+		{"uname arch detection", `uname -m`},
+		{"token secret template", `nomadVar "nomad/jobs"`},
+		{"token secret key", `.wave_token`},
+		{"token env injection", `"secrets/wave.env"`},
+		{"conda env template", `samtools=1.21`},
+		{"build script template", `"local/wave-build.sh"`},
+		{"await flag in script", `--await`},
+		{"platform in script", `linux/amd64`},
+		{"main task still present", `"main"`},
+		{"main docker driver", `driver = "docker"`},
+		{"wave image in main config", `wave.seqera.io/wt/abc123/ubuntu:22.04`},
+	}
+	for _, c := range checks {
+		if !strings.Contains(hcl, c.want) {
+			t.Errorf("[%s] expected HCL to contain %q\nFull HCL:\n%s", c.label, c.want, hcl)
+		}
+	}
+}

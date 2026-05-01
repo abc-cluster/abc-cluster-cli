@@ -51,6 +51,26 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		})
 	}
 
+	// Wave-exec: resolve token secret parts and derive the artifact source URL.
+	var waveSpec jobhcl.WaveSpec
+	if spec.WaveTargetImage != "" {
+		tokenPath, tokenKey := parseWaveTokenSecret(spec.WaveTokenSecret)
+		platform := spec.WavePlatform
+		if platform == "" {
+			platform = waveDefaultPlatform
+		}
+		waveSpec = jobhcl.WaveSpec{
+			Enabled:         true,
+			CondaFileContent: spec.WaveEnvContent,
+			TokenSecretPath: tokenPath,
+			TokenSecretKey:  tokenKey,
+			Platform:        platform,
+			// Base URL only — the build script appends -${kernel}-${arch} via
+			// uname at runtime, matching the micromamba download pattern.
+			BinarySourceURL: spec.WaveBinaryURL,
+		}
+	}
+
 	var extraTemplates []jobhcl.TemplateSpec
 	if spec.PixiManifestContent != "" {
 		extraTemplates = append(extraTemplates, jobhcl.TemplateSpec{
@@ -153,6 +173,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		StaticEnv:           staticEnv,
 		Artifacts:           artifacts,
 		ExtraTemplates:      extraTemplates,
+		Wave:                waveSpec,
 	}
 	return jobhcl.Generate(hclSpec, scriptName, scriptContent)
 }

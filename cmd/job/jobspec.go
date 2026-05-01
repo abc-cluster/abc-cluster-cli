@@ -141,6 +141,18 @@ type jobSpec struct {
 	// TaskTmp enables task-local temp defaults (TMPDIR under NOMAD_TASK_DIR/tmp).
 	TaskTmp bool
 
+	// ── Wave-exec runtime fields ──────────────────────────────────────────────────
+	// Set by resolveWaveLocalMode after calling the Wave CLI at submit time.
+	//
+	// WaveTargetImage is the resolved Wave container URI. It is injected into
+	// DriverConfig["image"] so the main task uses the Wave-built image. A Nomad
+	// prestart task calls `wave --await` to block until the image is pullable.
+	WaveTargetImage string // resolved Wave image URI (e.g. wave.seqera.io/wt/<token>/…)
+	WaveEnvContent  string // embedded environment.yml content for the prestart task
+	WaveBinaryURL   string // base URL for wave-cli binary (platform suffix added by Nomad)
+	WavePlatform    string // target platform, e.g. "linux/amd64" (default)
+	WaveTokenSecret string // "nomad/path:key" for TOWER_ACCESS_TOKEN
+
 	// ── Debug / interactive directives ───────────────────────────────────────
 	// DebugSleepSecs injects a `sleep N` at the start of the job script so the
 	// user can exec into the running allocation to inspect state or attach a
@@ -301,6 +313,21 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.MicromambaCleanup {
 		base.MicromambaCleanup = true
+	}
+	if override.WaveTargetImage != "" {
+		base.WaveTargetImage = override.WaveTargetImage
+	}
+	if override.WaveEnvContent != "" {
+		base.WaveEnvContent = override.WaveEnvContent
+	}
+	if override.WaveBinaryURL != "" {
+		base.WaveBinaryURL = override.WaveBinaryURL
+	}
+	if override.WavePlatform != "" {
+		base.WavePlatform = override.WavePlatform
+	}
+	if override.WaveTokenSecret != "" {
+		base.WaveTokenSecret = override.WaveTokenSecret
 	}
 	if override.TaskTmp {
 		base.TaskTmp = true

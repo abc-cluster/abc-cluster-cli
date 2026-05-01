@@ -68,7 +68,8 @@ EXAMPLES
 	cmd.Flags().String("config", "", "Extra nextflow config file to merge")
 	cmd.Flags().String("work-dir", "", "Shared work directory: local path or s3:// URI (default: /work/nextflow-work)")
 	cmd.Flags().String("host-volume", "", "Nomad host volume name for the work dir (default: nextflow-work; use \"-\" to disable)")
-	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (also use --config to constrain child jobs)")
+	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (workers spread freely; combine with --pin-workers for single-host runs)")
+	cmd.Flags().Bool("pin-workers", false, "When --node is set, ALSO pin every spawned process to that node (single-host run; needed when there is no shared FS / nf-rclone)")
 
 	// Nomad placement
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
@@ -88,6 +89,11 @@ EXAMPLES
 	// Resume / session control
 	cmd.Flags().Bool("resume", false, "Append -resume to the nextflow run command (checkpoint restart)")
 	cmd.Flags().String("session-id", "", "Resume a specific Nextflow session UUID (implies --resume)")
+
+	// Dev plugin set — opt the run into the cluster's nf-abc-cluster-dev meta-plugin bundle.
+	cmd.Flags().Bool("dev-plugins", false,
+		"Load the nf-abc-cluster-dev plugin bundle into the head container "+
+			"(requires `abc admin tools push` to have shipped the bundle)")
 
 	// Behaviour
 	cmd.Flags().Bool("wait", false, "Block until the head job completes")
@@ -153,6 +159,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("node"); v != "" {
 		override.NodeConstraint = v
 	}
+	if pin, _ := cmd.Flags().GetBool("pin-workers"); pin {
+		override.PinWorkers = true
+	}
 	if v, _ := cmd.Flags().GetStringSlice("datacenter"); len(v) > 0 {
 		override.Datacenters = v
 	}
@@ -198,6 +207,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if sessionID, _ := cmd.Flags().GetString("session-id"); sessionID != "" {
 		override.SessionID = sessionID
 	}
+	if devPlugins, _ := cmd.Flags().GetBool("dev-plugins"); devPlugins {
+		override.DevPlugins = true
+	}
 	if ns != "" {
 		override.Namespace = ns
 	}
@@ -208,12 +220,43 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	// Translate secret://name param values to Nomad template refs for abc-nodes.
 	translateSecretParams(spec)
 
+	// Resolve the dev plugin bundle (if requested) into a concrete artifact URL
+	// and a default plugin set. Done after mergeSpec/defaults so a saved spec
+	// can override individual plugin versions / pin a custom bundle URL while
+	// still benefitting from --dev-plugins as a one-flag opt-in.
+	if spec.DevPlugins {
+		if spec.PluginBundleURL == "" {
+			url, err := resolveDevPluginBundle()
+			if err != nil {
+				return err
+			}
+			spec.PluginBundleURL = url
+		}
+		if len(spec.Plugins) == 0 {
+			spec.Plugins = defaultDevPlugins()
+		}
+		if len(spec.ExtraBinaries) == 0 {
+			spec.ExtraBinaries = defaultDevPluginBinaries()
+		}
+	}
+
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	// Read Nomad connection details for embedding in the head job env block.
 	nomadAddr, nomadToken := nomadConnFromCmd(cmd)
 
 	runUUID := newRunUUID()
+
+	// Append a short UUID-derived suffix to the Nomad job name so every
+	// submission produces a unique job — no collisions, no `-purge` needed
+	// before re-runs, and old child Nomad jobs remain inspectable while a
+	// new run is in flight. The full runUUID still goes into job.Meta.
+	jobBase := spec.Name
+	if jobBase == "" {
+		jobBase = "nextflow-head"
+	}
+	spec.Name = fmt.Sprintf("%s-%s", jobBase, runUUID[:8])
+
 	hcl := generateHeadJobHCL(spec, nomadAddr, nomadToken, runUUID)
 
 	if dryRun {

@@ -25,6 +25,29 @@ type PipelineSpec struct {
 	HostVolume     string `json:"hostVolume,omitempty" yaml:"hostVolume,omitempty"`
 	// NodeConstraint pins the head job to a specific Nomad node hostname.
 	NodeConstraint string `json:"nodeConstraint,omitempty" yaml:"nodeConstraint,omitempty"`
+	// PinWorkers, when true with NodeConstraint set, also pins every spawned
+	// Nextflow process to the same node (single-host run). Default false:
+	// `--node` only pins the head and workers spread across the cluster.
+	PinWorkers bool `json:"pinWorkers,omitempty" yaml:"pinWorkers,omitempty"`
+
+	// DevPlugins toggles loading the cluster's nf-abc-cluster-dev meta-plugin
+	// bundle into the head container. When set, run.go resolves PluginBundleURL
+	// and Plugins from the active context's tools.toml + admin.tools.endpoint.
+	DevPlugins bool `json:"devPlugins,omitempty" yaml:"devPlugins,omitempty"`
+	// PluginBundleURL is the resolved cluster-side URL of a Nextflow plugin
+	// bundle zip. Pulled by the head Nomad task as an artifact and unpacked
+	// into $NXF_HOME/plugins. Normally derived from DevPlugins, but can be
+	// set explicitly to override or to point at a custom bundle.
+	PluginBundleURL string `json:"pluginBundleURL,omitempty" yaml:"pluginBundleURL,omitempty"`
+	// Plugins is the ordered list of Nextflow plugin IDs/versions emitted in
+	// the generated nextflow.headjob.config plugins { ... } block. Empty means
+	// "use the default single nf-nomad@<NfPluginVersion> line".
+	Plugins []PluginRef `json:"plugins,omitempty" yaml:"plugins,omitempty"`
+	// ExtraBinaries names additional cluster tool binaries the head task
+	// should pull as Nomad artifacts (resolved at run time via the active
+	// context's tools.toml). Used to satisfy plugin runtime dependencies —
+	// e.g. nf-rclone needs the rclone binary on PATH.
+	ExtraBinaries []string `json:"extraBinaries,omitempty" yaml:"extraBinaries,omitempty"`
 
 	// Head job resource overrides
 	CPU      int    `json:"cpu,omitempty" yaml:"cpu,omitempty"`           // MHz
@@ -39,6 +62,13 @@ type PipelineSpec struct {
 	// Record-keeping (set by add/update, not by launch)
 	CreatedAt time.Time `json:"createdAt,omitempty" yaml:"createdAt,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
+}
+
+// PluginRef is one entry in a Nextflow plugins { ... } block. Mirrors
+// hclpipeline.PluginRef; converted in hcl_adapter.go.
+type PluginRef struct {
+	ID      string `json:"id" yaml:"id"`
+	Version string `json:"version,omitempty" yaml:"version,omitempty"`
 }
 
 // mergeSpec applies non-zero fields from override on top of base.
@@ -107,6 +137,21 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	}
 	if override.NodeConstraint != "" {
 		base.NodeConstraint = override.NodeConstraint
+	}
+	if override.PinWorkers {
+		base.PinWorkers = true
+	}
+	if override.DevPlugins {
+		base.DevPlugins = true
+	}
+	if override.PluginBundleURL != "" {
+		base.PluginBundleURL = override.PluginBundleURL
+	}
+	if len(override.Plugins) > 0 {
+		base.Plugins = append([]PluginRef(nil), override.Plugins...)
+	}
+	if len(override.ExtraBinaries) > 0 {
+		base.ExtraBinaries = append([]string(nil), override.ExtraBinaries...)
 	}
 	return base
 }

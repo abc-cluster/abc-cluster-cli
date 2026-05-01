@@ -115,3 +115,11 @@ version = "latest"
 #
 # [local.nf-pipeline-gen]
 # path = "/Users/me/projects/nf-pipeline-gen/build/libs/nf-pipeline-gen-1.0.0-all.jar"
+
+# Nextflow plugin bundle for cluster-side dev/test runs.
+# Built by `make bundle` in the meta-plugin repo; one zip per release that
+# unpacks into $NXF_HOME/plugins inside the head Docker container.
+# Consumed by:  abc pipeline run --dev-plugins
+#
+# [local.nf-abc-cluster-dev]
+# path = "/Users/me/projects/PHD-pub-abc-cluster/analysis/packages/nf-abc-cluster-dev/build/dist/nf-abc-cluster-dev-0.1.0.zip"
