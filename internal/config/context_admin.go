@@ -125,6 +125,7 @@ type AdminServices struct {
 	Vault        *AdminFloorService `yaml:"vault,omitempty"`
 	Traefik      *AdminFloorService `yaml:"traefik,omitempty"`
 	Uppy         *AdminFloorService `yaml:"uppy,omitempty"`
+	Wave         *AdminFloorService `yaml:"wave,omitempty"`
 }
 
 // AdminABCNodes holds optional static operator credentials for abc-nodes–style
@@ -178,7 +179,20 @@ type Admin struct {
 	// Whoami is an optional operator persona label for abc-nodes contexts (e.g. su-mbhg-bioinformatics_admin).
 	// When admin.abc_nodes.nomad_namespace is unset, Nomad namespace defaults are derived from known
 	// _<role> suffixes on Whoami (see deriveNomadNamespaceFromAdminWhoami).
-	Whoami   string         `yaml:"whoami,omitempty"`
+	Whoami string `yaml:"whoami,omitempty"`
+
+	// ID is a stable per-user identifier generated on first `abc auth whoami`
+	// (when absent). Format: ULID (26-char Crockford Base32, lex-sortable,
+	// embeds creation time). Used as the canonical user identity for cross-
+	// cluster joins, audit logs (abc-jurist + XTDB), and billing —
+	// independent of the human-readable Whoami label which can change as
+	// personas evolve.
+	//
+	// Unlike Whoami, ID is opaque, never collides (80 bits of randomness +
+	// ms timestamp), and privacy-safer to surface in metadata than email
+	// addresses. Set once, never edited. Sortable by creation time.
+	ID string `yaml:"id,omitempty"`
+
 	Services AdminServices  `yaml:"services,omitempty"`
 	ABCNodes *AdminABCNodes `yaml:"abc_nodes,omitempty"`
 	Tools    *AdminTools    `yaml:"tools,omitempty"`

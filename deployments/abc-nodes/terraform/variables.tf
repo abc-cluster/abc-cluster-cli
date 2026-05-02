@@ -160,13 +160,19 @@ variable "docker_registry_image" {
 }
 
 variable "docker_registry_node" {
-  description = "Hostname constraint for the local registry (single-node — data is on this node's scratch volume)"
+  description = "Hostname of the node that runs the registry (must have the docker driver). Moved from aither (containerd-driver) to a sun-nomadlab or gcp-nomadlab node — the docker driver natively supports HTTP registries via daemon.json insecure-registries."
   type        = string
-  default     = "aither"
+  default     = "nomad02"
+}
+
+variable "docker_registry_ip" {
+  description = "Tailscale IP of docker_registry_node. Used for Consul health checks and client push/pull URLs. Must match the node named by docker_registry_node."
+  type        = string
+  default     = "100.126.253.95"
 }
 
 variable "docker_registry_port" {
-  description = "Host port mapped to the registry container's :5000. Clients push/pull at <cluster_tailscale_ip>:<this>."
+  description = "Host port the registry binds to. Clients push/pull at <docker_registry_ip>:<this>."
   type        = number
   default     = 5000
 }
@@ -209,13 +215,13 @@ variable "enable_postgres" {
 }
 
 variable "enable_redis" {
-  description = "Deploy Redis (abc-experimental) — Wave rate-limit / cache dep"
+  description = "Deploy Redis in abc-experimental (token cache + rate-limit windows for Wave). Must use mode=bridge — containerd-driver with host mode only binds to 127.0.0.1, making the port unreachable from nomad02."
   type        = bool
   default     = false
 }
 
 variable "enable_wave" {
-  description = "Deploy Wave container-build orchestrator (abc-experimental; needs postgres + redis)"
+  description = "Deploy Wave Lite container augmentation service on nomad02 (abc-experimental). Intercepts OCI manifest pulls to inject layers, env vars, and entrypoints on-the-fly — no image rebuild needed. Requires enable_postgres=true and enable_redis=true."
   type        = bool
   default     = false
 }
@@ -582,11 +588,84 @@ variable "restic_server_image" {
   default     = "restic/rest-server:latest"
 }
 
-# Wave image is TBD — left as empty string; the nomad HCL stub documents this.
 variable "wave_image" {
-  description = "Wave container image (abc-experimental; TBD from Wave release channel)"
+  description = "Wave container image. Wave has no public image — build from source (apache-2.0 at github.com/seqeralabs/wave) and push to the local registry. Default references the nomad02 local registry at the version deployed in this cluster."
   type        = string
-  default     = ""
+  default     = "100.126.253.95:5000/wave:v1.33.3"
+}
+
+variable "wave_version" {
+  description = "Wave release tag — used in build instructions in the tftpl header comment."
+  type        = string
+  default     = "v1.33.3"
+}
+
+variable "wave_node" {
+  description = "Hostname of the node that runs Wave (must have the docker driver and the local registry). Defaults to nomad02 (sun-nomadlab) which has Docker 24.x and the local registry at port 5000."
+  type        = string
+  default     = "nomad02"
+}
+
+variable "wave_ip" {
+  description = "Tailscale IP of wave_node. Used in Consul service registration, the consul-register health check, and as the Caddy reverse-proxy target (wave.aither → wave_ip:9090). Must match the node named by wave_node."
+  type        = string
+  default     = "100.126.253.95"
+}
+
+variable "wave_server_url" {
+  description = "Public URL advertised to Nextflow pipelines as wave.endpoint."
+  type        = string
+  default     = "http://wave.aither"
+}
+
+variable "wave_pg_host" {
+  description = "Tailscale IP of the PostgreSQL host for Wave. PostgreSQL runs on aither (abc-experimental-postgres); accessed via static Tailscale IP so the URL stays valid if Wave is rescheduled."
+  type        = string
+  default     = "100.70.185.46"
+}
+
+variable "wave_pg_admin_user" {
+  description = "PostgreSQL superuser for Wave's db-init prestart (creates the wave DB and role)."
+  type        = string
+  default     = "abc"
+}
+
+variable "wave_pg_admin_password" {
+  description = "Password for wave_pg_admin_user."
+  type        = string
+  sensitive   = true
+  default     = "abc_db_secret"
+}
+
+variable "wave_pg_db" {
+  description = "Name of the Wave PostgreSQL database (created by wave-db-init prestart)."
+  type        = string
+  default     = "wave"
+}
+
+variable "wave_pg_user" {
+  description = "Least-privilege PostgreSQL role that Wave uses at runtime."
+  type        = string
+  default     = "wave_user"
+}
+
+variable "wave_pg_password" {
+  description = "Password for wave_pg_user."
+  type        = string
+  sensitive   = true
+  default     = "wave_secret"
+}
+
+variable "wave_redis_uri" {
+  description = "Redis URI for Wave (Lettuce client format). Redis runs on aither."
+  type        = string
+  default     = "redis://100.70.185.46:6379"
+}
+
+variable "wave_consul_addr" {
+  description = "HTTP address of the Consul server used by the consul-register sidecar to register Wave. Consul runs on aither."
+  type        = string
+  default     = "http://100.70.185.46:8500"
 }
 
 variable "caddy_image" {

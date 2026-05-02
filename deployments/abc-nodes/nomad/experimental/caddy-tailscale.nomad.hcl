@@ -242,6 +242,16 @@ http://docs.aither {
   reverse_proxy abc-nodes-traefik.service.consul:8081
 }
 
+# ── Wave Lite — container augmentation service (abc-experimental) ─────────────
+# Wave serves its own Docker registry API under /v2/ on the same port as the
+# REST API (9090 on nomad02, 100.126.253.95).  Route directly to the Wave
+# service — NOT through Traefik — so Docker image pulls (large, streaming
+# responses) bypass Traefik's buffering and get clean response bodies.
+http://wave.aither {
+  import ts_bind
+  reverse_proxy 100.126.253.95:9090
+}
+
 http://vault.aither {
   import ts_bind
   @root path /

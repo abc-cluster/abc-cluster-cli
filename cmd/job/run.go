@@ -236,6 +236,11 @@ EXAMPLES
 
 	// Script file handling
 	cmd.Flags().Bool("chmod", true, "Mark the script file as executable before submission (chmod +x). Disable with --chmod=false.")
+	cmd.Flags().String("shellcheck", "warn",
+		"Validate the submitted bash script before generating HCL. Modes:\n"+
+			"  warn  (default) bash parse errors block submission; shellcheck findings are shown as warnings.\n"+
+			"  error           shellcheck findings also block submission (requires `shellcheck` on PATH).\n"+
+			"  off             skip all script validation.")
 
 	// Artifact injection (used internally by abc data download for exec driver binaries)
 	cmd.Flags().StringArray("artifact", nil, "Nomad artifact URL to fetch into the task directory before the task starts (repeatable); used by abc data download for exec driver binary staging")
@@ -597,6 +602,9 @@ func runJob(cmd *cobra.Command, args []string) error {
 	if err := resolveMicromambaLocalMode(spec); err != nil {
 		return err
 	}
+	if err := resolveWaveInjectMode(spec); err != nil {
+		return err
+	}
 	if err := resolveWaveLocalMode(spec); err != nil {
 		return err
 	}
@@ -639,6 +647,12 @@ func runJob(cmd *cobra.Command, args []string) error {
 		scriptBody = string(scriptBytes)
 		scriptBody, err = FinalizeJobScript(spec, scriptBase, scriptBody)
 		if err != nil {
+			return err
+		}
+	}
+
+	if mode, _ := cmd.Flags().GetString("shellcheck"); mode != "off" {
+		if err := validateSubmittedScript(cmd.Context(), cmd.OutOrStderr(), scriptBase, scriptBody, mode); err != nil {
 			return err
 		}
 	}

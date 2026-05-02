@@ -14,16 +14,17 @@ job "abc-experimental-redis" {
   group "redis" {
     count = 1
 
-    # Pin to aither: static port 6379 exposed on aither's Tailscale IP.
-    # Wave connects to 100.70.185.46:6379; if Redis lands on another node
-    # that connection breaks. Update Wave's REDIS_URL if this changes.
+    # Pin to aither: static port 6379 forwarded via CNI bridge to the
+    # container. Wave connects to 100.70.185.46:6379 from nomad02.
+    # bridge mode is required: containerd-driver with host mode only binds
+    # to 127.0.0.1, making the port unreachable from other nodes.
     constraint {
       attribute = "$${attr.unique.hostname}"
       value     = "aither"
     }
 
     network {
-      mode = "host"
+      mode = "bridge"
       port "redis" { static = 6379 }
     }
 

@@ -11,12 +11,15 @@ package auth
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -258,6 +261,32 @@ instead (with a warning).`,
 				}
 			}
 
+			// Ensure admin.id is populated. Generated once per (context, user)
+			// on first whoami; never edited afterwards. Used as the canonical
+			// user identity in Job.Meta for cross-cluster correlation, audit
+			// (abc-jurist + XTDB), and billing — independent of the human-
+			// readable Whoami label which can change as personas evolve.
+			//
+			// Format is ULID: 26-char Crockford Base32, embeds ms creation
+			// timestamp, lexicographically sortable, no I/L/O/U for human
+			// readability. Picked over UUIDv4 because the embedded timestamp
+			// makes IDs self-describing in audit logs.
+			idGenerated := false
+			if strings.TrimSpace(activeCtx.Admin.ID) == "" {
+				if u, err := generateULID(); err != nil {
+					fmt.Fprintf(os.Stderr, "[abc] Warning: could not generate admin.id: %v\n", err)
+				} else {
+					activeCtx.Admin.ID = u
+					cfg.Contexts[canon] = activeCtx
+					if saveErr := cfg.Save(); saveErr != nil {
+						fmt.Fprintf(os.Stderr, "[abc] Warning: could not save admin.id: %v\n", saveErr)
+					} else {
+						idGenerated = true
+					}
+				}
+			}
+			_ = idGenerated
+
 			// --- Display ---
 			fmt.Printf("Context      %s\n", cfg.ActiveContext)
 			if canon != cfg.ActiveContext {
@@ -277,6 +306,15 @@ instead (with a warning).`,
 				fmt.Printf("Region       %s\n", activeCtx.Region)
 			}
 			fmt.Printf("Token        %s\n", maskToken(activeCtx.AccessToken))
+			if activeCtx.Admin.ID != "" {
+				marker := ""
+				if idGenerated {
+					marker = "  ✓ generated"
+				}
+				fmt.Printf("User ID      %s%s  (ULID; created %s)\n",
+					activeCtx.Admin.ID, marker,
+					ulidCreatedAt(activeCtx.Admin.ID).Format(time.RFC3339))
+			}
 
 			if nomadTok != nil {
 				fmt.Printf("\nNomad identity\n")
@@ -367,4 +405,27 @@ func maskToken(tok string) string {
 		return strings.Repeat("•", len(tok))
 	}
 	return tok[:8] + strings.Repeat("•", len(tok)-8)
+}
+
+// generateULID returns a Crockford Base32 ULID (26 chars, lex-sortable,
+// embeds ms creation timestamp). Picked over UUIDv4 for self-describing
+// IDs in audit logs and chronological scans in XTDB. See
+// `docs/design/workspace-model-and-job-correlation.md`.
+func generateULID() (string, error) {
+	ms := ulid.Timestamp(time.Now())
+	id, err := ulid.New(ms, rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// ulidCreatedAt extracts the ms timestamp embedded in a ULID. Returns the
+// zero time on a parse failure (e.g. legacy non-ULID IDs).
+func ulidCreatedAt(s string) time.Time {
+	id, err := ulid.Parse(s)
+	if err != nil {
+		return time.Time{}
+	}
+	return ulid.Time(id.Time()).UTC()
 }

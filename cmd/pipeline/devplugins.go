@@ -26,6 +26,7 @@ func defaultDevPlugins() []PluginRef {
 	return []PluginRef{
 		{ID: "nf-nomad", Version: "99.99.99"},
 		{ID: "nf-rclone", Version: "99.99.99"},
+		{ID: "nf-s5cmd", Version: "99.99.99"},
 	}
 }
 
@@ -33,11 +34,18 @@ func defaultDevPlugins() []PluginRef {
 // requires at runtime. Each entry must be registered in tools.toml so its
 // per-arch URL can be resolved via tools.ArtifactURL(name, "").
 //
-// nf-rclone needs the `rclone` binary on PATH (head + every compute node).
+//   - `rclone` — needed by nf-rclone (head + every compute node).
+//   - `s5cmd`  — needed by nf-s5cmd's S5cmdNomadInterop, which shells out to
+//                s5cmd cp from the head (to upload .command.* + sync results
+//                back) and from every worker bootstrap script. Must be on the
+//                head image's PATH OR available via /nxf-work/bin/ (which the
+//                worker bootstrap script also probes).
+//
 // The head pull is automatic via the artifact stanza; child-task coverage is
-// the plugin's own responsibility.
+// the plugin's own responsibility (see e.g. abc-place-s5cmd sysbatch which
+// drops s5cmd onto every Nomad client's host volume).
 func defaultDevPluginBinaries() []string {
-	return []string{"rclone"}
+	return []string{"rclone", "s5cmd"}
 }
 
 // resolveDevPluginBundle returns the cluster-side artifact URL for the dev

@@ -404,14 +404,18 @@ resource "nomad_job" "docker_registry" {
   count = local.registry_count
 
   # Local OCI registry (registry:2) for pushing locally-built images and
-  # pulling them back into Nomad jobs.  Lives in `abc-experimental` so it
-  # can be torn down without touching the production-tier services; the
-  # data lives on aither's scratch host volume so it survives rescheduling.
+  # pulling them back into Nomad jobs.  Runs on a sun-nomadlab node (docker
+  # driver) rather than aither (containerd-driver) because the docker driver
+  # natively supports HTTP registries via daemon.json insecure-registries.
+  # A consul-register sidecar registers the service against aither's Consul
+  # so Traefik can route registry.aither.
   jobspec = templatefile("${path.module}/../nomad/experimental/docker-registry.nomad.hcl.tftpl", {
     registry_image = var.docker_registry_image
     registry_node  = var.docker_registry_node
+    registry_ip    = var.docker_registry_ip
     registry_port  = var.docker_registry_port
-    registry_host  = var.cluster_tailscale_ip
+    registry_host  = var.docker_registry_ip
+    consul_addr    = var.wave_consul_addr
   })
   detach = false
 
@@ -440,6 +444,10 @@ resource "nomad_job" "postgres" {
 resource "nomad_job" "redis" {
   count = var.enable_redis ? 1 : 0
 
+  # Redis uses network { mode = "bridge" } (not "host") because the
+  # containerd-driver with host mode only binds static ports to 127.0.0.1,
+  # making port 6379 unreachable from Wave running on nomad02.  Bridge mode
+  # activates CNI port-forwarding that exposes the port on all host interfaces.
   jobspec = templatefile("${path.module}/../nomad/experimental/redis.nomad.hcl.tftpl", {
     redis_image = var.redis_image
   })
@@ -455,15 +463,28 @@ resource "nomad_job" "redis" {
 resource "nomad_job" "wave" {
   count = var.enable_wave ? 1 : 0
 
+  # Wave Lite runs on a sun-nomadlab node (docker driver) so it can pull its
+  # image from the local HTTP registry.  A consul-register sidecar registers
+  # the service against aither's Consul so Traefik routes wave.aither → here.
   jobspec = templatefile("${path.module}/../nomad/experimental/wave.nomad.hcl.tftpl", {
-    wave_image        = var.wave_image
-    postgres_user     = var.postgres_user
-    postgres_password = var.postgres_password
-    postgres_db       = var.postgres_db
+    wave_image      = var.wave_image
+    wave_version    = var.wave_version
+    wave_node       = var.wave_node
+    wave_ip         = var.wave_ip
+    wave_server_url = var.wave_server_url
+    consul_addr     = var.wave_consul_addr
+
+    pg_host           = var.wave_pg_host
+    pg_admin_user     = var.wave_pg_admin_user
+    pg_admin_password = var.wave_pg_admin_password
+    pg_wave_db        = var.wave_pg_db
+    pg_wave_user      = var.wave_pg_user
+    pg_wave_password  = var.wave_pg_password
+    redis_uri         = var.wave_redis_uri
   })
   detach = false
 
-  # Wave requires postgres (job metadata) and redis (rate-limit / queue).
+  # Wave requires postgres (DB storage) and redis (rate-limit / token cache).
   depends_on = [
     nomad_job.postgres,
     nomad_job.redis,

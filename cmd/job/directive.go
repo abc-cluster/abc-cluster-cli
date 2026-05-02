@@ -749,6 +749,15 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			}
 			spec.Spread = true
 
+		case "wave-inject-tools":
+			// Without a value, inject all wave_inject tools ("*" sentinel).
+			// With a value, inject only the named tools (comma-separated).
+			if !hasValue || val == "" {
+				spec.WaveInjectTools = []string{"*"}
+			} else {
+				spec.WaveInjectTools = strings.Split(val, ",")
+			}
+
 		default:
 			return fmt.Errorf("unknown #%s directive --%s", marker, key)
 		}

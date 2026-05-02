@@ -1,12 +1,22 @@
 package job
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/wave"
 )
 
 const (
@@ -115,6 +125,222 @@ func invokeWaveCLI(condaFile, platform string) (string, error) {
 	}
 	if resp.TargetImage == "" {
 		return "", fmt.Errorf("wave: empty targetImage in response: %s", string(out))
+	}
+	return resp.TargetImage, nil
+}
+
+// resolveWaveInjectMode handles #ABC --wave-inject-tools by:
+//  1. Reading tools.toml to find the matching wave_inject tools.
+//  2. Downloading the pre-built wave-layer-linux-<arch>.tar.gz from the cluster
+//     S3 endpoint and extracting the requested binaries to a temp staging dir.
+//  3. Calling the Wave CLI with --layer <staging-dir> to augment the base image.
+//  4. Replacing DriverConfig["image"] with the resolved Wave target image.
+//
+// No prestart task is emitted — the image swap happens at submit time and the
+// augmented image is pulled by the main task like any other Docker image.
+func resolveWaveInjectMode(spec *jobSpec) error {
+	if len(spec.WaveInjectTools) == 0 {
+		return nil
+	}
+	if NormalizeRuntimeID(spec.Runtime) == runtimeWaveExec {
+		return fmt.Errorf("--wave-inject-tools cannot be combined with --runtime=wave-exec")
+	}
+	baseImage := ""
+	if spec.DriverConfig != nil {
+		baseImage = spec.DriverConfig["image"]
+	}
+	if baseImage == "" {
+		return fmt.Errorf("--wave-inject-tools requires a base image: set --driver.config.image=<image>")
+	}
+
+	// Determine target arch from WavePlatform (default linux/amd64).
+	platform := spec.WavePlatform
+	if platform == "" {
+		platform = waveDefaultPlatform
+	}
+	parts := strings.SplitN(platform, "/", 2)
+	if len(parts) != 2 || parts[0] != "linux" {
+		return fmt.Errorf("--wave-inject-tools: unsupported platform %q (expected linux/<arch>)", platform)
+	}
+	arch := parts[1]
+
+	// Load config once — used for the tools endpoint and abc-wave URL.
+	cfg, err := abccfg.Load()
+	if err != nil {
+		return fmt.Errorf("wave-inject-tools: load config: %w", err)
+	}
+	assetDir, err := utils.AssetDir()
+	if err != nil {
+		return fmt.Errorf("wave-inject-tools: asset dir: %w", err)
+	}
+	toolsTomlPath := filepath.Join(assetDir, "tools.toml")
+	tcfg, err := tools.ReadToolsConfig(toolsTomlPath)
+	if err != nil {
+		return fmt.Errorf("wave-inject-tools: read tools.toml: %w", err)
+	}
+
+	// Determine which tools to inject.
+	wantAll := len(spec.WaveInjectTools) == 1 && spec.WaveInjectTools[0] == "*"
+	wantSet := map[string]bool{}
+	for _, n := range spec.WaveInjectTools {
+		wantSet[n] = true
+	}
+
+	var injectTools []tools.ToolSpec
+	for _, t := range tcfg.WaveInjectTools() {
+		if wantAll || wantSet[t.Name] {
+			injectTools = append(injectTools, t)
+		}
+	}
+	if len(injectTools) == 0 {
+		return fmt.Errorf("wave-inject-tools: no matching wave_inject tools found in tools.toml for %v", spec.WaveInjectTools)
+	}
+
+	// Resolve S3 endpoint and abc-wave URL from config.
+	ep := strings.TrimRight(cfg.ActiveCtx().ToolPushEndpoint(), "/")
+	if ep == "" {
+		return fmt.Errorf(
+			"wave-inject-tools: no tools endpoint configured\n" +
+				"  Run once: abc admin tools push   (writes endpoint to config)\n" +
+				"  Or set:   abc config set contexts.<name>.admin.tools.endpoint http://<host>:<port>",
+		)
+	}
+	actx := cfg.ActiveCtx()
+	waveAPIURL, _ := abccfg.GetAdminFloorField(&actx.Admin.Services, "wave", "http")
+	if waveAPIURL == "" {
+		return fmt.Errorf(
+			"wave-inject-tools: no abc-wave URL configured\n" +
+				"  Set: abc config set contexts.<name>.admin.services.wave.http http://<host>:<port>",
+		)
+	}
+
+	// Build the list of layer inputs.
+	//   *  → one combined layer  (wave-layer-linux-<arch>.tar.gz)
+	//   subset → one per-tool layer per requested tool; Wave accepts multiple layers
+	//            in a single /v1alpha2/container call.
+	var layerInputs []waveLayerInput
+	if wantAll {
+		url := fmt.Sprintf("%s/%s/%s/wave-layer-linux-%s.tar.gz",
+			ep, tcfg.Push.Bucket, tcfg.Push.Prefix, arch)
+		d, err := fetchLayerDigests(url)
+		if err != nil {
+			return fmt.Errorf("wave-inject-tools: %w", err)
+		}
+		layerInputs = []waveLayerInput{{URL: url, Digests: d}}
+	} else {
+		for _, t := range injectTools {
+			url := fmt.Sprintf("%s/%s/%s/wave-layer-linux-%s-%s.tar.gz",
+				ep, tcfg.Push.Bucket, tcfg.Push.Prefix, arch, t.Name)
+			d, err := fetchLayerDigests(url)
+			if err != nil {
+				return fmt.Errorf("wave-inject-tools: tool %s: %w", t.Name, err)
+			}
+			layerInputs = append(layerInputs, waveLayerInput{URL: url, Digests: d})
+		}
+	}
+
+	// Call Wave REST API — passes all layer URLs; Wave fetches them server-side.
+	targetImage, err := callWaveAPI(context.Background(), waveAPIURL, baseImage, layerInputs)
+	if err != nil {
+		return fmt.Errorf("wave-inject-tools: %w", err)
+	}
+
+	if spec.DriverConfig == nil {
+		spec.DriverConfig = make(map[string]string)
+	}
+	spec.DriverConfig["image"] = targetImage
+	return nil
+}
+
+// waveContainerLayer is a single layer entry in the Wave /v1alpha2/container request.
+type waveContainerLayer struct {
+	Location   string `json:"location"`
+	GzipDigest string `json:"gzipDigest"`
+	GzipSize   int64  `json:"gzipSize"`
+	TarDigest  string `json:"tarDigest"`
+}
+
+// waveContainerConfig is the containerConfig field of the Wave request.
+type waveContainerConfig struct {
+	Layers []waveContainerLayer `json:"layers"`
+}
+
+// waveContainerRequest is the body for POST /v1alpha2/container.
+type waveContainerRequest struct {
+	ContainerImage  string              `json:"containerImage"`
+	ContainerConfig waveContainerConfig `json:"containerConfig"`
+}
+
+// waveLayerInput is a layer URL + pre-computed digests for the Wave API.
+type waveLayerInput struct {
+	URL     string
+	Digests wave.LayerDigests
+}
+
+// fetchLayerDigests downloads the layer at url and returns its sha256 digests.
+// The download is needed to compute the gzip and tar digests required by the Wave API.
+func fetchLayerDigests(url string) (wave.LayerDigests, error) {
+	resp, err := http.Get(url) //nolint:noctx
+	if err != nil {
+		return wave.LayerDigests{}, fmt.Errorf("download layer from %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return wave.LayerDigests{}, fmt.Errorf("download layer %s: HTTP %d", url, resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return wave.LayerDigests{}, fmt.Errorf("read layer from %s: %w", url, err)
+	}
+	return wave.ComputeLayerDigests(data)
+}
+
+// callWaveAPI calls the Wave REST API to augment baseImage with one or more
+// pre-built layers. Wave fetches each layer from its URL server-side, so there
+// is no local size constraint. Returns the resolved targetImage URI.
+func callWaveAPI(ctx context.Context, waveURL, baseImage string, layers []waveLayerInput) (string, error) {
+	wl := make([]waveContainerLayer, len(layers))
+	for i, l := range layers {
+		wl[i] = waveContainerLayer{
+			Location:   l.URL,
+			GzipDigest: l.Digests.GzipDigest,
+			GzipSize:   l.Digests.GzipSize,
+			TarDigest:  l.Digests.TarDigest,
+		}
+	}
+	reqBody := waveContainerRequest{
+		ContainerImage:  baseImage,
+		ContainerConfig: waveContainerConfig{Layers: wl},
+	}
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("wave API: marshal request: %w", err)
+	}
+
+	apiURL := strings.TrimRight(waveURL, "/") + "/v1alpha2/container"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("wave API: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	httpResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("wave API: POST %s: %w", apiURL, err)
+	}
+	defer httpResp.Body.Close()
+	body, _ := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return "", fmt.Errorf("wave API: POST %s: HTTP %d: %s", apiURL, httpResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var resp waveResponse
+	if jsonErr := json.Unmarshal(body, &resp); jsonErr != nil {
+		return "", fmt.Errorf("wave API: unexpected response %q: %w", strings.TrimSpace(string(body)), jsonErr)
+	}
+	if resp.TargetImage == "" {
+		return "", fmt.Errorf("wave API: empty targetImage in response: %s", string(body))
 	}
 	return resp.TargetImage, nil
 }

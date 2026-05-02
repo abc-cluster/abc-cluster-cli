@@ -153,6 +153,11 @@ type jobSpec struct {
 	WavePlatform    string // target platform, e.g. "linux/amd64" (default)
 	WaveTokenSecret string // "nomad/path:key" for TOWER_ACCESS_TOKEN
 
+	// WaveInjectTools lists tool names to inject into the container image via
+	// Wave layer augmentation. The special value "*" means all wave_inject tools
+	// from tools.toml. Resolved at submit time by resolveWaveInjectMode.
+	WaveInjectTools []string
+
 	// ── Debug / interactive directives ───────────────────────────────────────
 	// DebugSleepSecs injects a `sleep N` at the start of the job script so the
 	// user can exec into the running allocation to inspect state or attach a
@@ -328,6 +333,9 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.WaveTokenSecret != "" {
 		base.WaveTokenSecret = override.WaveTokenSecret
+	}
+	if len(override.WaveInjectTools) > 0 {
+		base.WaveInjectTools = append([]string(nil), override.WaveInjectTools...)
 	}
 	if override.TaskTmp {
 		base.TaskTmp = true

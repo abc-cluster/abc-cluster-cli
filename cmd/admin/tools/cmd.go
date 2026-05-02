@@ -136,13 +136,14 @@ func NewCmd() *cobra.Command {
 		Short: "Manage cluster-node tool binaries (fetch, push, list)",
 		Long: `Download and distribute tool binaries for cluster nodes.
 
-  abc admin tools init     Create ~/.abc/assets/tools.toml from the bundled default
-  abc admin tools edit     Open tools.toml in $EDITOR
-  abc admin tools fetch    Download tools for all configured architectures
-  abc admin tools push     Upload cached binaries to cluster S3
-  abc admin tools list         Show local cache vs remote state side-by-side
-  abc admin tools status       Quick health check; exits 1 if anything is missing
+  abc admin tools init        Create ~/.abc/assets/tools.toml from the bundled default
+  abc admin tools edit        Open tools.toml in $EDITOR
+  abc admin tools fetch       Download tools for all configured architectures
+  abc admin tools push        Upload cached binaries to cluster S3
+  abc admin tools list        Show local cache vs remote state side-by-side
+  abc admin tools status      Quick health check; exits 1 if anything is missing
   abc admin tools artifact-url Print Nomad artifact stanza for a tool
+  abc admin tools wave-layer  Build and push wave-layer tar.gz bundles to the cluster
 
 Directory layout:
   ~/.abc/assets/           Distribution artifacts — arch-suffixed binaries, JARs,
@@ -163,6 +164,7 @@ Target architectures come from admin.tools.architectures in the active context
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newArtifactURLCmd())
+	cmd.AddCommand(newWaveLayerCmd())
 
 	return cmd
 }

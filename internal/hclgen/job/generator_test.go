@@ -1,8 +1,12 @@
 package job
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/shellcheck"
 )
 
 func TestGenerate_StaticEnvOnlyCreatesEnvBlock(t *testing.T) {
@@ -147,5 +151,48 @@ func TestGenerate_WavePrestartTask(t *testing.T) {
 		if !strings.Contains(hcl, c.want) {
 			t.Errorf("[%s] expected HCL to contain %q\nFull HCL:\n%s", c.label, c.want, hcl)
 		}
+	}
+}
+
+
+func TestGenerate_WavePrestartScriptPassesShellcheck(t *testing.T) {
+	spec := Spec{
+		Name:        "samtools-wave",
+		Namespace:   "default",
+		Datacenters: []string{"dc1"},
+		Priority:    50,
+		Nodes:       1,
+		Cores:       4,
+		MemoryMB:    8192,
+		Driver:      "docker",
+		DriverConfig: map[string]string{"image": "wave.seqera.io/wt/abc123/ubuntu:22.04"},
+		Wave: WaveSpec{
+			Enabled:          true,
+			CondaFileContent: "name: env\n",
+			TokenSecretPath:  "nomad/jobs",
+			TokenSecretKey:   "wave_token",
+			Platform:         "linux/amd64",
+			BinarySourceURL:  "http://rustfs/binary_tools/wave",
+		},
+	}
+	hcl := Generate(spec, "samtools.sh", "#!/bin/bash\necho ok\n")
+
+	script := shellcheck.ExtractHCLHeredoc(hcl, "wave-build.sh")
+	if script == "" {
+		t.Fatalf("could not extract wave-build.sh heredoc body from HCL:\n%s", hcl)
+	}
+
+	// hclwrite auto-escapes ${VAR} → $${VAR} in heredoc emission, so the
+	// HCL-escape pre-check (ABC001) doesn't apply here. Always run the
+	// embedded bash parser; run shellcheck only when it's on PATH.
+	if perr := shellcheck.Parse(script); perr != nil {
+		t.Fatalf("wave-build.sh fails bash parse: %v\n--- script ---\n%s", perr, script)
+	}
+	out, err := shellcheck.Lint(context.Background(), script, shellcheck.Default())
+	switch {
+	case errors.Is(err, shellcheck.ErrShellcheckUnavailable):
+		t.Logf("system shellcheck not on PATH; embedded parse passed")
+	case err != nil:
+		t.Logf("shellcheck findings (advisory):\n%s", out)
 	}
 }

@@ -19,36 +19,47 @@
 #  ✗ Security scanning                 ✓ Blob caching
 #  ✗ Blob caching
 #
+# DEPLOYMENT NODE: nomad02 in sun-nomadlab (Tailscale IP 100.126.253.95)
+# ─────────────────────────────────────────────────────────────────────────────
+# Wave runs on nomad02 because it has the `docker` driver which natively supports
+# HTTP registries via insecure_registries in task config.  aither uses the
+# containerd-driver which does not support HTTP registries without complex
+# host-level patching that proved unreliable.
+#
 # IMAGE — SELF-BUILD REQUIRED
 # ───────────────────────────
 # Wave has no public Docker image.  Seqera distributes only via private ECR
 # (nf-tower-enterprise/wave) under an enterprise agreement.  The source is
 # Apache-2.0 at https://github.com/seqeralabs/wave.
 #
-# Build and push to the local registry (one-time, re-run to upgrade):
+# Build on your Mac and push to the GCP local registry (one-time, re-run to upgrade):
 #
 #   git clone https://github.com/seqeralabs/wave --branch v1.33.3 --depth 1
 #   cd wave
 #
-#   # Option A — jib direct push (no local Docker required)
-#   ./gradlew jib \
-#     -Djib.to.image=100.70.185.46:5000/wave:v1.33.3 \
-#     -Djib.to.auth.allowInsecureRegistries=true
+#   # Option A — build on Mac, push via jib + SSH tunnel to nomad02
+#   ssh -f -N -L 5000:localhost:5000 nomad02  # tunnel Mac:5000 → nomad02:5000
+#   JAVA_HOME=/usr/local/opt/openjdk ./gradlew jib \
+#     -PjibRepo=localhost:5000 \
+#     -Djib.to.image=localhost:5000/wave:v1.33.3
 #
-#   # Option B — jib to local Docker, then push
-#   ./gradlew jibDockerBuild --image=100.70.185.46:5000/wave:v1.33.3
-#   docker push 100.70.185.46:5000/wave:v1.33.3
+#   # Option B — build on Mac, push via Docker + tunnel
+#   ./gradlew jibDockerBuild --image=localhost:5000/wave:v1.33.3
+#   ssh -f -N -L 5000:localhost:5000 nomad02
+#   docker push localhost:5000/wave:v1.33.3
 #
-# Local registry: abc-nodes-docker-registry at 100.70.185.46:5000 (HTTP, no TLS).
-# containerd on each node must allow this insecure registry — add to:
-#   /etc/containerd/config.toml:
-#     [plugins."io.containerd.grpc.v1.cri".registry.mirrors."100.70.185.46:5000"]
-#       endpoint = ["http://100.70.185.46:5000"]
+#   # Option C — copy from aither's old registry via the copy batch job:
+#   abc admin services nomad cli -- job run /tmp/copy-wave-image-to-nomad02.nomad.hcl
+#
+# nomad02 local registry: abc-nodes-docker-registry on nomad02:5000 (HTTP, no TLS).
+# Docker on nomad02 allows HTTP via insecure_registries in /etc/docker/daemon.json
+# (set up by the setup-nomad02-docker-insecure-registry batch job).
 #
 # DEPENDENCIES
 # ────────────
 #  PostgreSQL  : abc-experimental-postgres  (100.70.185.46:5432, db=abc)
 #                → wave_db_init prestart creates the 'wave' database + user
+#                  (postgres stays on aither; accessed via Tailscale IP)
 #  Redis       : abc-experimental-redis     (100.70.185.46:6379)
 #                → must be enabled: terraform apply -var enable_redis=true
 #
@@ -87,8 +98,8 @@ variable "wave_version" {
 
 variable "wave_image" {
   type        = string
-  default     = "100.70.185.46:5000/wave:v1.33.3"
-  description = "Self-built Wave image in the local registry. See build instructions in file header."
+  default     = "100.126.253.95:5000/wave:v1.33.3"
+  description = "Wave image in nomad02's local HTTP registry. See build instructions in file header. Use copy-wave-image-to-nomad02 batch job to seed it from aither's registry."
 }
 
 # PostgreSQL superuser credentials (for the db-init prestart only).
@@ -112,6 +123,12 @@ variable "pg_wave_db" {
 variable "pg_wave_user" {
   type    = string
   default = "wave_user"
+}
+
+variable "pg_wave_password" {
+  type        = string
+  default     = "wave_secret"
+  description = "Password for wave_user in PostgreSQL. Override with -var pg_wave_password=... at deploy time."
 }
 
 variable "redis_uri" {
@@ -140,21 +157,18 @@ job "abc-experimental-wave" {
   group "wave" {
     count = 1
 
-    # Pin to aither — PostgreSQL data and Redis are on aither.
-    # Wave's DB connections use the static Tailscale IP (100.70.185.46) rather
-    # than 127.0.0.1 so the URLs stay valid even if Wave is rescheduled to a
-    # different node in future (e.g. when the DB is extracted to a managed service).
+    # Pin to nomad02 (sun-nomadlab, Tailscale IP 100.126.253.95).
+    # This node runs the docker driver and hosts the local Docker registry at port 5000.
+    # PostgreSQL (100.70.185.46:5432) and Redis (100.70.185.46:6379) stay on
+    # aither and are reached via their static Tailscale IPs.
     constraint {
       attribute = "${attr.unique.hostname}"
-      value     = "aither"
+      value     = "nomad02"
     }
 
     network {
-      mode = "bridge"
-      port "http" {
-        static = 9090
-        to     = 9090
-      }
+      mode = "host"
+      port "http" { static = 9090 }
     }
 
     restart {
@@ -178,9 +192,10 @@ job "abc-experimental-wave" {
         sidecar = false
       }
 
-      # DESIGN DECISION: containerd-driver so psql comes from the postgres image
-      # rather than requiring a host-side psql install.
-      driver = "containerd-driver"
+      # Uses the docker driver — psql comes from the postgres image rather than
+      # requiring a host-side psql install.  postgres:15-alpine is a public image
+      # so the docker driver pulls it from Docker Hub with no registry config needed.
+      driver = "docker"
 
       config {
         image      = "postgres:15-alpine"
@@ -229,16 +244,8 @@ job "abc-experimental-wave" {
         ]
       }
 
-      # WAVE_DB_PASSWORD injected from Nomad Variables so the prestart task can
-      # set the initial password for wave_user consistently with what Wave itself uses.
-      template {
-        destination = "secrets/db.env"
-        env         = true
-        data        = <<EOF
-{{- with nomadVar "nomad/jobs/abc-experimental-wave" -}}
-WAVE_DB_PASSWORD={{ .wave_db_password }}
-{{- end }}
-EOF
+      env {
+        WAVE_DB_PASSWORD = "${var.pg_wave_password}"
       }
 
       resources {
@@ -249,12 +256,18 @@ EOF
 
     # ── Wave Lite server ──────────────────────────────────────────────────────
     task "wave" {
-      driver = "containerd-driver"
+      driver = "docker"
 
       config {
-        image = var.wave_image
+        image        = var.wave_image
+        network_mode = "host"
         # Wave (Micronaut) looks for config.yml in the working directory.
         # MICRONAUT_CONFIG_FILES overrides the search path — see env block below.
+        #
+        # HTTP pull from 100.126.253.95:5000 is allowed via /etc/docker/daemon.json
+        # on nomad02 (set by setup-nomad02-docker-insecure-registry batch job).
+        # network_mode=host: docker driver on nomad02 doesn't apply group-level host
+        # mode automatically — this ensures Wave binds directly to host port 9090.
       }
 
       # ── Wave config.yml (delivered via Nomad template) ──────────────────────
@@ -306,7 +319,7 @@ micronaut:
   netty:
     event-loops:
       default:
-        # 2–4× CPU core count. aither has 8+ cores; 16 threads is conservative.
+        # 2–4× CPU core count. nomad02 has 4+ vCPUs; 16 threads is conservative.
         num-threads: 16
   http:
     services:
@@ -356,46 +369,8 @@ EOF
 
         # AWS SDK requires a region even for non-AWS endpoints.
         AWS_DEFAULT_REGION = "us-east-1"
-      }
 
-      # Sensitive values from Nomad Variables.
-      template {
-        destination = "secrets/wave.env"
-        env         = true
-        data        = <<EOF
-{{- with nomadVar "nomad/jobs/abc-experimental-wave" -}}
-WAVE_DB_PASSWORD={{ .wave_db_password }}
-{{- end }}
-EOF
-      }
-
-      service {
-        name     = "abc-experimental-wave"
-        port     = "http"
-        provider = "consul"
-        tags = [
-          "abc-nodes", "wave", "experimental",
-          "prometheus.scrape=true",
-          "traefik.enable=true",
-          "traefik.http.routers.wave.rule=Host(`wave.aither`)",
-          "traefik.http.routers.wave.entrypoints=web",
-          "traefik.http.services.wave.loadbalancer.server.port=9090",
-        ]
-
-        check {
-          name     = "wave-health"
-          type     = "http"
-          path     = "/health"
-          interval = "20s"
-          timeout  = "5s"
-          # Wave takes 30–60s to initialise (Flyway DB migration + JVM warmup).
-          # check_restart gives it time before Nomad considers it failed.
-          check_restart {
-            limit           = 5
-            grace           = "90s"
-            ignore_warnings = false
-          }
-        }
+        WAVE_DB_PASSWORD = "${var.pg_wave_password}"
       }
 
       resources {
@@ -403,6 +378,84 @@ EOF
         # Wave Lite without build overhead sits comfortably at 800–1000 MB steady state.
         cpu    = 500
         memory = 1536
+      }
+    }
+
+    # ── Consul service registration sidecar ───────────────────────────────────
+    # nomad02 has no Consul agent, so we can't use `service { provider = "consul" }`.
+    # This raw_exec sidecar registers Wave directly against aither's Consul agent
+    # (100.70.185.46:8500) with nomad02's Tailscale IP (100.126.253.95:9090) as the
+    # address, then deregisters cleanly on stop.
+    # Traefik on aither reads Consul catalog and routes wave.aither → this address.
+    task "consul-register" {
+      lifecycle {
+        hook    = "poststart"
+        sidecar = true
+      }
+
+      driver = "raw_exec"
+
+      config {
+        command = "/bin/bash"
+        args    = ["${NOMAD_TASK_DIR}/register.sh"]
+      }
+
+      template {
+        destination = "local/register.sh"
+        perms       = "755"
+        data        = <<EOF
+#!/bin/bash
+set -e
+
+CONSUL_ADDR="http://100.70.185.46:8500"
+SERVICE_ID="abc-experimental-wave-nomad02"
+WAVE_ADDR="100.126.253.95"
+WAVE_PORT=9090
+
+# Register on start, deregister on stop (SIGTERM from Nomad).
+cleanup() {
+  echo "consul-register: deregistering $SERVICE_ID"
+  curl -sf -X PUT "$CONSUL_ADDR/v1/agent/service/deregister/$SERVICE_ID" || true
+  exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+echo "consul-register: registering $SERVICE_ID in Consul at $CONSUL_ADDR"
+# No local readiness wait — Consul's own HTTP health check (below) handles this.
+# Consul marks the service critical until Wave's /health endpoint responds,
+# so Traefik won't route to it until it's actually up.
+curl -sf -X PUT "$CONSUL_ADDR/v1/agent/service/register" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"ID\": \"$SERVICE_ID\",
+    \"Name\": \"abc-experimental-wave\",
+    \"Address\": \"$WAVE_ADDR\",
+    \"Port\": $WAVE_PORT,
+    \"Tags\": [
+      \"abc-nodes\", \"wave\", \"experimental\",
+      \"prometheus.scrape=true\",
+      \"traefik.enable=true\",
+      \"traefik.http.routers.wave.rule=Host(\\\"wave.aither\\\")\",
+      \"traefik.http.routers.wave.entrypoints=web\",
+      \"traefik.http.services.wave.loadbalancer.server.port=9090\"
+    ],
+    \"Check\": {
+      \"HTTP\": \"http://$WAVE_ADDR:$WAVE_PORT/health\",
+      \"Interval\": \"20s\",
+      \"Timeout\": \"5s\",
+      \"DeregisterCriticalServiceAfter\": \"2m\"
+    }
+  }"
+
+echo "consul-register: registered. Sleeping until stopped..."
+# Sleep in a loop so the trap fires promptly on SIGTERM.
+while true; do sleep 30; done
+EOF
+      }
+
+      resources {
+        cpu    = 50
+        memory = 32
       }
     }
   }

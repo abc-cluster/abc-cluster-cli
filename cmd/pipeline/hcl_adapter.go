@@ -1,10 +1,52 @@
 package pipeline
 
 import (
+	"runtime/debug"
+	"strings"
+	"time"
+
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	hclpipeline "github.com/abc-cluster/abc-cluster-cli/internal/hclgen/pipeline"
 )
+
+// resolveIdentity gathers the user/workspace/pipeline correlation context
+// from the active context + spec. Each field is best-effort; absent fields
+// degrade cleanly (the generator omits empty meta keys).
+func resolveIdentity(spec *PipelineSpec) hclpipeline.Identity {
+	id := hclpipeline.Identity{
+		PipelineURL:      spec.Repository,
+		PipelineRevision: spec.Revision,
+		RunName:          spec.Name,
+		SubmittedAt:      time.Now().UTC().Format(time.RFC3339),
+		CLIVersion:       cliVersion(),
+	}
+	if c, err := cfg.Load(); err == nil {
+		ctx := c.ActiveCtx()
+		id.UserWhoami = strings.TrimSpace(ctx.Admin.Whoami)
+		if id.UserWhoami == "" && ctx.Auth != nil {
+			id.UserWhoami = strings.TrimSpace(ctx.Auth.Whoami)
+		}
+		id.UserUUID = strings.TrimSpace(ctx.Admin.ID)
+		// Workspace = the Nomad namespace the head will land in (== bucket
+		// name in workspaces.yaml v2).
+		id.Workspace = strings.TrimSpace(spec.Namespace)
+		// Tenant defaults to Workspace; future schema work resolves the real
+		// parent-chain root from workspaces.yaml.
+	}
+	return id
+}
+
+// cliVersion reports the abc CLI's own version. Falls back to "dev" outside
+// a build with embedded version info.
+func cliVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "dev"
+}
 
 func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string) string {
 	if spec == nil {
@@ -51,6 +93,8 @@ func generateHeadJobHCLWithStaticEnv(spec *PipelineSpec, nomadAddr, nomadToken, 
 		ExtraConfig:     spec.ExtraConfig,
 		Resume:          spec.Resume,
 		SessionID:       spec.SessionID,
+		RunTag:          spec.RunTag,
+		PipelineSlug:    spec.PipelineSlug,
 		HostVolume:      spec.HostVolume,
 		NodeConstraint:    spec.NodeConstraint,
 		PinWorkers:        spec.PinWorkers,
@@ -59,5 +103,9 @@ func generateHeadJobHCLWithStaticEnv(spec *PipelineSpec, nomadAddr, nomadToken, 
 		Plugins:         plugins,
 		ExtraBinaries:   bins,
 		StaticEnv:       staticEnv,
+		WaveEndpoint:     spec.WaveEndpoint,
+		FusionEnabled:    spec.FusionEnabled,
+		ContainerRuntime: spec.ContainerRuntime,
+		Identity:         resolveIdentity(spec),
 	}, nomadAddr, nomadToken, runUUID)
 }

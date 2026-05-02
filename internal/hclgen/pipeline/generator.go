@@ -3,6 +3,7 @@ package pipeline
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -31,8 +32,20 @@ type Spec struct {
 
 	// Resume appends -resume to the nextflow run command (checkpoint restart).
 	Resume bool
-	// SessionID resumes a specific Nextflow session (implies Resume).
+	// SessionID is the Nextflow session UUID to resume from (only meaningful
+	// when Resume is true). Distinct from RunTag below — Nextflow's session
+	// UUID is data-plane (cache locality); the run tag is orchestration.
 	SessionID string
+	// RunTag is a short alphanumeric prefix that the harness pre-chose for
+	// single-prefix Nomad correlation. Emitted on the head task as
+	// `NF_NOMAD_RUN_TAG`. Combined with PipelineSlug below.
+	RunTag string
+	// PipelineSlug is the sanitized slug derived from the pipeline URL
+	// (e.g. `nf-core-demo` from `nf-core/demo`). Used as the trailing
+	// segment of the head Nomad job-id (`<runtag>-nf-head-<slug>`) for
+	// human readability. NOT emitted to nf-nomad — children encode
+	// pipeline context in the process name already.
+	PipelineSlug string
 
 	// HostVolume is the Nomad host volume name used for the shared work directory.
 	// Defaults to "nextflow-work". Override with the name of any host volume
@@ -82,6 +95,39 @@ type Spec struct {
 	// StaticEnv is merged into the task env block as literal strings (abc-nodes
 	// enhanced floor: Loki, Prometheus, Grafana Alloy).
 	StaticEnv map[string]string
+
+	// Identity carries the user/workspace correlation context that's emitted
+	// onto the head Job's `meta {}` block AND injected as env vars on the head
+	// task. nf-nomad reads from those env vars at session-init and mirrors the
+	// same keys onto every child Nomad job's meta — so a single allocation
+	// inspect tells you who/where/when without external state. See
+	// docs/design/workspace-model-and-job-correlation.md.
+	Identity Identity
+
+	// WaveEndpoint, when non-empty, emits a wave { enabled = true; endpoint = "..." }
+	// block in the Groovy nextflow config. Set to abc-wave URL for local augmentation
+	// or to wave.seqera.io for the public service. Empty = no wave block emitted.
+	WaveEndpoint string
+
+	// FusionEnabled, when true AND WaveEndpoint is set, also emits a
+	// fusion { enabled = true } block. Fusion requires Wave and an S3 work dir,
+	// and always routes to wave.seqera.io (Wave Lite does not support Fusion).
+	FusionEnabled bool
+
+	// WaveTokenSecret is the Nomad Variable path+key for the Seqera access token
+	// injected as TOWER_ACCESS_TOKEN when FusionEnabled = true.
+	// Format: "nomad/path:key" (e.g. "nomad/jobs:wave_token").
+	// Defaults to "nomad/jobs:wave_token" when empty and FusionEnabled is set.
+	WaveTokenSecret string
+
+	// ContainerRuntime selects the Nextflow container engine. Valid values:
+	//   ""  or "docker"     → docker  { enabled = true }  (default)
+	//   "singularity"       → singularity { enabled = true; ociAutoPull = true* }
+	//   "apptainer"         → apptainer  { enabled = true; ociAutoPull = true* }
+	// *ociAutoPull is only emitted when WaveEndpoint is set so Singularity/Apptainer
+	// pulls the augmented OCI image from the Wave proxy and converts it to SIF locally,
+	// instead of relying on Wave to build the SIF (which Wave Lite cannot do).
+	ContainerRuntime string
 }
 
 // PluginRef is one entry in a Nextflow plugins { ... } block.
@@ -97,6 +143,153 @@ type PluginRef struct {
 type ToolBinary struct {
 	Name      string
 	SourceURL string
+}
+
+// Identity is the user / workspace / pipeline correlation context emitted
+// onto the head Job's `meta {}` block AND injected as ABC_*/NF_* env vars on
+// the head task. nf-nomad propagates the same keys onto every child Nomad
+// job's meta. Each field is optional — empty fields are omitted from the
+// emitted meta/env, so partial identity (e.g. workspace yet to be wired)
+// degrades cleanly. See
+// `abc-cluster-cli/docs/design/workspace-model-and-job-correlation.md`.
+type Identity struct {
+	// User identity (from auth.<ctx>.admin.{whoami,uuid})
+	UserWhoami string
+	UserUUID   string
+
+	// Workspace = Nomad namespace = RustFS bucket; opaque flat slug
+	Workspace     string // e.g. "su-mbhg-bioinformatics"
+	WorkspaceType string // "personal" | "shared" (optional)
+	Tenant        string // root of workspace parent chain; defaults to Workspace
+
+	// Pipeline provenance
+	PipelineURL      string // e.g. "https://github.com/nextflow-io/rnaseq-nf"
+	PipelineRevision string // resolved git rev / tag
+
+	// Run-level
+	RunName     string // user-supplied via --name (or auto)
+	SubmittedAt string // ISO-8601 UTC, set by abc-cluster-cli at submit time
+	CLIVersion  string // semver of the abc CLI binary that submitted
+}
+
+// Empty reports whether no identity fields are populated. Used to skip the
+// meta + env emission entirely when running in legacy / no-identity mode.
+func (i Identity) Empty() bool {
+	return i.UserWhoami == "" && i.UserUUID == "" && i.Workspace == "" &&
+		i.PipelineURL == "" && i.RunName == "" && i.SubmittedAt == ""
+}
+
+// MetaMap returns the identity as the meta-key map emitted on Job.Meta.
+// Keys use underscores rather than dots — HCL2 disallows dotted bare
+// attribute names in `meta { ... }` blocks. Downstream readers (jurist /
+// xtdb / `nomad job inspect`) treat these as flat strings; the
+// `abc_user_*` / `nf_pipeline_*` prefixes carry the same hierarchy that
+// the dotted form did in the design doc.
+func (i Identity) MetaMap() map[string]string {
+	out := make(map[string]string, 12)
+	if i.UserWhoami != "" {
+		out["abc_user_whoami"] = i.UserWhoami
+	}
+	if i.UserUUID != "" {
+		out["abc_user_id"] = i.UserUUID
+	}
+	if i.Workspace != "" {
+		out["abc_workspace"] = i.Workspace
+	}
+	if i.WorkspaceType != "" {
+		out["abc_workspace_type"] = i.WorkspaceType
+	}
+	if i.Tenant != "" {
+		out["abc_tenant"] = i.Tenant
+	} else if i.Workspace != "" {
+		out["abc_tenant"] = i.Workspace
+	}
+	if i.PipelineURL != "" {
+		out["nf_pipeline_url"] = i.PipelineURL
+	}
+	if i.PipelineRevision != "" {
+		out["nf_pipeline_revision"] = i.PipelineRevision
+	}
+	if i.RunName != "" {
+		out["abc_run_name"] = i.RunName
+	}
+	if i.SubmittedAt != "" {
+		out["abc_submitted_at"] = i.SubmittedAt
+	}
+	if i.CLIVersion != "" {
+		out["abc_cli_version"] = i.CLIVersion
+	}
+	return out
+}
+
+// identityPassthroughLine emits the nomad.jobs.identityEnvPassthrough config
+// line (or empty when no identity fields are set, so legacy runs stay byte-
+// identical). Sorted for determinism.
+func identityPassthroughLine(id Identity) string {
+	names := id.EnvVarNames()
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = `"` + n + `"`
+	}
+	return "identityEnvPassthrough  = [" + strings.Join(quoted, ", ") + "]"
+}
+
+// EnvVarNames returns the head-task env var names whose values nf-nomad
+// should mirror onto each child Job.Meta + child task env. Emitted into
+// the generated nextflow.headjob.config under
+// `nomad.jobs.identityEnvPassthrough` — keeps nf-nomad ignorant of the
+// abc/nxf naming scheme (it only sees the list of names this side
+// supplies).
+func (i Identity) EnvVarNames() []string {
+	names := make([]string, 0, len(i.EnvMap()))
+	for k := range i.EnvMap() {
+		names = append(names, k)
+	}
+	return names
+}
+
+// EnvMap returns the same identity as ABC_*/NF_* env-var pairs to set on the
+// head task. nf-nomad reads these via the identityEnvPassthrough list (see
+// EnvVarNames) and mirrors them onto child jobs.
+func (i Identity) EnvMap() map[string]string {
+	out := make(map[string]string, 12)
+	if i.UserWhoami != "" {
+		out["ABC_USER"] = i.UserWhoami
+	}
+	if i.UserUUID != "" {
+		out["ABC_USER_ID"] = i.UserUUID
+	}
+	if i.Workspace != "" {
+		out["ABC_WORKSPACE"] = i.Workspace
+	}
+	if i.WorkspaceType != "" {
+		out["ABC_WORKSPACE_TYPE"] = i.WorkspaceType
+	}
+	if i.Tenant != "" {
+		out["ABC_TENANT"] = i.Tenant
+	} else if i.Workspace != "" {
+		out["ABC_TENANT"] = i.Workspace
+	}
+	if i.PipelineURL != "" {
+		out["NXF_PIPELINE_URL"] = i.PipelineURL
+	}
+	if i.PipelineRevision != "" {
+		out["NXF_PIPELINE_REVISION"] = i.PipelineRevision
+	}
+	if i.RunName != "" {
+		out["ABC_RUN_NAME"] = i.RunName
+	}
+	if i.SubmittedAt != "" {
+		out["ABC_SUBMITTED_AT"] = i.SubmittedAt
+	}
+	if i.CLIVersion != "" {
+		out["ABC_CLI_VERSION"] = i.CLIVersion
+	}
+	return out
 }
 
 // generateHeadJobHCL produces a Nomad HCL job spec for a Nextflow head job
@@ -129,6 +322,12 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	metaBody.SetAttributeValue("run_uuid", cty.StringVal(runUUID))
 	if len(spec.StaticEnv) > 0 {
 		metaBody.SetAttributeValue("abc_monitoring_floor", cty.StringVal("enhanced"))
+	}
+	// Identity correlation keys (user/workspace/pipeline). Mirrored as env
+	// vars on the head task below; nf-nomad picks them up at session-init
+	// and propagates onto every child Nomad job's meta.
+	for _, k := range utils.SortedKeys(spec.Identity.MetaMap()) {
+		metaBody.SetAttributeValue(k, cty.StringVal(spec.Identity.MetaMap()[k]))
 	}
 
 	groupBody := jobBody.AppendNewBlock("group", []string{"head"}).Body()
@@ -195,9 +394,17 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 		if tb.Name == "" || tb.SourceURL == "" {
 			continue
 		}
+		// Each binary gets its own parent dir (local/bin-<name>/<name>) instead
+		// of a shared local/bin/. Multiple file-mode artifacts targeting the
+		// same parent directory triggered a Nomad/go-getter race in 1.11.x on
+		// some agent configurations: the second artifact's staging step
+		// readdirent's a path it expects to be a directory but the first
+		// artifact's file handle has already populated it as a regular file,
+		// surfacing as "readdirent .../artifact: not a directory". Per-binary
+		// parent dirs sidestep the race entirely.
 		binArt := taskBody.AppendNewBlock("artifact", nil).Body()
 		binArt.SetAttributeValue("source", cty.StringVal(tb.SourceURL))
-		binArt.SetAttributeValue("destination", cty.StringVal("local/bin/"+tb.Name))
+		binArt.SetAttributeValue("destination", cty.StringVal("local/bin-"+tb.Name+"/"+tb.Name))
 		binArt.SetAttributeValue("mode", cty.StringVal("file"))
 	}
 
@@ -228,6 +435,27 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 			"{{- end }}\n",
 	))
 
+	// Template: Seqera / Tower access token — injected as TOWER_ACCESS_TOKEN and
+	// SEQERA_ACCESS_TOKEN when Fusion is enabled. Fusion v2 requires these for Wave
+	// to inject the Fusion agent layer. The inner {{ if }} guard prevents an empty
+	// variable value from being exported, which would cause Wave to return 401.
+	if spec.FusionEnabled {
+		tokenPath, tokenKey := parseWaveTokenSecret(spec.WaveTokenSecret)
+		tokenData := fmt.Sprintf(
+			"{{- with nomadVar %q -}}\n"+
+				"{{- if .%s }}\n"+
+				"TOWER_ACCESS_TOKEN={{ .%s }}\n"+
+				"SEQERA_ACCESS_TOKEN={{ .%s }}\n"+
+				"{{- end }}\n"+
+				"{{- end }}\n",
+			tokenPath, tokenKey, tokenKey, tokenKey,
+		)
+		waveTmpl := taskBody.AppendNewBlock("template", nil).Body()
+		waveTmpl.SetAttributeValue("destination", cty.StringVal("secrets/wave.env"))
+		waveTmpl.SetAttributeValue("env", cty.BoolVal(true))
+		waveTmpl.SetAttributeValue("data", cty.StringVal(tokenData))
+	}
+
 	// Template: params.json (only when pipeline params are provided)
 	if len(spec.Params) > 0 {
 		paramsJSON, _ := json.Marshal(spec.Params)
@@ -253,8 +481,23 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	envBody := taskBody.AppendNewBlock("env", nil).Body()
 	envBody.SetAttributeValue("NOMAD_ADDR", cty.StringVal(nomadAddr))
 	envBody.SetAttributeValue("NOMAD_TOKEN", cty.StringVal(nomadToken))
+	// Run tag for single-prefix correlation. nf-nomad's NomadHelper composes
+	// `<runtag>-<8task>-` as the prefix on every child Nomad job-id;
+	// abc-cluster-cli builds the head as `<runtag>-nf-head-<pipeline-slug>`,
+	// so a single `nomad job status -prefix <runtag>-` lists head +
+	// workers. The pipeline slug is not propagated to children — the
+	// process name already encodes pipeline context (e.g.
+	// `NFCORE_DEMO_DEMO_FASTQC`).
+	if spec.RunTag != "" {
+		envBody.SetAttributeValue("NF_NOMAD_RUN_TAG", cty.StringVal(spec.RunTag))
+	}
 	for _, k := range utils.SortedKeys(spec.StaticEnv) {
 		envBody.SetAttributeValue(k, cty.StringVal(spec.StaticEnv[k]))
+	}
+	// Identity envs (ABC_*, NXF_PIPELINE_*). Read by nf-nomad at session
+	// init; mirrored onto child Nomad jobs' meta. Empty fields are skipped.
+	for _, k := range utils.SortedKeys(spec.Identity.EnvMap()) {
+		envBody.SetAttributeValue(k, cty.StringVal(spec.Identity.EnvMap()[k]))
 	}
 
 	return utils.PrettyPrintHCL(string(f.Bytes()))
@@ -263,6 +506,19 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 // isS3URI returns true if the path starts with s3:// or s3a://.
 func isS3URI(path string) bool {
 	return strings.HasPrefix(path, "s3://") || strings.HasPrefix(path, "s3a://")
+}
+
+// parseWaveTokenSecret splits a "nomad/path:key" secret reference into its
+// Nomad Variable path and key. Falls back to "nomad/jobs" / "wave_token" when
+// the input is empty or malformed — the same default used by wave-exec jobs.
+func parseWaveTokenSecret(s string) (path, key string) {
+	if s == "" {
+		return "nomad/jobs", "wave_token"
+	}
+	if i := strings.LastIndex(s, ":"); i > 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, "wave_token"
 }
 
 // buildNextflowConfig generates the Groovy nextflow config embedded in the
@@ -322,13 +578,62 @@ process {
 		pluginsBody = strings.Join(lines, "\n")
 	}
 
+	// Container runtime block: docker (default), singularity, or apptainer.
+	// For singularity/apptainer with Wave, ociAutoPull lets the local runtime convert
+	// the Wave OCI proxy image to SIF — no Wave-side SIF build required (Wave Lite safe).
+	var containerBlock string
+	switch strings.ToLower(spec.ContainerRuntime) {
+	case "singularity":
+		if spec.WaveEndpoint != "" {
+			containerBlock = `singularity {
+  enabled    = true
+  ociAutoPull = true
+}`
+		} else {
+			containerBlock = `singularity {
+  enabled = true
+}`
+		}
+	case "apptainer":
+		if spec.WaveEndpoint != "" {
+			containerBlock = `apptainer {
+  enabled    = true
+  ociAutoPull = true
+}`
+		} else {
+			containerBlock = `apptainer {
+  enabled = true
+}`
+		}
+	default:
+		containerBlock = `docker {
+  enabled = true
+}`
+	}
+
+	// Optional Wave and Fusion blocks.
+	waveBlock := ""
+	if spec.WaveEndpoint != "" {
+		waveBlock = fmt.Sprintf(`
+wave {
+  enabled  = true
+  endpoint = "%s"
+}
+`, spec.WaveEndpoint)
+		if spec.FusionEnabled {
+			waveBlock += `
+fusion {
+  enabled = true
+}
+`
+		}
+	}
+
 	fmt.Fprintf(&sb, `plugins {
 %s
 }
 
-docker {
-  enabled = true
-}
+%s
 
 process {
   executor      = "nomad"
@@ -362,13 +667,14 @@ nomad {
     failOnPlacementFailure   = true
     placementFailureTimeout  = "5m"
     %s
+    %s
     failures = [
       restart   : [attempts: 1, mode: "fail"],
       reschedule: [attempts: 1]
     ]
   }
 }
-%s`, pluginsBody, spec.WorkDir, spec.Namespace, volumesLine, processConstraint)
+%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity), waveBlock, processConstraint)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")
@@ -381,11 +687,22 @@ nomad {
 func buildEntrypoint(spec Spec) string {
 	var sb strings.Builder
 	sb.WriteString("#!/usr/bin/env bash\nset -euo pipefail\ncd /local\n\n")
-	// NXF_HOME must be a local writable path even when workDir is S3.
-	nxfHome := spec.WorkDir + "/.nxf-home"
-	if isS3URI(spec.WorkDir) {
-		nxfHome = "/local/.nxf-home"
-	}
+	// Mirror everything from now on into a debug log on the persistent host
+	// volume. Nomad alloc logs are gated by ACL (alloc-fs read), so when a
+	// run dies before producing a meaningful Nextflow log this is the only
+	// post-mortem we get without a privileged token.
+	sb.WriteString("DEBUG_LOG=\"" + spec.WorkDir + "/.head-debug-${NOMAD_ALLOC_ID:-noalloc}.log\"\n")
+	sb.WriteString("mkdir -p \"$(dirname \"$DEBUG_LOG\")\" 2>/dev/null || true\n")
+	sb.WriteString("exec > >(tee -a \"$DEBUG_LOG\") 2>&1\n")
+	sb.WriteString("echo \"[head] start $(date -u +%Y-%m-%dT%H:%M:%SZ) alloc=${NOMAD_ALLOC_ID:-} job=${NOMAD_JOB_ID:-}\"\n\n")
+	// NXF_HOME is task-local (under /local, the alloc's ephemeral task dir).
+	// This avoids cross-run pollution of the plugins/ tree on shared host
+	// volumes — observed empirically when an older bundle dropped a now-stale
+	// "aggregator marker" dir into the persistent host volume that Nextflow's
+	// PF4J loader then tripped over on subsequent runs. Per-alloc isolation
+	// is the cheap, robust fix; the per-run cost (re-extracting the plugin
+	// bundle) is dwarfed by image-pull time.
+	nxfHome := "/local/.nxf-home"
 	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s\n\n", nxfHome)
 
 	// Move the auto-extracted plugin bundle into NXF_HOME/plugins before
@@ -398,10 +715,14 @@ func buildEntrypoint(spec Spec) string {
 	}
 
 	// Make any tool binaries pulled by ExtraBinaries executable and on PATH.
-	// /local is the task working dir (set in the docker config), so /local/bin
-	// matches the artifact destinations emitted above.
+	// Each binary lives in its own parent dir (local/bin-<name>/<name>) — see
+	// the artifact-emission code above for the rationale.
 	if len(spec.ExtraBinaries) > 0 {
-		sb.WriteString("if [ -d /local/bin ]; then chmod +x /local/bin/*; export PATH=\"/local/bin:$PATH\"; fi\n\n")
+		sb.WriteString("for d in /local/bin-*/; do\n")
+		sb.WriteString("  [ -d \"$d\" ] || continue\n")
+		sb.WriteString("  chmod +x \"$d\"* 2>/dev/null || true\n")
+		sb.WriteString("  export PATH=\"${d%/}:$PATH\"\n")
+		sb.WriteString("done\n\n")
 	}
 
 	fmt.Fprintf(&sb, "nextflow run %s \\\n", spec.Repository)
@@ -412,11 +733,14 @@ func buildEntrypoint(spec Spec) string {
 	if spec.Profile != "" {
 		fmt.Fprintf(&sb, " \\\n  -profile %s", spec.Profile)
 	}
-	if spec.Resume || spec.SessionID != "" {
+	// `-resume` is reserved for genuine Nextflow resume operations. SessionID
+	// is the prior session the user wants to resume from; not an abc-cluster
+	// orchestration concern. abc-cluster-cli's run-tag (used for Nomad job-id
+	// correlation) is unrelated and stays out of the Nextflow CLI.
+	if spec.Resume && spec.SessionID != "" {
+		fmt.Fprintf(&sb, " \\\n  -resume %s", spec.SessionID)
+	} else if spec.Resume {
 		sb.WriteString(" \\\n  -resume")
-	}
-	if spec.SessionID != "" {
-		fmt.Fprintf(&sb, " \\\n  -sessionId %s", spec.SessionID)
 	}
 	if len(spec.Params) > 0 {
 		sb.WriteString(" \\\n  -params-file /local/params.json")

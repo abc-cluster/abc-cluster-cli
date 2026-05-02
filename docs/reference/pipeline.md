@@ -4,7 +4,7 @@ sidebar_position: 6.7
 
 # pipeline run
 
-Submit a Nextflow pipeline as a head job to the ABC Nomad cluster, with optional [Wave](https://seqera.io/wave/) container builds via the Seqera Wave service.
+Submit a Nextflow pipeline as a head job to the ABC Nomad cluster, with optional [Wave](https://seqera.io/wave/) container augmentation via the hybrid abc-wave / Seqera Wave router.
 
 ## Basic usage
 
@@ -16,6 +16,8 @@ abc pipeline run <pipeline> [flags]
 
 ## Key flags
 
+### Pipeline source and runtime
+
 | Flag | Default | Description |
 |---|---|---|
 | `--revision` | *(default branch)* | Branch, tag, or commit SHA to check out |
@@ -25,23 +27,188 @@ abc pipeline run <pipeline> [flags]
 | `--config PATH` | *(none)* | Extra `nextflow.config` to merge into the head job |
 | `--work-dir PATH` | `/work/nextflow-work` | Shared work directory — local path or `s3://` URI |
 | `--host-volume NAME` | `nextflow-work` | Nomad host volume for the work dir; use `-` to disable |
+| `--resume` | `false` | Append `-resume` to the `nextflow run` command |
+| `--session-id UUID` | *(none)* | Resume a specific Nextflow session (implies `--resume`) |
+
+### Container runtime
+
+| Flag | Default | Description |
+|---|---|---|
+| `--singularity` | `false` | Use Singularity as the container runtime instead of Docker. With `--wave`, enables `ociAutoPull` so Singularity converts the Wave-augmented OCI image to SIF locally — no Wave-side SIF build required (compatible with Wave Lite). |
+| `--apptainer` | `false` | Same as `--singularity` but emits `apptainer { }` config. Mutually exclusive with `--singularity`. |
+
+### Wave container augmentation
+
+| Flag | Default | Description |
+|---|---|---|
+| `--wave` | `false` | Enable Wave augmentation. Routes to abc-wave (if configured and healthy) or falls back to `wave.seqera.io`. |
+| `--wave-endpoint URL` | *(router)* | Override the Wave endpoint directly (bypasses the abc-wave probe). Use `seqera` as shorthand for `https://wave.seqera.io`. |
+| `--fusion` | `false` | Enable [Fusion v2](https://docs.seqera.io/fusion) filesystem alongside Wave. Always routes to `wave.seqera.io` (Fusion is not supported by Wave Lite). Requires an `s3://` work dir and a Seqera token in the Nomad Variable `nomad/jobs:wave_token`. Incompatible with `--singularity`/`--apptainer`. |
+
+### Placement and resources
+
+| Flag | Default | Description |
+|---|---|---|
+| `--node HOSTNAME` | *(any)* | Pin head job to a specific Nomad node |
+| `--pin-workers` | `false` | Also pin every process to the same node as `--node` (single-host run) |
+| `--worker-exclude-host HOSTNAME` | *(none)* | Force every process off this hostname (use with `--node` for a true head≠worker distributed test) |
+| `--datacenter LIST` | `dc1` | Nomad datacenter(s) |
 | `--nf-version TAG` | `25.10.4` | Nextflow Docker image tag |
 | `--nf-plugin-version V` | `0.4.0-edge3` | nf-nomad plugin version |
 | `--cpu MHz` | `1000` | Head job CPU allocation |
 | `--memory MB` | `2048` | Head job memory allocation |
-| `--datacenter LIST` | `dc1` | Nomad datacenter(s) |
-| `--node HOSTNAME` | *(any)* | Pin head job to a specific Nomad node |
 | `--name NAME` | `nextflow-head` | Override Nomad job name |
-| `--resume` | `false` | Append `-resume` to the `nextflow run` command |
-| `--session-id UUID` | *(none)* | Resume a specific Nextflow session (implies `--resume`) |
+
+### Behaviour
+
+| Flag | Default | Description |
+|---|---|---|
 | `--wait` | `false` | Block until the head job completes |
 | `--logs` | `false` | Stream head job logs after submit |
 | `--timeout DURATION` | `2h` | Max wait time when using `--wait` |
 | `--dry-run` | `false` | Print generated HCL without submitting |
+| `--dev-plugins` | `false` | Load the nf-abc-cluster-dev plugin bundle into the head container |
 
-## Wave container builds
+---
 
-Wave is a [Seqera](https://seqera.io/wave/) service that builds OCI containers on demand from conda/spack package specs or a custom Dockerfile. When Wave directives are present in `abc job run` scripts, abc submits a **Nomad prestart task** that calls the Wave CLI with `--await`, blocking until the container image is pullable before the main task starts.
+## Wave container augmentation
+
+There are two distinct Wave integration points in abc-cluster-cli:
+
+| Integration | Trigger | Use case |
+|---|---|---|
+| **Pipeline Wave** (`--wave`) | `abc pipeline run` flag | Nextflow `wave { }` config — augments containers for every process at pull time. Runs on the cluster head job. |
+| **Job Wave** (`#ABC wave-exec`) | `abc job run` directive | Pre-builds a conda container via the Wave CLI as a Nomad prestart task before the main task starts. |
+
+These are independent. A pipeline run can use `--wave` without any job-level wave directives, and vice versa.
+
+### Hybrid routing
+
+The CLI uses a hybrid router that automatically selects the best available Wave endpoint:
+
+```
+--wave (pipeline augmentation)
+  │
+  ├── probe admin.services.wave.http  (3 s timeout, cached 5 min)
+  │     │
+  │     ├── healthy  →  abc-wave  (local, low-latency augmentation)
+  │     └── absent / unhealthy  →  wave.seqera.io  (public fallback)
+  │
+  └── --fusion flag  →  always wave.seqera.io  (Fusion not supported by Wave Lite)
+
+#ABC wave-exec / wave-conda (job builds)
+  └── always wave.seqera.io  (Wave Lite has no build service)
+```
+
+Configure the abc-wave URL in your context:
+
+```bash
+abc config set admin.services.wave.http http://100.126.253.95:9090
+# or via Traefik hostname:
+abc config set admin.services.wave.http http://wave.aither
+```
+
+When set, every `--wave` pipeline run will probe this URL first. If abc-wave is unreachable the fallback is transparent — the pipeline still runs, just augmented by Seqera Wave instead.
+
+### Pipeline augmentation (`--wave`)
+
+Emits a `wave { enabled = true; endpoint = "..." }` block in the generated `nextflow.headjob.config`. Nextflow sends an augmentation request to Wave for each process container before pulling it; Wave returns a `targetImage` URL pointing to the augmented manifest through Wave's OCI proxy.
+
+```bash
+# Route automatically (abc-wave if healthy, else Seqera)
+abc pipeline run nf-core/rnaseq --wave --revision 3.14.0
+
+# Force Seqera Wave explicitly
+abc pipeline run nf-core/rnaseq --wave-endpoint seqera
+
+# Pin to abc-wave unconditionally
+abc pipeline run nf-core/rnaseq --wave-endpoint http://100.126.253.95:9090
+```
+
+### Container runtime compatibility
+
+Wave's augmentation protocol is OCI-based. The `targetImage` URL returned by Wave is an OCI image reference that any OCI-capable runtime can pull.
+
+| Runtime | Wave Lite support | Notes |
+|---|---|---|
+| Docker | ✅ Full | Default; `docker { enabled = true }` |
+| containerd | ✅ Full | Pulls OCI manifest from Wave proxy natively |
+| Podman | ✅ Full | OCI-native |
+| Singularity / Apptainer | ✅ via OCI pull | Use `--singularity`/`--apptainer` — see below |
+| Singularity SIF (Wave-built) | ❌ Wave Lite only | Requires `freeze` / build service; use full Seqera Wave |
+
+### Singularity and Apptainer
+
+Wave Lite cannot build SIF files (the build service is disabled). The workaround is to let the local Singularity/Apptainer runtime pull Wave's augmented OCI image and convert it to SIF on the worker node via `ociAutoPull`:
+
+```bash
+# Singularity: augment with abc-wave, convert OCI → SIF locally on each worker
+abc pipeline run nf-core/rnaseq --wave --singularity
+
+# Apptainer equivalent
+abc pipeline run nf-core/rnaseq --wave --apptainer
+
+# Without --wave, emits singularity { enabled = true } only (no ociAutoPull)
+abc pipeline run nf-core/rnaseq --singularity
+```
+
+Generated nextflow config with `--wave --singularity`:
+
+```groovy
+singularity {
+  enabled     = true
+  ociAutoPull = true   // only emitted when --wave is also set
+}
+
+wave {
+  enabled  = true
+  endpoint = "http://100.126.253.95:9090"
+}
+```
+
+`ociAutoPull` requires Nextflow ≥ 23.10. For older versions, pass the Wave `targetImage` URL directly via `--config` with a custom `singularity.pullTimeout` override.
+
+### Fusion filesystem
+
+[Fusion v2](https://docs.seqera.io/fusion) mounts S3 buckets as a POSIX filesystem inside process containers, eliminating the need for a shared NFS/host volume.
+
+**Requirements:**
+- `--wave` or `--wave-endpoint seqera` (Fusion always routes to Seqera Wave — Wave Lite does not support it)
+- An `s3://` work directory (`--work-dir s3://bucket/path`)
+- A Seqera Platform token stored in the Nomad Variable `nomad/jobs:wave_token`
+- Docker or containerd runtime (Fusion is FUSE-based; incompatible with `--singularity`/`--apptainer`)
+
+```bash
+# Store your Seqera token once
+abc admin services nomad cli -- var put nomad/jobs wave_token=<your-seqera-token>
+
+# Run with Fusion
+abc pipeline run nf-core/rnaseq \
+  --wave --fusion \
+  --work-dir s3://my-bucket/nextflow-work \
+  --revision 3.14.0
+```
+
+The CLI injects `TOWER_ACCESS_TOKEN` and `SEQERA_ACCESS_TOKEN` into the head job automatically when `--fusion` is set, reading from `nomad/jobs:wave_token` (override with `--wave-endpoint` if your token lives elsewhere). The `{{ if }}` guard in the template prevents an empty token from triggering a 401 from Wave.
+
+Generated nextflow config with `--wave --fusion`:
+
+```groovy
+wave {
+  enabled  = true
+  endpoint = "https://wave.seqera.io"
+}
+
+fusion {
+  enabled = true
+}
+```
+
+---
+
+## Job-level Wave builds (`abc job run`)
+
+Wave is also used for individual Nomad batch jobs submitted with `abc job run`. This is a separate, build-oriented integration: the Wave CLI builds a container from a conda spec before the main task starts. It always uses `wave.seqera.io` (Wave Lite has no build service).
 
 ### How it works
 
@@ -55,13 +222,7 @@ abc job run script.sh
     main task      →  runs with the resolved Wave image
 ```
 
-The resolved image URI is deterministic — Wave computes it from a hash of the inputs — so it can be baked into the HCL before the build finishes. The prestart task ensures the image is pullable before the main task ever tries to pull it.
-
-Wave CLI v1.8.2 is distributed through the cluster binary store (`abc-reserved/binary_tools/wave-linux-{amd64,arm64}`) and fetched automatically by the prestart task as a Nomad artifact — no manual installation on nodes required.
-
 ### `#ABC` Wave directives
-
-Add any of the following directives to your script preamble. Wave activates automatically when at least one `wave-*` directive is present.
 
 ```bash
 #!/bin/bash
@@ -76,93 +237,29 @@ Add any of the following directives to your script preamble. Wave activates auto
 #ABC --wave-token-secret=nomad/jobs:wave_token  # Nomad Variable for TOWER_ACCESS_TOKEN
 ```
 
-#### Directive reference
-
 | Directive | Description |
 |---|---|
 | `--wave-conda-packages=pkg[=ver],...` | Conda packages to layer onto `--from`. Comma-separated, version optional. |
-| `--wave-r-packages=pkg[=ver],...` | R packages from conda-forge (`r-ggplot2`, `r-dplyr`, …). Convenience alias — expands to `r-<pkg>` conda package names. |
+| `--wave-r-packages=pkg[=ver],...` | R packages from conda-forge (`r-ggplot2`, `r-dplyr`, …). Expands to `r-<pkg>` conda package names. |
 | `--wave-spack-packages=pkg[@ver],...` | Spack packages. |
-| `--wave-conda-file=PATH` | Path to a `conda env` YAML file. Content is embedded in the job — no shared filesystem access needed at runtime. |
+| `--wave-conda-file=PATH` | Path to a `conda env` YAML file. Content is embedded in the job. |
 | `--wave-spack-file=PATH` | Path to a `spack.yaml`. Embedded the same way. |
 | `--wave-containerfile=PATH` | Path to a Dockerfile. Embedded and passed to Wave as a custom build context. |
 | `--wave-platform=OS/ARCH` | Target platform (default: `linux/amd64`). |
-| `--wave-token-secret=PATH:KEY` | Nomad Variable path and key holding the `TOWER_ACCESS_TOKEN` (default: `nomad/jobs:wave_token`). |
+| `--wave-token-secret=PATH:KEY` | Nomad Variable path and key for `TOWER_ACCESS_TOKEN` (default: `nomad/jobs:wave_token`). |
 
 ### Authentication
 
-Wave requires a Seqera Platform token (`TOWER_ACCESS_TOKEN`). Store it in a Nomad Variable and reference it with `--wave-token-secret`:
+Job-level Wave builds always target `wave.seqera.io` and require a Seqera Platform token:
 
 ```bash
-# Store the token once
-abc secrets set nomad/jobs wave_token=<your-seqera-token>
-
-# Reference in your script (or rely on the default)
-#ABC --wave-token-secret=nomad/jobs:wave_token
+# Store the token once (also used by --fusion in pipeline runs)
+abc admin services nomad cli -- var put nomad/jobs wave_token=<your-seqera-token>
 ```
 
-Anonymous Wave builds are rate-limited (25/day). An authenticated token raises this to 100 builds/hour.
+Anonymous builds are rate-limited (25/day). An authenticated token raises this to 100 builds/hour.
 
-### Examples
-
-**Add conda packages to a base image:**
-
-```bash
-#!/bin/bash
-#ABC --name=samtools-job
-#ABC --driver=docker
-#ABC --from=ubuntu:22.04
-#ABC --wave-conda-packages=samtools=1.21,bwa=0.7.17
-
-samtools view -c input.bam
-```
-
-**R analysis with conda-forge packages:**
-
-```bash
-#!/bin/bash
-#ABC --name=r-analysis
-#ABC --driver=docker
-#ABC --from=ubuntu:22.04
-#ABC --wave-r-packages=ggplot2=3.4.2,dplyr=1.1.4,tidyr
-
-Rscript analysis.R
-```
-
-**Custom Dockerfile:**
-
-```bash
-#!/bin/bash
-#ABC --name=custom-build
-#ABC --driver=docker
-#ABC --wave-containerfile=Dockerfile
-#ABC --wave-platform=linux/amd64
-
-python run_pipeline.py
-```
-
-**Conda environment file:**
-
-```bash
-#!/bin/bash
-#ABC --name=conda-env-job
-#ABC --driver=docker
-#ABC --from=ubuntu:22.04
-#ABC --wave-conda-file=environment.yml
-
-python analysis.py
-```
-
-### Failure handling
-
-If the Wave build fails, the prestart task exits non-zero and Nomad marks the allocation as `failed` before the main task starts. Build failure details are available in the prestart task logs:
-
-```bash
-abc job logs <job-id>          # streams both prestart and main task logs
-abc job show <job-id>          # shows task-level status breakdown
-```
-
-Wave build status can also be checked on the [Seqera Platform](https://cloud.seqera.io) under your workspace's build history.
+---
 
 ## Examples
 
@@ -173,6 +270,17 @@ abc pipeline run nextflow-io/hello --profile hello
 # Pin to a release
 abc pipeline run nf-core/rnaseq --revision 3.14.0 --profile test
 
+# Wave augmentation (routes to abc-wave if healthy, else Seqera)
+abc pipeline run nf-core/rnaseq --wave --revision 3.14.0
+
+# Wave + Fusion on S3 (always Seqera Wave)
+abc pipeline run nf-core/rnaseq \
+  --wave --fusion \
+  --work-dir s3://my-bucket/nextflow-work
+
+# Wave + Singularity (OCI pull → local SIF conversion, Wave Lite compatible)
+abc pipeline run nf-core/rnaseq --wave --singularity
+
 # Pass parameters inline
 abc pipeline run nf-core/sarek \
   --param genome=GRCh38 \
@@ -181,6 +289,11 @@ abc pipeline run nf-core/sarek \
 # Use S3 work directory (no host volume needed)
 abc pipeline run nextflow-io/hello \
   --work-dir s3://my-bucket/nextflow-work
+
+# Pin head to a node, exclude it from workers (distributed test)
+abc pipeline run nextflow-io/hello \
+  --node nomad02 \
+  --worker-exclude-host nomad02
 
 # Resume a previous run
 abc pipeline run nextflow-io/hello --resume
@@ -194,17 +307,17 @@ abc pipeline run nextflow-io/hello --dry-run
 
 ## Saved pipelines
 
-Frequently used pipeline configurations can be saved and recalled by name:
+Frequently used pipeline configurations can be saved and recalled by name. Wave and runtime fields (`waveEndpoint`, `fusionEnabled`, `containerRuntime`) are serialised as part of the saved spec.
 
 ```bash
-# Save a pipeline config
+# Save a pipeline config with Wave enabled
 abc pipeline add rnaseq \
   --repo nf-core/rnaseq \
   --revision 3.14.0 \
   --profile test
 
 # Run the saved pipeline (flags override saved values)
-abc pipeline run rnaseq --param genome=GRCh38
+abc pipeline run rnaseq --param genome=GRCh38 --wave
 ```
 
 Use `abc pipeline list` to see saved pipelines and `abc pipeline delete <name>` to remove one.
@@ -212,5 +325,5 @@ Use `abc pipeline list` to see saved pipelines and `abc pipeline delete <name>` 
 ## See also
 
 - [`abc module run`](./module.md) — run a single nf-core module via nf-pipeline-gen.
-- [`abc job run`](./jobs.md) — run arbitrary shell scripts as Nomad batch jobs.
+- [`abc job run`](./jobs.md) — run arbitrary shell scripts as Nomad batch jobs, including job-level Wave builds.
 - [`abc admin tools`](./admin.md) — manage cluster tool binaries including the Wave CLI.

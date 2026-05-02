@@ -20,10 +20,14 @@ import (
 
 // ToolSpec describes one [tools.<name>] entry.
 type ToolSpec struct {
-	Name     string // derived from the map key, not the TOML value
-	Repo     string `toml:"repo"`
-	Version  string `toml:"version"`
-	Disabled bool   `toml:"disabled"`
+	Name       string // derived from the map key, not the TOML value
+	Repo       string `toml:"repo"`
+	Version    string `toml:"version"`
+	Disabled   bool   `toml:"disabled"`
+	// WaveInject marks this tool for inclusion in the cluster wave-layer bundle.
+	// When true and the tool has a cached binary for a given arch, it is packaged
+	// into wave-layer-linux-<arch>.tar.gz at usr/local/bin/<name> during push.
+	WaveInject bool   `toml:"wave_inject"`
 }
 
 // LocalSpec describes one [local.<name>] entry — a locally built artifact.
@@ -64,9 +68,10 @@ type rawConfig struct {
 }
 
 type rawTool struct {
-	Repo     string `toml:"repo"`
-	Version  string `toml:"version"`
-	Disabled bool   `toml:"disabled"`
+	Repo       string `toml:"repo"`
+	Version    string `toml:"version"`
+	Disabled   bool   `toml:"disabled"`
+	WaveInject bool   `toml:"wave_inject"`
 }
 
 type rawLocalSpec struct {
@@ -148,10 +153,11 @@ func ReadToolsConfig(path string) (*ToolsConfig, error) {
 			continue
 		}
 		tools = append(tools, ToolSpec{
-			Name:     name,
-			Repo:     rt.Repo,
-			Version:  rt.Version,
-			Disabled: rt.Disabled,
+			Name:       name,
+			Repo:       rt.Repo,
+			Version:    rt.Version,
+			Disabled:   rt.Disabled,
+			WaveInject: rt.WaveInject,
 		})
 	}
 
@@ -293,3 +299,15 @@ func (cfg *ToolsConfig) ToolByName(name string) (ToolSpec, bool) {
 
 // Path returns the file path this config was loaded from.
 func (cfg *ToolsConfig) Path() string { return cfg.path }
+
+// WaveInjectTools returns enabled tools that are marked wave_inject = true,
+// in file order. These are candidates for bundling into the cluster wave layer.
+func (cfg *ToolsConfig) WaveInjectTools() []ToolSpec {
+	out := make([]ToolSpec, 0, len(cfg.Tools))
+	for _, t := range cfg.Tools {
+		if !t.Disabled && t.WaveInject {
+			out = append(out, t)
+		}
+	}
+	return out
+}

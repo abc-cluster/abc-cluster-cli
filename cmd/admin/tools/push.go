@@ -14,6 +14,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/wave"
 	"github.com/spf13/cobra"
 )
 
@@ -209,6 +210,80 @@ func runPush(ctx context.Context, w io.Writer, args []string, dryRun bool, bucke
 
 	fmt.Fprintf(w, "\n%d/%d binaries pushed.\n", uploaded, len(targets))
 
+	// ── Push tools.toml as a version reference ────────────────────────────────
+	tomlRemoteKey := prefix + "/tools.toml"
+	tomlRemoteURI := fmt.Sprintf("s3://%s/%s", bucket, tomlRemoteKey)
+	if dryRun {
+		fmt.Fprintf(w, "  %-32s  ○  would upload → %s\n", "tools.toml", tomlRemoteURI)
+	} else {
+		tomlArgs := []string{
+			"--endpoint-url", endpoint,
+			"cp", cfg.Path(), tomlRemoteURI,
+		}
+		if err := utils.RunExternalCLIWithEnv(
+			ctx, tomlArgs, s5cmdBin, []string{"s5cmd"},
+			envMap,
+			nil, w, w,
+		); err != nil {
+			fmt.Fprintf(w, "  %-32s  ✗  upload failed: %v\n", "tools.toml", err)
+		} else {
+			fmt.Fprintf(w, "  %-32s  ✓  uploaded → %s\n", "tools.toml", tomlRemoteURI)
+		}
+	}
+
+	// ── Build and push wave layers for wave_inject tools ─────────────────────
+	// Only when at least one tool has wave_inject = true and we are not
+	// filtering to a single tool (a single-tool push can't build a complete layer).
+	injectTools := cfg.WaveInjectTools()
+	if len(injectTools) > 0 && filterName == "" {
+		fmt.Fprintf(w, "\n[abc] building wave layers for %d wave_inject tool(s)...\n", len(injectTools))
+
+		// Collect arches present in the binary cache for the inject tools.
+		archBins := map[string][]wave.ToolBin{} // arch → []ToolBin
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			for _, t := range injectTools {
+				pfx := t.Name + "-linux-"
+				if !strings.HasPrefix(name, pfx) {
+					continue
+				}
+				arch := strings.TrimPrefix(name, pfx)
+				if arch == "" {
+					continue
+				}
+				archBins[arch] = append(archBins[arch], wave.ToolBin{
+					Name: t.Name,
+					Path: filepath.Join(binDir, name),
+				})
+			}
+		}
+
+		archList := make([]string, 0, len(archBins))
+		for a := range archBins {
+			archList = append(archList, a)
+		}
+		sort.Strings(archList)
+
+		for _, arch := range archList {
+			bins := archBins[arch]
+
+			// Combined layer: wave-layer-linux-<arch>.tar.gz (all wave_inject tools).
+			combinedName := "wave-layer-linux-" + arch + ".tar.gz"
+			uploadWaveLayer(ctx, w, bins, combinedName, bucket, prefix, endpoint, s5cmdBin, envMap, dryRun)
+
+			// Per-tool layers: wave-layer-linux-<arch>-<tool>.tar.gz
+			// Allows --wave-inject-tools=<name> to inject only a single tool and
+			// lets the Wave API receive exactly the needed layer with no extras.
+			for _, b := range bins {
+				perToolName := fmt.Sprintf("wave-layer-linux-%s-%s.tar.gz", arch, b.Name)
+				uploadWaveLayer(ctx, w, []wave.ToolBin{b}, perToolName, bucket, prefix, endpoint, s5cmdBin, envMap, dryRun)
+			}
+		}
+	}
+
 	// Write the resolved endpoint back to config.yaml so job definitions can
 	// reference it directly via abc config get.
 	if err := writeEndpointToConfig(endpoint); err != nil {
@@ -297,6 +372,62 @@ func isEndpointReachable(ctx context.Context, endpoint string) bool {
 	resp.Body.Close()
 	// Any HTTP response (including 403, 404) means the endpoint is reachable.
 	return true
+}
+
+// uploadWaveLayer packs bins into a tar.gz wave layer and uploads it to S3.
+// layerName is the basename (e.g. "wave-layer-linux-amd64.tar.gz").
+func uploadWaveLayer(
+	ctx context.Context, w io.Writer,
+	bins []wave.ToolBin, layerName, bucket, prefix, endpoint, s5cmdBin string,
+	envMap map[string]string, dryRun bool,
+) {
+	remoteKey := prefix + "/" + layerName
+	remoteURI := fmt.Sprintf("s3://%s/%s", bucket, remoteKey)
+
+	names := make([]string, len(bins))
+	for i, b := range bins {
+		names[i] = b.Name
+	}
+
+	if dryRun {
+		fmt.Fprintf(w, "  %-36s  ○  would build+upload → %s [%s]\n",
+			layerName, remoteURI, strings.Join(names, ", "))
+		return
+	}
+
+	data, err := wave.PackToolsLayer(bins)
+	if err != nil {
+		fmt.Fprintf(w, "  %-36s  ✗  pack failed: %v\n", layerName, err)
+		return
+	}
+
+	tmp, err := os.CreateTemp("", "wave-layer-*.tar.gz")
+	if err != nil {
+		fmt.Fprintf(w, "  %-36s  ✗  temp file: %v\n", layerName, err)
+		return
+	}
+	_, writeErr := tmp.Write(data)
+	tmp.Close()
+	if writeErr != nil {
+		os.Remove(tmp.Name())
+		fmt.Fprintf(w, "  %-36s  ✗  write temp: %v\n", layerName, writeErr)
+		return
+	}
+
+	uploadErr := utils.RunExternalCLIWithEnv(
+		ctx,
+		[]string{"--endpoint-url", endpoint, "cp", tmp.Name(), remoteURI},
+		s5cmdBin, []string{"s5cmd"},
+		envMap,
+		nil, w, w,
+	)
+	os.Remove(tmp.Name())
+	if uploadErr != nil {
+		fmt.Fprintf(w, "  %-36s  ✗  upload failed: %v\n", layerName, uploadErr)
+	} else {
+		fmt.Fprintf(w, "  %-36s  ✓  uploaded → %s [%s]\n",
+			layerName, remoteURI, strings.Join(names, ", "))
+	}
 }
 
 // ── s5cmd for upload ──────────────────────────────────────────────────────────

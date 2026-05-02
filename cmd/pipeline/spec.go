@@ -20,6 +20,15 @@ type PipelineSpec struct {
 	Params      map[string]any `json:"params,omitempty" yaml:"params,omitempty"`           // nextflow pipeline params
 	Resume      bool           `json:"resume,omitempty" yaml:"resume,omitempty"`           // append -resume to nextflow run
 	SessionID   string         `json:"sessionID,omitempty" yaml:"sessionID,omitempty"`     // resume specific Nextflow session
+	// RunTag is a short alphanumeric prefix shared by the head Nomad job-id
+	// and every child Nomad job-id (single-prefix correlation). Set per-
+	// submission by run.go (newRunTag); not user-configurable.
+	RunTag string `json:"-" yaml:"-"`
+	// PipelineSlug is the sanitized pipeline identifier (e.g. `nf-core-demo`)
+	// that leads the head Nomad job-id and every child Nomad job-id. Set
+	// per-submission by run.go from --name (if provided) or pipelineSlug()
+	// applied to the repository URL.
+	PipelineSlug string `json:"-" yaml:"-"`
 	// HostVolume is the Nomad host volume name for shared work storage.
 	// Use "-" to disable host volumes (e.g. when workDir is an S3 URI).
 	HostVolume     string `json:"hostVolume,omitempty" yaml:"hostVolume,omitempty"`
@@ -52,6 +61,22 @@ type PipelineSpec struct {
 	// context's tools.toml). Used to satisfy plugin runtime dependencies —
 	// e.g. nf-rclone needs the rclone binary on PATH.
 	ExtraBinaries []string `json:"extraBinaries,omitempty" yaml:"extraBinaries,omitempty"`
+
+	// Wave — container augmentation routing.
+	// WaveEndpoint, when set, emits a wave { enabled = true; endpoint = "..." } block
+	// in the generated Groovy nextflow config. Resolved by run.go via the hybrid router
+	// (abc-wave probed first; falls back to wave.seqera.io on absence/failure).
+	// Set explicitly via --wave-endpoint to bypass routing and hard-code a URL.
+	WaveEndpoint string `json:"waveEndpoint,omitempty" yaml:"waveEndpoint,omitempty"`
+	// FusionEnabled emits fusion { enabled = true } alongside the wave block.
+	// Always routes to wave.seqera.io (Wave Lite does not support Fusion).
+	// Requires WaveEndpoint to be set and an S3 work dir.
+	FusionEnabled bool `json:"fusionEnabled,omitempty" yaml:"fusionEnabled,omitempty"`
+	// ContainerRuntime selects the Nextflow container engine: "", "docker" (default),
+	// "singularity", or "apptainer". With --wave, singularity/apptainer enable
+	// ociAutoPull so the local runtime converts the Wave OCI image to SIF — no
+	// Wave-side SIF build needed (compatible with Wave Lite).
+	ContainerRuntime string `json:"containerRuntime,omitempty" yaml:"containerRuntime,omitempty"`
 
 	// Head job resource overrides
 	CPU      int    `json:"cpu,omitempty" yaml:"cpu,omitempty"`           // MHz
@@ -159,6 +184,15 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	}
 	if len(override.ExtraBinaries) > 0 {
 		base.ExtraBinaries = append([]string(nil), override.ExtraBinaries...)
+	}
+	if override.WaveEndpoint != "" {
+		base.WaveEndpoint = override.WaveEndpoint
+	}
+	if override.FusionEnabled {
+		base.FusionEnabled = true
+	}
+	if override.ContainerRuntime != "" {
+		base.ContainerRuntime = override.ContainerRuntime
 	}
 	return base
 }

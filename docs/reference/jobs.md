@@ -90,6 +90,13 @@ All flags available on the command line can also be embedded directly in the scr
 | `--task-tmp` | | Mount a scratch dir at `$TMPDIR` |
 | `--no-network` | | Disable outbound network |
 
+#### Wave tool injection
+
+| Directive | Example | Description |
+|---|---|---|
+| `--wave-inject-tools` | *(bare flag)* | Inject all `wave_inject` tools into the base image via Wave Lite |
+| `--wave-inject-tools=NAMES` | `--wave-inject-tools=s5cmd` | Inject specific tools only (comma-separated) |
+
 #### Job metadata & secrets
 
 | Directive | Example | Description |
@@ -285,6 +292,107 @@ abc job run script.sh --mamba-cleanup
 
 ---
 
+## Wave tool injection
+
+`--wave-inject-tools` augments any Docker base image with cluster-managed binaries at submit time, without rebuilding the image. The CLI calls the cluster's Wave Lite service (`abc-wave`) at submit time, which produces a new image tag that is wired directly into the job's `image` field. No Dockerfile change, no prestart task, no volume mount.
+
+### How it works
+
+1. `abc admin tools push` builds two kinds of wave layer archives per tool and uploads them to cluster S3:
+   - **Combined layer** `wave-layer-linux-<arch>.tar.gz` — all tools marked `wave_inject = true` in `tools.toml`
+   - **Per-tool layers** `wave-layer-linux-<arch>-<tool>.tar.gz` — one archive per tool
+2. At submit time, `abc job run` resolves which layer(s) to use, downloads them to compute their sha256 digests, then calls `POST /v1alpha2/container` on the Wave Lite service with the S3 layer URL(s). Wave fetches each layer server-side (no local size limit).
+3. The resolved `targetImage` (e.g. `wave.aither/wt/<token>/library/ubuntu:24.04`) replaces the original `image` in the generated HCL.
+
+### Layer selection
+
+| Directive | Layer used | Use when |
+|---|---|---|
+| `--wave-inject-tools` *(bare)* | Combined layer — all `wave_inject` tools | You want everything available |
+| `--wave-inject-tools=s5cmd` | Per-tool layer for `s5cmd` only | Minimal image, one tool |
+| `--wave-inject-tools=s5cmd,rclone` | Two per-tool layers merged by Wave | Specific subset of tools |
+
+### Example — inject all tools
+
+```bash
+#!/bin/bash
+#ABC --name=sync-job
+#ABC --driver=docker
+#ABC --driver.config.image=ubuntu:24.04
+#ABC --wave-inject-tools
+#ABC --mem=1G
+#ABC --cores=2
+
+# s5cmd and rclone are available inside the container
+s5cmd --endpoint-url "$S3_ENDPOINT" cp s3://my-bucket/input.bam .
+rclone copy remote:backup/ /data/restore/
+```
+
+### Example — inject a single tool
+
+```bash
+#!/bin/bash
+#ABC --name=s3-upload
+#ABC --driver=docker
+#ABC --driver.config.image=alpine:3.21
+#ABC --wave-inject-tools=s5cmd
+#ABC --mem=256M
+#ABC --cores=1
+
+s5cmd --endpoint-url "$S3_ENDPOINT" cp results/ s3://my-bucket/results/
+```
+
+### Example — inject a named subset (multiple tools, per-tool layers)
+
+```bash
+#!/bin/bash
+#ABC --name=archive-job
+#ABC --driver=docker
+#ABC --driver.config.image=debian:12-slim
+#ABC --wave-inject-tools=s5cmd,rclone
+#ABC --mem=512M
+#ABC --cores=1
+
+# Wave merges two per-tool layers into a single augmented image
+s5cmd ...
+rclone ...
+```
+
+### Prerequisites
+
+- `abc admin tools push` must have been run at least once to upload the wave layers.
+- The active context must have `admin.services.wave.http` set to the Wave Lite URL:
+  ```bash
+  abc config set contexts.<name>.admin.services.wave.http http://<wave-host>:<port>
+  ```
+- `--wave-inject-tools` requires `--driver=docker`. It cannot be combined with `--runtime=wave-exec`.
+
+### Marking a tool for wave injection
+
+In `~/.abc/assets/tools.toml`, add `wave_inject = true` to any tool you want available for injection:
+
+```toml
+[tools.s5cmd]
+repo        = "peak/s5cmd"
+version     = "v2.3.0"
+wave_inject = true
+
+[tools.rclone]
+repo        = "rclone/rclone"
+version     = "v1.73.5"
+wave_inject = true
+```
+
+Then rebuild and push the wave layers:
+
+```bash
+abc admin tools push
+```
+
+See [`abc admin tools`](./admin-tools.md) for the full tools management reference.
+
+---
+
 ## Passing data to jobs via metadata
 
 Use `--meta key=value` (or `#ABC --meta key=val` in the preamble) to pass per-run parameters. Inside the task, metadata appears as `NOMAD_META_<KEY>` environment variables (keys are uppercased automatically).
@@ -401,4 +509,4 @@ abc job run script.sh --cores 32 --mem 64G --time 12:00:00
 - [`abc pipeline run`](./pipeline.md) — run a Nextflow pipeline as a head job with Wave container builds
 - [`abc module run`](./module.md) — run a single nf-core module via `nf-pipeline-gen`
 - [`abc data`](./data.md) — stage input/output data to/from MinIO or JuiceFS
-- [`abc admin tools`](./admin.md) — manage cluster tool binaries (pixi, micromamba, wave CLI)
+- [`abc admin tools`](./admin-tools.md) — manage cluster tool binaries, wave layers, and binary store

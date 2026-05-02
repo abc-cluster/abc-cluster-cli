@@ -3,11 +3,13 @@ package pipeline
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
+	"github.com/abc-cluster/abc-cluster-cli/internal/wave"
 	"github.com/spf13/cobra"
 )
 
@@ -90,6 +93,27 @@ EXAMPLES
 	// Resume / session control
 	cmd.Flags().Bool("resume", false, "Append -resume to the nextflow run command (checkpoint restart)")
 	cmd.Flags().String("session-id", "", "Resume a specific Nextflow session UUID (implies --resume)")
+
+	// Wave container augmentation.
+	cmd.Flags().Bool("wave", false,
+		"Enable Wave container augmentation for this pipeline run. "+
+			"Routes to abc-wave (if configured and healthy) or falls back to wave.seqera.io.")
+	cmd.Flags().String("wave-endpoint", "",
+		"Override Wave endpoint URL directly (bypasses abc-wave probe). "+
+			"Use \"seqera\" as shorthand for https://wave.seqera.io.")
+	cmd.Flags().Bool("fusion", false,
+		"Enable Fusion filesystem alongside Wave (requires --wave and an s3:// work dir). "+
+			"Always routes to wave.seqera.io — Fusion is not supported by Wave Lite.")
+
+	// Container runtime selection.
+	cmd.Flags().Bool("singularity", false,
+		"Use Singularity as the container runtime instead of Docker. "+
+			"With --wave, enables ociAutoPull so Singularity converts the Wave-augmented OCI "+
+			"image to SIF locally — no Wave-side SIF build required (compatible with Wave Lite).")
+	cmd.Flags().Bool("apptainer", false,
+		"Use Apptainer as the container runtime instead of Docker. "+
+			"With --wave, enables ociAutoPull so Apptainer converts the Wave-augmented OCI "+
+			"image to SIF locally — no Wave-side SIF build required (compatible with Wave Lite).")
 
 	// Dev plugin set — opt the run into the cluster's nf-abc-cluster-dev meta-plugin bundle.
 	cmd.Flags().Bool("dev-plugins", false,
@@ -209,13 +233,69 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		override.Resume = true
 	}
 	if sessionID, _ := cmd.Flags().GetString("session-id"); sessionID != "" {
+		// --session-id implies --resume (was previously inferred inside the
+		// HCL generator; now that fresh runs also carry a SessionID we need
+		// to set Resume explicitly here).
 		override.SessionID = sessionID
+		override.Resume = true
 	}
 	if devPlugins, _ := cmd.Flags().GetBool("dev-plugins"); devPlugins {
 		override.DevPlugins = true
 	}
 	if ns != "" {
 		override.Namespace = ns
+	}
+
+	// Container runtime selection — mutually exclusive.
+	singularityFlag, _ := cmd.Flags().GetBool("singularity")
+	apptainerFlag, _ := cmd.Flags().GetBool("apptainer")
+	fusionFlag, _ := cmd.Flags().GetBool("fusion")
+	if singularityFlag && apptainerFlag {
+		return fmt.Errorf("--singularity and --apptainer are mutually exclusive")
+	}
+	if (singularityFlag || apptainerFlag) && fusionFlag {
+		return fmt.Errorf("Fusion is not compatible with Singularity/Apptainer (Fusion requires Docker/containerd)")
+	}
+	switch {
+	case singularityFlag:
+		override.ContainerRuntime = "singularity"
+	case apptainerFlag:
+		override.ContainerRuntime = "apptainer"
+	}
+
+	// Wave endpoint resolution.
+	// --wave-endpoint "seqera" is a convenience shorthand for the public service.
+	// --wave alone triggers hybrid routing: probe abc-wave; fall back to Seqera.
+	// --fusion forces Seqera Wave regardless of abc-wave config (Wave Lite has no Fusion).
+	// --fusion / --wave are silently ignored when neither --wave nor --wave-endpoint is set.
+	waveEndpointFlag, _ := cmd.Flags().GetString("wave-endpoint")
+	waveFlag, _ := cmd.Flags().GetBool("wave")
+	if waveEndpointFlag == "seqera" {
+		waveEndpointFlag = wave.SeqeraWaveURL
+	}
+	if waveEndpointFlag != "" {
+		override.WaveEndpoint = waveEndpointFlag
+		override.FusionEnabled = fusionFlag
+	} else if waveFlag || fusionFlag {
+		if fusionFlag {
+			// Fusion always uses Seqera Wave — Wave Lite has no Fusion support.
+			override.WaveEndpoint = wave.SeqeraWaveURL
+			override.FusionEnabled = true
+			fmt.Fprintf(cmd.ErrOrStderr(), "  Wave/Fusion: routing to %s (Fusion requires Seqera Wave)\n", wave.SeqeraWaveURL)
+		} else {
+			abcWaveURL := ""
+			if c, err := abccfg.Load(); err == nil {
+				actx := c.ActiveCtx()
+				abcWaveURL, _ = abccfg.GetAdminFloorField(&actx.Admin.Services, "wave", "http")
+			}
+			router := wave.NewRouter(abcWaveURL)
+			override.WaveEndpoint = router.EndpointForAugment(cmd.Context())
+			if router.IsAbcWaveConfigured() && override.WaveEndpoint == abcWaveURL {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  Wave: routing to abc-wave (%s)\n", override.WaveEndpoint)
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  Wave: abc-wave unavailable or unconfigured, routing to %s\n", override.WaveEndpoint)
+			}
+		}
 	}
 
 	spec := mergeSpec(base, override)
@@ -251,15 +331,39 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 	runUUID := newRunUUID()
 
-	// Append a short UUID-derived suffix to the Nomad job name so every
-	// submission produces a unique job — no collisions, no `-purge` needed
-	// before re-runs, and old child Nomad jobs remain inspectable while a
-	// new run is in flight. The full runUUID still goes into job.Meta.
-	jobBase := spec.Name
-	if jobBase == "" {
-		jobBase = "nextflow-head"
+	// Mint a short alphanumeric *run tag* that gets used as the prefix on
+	// both the head Nomad job-id and every child Nomad job-id. This is an
+	// abc-cluster-cli orchestration concern only — distinct from Nextflow's
+	// internal session.uniqueId. The tag is plumbed to nf-nomad via the
+	// `NF_NOMAD_RUN_TAG` env var on the head task; nf-nomad's
+	// NomadHelper.childJobName prefers this over its session-derived
+	// fallback. Single-prefix correlation:
+	//   nomad job status -prefix nf-<run-tag>-     → head + every worker
+	runTag := newRunTag()
+	spec.RunTag = runTag
+
+	// Pipeline slug leads the head job-id and every child job-id. `--name`
+	// (user override) takes precedence over the auto-derived slug so a user
+	// can pin a specific identifier (e.g. when running multiple variants of
+	// the same pipeline).
+	slug := strings.TrimSpace(spec.Name)
+	if slug == "" {
+		slug = pipelineSlug(spec.Repository)
 	}
-	spec.Name = fmt.Sprintf("%s-%s", jobBase, runUUID[:8])
+	if slug == "" {
+		slug = "nextflow"
+	}
+	spec.PipelineSlug = slug
+
+	// Head job-id = `<run-tag>-nf-head-<slug>`. Child job-ids (built by
+	// nf-nomad's NomadHelper from NF_NOMAD_RUN_TAG) follow
+	// `<run-tag>-<8task>-<process>`. Pipeline slug appears only on the
+	// head — children get pipeline context from the process name itself
+	// (`NFCORE_DEMO_DEMO_FASTQC` etc).
+	//
+	// Single-prefix correlation:
+	//   nomad job status -prefix <run-tag>-      → head + every worker
+	spec.Name = headJobName(runTag, slug)
 
 	hcl := generateHeadJobHCL(spec, nomadAddr, nomadToken, runUUID)
 
@@ -432,6 +536,157 @@ func newRunUUID() string {
 		return fmt.Sprintf("run-%d", os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+// newRunTag returns a fresh run tag — the shared prefix on the head Nomad
+// job-id and every child Nomad job-id (single-prefix correlation).
+//
+// Default form: `<sanitized-whoami>-<unix-seconds>` (e.g.
+// `abhi-admin-1730568000`). Using the submitter's whoami makes job
+// listings legible at a glance; the monotonic Unix-seconds suffix
+// guarantees distinct tags between successive submissions and gives ops a
+// trivially parseable timestamp (`date -d @1730568000`).
+//
+// When whoami is unavailable (no config, fresh install, etc.) the form
+// is `nf-<unix-seconds>` — `nf-` keeps the cluster marker visible.
+//
+// Collision risk: only when the same user submits twice within the same
+// wall-second. That surfaces as a Nomad "job already exists" submit error,
+// not data corruption — the user resubmits a moment later. For
+// finer-grained protection (sub-second submits via scripted dispatch),
+// the API caller can override RunTag explicitly.
+//
+// Length budget: e.g. an 18-char whoami + `-` + 10-digit timestamp =
+// 29 chars; the head job-id (`<runtag>-nf-head-<slug>`) and child
+// job-id (`<runtag>-<8task>-<process>`) both stay well within Nomad's
+// 128-char job-id soft limit.
+func newRunTag() string {
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	whoami := activeWhoamiTag()
+	if whoami != "" {
+		return whoami + "-" + ts
+	}
+	return "nf-" + ts
+}
+
+// activeWhoamiTag returns the active context's whoami, sanitized for use
+// in a Nomad job-id (lowercase, alphanumeric + dashes, no leading/trailing
+// dash, capped at a sensible length to leave room for slug + task hash).
+// Returns "" when whoami is unavailable.
+func activeWhoamiTag() string {
+	cfg, err := abccfg.Load()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	ctx := cfg.ActiveCtx()
+	raw := ""
+	if v := strings.TrimSpace(ctx.Admin.Whoami); v != "" {
+		raw = v
+	} else if ctx.Auth != nil {
+		raw = strings.TrimSpace(ctx.Auth.Whoami)
+	}
+	if raw == "" {
+		return ""
+	}
+	// Use rightmost colon segment for "scope:role" style whoami values.
+	if i := strings.LastIndex(raw, ":"); i >= 0 {
+		raw = raw[i+1:]
+	}
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(raw)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if !prevDash && b.Len() > 0 {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	const maxWhoamiLen = 24
+	if len(out) > maxWhoamiLen {
+		out = strings.TrimRight(out[:maxWhoamiLen], "-")
+	}
+	return out
+}
+
+// pipelineSlug derives a short, lowercase, dash-joined slug from a pipeline
+// repository spec. Examples:
+//
+//	nf-core/demo                     → nfcore-demo
+//	https://github.com/abhi/foo.git  → abhi-foo
+//	../local/path/to/main.nf         → main
+//
+// Truncated to 40 chars; on overflow the tail is replaced with a 7-char
+// SHA1-derived suffix so distinct long names stay distinguishable.
+func pipelineSlug(repo string) string {
+	s := strings.TrimSpace(repo)
+	if s == "" {
+		return ""
+	}
+	// Strip URL scheme + host to expose `<owner>/<repo>` for github/gitlab URLs.
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+		if j := strings.Index(s, "/"); j >= 0 {
+			s = s[j+1:]
+		}
+	}
+	// Drop common Git suffixes and Nextflow main script noise.
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.TrimSuffix(s, "/main.nf")
+	// Lowercase everything; replace path separators + non-alnum with single dash.
+	s = strings.ToLower(s)
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') {
+			b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if !prevDash && b.Len() > 0 {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	const slugMax = 40
+	if len(out) <= slugMax {
+		return out
+	}
+	// Long: keep the head and append a 7-char SHA1-derived suffix.
+	sum := sha1.Sum([]byte(repo))
+	return out[:slugMax-8] + "-" + hex.EncodeToString(sum[:4])[:7]
+}
+
+// headJobName assembles the head job-id in the
+// `<run-tag>-nf-head-<slug>` form. The run-tag leads so it shares a prefix
+// with every child job-id (`<run-tag>-<8task>-<process>` from
+// NomadHelper.childJobName); the trailing slug is human-readable context
+// for the head row in `nomad job status` output.
+//
+// Single-prefix correlation:
+//
+//	nomad job status -prefix <run-tag>-     → head + every worker
+//
+// Capped at 128 chars (Nomad job-id soft limit); on overflow the slug is
+// truncated and a 7-char SHA1 suffix appended.
+func headJobName(runTag, slug string) string {
+	const max = 128
+	prefix := runTag + "-nf-head-"
+	budget := max - len(prefix)
+	if len(slug) <= budget {
+		return prefix + slug
+	}
+	headLen := budget - 8
+	if headLen < 1 {
+		headLen = 1
+	}
+	sum := sha1.Sum([]byte(slug))
+	return prefix + slug[:headLen] + "-" + hex.EncodeToString(sum[:4])[:7]
 }
 
 // annotateGrafanaPipelineStart writes a point annotation to Grafana so
