@@ -83,7 +83,7 @@ This contacts the Nomad API to resolve your token name and saves it to `auth.who
 One workload is baked into the CLI — no script file required. It runs a randomised **stress-ng** job across CPU, VM, and I/O stressors, which is useful for verifying your workspace quota and checking that the cluster can schedule on your namespace:
 
 ```bash
-abc job run hello-abc
+abc job run hello-cluster
 ```
 
 ### 2.2 Debug sleep: exec into a running allocation
@@ -91,7 +91,7 @@ abc job run hello-abc
 Add a sleep at the start of any job so you have time to open a shell inside the allocation before the workload begins:
 
 ```bash
-abc job run hello-abc --sleep=120s
+abc job run hello-cluster --sleep=120s
 ```
 
 `--sleep` accepts plain seconds (`120`), Go duration strings (`2m`, `1h30m`), or `HH:MM:SS` walltime format.
@@ -163,7 +163,7 @@ abc job list --status dead --limit 5
 abc job show <job-id>
 ```
 
-This shows resource allocation, meta keys (including the `random_scenario` set by `hello-abc`), and allocation status.
+This shows resource allocation, meta keys (including the `random_scenario` set by `hello-cluster`), and allocation status.
 
 ### 3.3 Stop a job
 
@@ -272,7 +272,7 @@ abc module run nf-core/seqkit/stats \
 | Bootstrap config | `abc config init` |
 | Switch to aither context | `abc context use aither` |
 | Show identity | `abc auth whoami` |
-| Submit built-in workload | `abc job run hello-abc` |
+| Submit built-in workload | `abc job run hello-cluster` |
 | Debug interactively | `abc job run <script> --sleep=2m` |
 | Submit custom script | `abc job run hello-me.sh` |
 | List jobs | `abc job list --status running` |

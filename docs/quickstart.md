@@ -34,10 +34,10 @@ One workload is baked into the CLI — no script file required:
 
 ```bash
 # Randomised stress-ng job: exercises CPU, VM, and I/O stressors
-abc job run hello-abc
+abc job run hello-cluster
 
 # Add a debug sleep to exec into the running allocation before work begins
-abc job run hello-abc --sleep=120s
+abc job run hello-cluster --sleep=120s
 ```
 
 Check that the job was submitted and watch it appear:

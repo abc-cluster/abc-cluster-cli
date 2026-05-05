@@ -151,10 +151,10 @@ INLINE COMMENTS
 EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Built-in verification workload — randomised stress-ng across CPU / VM / I/O
-  abc job run hello-abc
+  abc job run hello-cluster
 
   # Inject a debug sleep so you can exec into the alloc before work begins
-  abc job run hello-abc --sleep=120s
+  abc job run hello-cluster --sleep=120s
   abc job run myscript.sh  --sleep=5m
 
   # Preview generated HCL without submitting
@@ -491,7 +491,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 	// Resolve --format (shell | hcl); auto-detect from extension when omitted.
 	format, _ := cmd.Flags().GetString("format")
 	if format == "" {
-		if scriptPath != "hello-abc" {
+		if scriptPath != "hello-cluster" {
 			format = detectJobFormat(scriptPath)
 		} else {
 			format = "shell"
@@ -506,17 +506,17 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown --format %q: must be shell or hcl", format)
 	}
 
-	isBuiltInHelloAbc := scriptPath == "hello-abc"
+	isBuiltInHelloCluster := scriptPath == "hello-cluster"
 	var (
 		scriptBytes []byte
 		scriptBase  string
 		defaultName string
 		err         error
 	)
-	if isBuiltInHelloAbc {
-		scriptBase = helloAbcScriptBase
-		defaultName = "hello-abc"
-		scriptBytes = []byte(helloAbcScriptBody)
+	if isBuiltInHelloCluster {
+		scriptBase = helloClusterScriptBase
+		defaultName = "hello-cluster"
+		scriptBytes = []byte(helloClusterScriptBody)
 	} else {
 		f, openErr := os.Open(scriptPath)
 		if openErr != nil {
@@ -564,8 +564,8 @@ func runJob(cmd *cobra.Command, args []string) error {
 
 	// Merge in documented precedence: CLI > preamble > env > params.
 	spec := &jobSpec{}
-	if isBuiltInHelloAbc {
-		spec = mergeSpec(spec, buildHelloAbcSpec())
+	if isBuiltInHelloCluster {
+		spec = mergeSpec(spec, buildHelloClusterSpec())
 	}
 
 	if paramsFile, _ := cmd.Flags().GetString("params-file"); paramsFile != "" {
@@ -610,8 +610,8 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 
 	var scriptBody string
-	if isBuiltInHelloAbc {
-		scriptBody, err = finalizeHelloAbc(spec)
+	if isBuiltInHelloCluster {
+		scriptBody, err = finalizeHelloCluster(spec)
 		if err != nil {
 			return err
 		}

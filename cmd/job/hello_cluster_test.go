@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestHelloAbcGeneratesHCL(t *testing.T) {
-	spec := buildHelloAbcSpec()
+func TestHelloClusterGeneratesHCL(t *testing.T) {
+	spec := buildHelloClusterSpec()
 	if spec.Cores != 4 {
 		t.Errorf("expected 4 cores, got %d", spec.Cores)
 	}
@@ -21,11 +21,11 @@ func TestHelloAbcGeneratesHCL(t *testing.T) {
 	}
 }
 
-func TestHelloAbcScriptContainsStressNG(t *testing.T) {
-	spec := buildHelloAbcSpec()
-	script, err := finalizeHelloAbc(spec)
+func TestHelloClusterScriptContainsStressNG(t *testing.T) {
+	spec := buildHelloClusterSpec()
+	script, err := finalizeHelloCluster(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloAbc error: %v", err)
+		t.Fatalf("finalizeHelloCluster error: %v", err)
 	}
 	if !strings.Contains(script, "stress-ng") {
 		t.Error("expected stress-ng in generated script")
@@ -41,11 +41,11 @@ func TestHelloAbcScriptContainsStressNG(t *testing.T) {
 	}
 }
 
-func TestHelloAbcMetaKeys(t *testing.T) {
-	spec := buildHelloAbcSpec()
-	_, err := finalizeHelloAbc(spec)
+func TestHelloClusterMetaKeys(t *testing.T) {
+	spec := buildHelloClusterSpec()
+	_, err := finalizeHelloCluster(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloAbc error: %v", err)
+		t.Fatalf("finalizeHelloCluster error: %v", err)
 	}
 	required := []string{
 		"abc_submission_id",
@@ -64,29 +64,29 @@ func TestHelloAbcMetaKeys(t *testing.T) {
 	}
 }
 
-func TestHelloAbcJobNameHasSuffix(t *testing.T) {
-	spec := buildHelloAbcSpec()
-	_, err := finalizeHelloAbc(spec)
+func TestHelloClusterJobNameHasSuffix(t *testing.T) {
+	spec := buildHelloClusterSpec()
+	_, err := finalizeHelloCluster(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloAbc error: %v", err)
+		t.Fatalf("finalizeHelloCluster error: %v", err)
 	}
-	if !strings.Contains(spec.Name, "script-job-hello-abc-") {
+	if !strings.Contains(spec.Name, "script-job-hello-cluster-") {
 		t.Errorf("unexpected job name %q", spec.Name)
 	}
 }
 
-func TestHelloAbcScriptNoDuplicatePlaceholder(t *testing.T) {
-	spec := buildHelloAbcSpec()
-	script, err := finalizeHelloAbc(spec)
+func TestHelloClusterScriptNoDuplicatePlaceholder(t *testing.T) {
+	spec := buildHelloClusterSpec()
+	script, err := finalizeHelloCluster(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloAbc error: %v", err)
+		t.Fatalf("finalizeHelloCluster error: %v", err)
 	}
 	if strings.Contains(script, "__STRESS_CMD__") {
 		t.Error("placeholder __STRESS_CMD__ was not replaced in generated script")
 	}
 }
 
-func TestHelloAbcScenarioLabelFormat(t *testing.T) {
+func TestHelloClusterScenarioLabelFormat(t *testing.T) {
 	p := randomParams{
 		CPUStressors: 2,
 		VMStressors:  1,
@@ -100,7 +100,7 @@ func TestHelloAbcScenarioLabelFormat(t *testing.T) {
 	}
 }
 
-func TestHelloAbcStressCmdCPUOnly(t *testing.T) {
+func TestHelloClusterStressCmdCPUOnly(t *testing.T) {
 	p := randomParams{
 		CPUStressors: 3,
 		VMStressors:  0,
@@ -123,7 +123,7 @@ func TestHelloAbcStressCmdCPUOnly(t *testing.T) {
 	}
 }
 
-func TestHelloAbcStressCmdAllStressors(t *testing.T) {
+func TestHelloClusterStressCmdAllStressors(t *testing.T) {
 	p := randomParams{
 		CPUStressors: 2,
 		VMStressors:  2,
@@ -139,12 +139,12 @@ func TestHelloAbcStressCmdAllStressors(t *testing.T) {
 	}
 }
 
-func TestHelloAbcWithDebugSleep(t *testing.T) {
-	spec := buildHelloAbcSpec()
+func TestHelloClusterWithDebugSleep(t *testing.T) {
+	spec := buildHelloClusterSpec()
 	spec.DebugSleepSecs = 30
-	script, err := finalizeHelloAbc(spec)
+	script, err := finalizeHelloCluster(spec)
 	if err != nil {
-		t.Fatalf("finalizeHelloAbc error: %v", err)
+		t.Fatalf("finalizeHelloCluster error: %v", err)
 	}
 	if !strings.Contains(script, "sleep 30") {
 		t.Errorf("expected 'sleep 30' in script with DebugSleepSecs=30:\n%s", script)

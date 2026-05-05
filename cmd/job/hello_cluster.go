@@ -1,5 +1,5 @@
-// hello_abc.go — built-in stress-ng workload for cluster verification and load testing.
-// Invoked via: abc job run hello-abc [flags]
+// hello_cluster.go — built-in stress-ng workload for cluster verification and load testing.
+// Invoked via: abc job run hello-cluster [flags]
 //
 // Randomises CPU, VM, and I/O stressor counts and a run duration at CLI time
 // so each submission exercises a different resource profile.  The chosen
@@ -22,7 +22,7 @@ import (
 )
 
 // helloWorldDefaultNamespace returns the Nomad namespace the built-in
-// hello-abc workload should target. Picks (in order):
+// hello-cluster workload should target. Picks (in order):
 //  1. active abc context's admin.abc_nodes.nomad_namespace
 //  2. "default" — fallback for clusters without a pinned namespace.
 func helloWorldDefaultNamespace() string {
@@ -42,15 +42,15 @@ func helloWorldDefaultNamespace() string {
 }
 
 const (
-	helloAbcScriptBase = "hello-abc.sh"
+	helloClusterScriptBase = "hello-cluster.sh"
 
-	// helloAbcScriptBody is a template. The final script is built by
-	// finalizeHelloAbc, which replaces the __STRESS_CMD__ placeholder with
+	// helloClusterScriptBody is a template. The final script is built by
+	// finalizeHelloCluster, which replaces the __STRESS_CMD__ placeholder with
 	// the randomised stress-ng invocation.
-	helloAbcScriptBody = `#!/bin/sh
+	helloClusterScriptBody = `#!/bin/sh
 set -eu
 
-echo "=== hello-abc ==="
+echo "=== hello-cluster ==="
 echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "node=$(hostname)"
 echo "alloc=${NOMAD_ALLOC_ID:-unknown}"
@@ -60,11 +60,11 @@ echo ""
 __STRESS_CMD__
 
 echo ""
-echo "=== hello-abc done ==="
+echo "=== hello-cluster done ==="
 `
 
-	// helloAbcImage is the container image used by hello-abc.
-	helloAbcImage = "community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8"
+	// helloClusterImage is the container image used by hello-cluster.
+	helloClusterImage = "community.wave.seqera.io/library/hyperfine_stress-ng:4c75e186a00376f8"
 )
 
 // randomParams holds the randomised stress-ng parameters chosen at CLI time.
@@ -125,21 +125,21 @@ func (p randomParams) stressCmd() string {
 	return strings.Join(args, " \\\n  ")
 }
 
-// buildHelloAbcSpec returns the default jobSpec for a hello-abc workload.
+// buildHelloClusterSpec returns the default jobSpec for a hello-cluster workload.
 // Resource limits are sized to accommodate 4 CPU stressors + 2 × 512 MB VM
 // stressors in the worst case.
-func buildHelloAbcSpec() *jobSpec {
+func buildHelloClusterSpec() *jobSpec {
 	return &jobSpec{
-		Name:         "hello-abc",
+		Name:         "hello-cluster",
 		Namespace:    helloWorldDefaultNamespace(),
 		Driver:       utils.NormalizeNomadTaskDriver("containerd"),
-		DriverConfig: map[string]string{"image": helloAbcImage},
+		DriverConfig: map[string]string{"image": helloClusterImage},
 		Cores:        4,
 		MemoryMB:     1536, // 3 × 512 MB to absorb worst-case VM stressors
 		WalltimeSecs: 10 * 60,
 		Meta: map[string]string{
-			"workload": "hello-abc",
-			"scenario": "pending", // overwritten by finalizeHelloAbc
+			"workload": "hello-cluster",
+			"scenario": "pending", // overwritten by finalizeHelloCluster
 		},
 		ExposeNamespaceEnv: true,
 		ExposeJobName:      true,
@@ -148,11 +148,11 @@ func buildHelloAbcSpec() *jobSpec {
 	}
 }
 
-// finalizeHelloAbc stamps submission metadata and bakes the randomised
+// finalizeHelloCluster stamps submission metadata and bakes the randomised
 // stress-ng command into the script body.
-func finalizeHelloAbc(spec *jobSpec) (string, error) {
+func finalizeHelloCluster(spec *jobSpec) (string, error) {
 	if spec == nil {
-		spec = buildHelloAbcSpec()
+		spec = buildHelloClusterSpec()
 	}
 	if spec.Meta == nil {
 		spec.Meta = map[string]string{}
@@ -190,7 +190,7 @@ func finalizeHelloAbc(spec *jobSpec) (string, error) {
 	}
 
 	// Splice the randomised stress-ng command into the script template.
-	script := strings.ReplaceAll(helloAbcScriptBody, "__STRESS_CMD__", params.stressCmd())
+	script := strings.ReplaceAll(helloClusterScriptBody, "__STRESS_CMD__", params.stressCmd())
 
-	return FinalizeJobScript(spec, helloAbcScriptBase, script)
+	return FinalizeJobScript(spec, helloClusterScriptBase, script)
 }
