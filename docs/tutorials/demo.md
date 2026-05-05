@@ -10,40 +10,44 @@ sidebar_position: 2
 
 # ABC CLI Hands-On Walkthrough
 
-A focused walkthrough of the **ABC CLI** covering the commands you will use every day. Each exercise takes about **ten minutes**; skip or skim anything you have already seen.
+A focused walkthrough of the **ABC CLI** built around the three things researchers do every day.
 
-## Overview
+| Part | What you will practise |
+|------|------------------------|
+| [Setup](#setup-5-min) | Install, configure, confirm identity |
+| [1 — Jobs](#part-1-submit-and-monitor-jobs-15-min) | Submit jobs, watch them run, read logs |
+| [2 — Upload & encrypt](#part-2-upload-and-encrypt-data-10-min) | Push data to the cluster, encrypt sensitive files |
+| [3 — Browse](#part-3-browse-data-10-min) | List buckets, inspect objects, stat a key |
 
-The ABC CLI turns annotated shell scripts into **Nomad batch jobs** (`abc job run`), moves data to and from the cluster (`abc data`), and dispatches higher-level Nextflow workflows (`abc pipeline run`, `abc module run`). A small `abc context` / `abc auth` layer tells the CLI which cluster to talk to.
+**Time budget:** roughly **40 minutes** end to end.
 
-| Exercise | Focus |
-|----------|--------|
-| [1](#exercise-1-context-setup) | Context setup and identity |
-| [2](#exercise-2-running-jobs) | `abc job run`: built-in workload and custom scripts |
-| [3](#exercise-3-tracking-jobs) | `abc job show`, logs, list, stop |
-| [4](#exercise-4-data-upload-and-download) | `abc data upload`, `download` |
-| [5](#exercise-5-pipelines-and-modules) | `abc pipeline run`, `abc module run` |
+**Cluster:** All exercises target the **aither** cluster (`http://aither.mb.sun.ac.za`). Your workspace lead provides a pre-configured `~/.abc/config.yaml` — you do not need to create credentials from scratch.
 
-**Time budget:** about **10 minutes per exercise** — 50 minutes for a complete pass.
-
-**Cluster:** All exercises target the **aither** cluster (`http://aither.mb.sun.ac.za`). Your workspace lead will hand you a pre-configured `~/.abc/config.yaml` — you do not need to create credentials from scratch.
-
-**Deeper reference:** [`USAGE.md`](https://github.com/abc-cluster/abc-cluster-cli/blob/main/USAGE.md) has every flag and preamble directive. `abc <command> --help` is always accurate.
+**Deeper reference:** `abc <command> --help` is always accurate. The [reference docs](../reference/) have every flag and preamble directive.
 
 ---
 
-## Prerequisites
+## Setup (~5 min)
 
-- **`abc` on your `PATH`:** confirm with `abc --version`.
-- Config file at `~/.abc/config.yaml` — handed to you by your workspace lead.
+### Install
 
----
+`abc` is a single static binary. Quick install:
 
-## Exercise 1: Context setup
+```bash
+curl -fsSL -H "Accept: application/vnd.github.raw+json" \
+    "https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main" \
+  | sh -s --
+```
 
-**Time target:** about 10 minutes.
+Verify:
 
-Bootstrap the config directory if it doesn't exist yet:
+```bash
+abc --version
+```
+
+### Configure context
+
+Bootstrap the config directory if it doesn't exist:
 
 ```bash
 abc config init          # creates ~/.abc/config.yaml with a placeholder context
@@ -62,43 +66,69 @@ abc context use aither
 abc context show
 ```
 
-Confirm your identity against the cluster:
+### Confirm your identity
 
 ```bash
 abc auth whoami
 ```
 
-This contacts the Nomad API to resolve your token name and saves it to `auth.whoami` in the active context for future reference.
+This contacts the Nomad API to resolve your token name and saves it to `auth.whoami` in the active context for future reference. If this command succeeds, you are ready.
 
 ---
 
-## Exercise 2: Running jobs
+## Part 1: Submit and monitor jobs (~15 min)
 
-**Time target:** about 10 minutes.
+`abc job run` turns an annotated shell script into a Nomad batch job and submits it. You do not need to write an HCL file or know how Nomad works.
 
-`abc job run` converts an annotated shell script into a Nomad batch job and submits it.
+### 1.1 Submit the built-in workload
 
-### 2.1 Built-in verification workload
-
-One workload is baked into the CLI — no script file required. It runs a randomised **stress-ng** job across CPU, VM, and I/O stressors, which is useful for verifying your workspace quota and checking that the cluster can schedule on your namespace:
+One workload is baked into the CLI — no script file required. It runs a randomised **stress-ng** job across CPU, VM, and I/O stressors, which is useful for verifying your workspace quota and confirming the cluster can schedule onto your namespace:
 
 ```bash
 abc job run hello-cluster
 ```
 
-### 2.2 Debug sleep: exec into a running allocation
+The CLI prints the job ID. Note it for the next steps.
 
-Add a sleep at the start of any job so you have time to open a shell inside the allocation before the workload begins:
+### 1.2 Monitor the job
+
+List all your running jobs:
 
 ```bash
-abc job run hello-cluster --sleep=120s
+abc job list --status running
+```
+
+Show details for a specific job:
+
+```bash
+abc job show <job-id>
+```
+
+Stream live logs:
+
+```bash
+abc job logs <job-id> --follow
+```
+
+Stop a job if needed:
+
+```bash
+abc job stop <job-id>
+```
+
+### 1.3 Debug: open a shell before work starts
+
+Add a pre-work sleep so you have time to exec into the allocation before the workload begins:
+
+```bash
+abc job run hello-cluster --sleep=2m
 ```
 
 `--sleep` accepts plain seconds (`120`), Go duration strings (`2m`, `1h30m`), or `HH:MM:SS` walltime format.
 
-### 2.3 Your first custom job
+### 1.4 Submit a custom script
 
-Replace `Your Name` with your own name and submit a personalised job:
+Replace `Your Name` below and submit a personalised job:
 
 ```bash
 cat > hello-me.sh << 'EOF'
@@ -107,79 +137,55 @@ cat > hello-me.sh << 'EOF'
 #ABC --mem=256M
 echo "Hello, Your Name!"
 echo "Running on: $(hostname)"
+echo "Alloc: ${NOMAD_ALLOC_ID}"
 EOF
-```
 
-Submit when ready (the CLI marks the script executable automatically):
-
-```bash
 abc job run hello-me.sh
 ```
 
-### 2.4 Override directives from the CLI
-
-CLI flags take precedence over `#ABC` preamble lines — useful for quick resource adjustments without editing the script:
+The CLI marks the script executable automatically. `#ABC` preamble lines set default resources; CLI flags override them:
 
 ```bash
 abc job run hello-me.sh --cores=2 --mem=512M
 ```
 
-### 2.5 Optional: Pixi software stack
+### 1.5 Attach a software environment
 
-If the cluster has [Pixi](https://pixi.sh) available, add a runtime stack to any job:
+`--runtime=micromamba-exec` installs a conda environment on the cluster node before running your script. Pass the environment spec with `--from`:
 
 ```bash
-cat > pixi-job.sh << 'EOF'
+cat > bio-job.sh << 'EOF'
 #!/bin/bash
-#ABC --name=pixi-demo
-#ABC --driver=exec
-#ABC --runtime=pixi-exec
-#ABC --from=/cluster/envs/myproject/pixi.toml
+#ABC --name=bio-demo
+#ABC --runtime=micromamba-exec
+#ABC --from=environment.yml
+#ABC --cores=4
+#ABC --mem=8G
 set -euo pipefail
-python -c "import pandas; print(pandas.__version__)"
+samtools --version | head -1
+fastqc --version
 EOF
-abc job run pixi-job.sh
 ```
 
-`--runtime=pixi-exec` (alias `pixi`) wraps your script in a `pixi run` invocation using the manifest at `--from`.
-
----
-
-## Exercise 3: Tracking jobs
-
-**Time target:** about 10 minutes.
-
-### 3.1 List recent jobs
-
 ```bash
-abc job list
-abc job list --status running
-abc job list --status dead --limit 5
-```
+cat > environment.yml << 'EOF'
+name: bio
+channels: [bioconda, conda-forge]
+dependencies:
+  - samtools>=1.20
+  - fastqc>=0.12
+EOF
 
-### 3.2 Show job details
-
-```bash
-abc job show <job-id>
-```
-
-This shows resource allocation, meta keys (including the `random_scenario` set by `hello-cluster`), and allocation status.
-
-### 3.3 Stop a job
-
-```bash
-abc job stop <job-id>
+abc job run bio-job.sh
 ```
 
 ---
 
-## Exercise 4: Data upload and download
+## Part 2: Upload and encrypt data (~10 min)
 
-**Time target:** about 10 minutes.
+`abc data upload` uses the **TUS resumable upload protocol** — uploads survive network interruptions and can be resumed exactly where they left off.
 
-### 4.1 Upload a file
-
-`abc data upload` uses the **TUS resumable upload protocol** — uploads can be paused and resumed on flaky networks:
+### 2.1 Upload a file
 
 ```bash
 abc data upload ./results.tar.gz \
@@ -187,25 +193,44 @@ abc data upload ./results.tar.gz \
   --meta project=my-study
 ```
 
-The upload endpoint and token resolve from the active context (`upload_endpoint` / `upload_token`).
+`--meta` attaches arbitrary key-value metadata to the object. The upload endpoint and token resolve automatically from the active context.
 
-### 4.2 Download SRA data to cluster storage
+### 2.2 Upload with encryption
 
-`abc data download` runs the transfer **on the cluster** as a Nomad job. The `exec` driver runs on the host filesystem and has direct internet access; tool binaries (`s5cmd`, etc.) are auto-staged via the Nomad artifact stanza from the cluster's `abc-reserved/binary_tools/` mirror, so no per-node install is needed.
-
-Use `--tool s5cmd` with `--tool-args '--no-sign-request'` to fetch from SRA's public S3 bucket (no credentials required):
+Sensitive files should be encrypted before leaving your machine. `abc data` uses an **age** key pair managed by `abc secrets`:
 
 ```bash
-abc data download \
-  --tool s5cmd \
-  --tool-args '--no-sign-request' \
-  --source 's3://sra-pub-src-10/SRR19090886/*.fastq.gz' \
-  --driver exec
+# One-time setup: generate your key pair
+abc secrets init
 ```
 
-Without `--destination`, files land in `/tmp/abc-data-download` on the Nomad allocation's local scratch — accessible during the job's lifetime.
+Then encrypt on upload:
 
-To persist them to your workspace's S3 bucket on the cluster, add `--destination storage`. The CLI resolves your rustfs/MinIO endpoint and credentials from the active context and stores the files under `s3://<your-namespace>/downloads/<your-identity>/` — i.e., a `downloads/<user>/` prefix inside your research-group bucket. The `group-member` IAM policy grants R/W on that prefix via `${aws:username}`, so every workspace member writes to their own folder without any extra setup:
+```bash
+abc data upload ./patient-data.tar.gz --encrypt
+```
+
+The file is encrypted locally with your age public key before any bytes are transmitted. Nobody on the cluster can read the ciphertext without the matching private key.
+
+### 2.3 Encrypt or decrypt locally (without uploading)
+
+Encrypt a local file:
+
+```bash
+abc data encrypt sensitive-report.pdf   # → sensitive-report.pdf.enc
+```
+
+Decrypt it back:
+
+```bash
+abc data decrypt sensitive-report.pdf.enc   # → sensitive-report.pdf
+```
+
+This is useful for encrypting files before sharing them via other channels, or for decrypting files that a collaborator encrypted with your public key.
+
+### 2.4 Download from a public source to cluster storage
+
+`abc data download` runs the transfer **on the cluster** as a Nomad job — the data never passes through your laptop. Tool binaries are auto-staged from the cluster's binary mirror, so no per-node install is needed:
 
 ```bash
 abc data download \
@@ -216,73 +241,69 @@ abc data download \
   --driver exec
 ```
 
-For HTTPS sources (e.g. NCBI, ENA), use `--tool wget` or `--tool aria2` instead — both also resolve `--destination storage` to the same `<namespace>/downloads/<user>/` location.
-
-`--node` pins the job to a specific Nomad node by name or ID. Supported tools: `wget`, `aria2`, `rclone`, `s5cmd`.
+`--destination storage` writes files to your research-group bucket under `s3://<namespace>/downloads/<your-identity>/`. Supported tools: `wget`, `aria2`, `rclone`, `s5cmd`.
 
 ---
 
-## Exercise 5: Pipelines and modules
+## Part 3: Browse data (~10 min)
 
-**Time target:** about 10 minutes.
+`abc data ls` lists buckets and objects in the cluster's S3-compatible storage (MinIO / RustFS). Credentials resolve from the active context.
 
-### 5.1 Run the Nextflow demo pipeline
-
-`abc pipeline run` submits a Nextflow head job to the cluster:
+### 3.1 List all buckets
 
 ```bash
-abc pipeline run nextflow-io/hello
+abc data ls
 ```
 
-Check that the job was submitted:
+### 3.2 List objects in a bucket
 
 ```bash
-abc job list --status running
+abc data ls <your-namespace>
 ```
 
-### 5.2 Run a module with your data
-
-`abc module run` generates and submits a Nextflow module-driver pipeline. You need a samplesheet CSV pointing at your input files. If you ran the download in Exercise 4 with `--destination storage`, your files are at `s3://<namespace>/downloads/<your-identity>/`. Create `samplesheet.csv`:
-
-```
-sample,fastq_1,fastq_2,strandedness
-SRR19090886,s3://<namespace>/downloads/<your-identity>/SRR19090886_1.fastq.gz,s3://<namespace>/downloads/<your-identity>/SRR19090886_2.fastq.gz,auto
-```
-
-Save this as `samplesheet.csv`, then run FastQC on your files:
+Drill into a prefix:
 
 ```bash
-abc module run nf-core/fastqc \
-  --samplesheet ./samplesheet.csv
+abc data ls <your-namespace>/downloads/
 ```
 
-Alternatively, use the seqkit stats module for a quicker sequence summary:
+Long format shows size and last-modified timestamp:
 
 ```bash
-abc module run nf-core/seqkit/stats \
-  --samplesheet ./samplesheet.csv
+abc data ls <your-namespace>/downloads/ --long
 ```
+
+### 3.3 Inspect an object
+
+`abc data stat` prints size, ETag, last-modified date, and any user metadata attached at upload time:
+
+```bash
+abc data stat <your-namespace>/downloads/alice/results.tar.gz
+```
+
+The `researcher` and `project` metadata you passed with `--meta` in Part 2 appears here — useful for tracing provenance without downloading the file.
 
 ---
 
-## Key takeaways
+## Quick-reference card
 
 | Task | Command |
 |------|---------|
-| Bootstrap config | `abc config init` |
-| Switch to aither context | `abc context use aither` |
-| Show identity | `abc auth whoami` |
+| Confirm identity | `abc auth whoami` |
 | Submit built-in workload | `abc job run hello-cluster` |
-| Debug interactively | `abc job run <script> --sleep=2m` |
-| Submit custom script | `abc job run hello-me.sh` |
-| List jobs | `abc job list --status running` |
+| Submit custom script | `abc job run <script.sh>` |
+| Override resources at submit | `abc job run <script> --cores=4 --mem=16G` |
+| List running jobs | `abc job list --status running` |
 | Show job details | `abc job show <job-id>` |
+| Stream logs | `abc job logs <job-id> --follow` |
 | Stop a job | `abc job stop <job-id>` |
-| Upload file | `abc data upload <file> [--meta k=v …]` |
-| Download from SRA (local scratch) | `abc data download --tool s5cmd --tool-args '--no-sign-request' --source <s3-url> --driver exec` |
-| Download from SRA → research-group bucket | `abc data download --tool s5cmd --tool-args '--no-sign-request' --source <s3-url> --destination storage --driver exec` |
-| Run demo pipeline | `abc pipeline run nextflow-io/hello` |
-| Run a module | `abc module run nf-core/<module> --samplesheet <csv>` |
+| Upload a file | `abc data upload <file> [--meta k=v …]` |
+| Upload and encrypt | `abc data upload <file> --encrypt` |
+| Encrypt locally | `abc data encrypt <file>` |
+| Decrypt locally | `abc data decrypt <file>.enc` |
+| List buckets | `abc data ls` |
+| List objects | `abc data ls <bucket>[/prefix] [--long]` |
+| Inspect an object | `abc data stat <bucket>/<key>` |
 
 ---
 
@@ -290,15 +311,16 @@ abc module run nf-core/seqkit/stats \
 
 | Symptom | Fix |
 |---------|-----|
-| `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN to reach the cluster |
+| `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
 | `403 Forbidden` | `abc context show` — confirm the **aither** context is active and your token is set |
-| Job goes to wrong namespace | `abc context show` — the `nomad_namespace` field in your config controls the default |
+| Job goes to wrong namespace | `abc context show` — check the `nomad_namespace` field |
+| `abc data ls` returns no endpoint | Run `abc cluster capabilities sync` to pull storage credentials |
 | `unknown command` | `abc --help` for the command list; `abc <verb> --help` for flags |
 
 ---
 
 ## Next steps
 
-- **[Reference → job run](../reference/jobs)** — full `#ABC` directive table and all flags.
-- **[Reference → data](../reference/data)** — upload, download, and object storage.
+- **[Reference → job run](../reference/jobs)** — full `#ABC` directive table, runtimes, and all flags.
+- **[Reference → data](../reference/data)** — upload, download, encrypt, and object storage.
 - **[`USAGE.md`](https://github.com/abc-cluster/abc-cluster-cli/blob/main/USAGE.md)** — every command, flag, and environment variable.
