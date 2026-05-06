@@ -26,7 +26,7 @@ func defaultDevPlugins() []PluginRef {
 	return []PluginRef{
 		{ID: "nf-nomad", Version: "99.99.99"},
 		{ID: "nf-rclone", Version: "99.99.99"},
-		{ID: "nf-s5cmd", Version: "99.99.99"},
+		{ID: "nf-nomad-s5cmd", Version: "99.99.99"},
 	}
 }
 
@@ -35,7 +35,7 @@ func defaultDevPlugins() []PluginRef {
 // per-arch URL can be resolved via tools.ArtifactURL(name, "").
 //
 //   - `rclone` — needed by nf-rclone (head + every compute node).
-//   - `s5cmd`  — needed by nf-s5cmd's S5cmdNomadInterop, which shells out to
+//   - `s5cmd`  — needed by nf-nomad-s5cmd's S5cmdNomadInterop, which shells out to
 //                s5cmd cp from the head (to upload .command.* + sync results
 //                back) and from every worker bootstrap script. Must be on the
 //                head image's PATH OR available via /nxf-work/bin/ (which the
