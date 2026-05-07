@@ -21,6 +21,25 @@ func TestHelloClusterGeneratesHCL(t *testing.T) {
 	}
 }
 
+// TestHelloClusterWalltimeCap verifies the hard 5-minute wall-clock cap on
+// the hello-cluster workload. Total alloc lifetime — image pull + stress-ng
+// + wind-down — must stay under helloClusterWalltimeSecs.
+func TestHelloClusterWalltimeCap(t *testing.T) {
+	spec := buildHelloClusterSpec()
+	if spec.WalltimeSecs > 5*60 {
+		t.Errorf("WalltimeSecs = %d, want ≤ 300 (5 minutes)", spec.WalltimeSecs)
+	}
+	if helloClusterWalltimeSecs > 5*60 {
+		t.Errorf("helloClusterWalltimeSecs = %d, want ≤ 300", helloClusterWalltimeSecs)
+	}
+	// stress-ng's natural timeout must leave headroom under the walltime
+	// for image pull + container startup + wind-down (~120s budget).
+	if helloClusterMaxStressSecs >= helloClusterWalltimeSecs {
+		t.Errorf("max stress duration %d must be strictly less than walltime %d",
+			helloClusterMaxStressSecs, helloClusterWalltimeSecs)
+	}
+}
+
 func TestHelloClusterScriptContainsStressNG(t *testing.T) {
 	spec := buildHelloClusterSpec()
 	script, err := finalizeHelloCluster(spec)

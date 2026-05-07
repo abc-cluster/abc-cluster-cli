@@ -76,6 +76,17 @@ type randomParams struct {
 	TimeoutSecs  int    // --timeout Ns
 }
 
+// helloClusterMaxStressSecs is the upper bound for the random stress-ng
+// --timeout. Combined with helloClusterWalltimeSecs (the Nomad kill_timeout
+// safety net) this guarantees `abc job run hello-cluster` never runs longer
+// than ~5 minutes wall-clock even in the worst case (slow image pull +
+// maximum stress duration).
+const helloClusterMaxStressSecs = 180 // 3 minutes — stress-ng natural timeout
+
+// helloClusterWalltimeSecs is the Nomad walltime budget; if stress-ng has
+// not finished by then (e.g. image pull stalled) Nomad kills the alloc.
+const helloClusterWalltimeSecs = 5 * 60 // 5 minutes hard wall-clock cap
+
 // newRandomParams returns randomly chosen stress-ng parameters.
 // Uses a seeded local RNG so the same seed always produces the same scenario.
 func newRandomParams(r *rand.Rand) randomParams {
@@ -90,8 +101,10 @@ func newRandomParams(r *rand.Rand) randomParams {
 	// I/O stressors: 0–2
 	io := r.Intn(3)
 
-	// Duration: 30–180 seconds
-	timeout := 30 + r.Intn(151)
+	// Duration: 30 .. helloClusterMaxStressSecs (currently 30–180s).
+	// Capped at 180s so the total alloc lifetime — image pull (variable) +
+	// startup + stress-ng + wind-down — stays under helloClusterWalltimeSecs.
+	timeout := 30 + r.Intn(helloClusterMaxStressSecs-30+1)
 
 	return randomParams{
 		CPUStressors: cpu,
@@ -136,7 +149,7 @@ func buildHelloClusterSpec() *jobSpec {
 		DriverConfig: map[string]string{"image": helloClusterImage},
 		Cores:        4,
 		MemoryMB:     1536, // 3 × 512 MB to absorb worst-case VM stressors
-		WalltimeSecs: 10 * 60,
+		WalltimeSecs: helloClusterWalltimeSecs,
 		Meta: map[string]string{
 			"workload": "hello-cluster",
 			"scenario": "pending", // overwritten by finalizeHelloCluster
