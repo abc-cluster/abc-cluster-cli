@@ -130,7 +130,7 @@ func TestAccountingShowSurfacesSourceTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := stdout.String()
-	for _, want := range []string{"cost.cpu_hour", "config", "cost.gpu_hour", "built-in", "currency"} {
+	for _, want := range []string{"cost.cpu_hour", "local", "cost.gpu_hour", "built-in", "currency"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output missing %q\n%s", want, out)
 		}

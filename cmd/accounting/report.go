@@ -25,12 +25,16 @@ func addReportFlags(cmd *cobra.Command) {
 	cmd.Flags().Float64("rate-gpu-hour", -1, "Layer 2 override: cost per GPU·hour")
 	cmd.Flags().Float64("rate-memory-gb-hour", -1, "Layer 2 override: cost per GB·hour memory")
 	cmd.Flags().Bool("all-contexts", false, "(Phase 2 — currently rejects with a clear error)")
+	cmd.Flags().Bool("signed", false, "(Phase 2 — produce a server-signed, reproducible report; not yet implemented)")
 	cmd.RunE = runLocalAccountingReport
 }
 
 func runLocalAccountingReport(cmd *cobra.Command, _ []string) error {
 	if all, _ := cmd.Flags().GetBool("all-contexts"); all {
-		return fmt.Errorf("--all-contexts requires --currency=<code> in Phase 1; mixed-currency conversion is deferred (see specs/active/abc-emissions-accounting.md \"Defers\")")
+		return fmt.Errorf("--all-contexts requires --currency=<code> in Phase 1; mixed-currency conversion is deferred (see specs/completed/abc-emissions-accounting.md \"Defers\")")
+	}
+	if signed, _ := cmd.Flags().GetBool("signed"); signed {
+		return fmt.Errorf("--signed is not yet implemented; see brainstorms/emissions-accounting/2026-05-07-permissions-model.md (signing requires server-side rate cards which arrive with abc-grove)")
 	}
 	by, _ := cmd.Flags().GetString("by")
 	output, _ := cmd.Flags().GetString("output")

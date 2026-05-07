@@ -20,12 +20,32 @@ import "time"
 type Source string
 
 const (
+	// SourceBuiltIn — shipped with the binary, immutable, trusted for
+	// canonical reports.
 	SourceBuiltIn Source = "built-in"
-	SourceConfig  Source = "config"
-	SourceFlag    Source = "flag"
+	// SourceLocal — overridden in ~/.abc/config.yaml. Per the permissions
+	// model (brainstorms/emissions-accounting/2026-05-07-permissions-model.md)
+	// these values are ADVISORY ONLY: a future `--signed` report will refuse
+	// to sign if any field resolves to SourceLocal because the user's local
+	// override is not reproducible by anyone else.
+	SourceLocal Source = "local"
+	// SourceFlag — overridden by a per-invocation flag. Same advisory-only
+	// status as SourceLocal.
+	SourceFlag Source = "flag"
 	// SourceAbcCloud is reserved for Phase 2 cloud-published rate cards.
 	SourceAbcCloud Source = "abc-cloud"
 )
+
+// SourceConfig is the legacy alias for SourceLocal — kept so older callsites
+// that haven't been renamed continue to compile. New code should use
+// SourceLocal directly.
+const SourceConfig = SourceLocal
+
+// IsAdvisory reports whether a Source is locally-overridable and therefore
+// not authoritative for canonical (signed) reports.
+func (s Source) IsAdvisory() bool {
+	return s == SourceLocal || s == SourceFlag
+}
 
 // RateValue carries a numeric rate with provenance.
 type RateValue struct {
