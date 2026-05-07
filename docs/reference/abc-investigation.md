@@ -108,3 +108,12 @@ stateDiagram-v2
   visualisation as a Mermaid comment line beneath the abandoned branch.
 - **archived** — manual transition for long-finished work the user wants out
   of the default `list` view.
+
+## Cost-per-investigation reporting
+
+Because `runs.investigation_id` is auto-attached on every submission,
+`abc accounting --by=investigation` rolls cost up cleanly per
+investigation (including dead-ends — which is the point: "how much did
+the failed Strelka comparison cost?"). See
+[`abc accounting`](abc-accounting.md) and
+[`abc emissions`](abc-emissions.md).

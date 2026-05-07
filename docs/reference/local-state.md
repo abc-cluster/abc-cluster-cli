@@ -11,7 +11,7 @@ binary remains CGO-free.
 | `projects` | Top-level research project (slug + ULID, scoped per cluster context) |
 | `investigations` | Branchable, mergeable explorations under a project |
 | `annotations` | Free-form notes attached to investigations (with optional `tag`) |
-| `runs` | Every pipeline / job / module submission, auto-attached to active project + investigation |
+| `runs` | Every pipeline / job / module submission, auto-attached to active project + investigation. Carries `cpu_hours`, `memory_gb_hours`, `walltime_seconds`, and `gpu_count` for cost / emissions reporting (`abc accounting`, `abc emissions`). |
 | `active_pointers` | Per-context "active project" / "active investigation" pointers |
 | `cli_audit` | Per-invocation audit log |
 | `citations` | Cross-investigation citation edges |
