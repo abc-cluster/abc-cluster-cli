@@ -67,6 +67,7 @@ type Run struct {
 	CPUHours         sql.NullFloat64
 	MemoryGBHours    sql.NullFloat64
 	WalltimeSeconds  sql.NullInt64
+	GpuCount         sql.NullInt64
 	FreezeID         sql.NullString
 }
 
@@ -600,13 +601,17 @@ func InsertRun(ctx context.Context, db *sql.DB, r Run) error {
 	if r.Status == "" {
 		r.Status = "running"
 	}
+	var gpuArg any
+	if r.GpuCount.Valid {
+		gpuArg = r.GpuCount.Int64
+	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO runs (run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, status, freeze_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO runs (run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, status, freeze_id, gpu_count, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.RunID, r.ContextName, nullableString(r.ProjectID), nullableString(r.InvestigationID),
 		r.Verb, r.WorkloadRef, nullableString(r.WorkloadVersion), nullableString(r.ParamsJSON),
 		nullableString(r.Namespace), nullableString(r.Workspace), r.SubmittedAt, r.Status,
-		nullableString(r.FreezeID), time.Now().Unix())
+		nullableString(r.FreezeID), gpuArg, time.Now().Unix())
 	return err
 }
 
@@ -621,7 +626,7 @@ func CompleteRun(ctx context.Context, db *sql.DB, runID, status, exitReason stri
 // ListRunsForInvestigation returns runs attached to an investigation.
 func ListRunsForInvestigation(ctx context.Context, db *sql.DB, investigationID string) ([]Run, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, completed_at, status, exit_reason, cpu_hours, memory_gb_hours, walltime_seconds, freeze_id
+		SELECT run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, completed_at, status, exit_reason, cpu_hours, memory_gb_hours, walltime_seconds, gpu_count, freeze_id
 		FROM runs WHERE investigation_id = ? ORDER BY submitted_at`, investigationID)
 	if err != nil {
 		return nil, err
@@ -633,7 +638,7 @@ func ListRunsForInvestigation(ctx context.Context, db *sql.DB, investigationID s
 		if err := rows.Scan(&r.RunID, &r.ContextName, &r.ProjectID, &r.InvestigationID, &r.Verb,
 			&r.WorkloadRef, &r.WorkloadVersion, &r.ParamsJSON, &r.Namespace, &r.Workspace,
 			&r.SubmittedAt, &r.CompletedAt, &r.Status, &r.ExitReason, &r.CPUHours,
-			&r.MemoryGBHours, &r.WalltimeSeconds, &r.FreezeID); err != nil {
+			&r.MemoryGBHours, &r.WalltimeSeconds, &r.GpuCount, &r.FreezeID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

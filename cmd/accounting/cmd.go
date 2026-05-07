@@ -44,6 +44,11 @@ Legacy: abc cost … and abc budget … are aliases for abc accounting …`,
 		newShowCmd(),
 		newSetCmd(),
 	)
+	// Default RunE: local SQLite cost report (spec abc-emissions-accounting §D).
+	// When invoked with no subcommand (e.g. `abc accounting --by=namespace`),
+	// the new local report runs. The cloud-budget verbs above remain
+	// reachable via `abc accounting list/show/set --cloud`.
+	addReportFlags(cmd)
 	return cmd
 }
 

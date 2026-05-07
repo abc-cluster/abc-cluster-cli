@@ -358,6 +358,43 @@ abc investigation visualize --project tb-cohort-2026 --type=gantt \
   --output=timeline.svg --render=svg
 ```
 
+### Cost & emissions rollup (additive)
+
+For grant-justification or methods sections that need a cost / carbon
+figure, the local `runs` table already carries the inputs:
+
+```bash
+abc accounting --by=investigation --since=2026-04-01
+```
+
+```
+Investigation                Cost (ZAR)
+----------------------------------------
+warm-cedar-2                       62.30
+bright-otter-3                     91.40
+tidy-beaver-5                      18.75
+quiet-falcon-9                      4.20
+cosmic-pelican-7                   28.90
+
+Rate card (effective):
+  cost.cpu_hour        0.45  config     (~/.abc/config.yaml mtime 2026-05-06 14:23)
+  cost.gpu_hour        9     built-in   (abc-cluster-cli v0.1.25 — SA on-prem indicative, 2026-05-07)
+  cost.memory_gb_hour  0.05  built-in   (abc-cluster-cli v0.1.25 — SA on-prem indicative, 2026-05-07)
+  currency             ZAR   built-in   (SA market default)
+```
+
+Same shape for emissions:
+
+```bash
+abc emissions --by=investigation --since=2026-04-01 --unit=kg
+```
+
+The "Rate card (effective)" footer is the audit trail — drop it into the
+methods appendix verbatim. See [`abc accounting`](../reference/abc-accounting.md)
+and [`abc emissions`](../reference/abc-emissions.md) for the full flag
+reference, including how to override coefficients with measured values
+via `abc config accounting set …` and `abc config emissions set …`.
+
 ## Part 6 — Methods section export (5 min)
 
 Time to write the methods section. Each closed investigation can be exported:
