@@ -50,7 +50,7 @@ abc investigation export cosmic-pelican-7 --format=markdown \
 Inspect the underlying state at any time:
 
 ```bash
-abc db status
+abc cache status
 abc investigation show cosmic-pelican-7 --output=json | jq .
 abc investigation tree
 ```

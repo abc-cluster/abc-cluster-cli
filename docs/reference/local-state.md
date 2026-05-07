@@ -26,9 +26,9 @@ binary remains CGO-free.
 
 ## Admin verbs
 
-- `abc db status` — binary version, DB path, schema version, applied/pending/future migrations, table row counts, WAL size, applied-migration history.
-- `abc db migrate` — explicitly apply pending migrations.
-- `abc db vacuum` — reclaim space (`VACUUM`).
+- `abc cache status` — binary version, DB path, schema version, applied/pending/future migrations, table row counts, WAL size, applied-migration history.
+- `abc cache migrate` — explicitly apply pending migrations.
+- `abc cache vacuum` — reclaim space (`VACUUM`).
 
 ## Schema versioning and migrations
 
@@ -47,7 +47,7 @@ On every `state.Open()` (which fires on every DB-backed verb) the CLI:
 4. **Equal** — no-op.
 
 Each `schema_migrations` row records the CLI version that applied it
-(`applied_by_cli_version`), so `abc db status` shows the full provenance
+(`applied_by_cli_version`), so `abc cache status` shows the full provenance
 chain.
 
 ### Adding a new migration
@@ -74,7 +74,7 @@ the backup file written before the attempt:
 ```
 
 To restore: stop all `abc` processes, replace `~/.abc/state.db` with the
-backup, then re-run `abc db status` to confirm the schema version.
+backup, then re-run `abc cache status` to confirm the schema version.
 
 ## Backup
 

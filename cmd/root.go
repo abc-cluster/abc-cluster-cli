@@ -18,7 +18,7 @@ import (
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
-	dbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/db"
+	cachecmd "github.com/abc-cluster/abc-cluster-cli/cmd/cache"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/investigation"
@@ -260,7 +260,7 @@ func init() {
 	rootCmd.AddCommand(compliance.NewCmd())
 	rootCmd.AddCommand(project.NewCmd())
 	rootCmd.AddCommand(investigation.NewCmd())
-	rootCmd.AddCommand(dbcmd.NewCmd())
+	rootCmd.AddCommand(cachecmd.NewCmd())
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

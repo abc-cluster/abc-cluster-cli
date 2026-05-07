@@ -1,5 +1,10 @@
-// Package db registers the `abc db` command group: status, migrate, vacuum.
-package db
+// Package cache registers the `abc cache` command group: status, migrate, vacuum.
+//
+// Manages the local SQLite at ~/.abc/state.db (the per-user CLI cache that
+// stores projects, investigations, runs, the cli_audit trail, and forward-
+// compatible substrate for the freezes / container-digest / pipeline-metadata
+// tables consumed by `abc freeze`).
+package cache
 
 import (
 	"fmt"
@@ -12,11 +17,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the `abc db` command group.
+// NewCmd returns the `abc cache` command group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "db",
-		Short: "Inspect and maintain the local SQLite state at ~/.abc/state.db",
+		Use:   "cache",
+		Short: "Inspect and maintain the local SQLite cache at ~/.abc/state.db",
 	}
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newMigrateCmd())
@@ -56,7 +61,7 @@ func newStatusCmd() *cobra.Command {
 			if len(pending) == 0 {
 				fmt.Fprintln(c.OutOrStdout(), "Pending:        none")
 			} else {
-				fmt.Fprintf(c.OutOrStdout(), "Pending:        %d (%v) — run `abc db migrate` to apply\n",
+				fmt.Fprintf(c.OutOrStdout(), "Pending:        %d (%v) — run `abc cache migrate` to apply\n",
 					len(pending), pending)
 			}
 

@@ -8,7 +8,7 @@
 //
 //  1. If the DB has any applied migration NOT in the embedded set, returns
 //     ErrSchemaAhead — the binary is older than the DB. The caller (typically
-//     `abc db status` or any DB-backed verb) prints a clear message asking
+//     `abc cache status` or any DB-backed verb) prints a clear message asking
 //     the user to upgrade `abc`.
 //  2. Backs up the DB file to <path>.backup-pre-<version>-<unix> before
 //     applying any pending migration. Keeps the most recent 5 backups.
@@ -163,7 +163,7 @@ func List() ([]string, error) {
 }
 
 // AppliedVersions returns versions recorded in schema_migrations, sorted ascending.
-// Used by `abc db status`.
+// Used by `abc cache status`.
 func AppliedVersions(db *sql.DB) ([]Applied, error) {
 	rows, err := db.Query(`SELECT version, applied_at, COALESCE(applied_by_cli_version, '') FROM schema_migrations ORDER BY version ASC`)
 	if err != nil {

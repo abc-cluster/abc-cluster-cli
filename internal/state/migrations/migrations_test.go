@@ -132,7 +132,7 @@ func TestSchemaAhead(t *testing.T) {
 		t.Errorf("error doesn't name the future version: %v", err)
 	}
 
-	// Future() exposes it for `abc db status`.
+	// Future() exposes it for `abc cache status`.
 	future, err := Future(db)
 	if err != nil {
 		t.Fatal(err)
