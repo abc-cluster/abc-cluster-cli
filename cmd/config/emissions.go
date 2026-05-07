@@ -154,10 +154,10 @@ func isEmissionsKey(k string) bool {
 func printRate(w io.Writer, key, value, source, citation string, ts0 bool, mtimeStr string) {
 	prov := citation
 	if prov == "" {
-		if source == "config" && !ts0 {
-			prov = "~/.abc/config.yaml mtime " + mtimeStr
+		if source == "local" && !ts0 {
+			prov = "~/.abc/config.yaml mtime " + mtimeStr + "  [advisory]"
 		} else if source == "flag" {
-			prov = "this invocation"
+			prov = "this invocation  [advisory]"
 		}
 	}
 	fmt.Fprintf(w, "  %-28s  %-10s  %-10s  (%s)\n", key, value, source, prov)

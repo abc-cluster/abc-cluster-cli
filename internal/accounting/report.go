@@ -410,11 +410,11 @@ func formatProvenance(r rateRow) string {
 	if r.Citation != "" {
 		return r.Citation
 	}
-	if r.Source == string(SourceConfig) && !r.UpdatedAt.IsZero() {
-		return "~/.abc/config.yaml mtime " + r.UpdatedAt.Format("2006-01-02 15:04")
+	if r.Source == string(SourceLocal) && !r.UpdatedAt.IsZero() {
+		return "~/.abc/config.yaml mtime " + r.UpdatedAt.Format("2006-01-02 15:04") + "  [advisory]"
 	}
 	if r.Source == string(SourceFlag) {
-		return "this invocation"
+		return "this invocation  [advisory]"
 	}
 	return ""
 }
