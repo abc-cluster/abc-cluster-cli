@@ -22,6 +22,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
 	"github.com/abc-cluster/abc-cluster-cli/internal/jurist"
+	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -273,7 +274,42 @@ EXAMPLES
 	// HCL variable overrides (--format=hcl only)
 	cmd.Flags().StringArray("var", nil, "HCL job variable override in key=value form (repeatable, --format=hcl only). Example: --var source=s3://my-bucket/data/")
 
+	// Auto-attach to active project / investigation (spec abc-investigation §E).
+	cmd.Flags().String("project", "", "Override active project (slug or ID); --no-project disables")
+	cmd.Flags().String("investigation", "", "Override active investigation (slug or ID); --no-investigation disables")
+	cmd.Flags().Bool("no-project", false, "Skip project auto-attach")
+	cmd.Flags().Bool("no-investigation", false, "Skip investigation auto-attach")
+
 	return cmd
+}
+
+// autoAttachJobRun resolves project / investigation per spec §E and inserts a
+// runs row in ~/.abc/state.db. Best-effort.
+func autoAttachJobRun(cmd *cobra.Command, scriptPath string) {
+	noProj, _ := cmd.Flags().GetBool("no-project")
+	noInv, _ := cmd.Flags().GetBool("no-investigation")
+	pflag, _ := cmd.Flags().GetString("project")
+	iflag, _ := cmd.Flags().GetString("investigation")
+	ns, _ := cmd.Flags().GetString("namespace")
+
+	db, err := state.Open()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: state DB unavailable (%v); skipping run record\n", err)
+		return
+	}
+	req := state.AutoAttachRequest{
+		ContextName:       state.ActiveContextName(),
+		NoProject:         noProj,
+		NoInvestigation:   noInv,
+		ProjectFlag:       pflag,
+		InvestigationFlag: iflag,
+		WorkloadRef:       scriptPath,
+		Verb:              "job",
+		Namespace:         ns,
+	}
+	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing)\n", err)
+	}
 }
 
 func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
@@ -487,6 +523,7 @@ func detectJobFormat(path string) string {
 
 func runJob(cmd *cobra.Command, args []string) error {
 	scriptPath := args[0]
+	autoAttachJobRun(cmd, scriptPath)
 
 	// Resolve --format (shell | hcl); auto-detect from extension when omitted.
 	format, _ := cmd.Flags().GetString("format")

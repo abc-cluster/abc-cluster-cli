@@ -18,6 +18,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -87,6 +88,12 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
 	cmd.Flags().Bool("pipeline-gen-no-run-manifest", false, "Pass --no-run-manifest to nf-pipeline-gen (omit run-manifest.json in each driver)")
 
+	// Auto-attach to active project / investigation (spec abc-investigation §E).
+	cmd.Flags().String("project", "", "Override active project (slug or ID); --no-project disables")
+	cmd.Flags().String("investigation", "", "Override active investigation (slug or ID); --no-investigation disables")
+	cmd.Flags().Bool("no-project", false, "Skip project auto-attach")
+	cmd.Flags().Bool("no-investigation", false, "Skip investigation auto-attach")
+
 	advhelp.Register(cmd, []string{
 		"work-dir",
 		"output-prefix",
@@ -110,6 +117,8 @@ func runModule(cmd *cobra.Command, args []string) error {
 	moduleName := args[0]
 	ns := namespaceFromCmd(cmd)
 	nc := nomadClientFromCmd(cmd)
+
+	autoAttachModuleRun(cmd, moduleName, ns)
 
 	spec := &RunSpec{
 		Module: moduleName,
@@ -420,4 +429,32 @@ func newRunUUID() string {
 		return fmt.Sprintf("run-%d", os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+// autoAttachModuleRun resolves project / investigation per spec §E and
+// inserts a runs row in ~/.abc/state.db. Best-effort.
+func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) {
+	noProj, _ := cmd.Flags().GetBool("no-project")
+	noInv, _ := cmd.Flags().GetBool("no-investigation")
+	pflag, _ := cmd.Flags().GetString("project")
+	iflag, _ := cmd.Flags().GetString("investigation")
+
+	db, err := state.Open()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: state DB unavailable (%v); skipping run record\n", err)
+		return
+	}
+	req := state.AutoAttachRequest{
+		ContextName:       state.ActiveContextName(),
+		NoProject:         noProj,
+		NoInvestigation:   noInv,
+		ProjectFlag:       pflag,
+		InvestigationFlag: iflag,
+		WorkloadRef:       moduleName,
+		Verb:              "module",
+		Namespace:         namespace,
+	}
+	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing)\n", err)
+	}
 }

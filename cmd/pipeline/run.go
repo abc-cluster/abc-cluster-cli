@@ -18,6 +18,7 @@ import (
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
+	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/abc-cluster/abc-cluster-cli/internal/wave"
 	"github.com/spf13/cobra"
 )
@@ -86,6 +87,12 @@ EXAMPLES
 
 	// Job identity
 	cmd.Flags().String("name", "", "Override Nomad job name (default: nextflow-head)")
+
+	// Auto-attach to active project / investigation (per spec abc-investigation §E).
+	cmd.Flags().String("project", "", "Override active project (slug or ID); --no-project disables")
+	cmd.Flags().String("investigation", "", "Override active investigation (slug or ID); --no-investigation disables")
+	cmd.Flags().Bool("no-project", false, "Skip project auto-attach")
+	cmd.Flags().Bool("no-investigation", false, "Skip investigation auto-attach")
 
 	// Inline parameter overrides (--param key=value, repeatable)
 	cmd.Flags().StringArray("param", nil, "Inline pipeline parameter override (key=value, repeatable; merged on top of --params-file)")
@@ -372,7 +379,41 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Auto-attach to active project / investigation (spec abc-investigation §E).
+	autoAttachPipelineRun(cmd, spec)
+
 	return submitAndWatch(cmd.Context(), cmd, nc, spec, hcl)
+}
+
+// autoAttachPipelineRun resolves project/investigation per the precedence in
+// spec abc-investigation §E and inserts a row into ~/.abc/state.db runs.
+// Best-effort: failures only log a warning and never block the submit.
+func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) {
+	noProj, _ := cmd.Flags().GetBool("no-project")
+	noInv, _ := cmd.Flags().GetBool("no-investigation")
+	pflag, _ := cmd.Flags().GetString("project")
+	iflag, _ := cmd.Flags().GetString("investigation")
+
+	db, err := state.Open()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: state DB unavailable (%v); skipping run record\n", err)
+		return
+	}
+	contextName := state.ActiveContextName()
+	req := state.AutoAttachRequest{
+		ContextName:       contextName,
+		NoProject:         noProj,
+		NoInvestigation:   noInv,
+		ProjectFlag:       pflag,
+		InvestigationFlag: iflag,
+		WorkloadRef:       spec.Repository,
+		WorkloadVersion:   spec.Revision,
+		Verb:              "pipeline",
+		Namespace:         spec.Namespace,
+	}
+	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing without run record)\n", err)
+	}
 }
 
 func nomadConnFromCmd(cmd *cobra.Command) (string, string) {
