@@ -123,3 +123,13 @@ version = "latest"
 #
 # [local.nf-abc-cluster-dev]
 # path = "/Users/me/projects/PHD-pub-abc-cluster/analysis/packages/nf-abc-cluster-dev/build/dist/nf-abc-cluster-dev-0.1.0.zip"
+
+# Custom Nextflow fork for cluster-side dev/test runs.
+# Built by `make bundle-nextflow NEXTFLOW_FORK_DIR=<path>` in the meta-plugin repo;
+# the zip contains `nextflow` (launcher) + `nextflow-all.jar` and is extracted into
+# local/nextflow-dev/ inside the head container, shadowing the image's built-in binary.
+# Use this when testing Nextflow core patches (e.g. per-process multi-driver support).
+# Consumed by:  abc pipeline run --dev-nextflow
+#
+# [local.nextflow-dev]
+# path = "/Users/me/projects/PHD-pub-abc-cluster/analysis/packages/nf-abc-cluster-dev/build/dist/nextflow-dev.zip"

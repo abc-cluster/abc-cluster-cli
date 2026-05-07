@@ -79,6 +79,14 @@ type Spec struct {
 	// variants that are not on the public registry.
 	PluginBundleURL string
 
+	// NextflowBinURL, when non-empty, makes the head job pull a custom Nextflow
+	// fork zip (typically registered as nextflow-dev-any in the tools registry)
+	// and extract it into local/nextflow-dev/. The launcher script is then
+	// prepended to PATH, shadowing the image's built-in nextflow binary. This
+	// allows testing core patches (e.g. per-process multi-driver support) without
+	// rebuilding the head Docker image.
+	NextflowBinURL string
+
 	// Plugins is the ordered list of `id "<id>@<version>"` lines emitted in the
 	// generated nextflow.headjob.config plugins { ... } block. When empty, the
 	// existing single-line "nf-nomad@<NfPluginVersion>" behaviour is preserved
@@ -384,6 +392,24 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 		artBody.SetAttributeValue("source", cty.StringVal(src))
 		artBody.SetAttributeValue("destination", cty.StringVal("local/plugins-bundle"))
 		artBody.SetAttributeValue("mode", cty.StringVal("any"))
+	}
+
+	// Custom Nextflow fork artifact — pulled and unpacked into local/nextflow-dev/.
+	// Same archive-hint pattern as the plugin bundle. The entrypoint prepends
+	// local/nextflow-dev to PATH so the fork shadows the image's built-in binary.
+	if spec.NextflowBinURL != "" {
+		src := spec.NextflowBinURL
+		if !strings.Contains(src, "?archive=") {
+			joiner := "?"
+			if strings.Contains(src, "?") {
+				joiner = "&"
+			}
+			src = src + joiner + "archive=zip"
+		}
+		nxfArt := taskBody.AppendNewBlock("artifact", nil).Body()
+		nxfArt.SetAttributeValue("source", cty.StringVal(src))
+		nxfArt.SetAttributeValue("destination", cty.StringVal("local/nextflow-dev"))
+		nxfArt.SetAttributeValue("mode", cty.StringVal("any"))
 	}
 
 	// Extra cluster tool binaries (e.g. rclone, when nf-rclone is in the bundle).
@@ -712,6 +738,13 @@ func buildEntrypoint(spec Spec) string {
 	if spec.PluginBundleURL != "" {
 		fmt.Fprintf(&sb, "mkdir -p \"%s/plugins\"\n", nxfHome)
 		fmt.Fprintf(&sb, "cp -r /local/plugins-bundle/. \"%s/plugins/\"\n\n", nxfHome)
+	}
+
+	// Prepend the custom Nextflow fork to PATH so it shadows the image binary.
+	// The zip is extracted to local/nextflow-dev/ by the artifact stanza above.
+	if spec.NextflowBinURL != "" {
+		sb.WriteString("chmod +x /local/nextflow-dev/nextflow 2>/dev/null || true\n")
+		sb.WriteString("export PATH=\"/local/nextflow-dev:$PATH\"\n\n")
 	}
 
 	// Make any tool binaries pulled by ExtraBinaries executable and on PATH.

@@ -47,11 +47,22 @@ type PipelineSpec struct {
 	// bundle into the head container. When set, run.go resolves PluginBundleURL
 	// and Plugins from the active context's tools.toml + admin.tools.endpoint.
 	DevPlugins bool `json:"devPlugins,omitempty" yaml:"devPlugins,omitempty"`
+	// DevNextflow toggles replacing the Nextflow binary in the head container
+	// with a custom fork. When set, run.go resolves NextflowBinURL from the
+	// active context's tools.toml + admin.tools.endpoint (key: nextflow-dev).
+	// Independent from DevPlugins — the two flags can be combined freely.
+	DevNextflow bool `json:"devNextflow,omitempty" yaml:"devNextflow,omitempty"`
 	// PluginBundleURL is the resolved cluster-side URL of a Nextflow plugin
 	// bundle zip. Pulled by the head Nomad task as an artifact and unpacked
 	// into $NXF_HOME/plugins. Normally derived from DevPlugins, but can be
 	// set explicitly to override or to point at a custom bundle.
 	PluginBundleURL string `json:"pluginBundleURL,omitempty" yaml:"pluginBundleURL,omitempty"`
+	// NextflowBinURL is the resolved cluster-side URL of a custom Nextflow fork
+	// zip (key: nextflow-dev-any). Pulled by the head Nomad task as an artifact
+	// and extracted to local/nextflow-dev/; the launcher is prepended to PATH so
+	// it shadows the image's built-in nextflow binary. Normally derived from
+	// DevNextflow, but can be set explicitly to point at any compatible zip.
+	NextflowBinURL string `json:"nextflowBinURL,omitempty" yaml:"nextflowBinURL,omitempty"`
 	// Plugins is the ordered list of Nextflow plugin IDs/versions emitted in
 	// the generated nextflow.headjob.config plugins { ... } block. Empty means
 	// "use the default single nf-nomad@<NfPluginVersion> line".
@@ -176,8 +187,14 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	if override.DevPlugins {
 		base.DevPlugins = true
 	}
+	if override.DevNextflow {
+		base.DevNextflow = true
+	}
 	if override.PluginBundleURL != "" {
 		base.PluginBundleURL = override.PluginBundleURL
+	}
+	if override.NextflowBinURL != "" {
+		base.NextflowBinURL = override.NextflowBinURL
 	}
 	if len(override.Plugins) > 0 {
 		base.Plugins = append([]PluginRef(nil), override.Plugins...)

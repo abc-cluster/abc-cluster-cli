@@ -127,6 +127,12 @@ EXAMPLES
 		"Load the nf-abc-cluster-dev plugin bundle into the head container "+
 			"(requires `abc admin tools push` to have shipped the bundle)")
 
+	// Dev Nextflow binary — replace the image's built-in nextflow with a custom fork.
+	// Independent of --dev-plugins; the two flags can be combined freely.
+	cmd.Flags().Bool("dev-nextflow", false,
+		"Replace the head container's nextflow binary with the custom fork registered "+
+			"as nextflow-dev in tools.toml (requires `abc admin tools push` to have shipped it)")
+
 	// Behaviour
 	cmd.Flags().Bool("wait", false, "Block until the head job completes")
 	cmd.Flags().Bool("logs", false, "Stream head job logs after submit")
@@ -151,6 +157,10 @@ EXAMPLES
 func runPipeline(cmd *cobra.Command, args []string) error {
 	nameOrURL := args[0]
 	ns := namespaceFromCmd(cmd)
+
+	if err := validatePipelineRef(nameOrURL); err != nil {
+		return err
+	}
 
 	nc := nomadClientFromCmd(cmd)
 
@@ -249,6 +259,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if devPlugins, _ := cmd.Flags().GetBool("dev-plugins"); devPlugins {
 		override.DevPlugins = true
 	}
+	if devNextflow, _ := cmd.Flags().GetBool("dev-nextflow"); devNextflow {
+		override.DevNextflow = true
+	}
 	if ns != "" {
 		override.Namespace = ns
 	}
@@ -328,6 +341,16 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		}
 		if len(spec.ExtraBinaries) == 0 {
 			spec.ExtraBinaries = defaultDevPluginBinaries()
+		}
+	}
+
+	if spec.DevNextflow {
+		if spec.NextflowBinURL == "" {
+			url, err := resolveDevNextflow()
+			if err != nil {
+				return err
+			}
+			spec.NextflowBinURL = url
 		}
 	}
 
