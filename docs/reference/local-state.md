@@ -13,7 +13,7 @@ binary remains CGO-free.
 | `annotations` | Free-form notes attached to investigations (with optional `tag`) |
 | `runs` | Every pipeline / job / module submission, auto-attached to active project + investigation. Carries `cpu_hours`, `memory_gb_hours`, `walltime_seconds`, and `gpu_count` for cost / emissions reporting (`abc accounting`, `abc emissions`). |
 | `active_pointers` | Per-context "active project" / "active investigation" pointers |
-| `cli_audit` | Per-invocation audit log |
+| `cli_audit` | Per-invocation command log: verb, redacted argv, exit code, duration ms, user ULID. Set `ABC_NO_AUDIT=1` to disable. Feeds `abc report`. |
 | `citations` | Cross-investigation citation edges |
 | `freezes`, `container_digests`, `pipeline_metadata`, `telemetry_queue` | Forward-compatible substrate (no consumers in this release) |
 
