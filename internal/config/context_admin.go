@@ -66,8 +66,9 @@ func isCredSourceEmpty(cs *AdminFloorCredSource) bool {
 // Pulumi-specific knobs belong in this struct.
 type PulumiService struct {
 	// DeployDir is the path (absolute or relative to CWD) of the Pulumi
-	// project directory for this context's abc-nodes deployment.
-	// e.g. "deployments/abc-nodes/userspace"
+	// project directory for this context's abc-nodes deployment. The
+	// userspace project lives in github.com/abc-cluster/abc-deployments
+	// since 2026-05; e.g. "/path/to/abc-deployments/userspace".
 	DeployDir string `yaml:"deploy_dir,omitempty"`
 
 	// Stack is the Pulumi stack name to select when running commands.
