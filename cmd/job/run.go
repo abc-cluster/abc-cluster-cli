@@ -291,6 +291,7 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) {
 	pflag, _ := cmd.Flags().GetString("project")
 	iflag, _ := cmd.Flags().GetString("investigation")
 	ns, _ := cmd.Flags().GetString("namespace")
+	gpus, _ := cmd.Flags().GetInt("gpus") // best-effort: CLI flag only; #ABC --gpus directive is parsed downstream
 
 	db, err := state.Open()
 	if err != nil {
@@ -306,6 +307,7 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) {
 		WorkloadRef:       scriptPath,
 		Verb:              "job",
 		Namespace:         ns,
+		GpuCount:          gpus,
 	}
 	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing)\n", err)
