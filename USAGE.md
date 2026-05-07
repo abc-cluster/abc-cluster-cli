@@ -265,7 +265,10 @@ contexts:
           workspace: prod
           vars: {}
         pulumi:                                 # optional; used by abc admin services cli pulumi
-          deploy_dir: deployments/abc-nodes/userspace
+          # The userspace Pulumi project lives in its own repo:
+          #   github.com/abc-cluster/abc-deployments
+          # Clone it, then point deploy_dir at the userspace/ subdirectory.
+          deploy_dir: /path/to/abc-deployments/userspace
           stack: prod
           access_token: ""                      # leave empty for local/self-managed state
           config_passphrase: ""
