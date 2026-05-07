@@ -16,3 +16,5 @@ Hands-on exercises for the full ABC CLI workflow. Each exercise takes roughly te
 | [Hands-on walkthrough](./demo) §6 | Large-file upload | Yes |
 | [Hands-on walkthrough](./demo) §7 | `job run`, `#ABC` directives, Nomad | Yes (for `--submit`) |
 | [Hands-on walkthrough](./demo) §8 | `pipeline`, `module`, `infra` overview | No |
+| [Your first investigation](./first-investigation) | `abc project` + `abc investigation` end-to-end | No |
+| [Bioinformatics project management](./bioinformatics-project-management) | Multi-investigation cohort workflow with citations + manuscript export | No (illustrative cluster runs only) |
