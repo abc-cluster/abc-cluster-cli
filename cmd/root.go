@@ -18,11 +18,14 @@ import (
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
+	dbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/db"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/investigation"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/project"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
@@ -250,6 +253,9 @@ func init() {
 	rootCmd.AddCommand(secrets.NewCmd())
 	rootCmd.AddCommand(emissions.NewCmd())
 	rootCmd.AddCommand(compliance.NewCmd())
+	rootCmd.AddCommand(project.NewCmd())
+	rootCmd.AddCommand(investigation.NewCmd())
+	rootCmd.AddCommand(dbcmd.NewCmd())
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
