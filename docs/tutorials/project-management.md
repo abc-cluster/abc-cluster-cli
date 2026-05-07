@@ -298,9 +298,15 @@ flowchart LR
    I_tidy -.->|merged| I_bright
    I_bright -.->|cites A-002| I_warm
 
-   classDef merged   fill:#dbeafe,stroke:#3b82f6
-   classDef active   fill:#dcfce7,stroke:#16a34a,stroke-width:3px
-   classDef deadend  fill:#fee2e2,stroke:#dc2626,stroke-dasharray:3 3
+   classDef active fill:#dcfce7,stroke:#16a34a
+   classDef merged fill:#dbeafe,stroke:#3b82f6
+   classDef deadend fill:#fee2e2,stroke:#dc2626,stroke-dasharray:3 3
+   classDef archived fill:#f3f4f6,stroke:#6b7280
+   classDef run fill:#dcfce7,stroke:#16a34a
+   classDef hyp fill:#dbeafe,stroke:#3b82f6
+   classDef issue fill:#fee2e2,stroke:#dc2626
+   classDef insight fill:#dbeafe,stroke:#3b82f6
+   classDef inv fill:#dbeafe,stroke:#3b82f6
 
    class I_warm,I_bright,I_tidy merged
    class I_cosmic active
@@ -352,27 +358,7 @@ the merge / dead-end branch reasons. Drop the file into your manuscript
 The RO-Crate is structured for archival deposit — bundles every run's parameters,
 the annotations, and the branch tree as a JSON-LD-described directory tree.
 
-## Part 7 — Inspecting the local cache (1 min)
-
-Everything you've created lives in `~/.abc/state.db`. To see the running totals:
-
-```bash
-abc cache status
-```
-
-You'll see `projects=1`, `investigations=4` (warm-cedar-2, quiet-falcon-9,
-bright-otter-3, tidy-beaver-5, cosmic-pelican-7 = 5 actually — counting all the
-branches), `runs=N` matching every `abc pipeline run` you fired, plus the
-applied schema migration with the CLI version that applied it.
-
-If you ever need a flat-file dump of your investigation state:
-
-```bash
-sqlite3 ~/.abc/state.db ".mode table" \
-  "SELECT slug, status, dead_end_reason FROM investigations ORDER BY created_at;"
-```
-
-## Part 8 — Cleanup vs archival
+## Part 7 — Cleanup vs archival
 
 When the project ends, you have two choices:
 
@@ -411,7 +397,6 @@ back.
 | `abc investigation visualize --type={branches\|timeline\|flow\|lineage\|kanban\|gantt}` | Six rendering modes for stakeholders, supervisors, manuscripts |
 | `abc investigation export --format={markdown\|ro-crate\|json}` | Methods sections + archival deposits |
 | `abc investigation tag / list` | Status review and lifecycle management |
-| `abc cache status` | Inspect the local SQLite |
 
 ## Where to go next
 
@@ -419,6 +404,3 @@ back.
   the CLI surface: `abc job run`, file uploads, encryption, contexts.
 - The [`abc investigation` reference](../reference/abc-investigation) covers
   every flag and schema field.
-- The [`abc cache` reference](../reference/local-state) covers the local
-  SQLite that backs everything (schema migrations, pre-migration backups,
-  CLI-version audit trail).

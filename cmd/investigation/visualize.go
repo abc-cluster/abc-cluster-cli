@@ -217,6 +217,36 @@ func writeOutput(stdout io.Writer, src, outputPath, render string) error {
 	return nil
 }
 
+// ----- Mermaid R|G|B|N colour palette -----------------------------------
+//
+// Single source of truth for all diagram types. Apply via classDef + class
+// directives in flowchart/gitGraph renderers.
+//
+//	R (red)     dead-end · issue · failed · crit
+//	G (green)   active · run · success
+//	B (blue)    merged · hypothesis · insight · citation · inv
+//	N (neutral) archived
+const (
+	mermaidR = "fill:#fee2e2,stroke:#dc2626"
+	mermaidG = "fill:#dcfce7,stroke:#16a34a"
+	mermaidB = "fill:#dbeafe,stroke:#3b82f6"
+	mermaidN = "fill:#f3f4f6,stroke:#6b7280"
+)
+
+// mermaidClassDefs writes the standard classDef block for all named classes
+// used across the flowchart renderers. Call once near the end of each diagram.
+func mermaidClassDefs(b *strings.Builder) {
+	b.WriteString("   classDef active " + mermaidG + "\n")
+	b.WriteString("   classDef merged " + mermaidB + "\n")
+	b.WriteString("   classDef deadend " + mermaidR + ",stroke-dasharray:3 3\n")
+	b.WriteString("   classDef archived " + mermaidN + "\n")
+	b.WriteString("   classDef run " + mermaidG + "\n")
+	b.WriteString("   classDef hyp " + mermaidB + "\n")
+	b.WriteString("   classDef issue " + mermaidR + "\n")
+	b.WriteString("   classDef insight " + mermaidB + "\n")
+	b.WriteString("   classDef inv " + mermaidB + "\n")
+}
+
 // ----- Rendering -----
 
 func renderInvestigation(ctx context.Context, db *sql.DB, inv state.Investigation, opts vizOptions) (string, error) {
@@ -262,11 +292,7 @@ func renderProject(ctx context.Context, db *sql.DB, p state.Project, opts vizOpt
 		fmt.Fprintf(&b, "   %s[%s\\n%s]\n", nodeID, i.Slug, escapeLabel(i.Title))
 		fmt.Fprintf(&b, "   P --> %s\n", nodeID)
 	}
-	// Status colour classes
-	b.WriteString("   classDef active fill:#dcfce7,stroke:#16a34a\n")
-	b.WriteString("   classDef merged fill:#dbeafe,stroke:#3b82f6\n")
-	b.WriteString("   classDef deadend fill:#fee2e2,stroke:#dc2626,stroke-dasharray:3 3\n")
-	b.WriteString("   classDef archived fill:#f3f4f6,stroke:#6b7280\n")
+	mermaidClassDefs(&b)
 	for _, i := range invs {
 		if !branchPasses(i, opts) {
 			continue
@@ -530,11 +556,7 @@ func renderFlow(ctx context.Context, db *sql.DB, inv state.Investigation, opts v
 		}
 		prev = e.nodeI
 	}
-	// Class styling
-	b.WriteString("   classDef hyp fill:#e8f4fd,stroke:#3b82f6\n")
-	b.WriteString("   classDef run fill:#dcfce7,stroke:#16a34a\n")
-	b.WriteString("   classDef issue fill:#fee2e2,stroke:#dc2626\n")
-	b.WriteString("   classDef insight fill:#fef9c3,stroke:#ca8a04\n")
+	mermaidClassDefs(&b)
 	for _, e := range entries {
 		switch e.kind {
 		case "A":
@@ -618,7 +640,7 @@ func renderLineage(ctx context.Context, db *sql.DB, inv state.Investigation, opt
 		}
 		fmt.Fprintf(&b, "   %s -.->|%s| %s\n", sID, label, rootID)
 	}
-	b.WriteString("   classDef inv fill:#e8f4fd,stroke:#3b82f6\n")
+	mermaidClassDefs(&b)
 	fmt.Fprintf(&b, "   class %s inv\n", rootID)
 	for id := range seen {
 		fmt.Fprintf(&b, "   class %s inv\n", id)

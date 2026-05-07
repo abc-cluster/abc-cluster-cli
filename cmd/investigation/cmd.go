@@ -89,7 +89,7 @@ func newCreateCmd() *cobra.Command {
 					return err
 				}
 				if exists {
-					return fmt.Errorf("slug %q already in use", s)
+					return fmt.Errorf("name %q already in use", s)
 				}
 			}
 			inv := state.Investigation{
@@ -115,7 +115,7 @@ func newCreateCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&projectRef, "project", "", "project slug or ID (defaults to active project)")
 	c.Flags().StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
-	c.Flags().StringVar(&userSlug, "slug", "", "user-supplied slug (validated)")
+	c.Flags().StringVar(&userSlug, "name", "", "user-supplied name (validated; auto-generated if omitted)")
 	c.Flags().BoolVar(&noProject, "no-project", false, "create a project-less investigation")
 	return c
 }
@@ -565,14 +565,14 @@ func newMergeCmd() *cobra.Command {
 }
 
 func newRenameCmd() *cobra.Command {
-	var newSlug, newTitle string
+	var newName, newTitle string
 	c := &cobra.Command{
-		Use:   "rename <slug-or-id>",
-		Short: "Rename slug/title",
+		Use:   "rename <name-or-id>",
+		Short: "Rename name/title",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
-			if newSlug == "" && newTitle == "" {
-				return fmt.Errorf("supply --slug or --title")
+			if newName == "" && newTitle == "" {
+				return fmt.Errorf("supply --name or --title")
 			}
 			db, err := state.Open()
 			if err != nil {
@@ -585,18 +585,18 @@ func newRenameCmd() *cobra.Command {
 				return err
 			}
 			fields := map[string]any{}
-			if newSlug != "" {
-				if err := slug.Validate(newSlug); err != nil {
+			if newName != "" {
+				if err := slug.Validate(newName); err != nil {
 					return err
 				}
-				exists, err := state.SlugExistsInvestigation(ctx, db, contextName, newSlug)
+				exists, err := state.SlugExistsInvestigation(ctx, db, contextName, newName)
 				if err != nil {
 					return err
 				}
-				if exists && newSlug != inv.Slug {
-					return fmt.Errorf("slug %q already in use", newSlug)
+				if exists && newName != inv.Slug {
+					return fmt.Errorf("name %q already in use", newName)
 				}
-				fields["slug"] = newSlug
+				fields["slug"] = newName
 			}
 			if newTitle != "" {
 				fields["title"] = newTitle
@@ -604,7 +604,7 @@ func newRenameCmd() *cobra.Command {
 			return state.UpdateInvestigationFields(ctx, db, inv.InvestigationID, fields)
 		},
 	}
-	c.Flags().StringVar(&newSlug, "slug", "", "new slug")
+	c.Flags().StringVar(&newName, "name", "", "new name")
 	c.Flags().StringVar(&newTitle, "title", "", "new title")
 	return c
 }

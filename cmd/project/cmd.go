@@ -13,6 +13,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/slug"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
+	"github.com/abc-cluster/abc-cluster-cli/internal/style"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +40,7 @@ func newCreateCmd() *cobra.Command {
 	var (
 		description string
 		tags        []string
-		userSlug    string
+		userName    string
 	)
 	c := &cobra.Command{
 		Use:   "create <title>",
@@ -52,7 +53,7 @@ func newCreateCmd() *cobra.Command {
 			}
 			ctx := cm.Context()
 			contextName := state.ActiveContextName()
-			s := userSlug
+			s := userName
 			if s == "" {
 				s, err = slug.GenerateUnique(func(g string) (bool, error) {
 					return state.SlugExistsProject(ctx, db, contextName, g)
@@ -69,7 +70,7 @@ func newCreateCmd() *cobra.Command {
 					return err
 				}
 				if exists {
-					return fmt.Errorf("slug %q already in use in context %q", s, contextName)
+					return fmt.Errorf("name %q already in use in context %q", s, contextName)
 				}
 			}
 			p := state.Project{
@@ -89,13 +90,14 @@ func newCreateCmd() *cobra.Command {
 			if err := state.SetActivePointer(ctx, db, contextName, state.PointerProject, &pv); err != nil {
 				return err
 			}
-			fmt.Fprintf(cm.OutOrStdout(), "Created project %s (%s) — %q\n", p.ProjectID, p.Slug, p.Title)
+			fmt.Fprintf(cm.OutOrStdout(), "%s %s (%s) — %q\n",
+				style.G("Created project"), p.ProjectID, p.Slug, p.Title)
 			return nil
 		},
 	}
 	c.Flags().StringVar(&description, "description", "", "optional description")
 	c.Flags().StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
-	c.Flags().StringVar(&userSlug, "slug", "", "user-supplied slug (validated)")
+	c.Flags().StringVar(&userName, "name", "", "user-supplied name (validated; auto-generated if omitted)")
 	return c
 }
 
@@ -132,19 +134,19 @@ func newListCmd() *cobra.Command {
 func renderProjects(cm *cobra.Command, db *sql.DB, projs []state.Project, format string) error {
 	ctx := cm.Context()
 	type row struct {
-		Slug          string `json:"slug"`
-		ID            string `json:"id"`
-		Status        string `json:"status"`
-		Title         string `json:"title"`
-		Investigations int   `json:"investigations"`
-		LastActivity  string `json:"last_activity"`
+		Name           string `json:"name"`
+		ID             string `json:"id"`
+		Status         string `json:"status"`
+		Title          string `json:"title"`
+		Investigations int    `json:"investigations"`
+		LastActivity   string `json:"last_activity"`
 	}
 	rows := make([]row, 0, len(projs))
 	for _, p := range projs {
 		var n int
 		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM investigations WHERE project_id = ?`, p.ProjectID).Scan(&n)
 		rows = append(rows, row{
-			Slug:           p.Slug,
+			Name:           p.Slug,
 			ID:             p.ProjectID,
 			Status:         p.Status,
 			Title:          p.Title,
@@ -159,17 +161,19 @@ func renderProjects(cm *cobra.Command, db *sql.DB, projs []state.Project, format
 		return enc.Encode(rows)
 	case "csv":
 		w := csv.NewWriter(cm.OutOrStdout())
-		w.Write([]string{"slug", "id", "status", "title", "investigations", "last_activity"})
+		w.Write([]string{"name", "id", "status", "title", "investigations", "last_activity"})
 		for _, r := range rows {
-			w.Write([]string{r.Slug, r.ID, r.Status, r.Title, fmt.Sprintf("%d", r.Investigations), r.LastActivity})
+			w.Write([]string{r.Name, r.ID, r.Status, r.Title, fmt.Sprintf("%d", r.Investigations), r.LastActivity})
 		}
 		w.Flush()
 		return nil
 	default:
 		tw := tabwriter.NewWriter(cm.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "SLUG\tID\tSTATUS\tINV\tLAST ACTIVITY\tTITLE")
+		fmt.Fprintln(tw, style.Header("NAME", "ID", "STATUS", "INV", "LAST ACTIVITY", "TITLE"))
 		for _, r := range rows {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n", r.Slug, shortID(r.ID), r.Status, r.Investigations, r.LastActivity, r.Title)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
+				r.Name, shortID(r.ID), style.Status(r.Status),
+				r.Investigations, style.Dim(r.LastActivity), r.Title)
 		}
 		return tw.Flush()
 	}
@@ -185,7 +189,7 @@ func shortID(id string) string {
 func newShowCmd() *cobra.Command {
 	var output string
 	c := &cobra.Command{
-		Use:   "show <slug-or-id>",
+		Use:   "show <name-or-id>",
 		Short: "Show project details",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
@@ -208,29 +212,29 @@ func newShowCmd() *cobra.Command {
 				enc := json.NewEncoder(cm.OutOrStdout())
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]any{
-					"project":         p,
-					"investigations":  invs,
-					"run_count":       runCount,
+					"project":        p,
+					"investigations": invs,
+					"run_count":      runCount,
 				})
 			}
 			tw := tabwriter.NewWriter(cm.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintf(tw, "ID:\t%s\n", p.ProjectID)
-			fmt.Fprintf(tw, "Slug:\t%s\n", p.Slug)
-			fmt.Fprintf(tw, "Title:\t%s\n", p.Title)
-			fmt.Fprintf(tw, "Status:\t%s\n", p.Status)
-			fmt.Fprintf(tw, "Description:\t%s\n", p.Description)
-			fmt.Fprintf(tw, "Created:\t%s\n", time.Unix(p.CreatedAt, 0).Format(time.RFC3339))
-			fmt.Fprintf(tw, "Updated:\t%s\n", time.Unix(p.UpdatedAt, 0).Format(time.RFC3339))
-			fmt.Fprintf(tw, "Investigations:\t%d\n", len(invs))
-			fmt.Fprintf(tw, "Total runs:\t%d\n", runCount)
+			fmt.Fprintf(tw, "%s\t%s\n", style.B("ID:"), p.ProjectID)
+			fmt.Fprintf(tw, "%s\t%s\n", style.B("Name:"), p.Slug)
+			fmt.Fprintf(tw, "%s\t%s\n", style.B("Title:"), p.Title)
+			fmt.Fprintf(tw, "%s\t%s\n", style.B("Status:"), style.Status(p.Status))
+			fmt.Fprintf(tw, "%s\t%s\n", style.B("Description:"), p.Description)
+			fmt.Fprintf(tw, "%s\t%s\n", style.B("Created:"), style.Dim(time.Unix(p.CreatedAt, 0).Format(time.RFC3339)))
+			fmt.Fprintf(tw, "%s\t%s\n", style.B("Updated:"), style.Dim(time.Unix(p.UpdatedAt, 0).Format(time.RFC3339)))
+			fmt.Fprintf(tw, "%s\t%d\n", style.B("Investigations:"), len(invs))
+			fmt.Fprintf(tw, "%s\t%d\n", style.B("Total runs:"), runCount)
 			tw.Flush()
 			fmt.Fprintln(cm.OutOrStdout(), "")
-			fmt.Fprintln(cm.OutOrStdout(), "Investigations:")
+			fmt.Fprintln(cm.OutOrStdout(), style.B("Investigations:"))
 			tw2 := tabwriter.NewWriter(cm.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw2, "  SLUG\tSTATUS\tRUNS\tTITLE")
+			fmt.Fprintln(tw2, "  "+style.Header("NAME", "STATUS", "RUNS", "TITLE"))
 			for _, i := range invs {
 				n, _ := state.CountRunsForInvestigation(ctx, db, i.InvestigationID)
-				fmt.Fprintf(tw2, "  %s\t%s\t%d\t%s\n", i.Slug, i.Status, n, i.Title)
+				fmt.Fprintf(tw2, "  %s\t%s\t%d\t%s\n", i.Slug, style.Status(i.Status), n, i.Title)
 			}
 			return tw2.Flush()
 		},
@@ -242,7 +246,7 @@ func newShowCmd() *cobra.Command {
 func newUseCmd() *cobra.Command {
 	var none bool
 	c := &cobra.Command{
-		Use:   "use <slug-or-id>",
+		Use:   "use <name-or-id>",
 		Short: "Set the active project for this context",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
@@ -263,7 +267,7 @@ func newUseCmd() *cobra.Command {
 				return nil
 			}
 			if len(args) == 0 {
-				return fmt.Errorf("supply <slug-or-id> or --none")
+				return fmt.Errorf("supply <name-or-id> or --none")
 			}
 			p, err := state.FindProject(ctx, db, contextName, args[0])
 			if err != nil {
@@ -312,27 +316,27 @@ func newStatusCmd() *cobra.Command {
 			}
 			ctx := cm.Context()
 			contextName := state.ActiveContextName()
-			fmt.Fprintf(cm.OutOrStdout(), "Context:        %s\n", contextName)
+			fmt.Fprintf(cm.OutOrStdout(), "%s  %s\n", style.B("Context:"), contextName)
 			pid, _ := state.GetActivePointer(ctx, db, contextName, state.PointerProject)
 			if pid == "" {
-				fmt.Fprintln(cm.OutOrStdout(), "Active project: (none)")
+				fmt.Fprintf(cm.OutOrStdout(), "%s  %s\n", style.B("Project:"), style.Dim("(none)"))
 			} else {
 				p, err := state.FindProject(ctx, db, contextName, pid)
 				if err != nil {
-					fmt.Fprintf(cm.OutOrStdout(), "Active project: %s (resolve error: %v)\n", pid, err)
+					fmt.Fprintf(cm.OutOrStdout(), "%s  %s (resolve error: %v)\n", style.B("Project:"), pid, err)
 				} else {
-					fmt.Fprintf(cm.OutOrStdout(), "Active project: %s — %s\n", p.Slug, p.Title)
+					fmt.Fprintf(cm.OutOrStdout(), "%s  %s — %s\n", style.B("Project:"), style.G(p.Slug), p.Title)
 				}
 			}
 			iid, _ := state.GetActivePointer(ctx, db, contextName, state.PointerInvestigation)
 			if iid == "" {
-				fmt.Fprintln(cm.OutOrStdout(), "Active inv:     (none)")
+				fmt.Fprintf(cm.OutOrStdout(), "%s  %s\n", style.B("Investigation:"), style.Dim("(none)"))
 			} else {
 				i, err := state.FindInvestigation(ctx, db, contextName, iid)
 				if err != nil {
-					fmt.Fprintf(cm.OutOrStdout(), "Active inv:     %s (resolve error: %v)\n", iid, err)
+					fmt.Fprintf(cm.OutOrStdout(), "%s  %s (resolve error: %v)\n", style.B("Investigation:"), iid, err)
 				} else {
-					fmt.Fprintf(cm.OutOrStdout(), "Active inv:     %s — %s\n", i.Slug, i.Title)
+					fmt.Fprintf(cm.OutOrStdout(), "%s  %s — %s\n", style.B("Investigation:"), style.G(i.Slug), i.Title)
 				}
 			}
 			return nil
@@ -342,7 +346,7 @@ func newStatusCmd() *cobra.Command {
 
 func newArchiveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "archive <slug-or-id>",
+		Use:   "archive <name-or-id>",
 		Short: "Archive a project (reversible via `abc project use`)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
@@ -353,7 +357,7 @@ func newArchiveCmd() *cobra.Command {
 
 func newCompleteCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "complete <slug-or-id>",
+		Use:   "complete <name-or-id>",
 		Short: "Mark a project completed (sticky)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
@@ -376,19 +380,19 @@ func setProjectStatus(cm *cobra.Command, ref, status string) error {
 	if err := state.UpdateProjectFields(ctx, db, p.ProjectID, map[string]any{"status": status}); err != nil {
 		return err
 	}
-	fmt.Fprintf(cm.OutOrStdout(), "Project %s → %s\n", p.Slug, status)
+	fmt.Fprintf(cm.OutOrStdout(), "Project %s → %s\n", p.Slug, style.Status(status))
 	return nil
 }
 
 func newRenameCmd() *cobra.Command {
-	var newSlug, newTitle, newDesc string
+	var newName, newTitle, newDesc string
 	c := &cobra.Command{
-		Use:   "rename <slug-or-id>",
-		Short: "Rename slug/title/description",
+		Use:   "rename <name-or-id>",
+		Short: "Rename name/title/description",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
-			if newSlug == "" && newTitle == "" && newDesc == "" {
-				return fmt.Errorf("supply at least one of --slug, --title, --description")
+			if newName == "" && newTitle == "" && newDesc == "" {
+				return fmt.Errorf("supply at least one of --name, --title, --description")
 			}
 			db, err := state.Open()
 			if err != nil {
@@ -401,18 +405,18 @@ func newRenameCmd() *cobra.Command {
 				return err
 			}
 			fields := map[string]any{}
-			if newSlug != "" {
-				if err := slug.Validate(newSlug); err != nil {
+			if newName != "" {
+				if err := slug.Validate(newName); err != nil {
 					return err
 				}
-				exists, err := state.SlugExistsProject(ctx, db, contextName, newSlug)
+				exists, err := state.SlugExistsProject(ctx, db, contextName, newName)
 				if err != nil {
 					return err
 				}
-				if exists && newSlug != p.Slug {
-					return fmt.Errorf("slug %q already in use", newSlug)
+				if exists && newName != p.Slug {
+					return fmt.Errorf("name %q already in use", newName)
 				}
-				fields["slug"] = newSlug
+				fields["slug"] = newName
 			}
 			if newTitle != "" {
 				fields["title"] = newTitle
@@ -423,11 +427,11 @@ func newRenameCmd() *cobra.Command {
 			if err := state.UpdateProjectFields(ctx, db, p.ProjectID, fields); err != nil {
 				return err
 			}
-			fmt.Fprintf(cm.OutOrStdout(), "Updated project %s.\n", p.ProjectID)
+			fmt.Fprintf(cm.OutOrStdout(), "%s %s.\n", style.G("Updated project"), p.ProjectID)
 			return nil
 		},
 	}
-	c.Flags().StringVar(&newSlug, "slug", "", "new slug")
+	c.Flags().StringVar(&newName, "name", "", "new name")
 	c.Flags().StringVar(&newTitle, "title", "", "new title")
 	c.Flags().StringVar(&newDesc, "description", "", "new description")
 	return c
@@ -436,7 +440,7 @@ func newRenameCmd() *cobra.Command {
 func newTagCmd() *cobra.Command {
 	var addTag, removeTag string
 	c := &cobra.Command{
-		Use:   "tag <slug-or-id>",
+		Use:   "tag <name-or-id>",
 		Short: "Add or remove a tag",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
@@ -487,7 +491,7 @@ func newTagCmd() *cobra.Command {
 func newDeleteCmd() *cobra.Command {
 	var force bool
 	c := &cobra.Command{
-		Use:   "delete <slug-or-id>",
+		Use:   "delete <name-or-id>",
 		Short: "Delete a project (cascades to investigations and annotations)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cm *cobra.Command, args []string) error {
@@ -513,7 +517,7 @@ func newDeleteCmd() *cobra.Command {
 			if err := state.DeleteProject(ctx, db, p.ProjectID); err != nil {
 				return err
 			}
-			fmt.Fprintf(cm.OutOrStdout(), "Deleted project %s.\n", p.Slug)
+			fmt.Fprintf(cm.OutOrStdout(), "%s %s.\n", style.R("Deleted project"), p.Slug)
 			return nil
 		},
 	}
