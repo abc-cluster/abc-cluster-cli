@@ -102,7 +102,7 @@ func newVisualizeCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&projectRef, "project", "", "render a project rollup instead of a single investigation")
-	c.Flags().StringVar(&vizType, "type", "branches", "branches|timeline|flow|lineage")
+	c.Flags().StringVar(&vizType, "type", "branches", "branches|timeline|flow|lineage|kanban|gantt")
 	c.Flags().StringVar(&output, "output", "", "write to path instead of stdout")
 	c.Flags().StringVar(&render, "render", "", "svg|png — invokes mmdc if present (soft dependency)")
 	c.Flags().StringVar(&since, "since", "", "filter entries newer than YYYY-MM-DD")
@@ -229,14 +229,23 @@ func renderInvestigation(ctx context.Context, db *sql.DB, inv state.Investigatio
 		return renderFlow(ctx, db, inv, opts)
 	case "lineage":
 		return renderLineage(ctx, db, inv, opts)
+	case "gantt":
+		return renderInvestigationGantt(ctx, db, inv, opts)
+	case "kanban":
+		return "", fmt.Errorf("--type=kanban requires --project=<slug> (kanban is project-level only)")
 	default:
 		return "", fmt.Errorf("unknown --type %q", opts.vizType)
 	}
 }
 
 func renderProject(ctx context.Context, db *sql.DB, p state.Project, opts vizOptions) (string, error) {
-	// Project rollup is implemented for lineage; other types fall back to a
-	// flowchart of investigations under the project.
+	switch opts.vizType {
+	case "kanban":
+		return renderProjectKanban(ctx, db, p, opts)
+	case "gantt":
+		return renderProjectGantt(ctx, db, p, opts)
+	}
+	// Default project rollup: flowchart-shaped lineage.
 	invs, err := state.ListInvestigations(ctx, db, p.ContextName, p.ProjectID, "", false)
 	if err != nil {
 		return "", err
@@ -659,4 +668,166 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-3] + "..."
+}
+
+// ----- Tier A: Kanban + Gantt (project-level, primarily) -----
+
+// renderProjectKanban groups investigations under a project by status into a
+// Mermaid kanban board. Each column is a status; each card is one investigation.
+func renderProjectKanban(ctx context.Context, db *sql.DB, p state.Project, opts vizOptions) (string, error) {
+	invs, err := state.ListInvestigations(ctx, db, p.ContextName, p.ProjectID, "", false)
+	if err != nil {
+		return "", err
+	}
+	// Bucket by status, preserving creation order within each bucket.
+	buckets := map[string][]state.Investigation{
+		"active":   {},
+		"merged":   {},
+		"dead-end": {},
+		"archived": {},
+	}
+	for _, i := range invs {
+		if !branchPasses(i, opts) {
+			continue
+		}
+		buckets[i.Status] = append(buckets[i.Status], i)
+	}
+	for k := range buckets {
+		sort.Slice(buckets[k], func(a, b int) bool {
+			return buckets[k][a].CreatedAt < buckets[k][b].CreatedAt
+		})
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\ntitle: %s — kanban\n---\n", p.Slug)
+	b.WriteString("kanban\n")
+	// Column order: Active, Merged, Dead-end, Archived
+	for _, status := range []string{"active", "merged", "dead-end", "archived"} {
+		col := strings.Title(status)
+		if status == "dead-end" {
+			col = "Dead-end"
+		}
+		fmt.Fprintf(&b, "  %s\n", col)
+		for _, i := range buckets[status] {
+			cardID := nodeIDFor("I", i.InvestigationID)
+			fmt.Fprintf(&b, "    %s[%s — %s]\n",
+				cardID, i.Slug, escapeLabel(truncate(i.Title, 60)))
+		}
+	}
+	return b.String(), nil
+}
+
+// renderProjectGantt builds a Gantt chart for all investigations under a
+// project. One bar per investigation from CreatedAt to UpdatedAt (or now if
+// active). Sections group by status.
+func renderProjectGantt(ctx context.Context, db *sql.DB, p state.Project, opts vizOptions) (string, error) {
+	invs, err := state.ListInvestigations(ctx, db, p.ContextName, p.ProjectID, "", false)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\ntitle: %s — investigation timeline\n---\n", p.Slug)
+	b.WriteString("gantt\n")
+	fmt.Fprintf(&b, "   title %s\n", p.Title)
+	b.WriteString("   dateFormat YYYY-MM-DD\n")
+	b.WriteString("   axisFormat %Y-%m-%d\n")
+
+	// Group by status; emit each non-empty section with status-typed task lines.
+	groups := map[string][]state.Investigation{}
+	for _, i := range invs {
+		if !branchPasses(i, opts) {
+			continue
+		}
+		groups[i.Status] = append(groups[i.Status], i)
+	}
+	now := time.Now().Unix()
+	for _, status := range []string{"active", "merged", "dead-end", "archived"} {
+		list := groups[status]
+		if len(list) == 0 {
+			continue
+		}
+		sort.Slice(list, func(a, b int) bool { return list[a].CreatedAt < list[b].CreatedAt })
+		section := strings.Title(status)
+		if status == "dead-end" {
+			section = "Dead-end"
+		}
+		fmt.Fprintf(&b, "   section %s\n", section)
+		for _, i := range list {
+			start, end := ganttRange(i.CreatedAt, i.UpdatedAt, status, now)
+			fmt.Fprintf(&b, "   %s :%s%s, %s\n", ganttLabel(i), statusGanttModifier(status), start, end)
+		}
+	}
+	return b.String(), nil
+}
+
+// renderInvestigationGantt builds a Gantt chart for a single investigation
+// showing its branches over time (each child branch as one bar). Useful when
+// the user has multiple parallel branches and wants to see when each was alive.
+func renderInvestigationGantt(ctx context.Context, db *sql.DB, root state.Investigation, opts vizOptions) (string, error) {
+	tree, err := investigationSubtree(ctx, db, root)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\ntitle: %s — branches over time\n---\n", root.Slug)
+	b.WriteString("gantt\n")
+	fmt.Fprintf(&b, "   title %s\n", escapeLabel(root.Title))
+	b.WriteString("   dateFormat YYYY-MM-DD\n")
+	b.WriteString("   axisFormat %Y-%m-%d\n")
+
+	// Sort all investigations in the subtree by created_at.
+	all := append([]state.Investigation{}, tree...)
+	sort.Slice(all, func(a, b int) bool { return all[a].CreatedAt < all[b].CreatedAt })
+
+	now := time.Now().Unix()
+	b.WriteString("   section Main\n")
+	start, end := ganttRange(root.CreatedAt, root.UpdatedAt, root.Status, now)
+	fmt.Fprintf(&b, "   %s :%s%s, %s\n", ganttLabel(root), statusGanttModifier(root.Status), start, end)
+	b.WriteString("   section Branches\n")
+	for _, i := range all {
+		if i.InvestigationID == root.InvestigationID {
+			continue
+		}
+		s, e := ganttRange(i.CreatedAt, i.UpdatedAt, i.Status, now)
+		fmt.Fprintf(&b, "   %s :%s%s, %s\n", ganttLabel(i), statusGanttModifier(i.Status), s, e)
+	}
+	return b.String(), nil
+}
+
+// ganttLabel renders an investigation as a label safe for Mermaid gantt syntax.
+// Mermaid uses ':' to separate task name from id+modifier+dates, so we never
+// emit a colon in the label. Use an em-dash separator instead.
+func ganttLabel(i state.Investigation) string {
+	return escapeLabel(truncate(i.Slug+" — "+i.Title, 60))
+}
+
+// ganttRange computes start + end dates for a gantt bar. If start == end (same-
+// day investigations, common for fresh test data), pad end by 1 day so the bar
+// is visible.
+func ganttRange(createdAt, updatedAt int64, status string, now int64) (string, string) {
+	endTs := updatedAt
+	if status == "active" {
+		endTs = now
+	}
+	if endTs <= createdAt {
+		endTs = createdAt + 86400 // 1 day
+	}
+	start := time.Unix(createdAt, 0).UTC().Format("2006-01-02")
+	end := time.Unix(endTs, 0).UTC().Format("2006-01-02")
+	if start == end {
+		end = time.Unix(createdAt+86400, 0).UTC().Format("2006-01-02")
+	}
+	return start, end
+}
+
+func statusGanttModifier(status string) string {
+	switch status {
+	case "active":
+		return "active, "
+	case "merged", "archived":
+		return "done, "
+	case "dead-end":
+		return "crit, "
+	}
+	return ""
 }

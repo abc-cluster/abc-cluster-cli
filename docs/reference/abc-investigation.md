@@ -50,17 +50,61 @@ prints to stdout; pass `--output=<path>` to write a file, and
 `mmdc` is a SOFT dependency: if not present, the `.mmd` source is
 written and a warning emitted to stderr instead of failing.
 
-Four view types:
+Six view types:
 
-- `branches` (default) — gitGraph with branches and merges
-- `timeline` — Mermaid `timeline` directive of all runs + annotations
-- `flow` — `flowchart TD` chain of annotation/run nodes
-- `lineage` — `flowchart LR` of investigation + citations (dotted
-  arrows from the `citations` table)
+| `--type` | Diagram | Scope |
+|---|---|---|
+| `branches` (default) | gitGraph with branches and merges | single investigation |
+| `timeline` | Mermaid `timeline` directive of all runs + annotations | single investigation |
+| `flow` | `flowchart TD` chain of annotation/run nodes | single investigation |
+| `lineage` | `flowchart LR` of investigation + citations (dotted arrows from the `citations` table) | single investigation OR project (`--project=<slug>`) |
+| `kanban` | Mermaid `kanban` board, columns by status (active / merged / dead-end / archived) | project only (`--project=<slug>` required) |
+| `gantt` | Mermaid `gantt` chart of investigation duration bars | single investigation (main + branches) OR project (sectioned by status) |
 
-Filter flags:
+Flags:
 
 - `--since=YYYY-MM-DD`
 - `--branches=alive|dead|all`
 - `--no-runs` (annotation-only)
 - `--mermaid-version=v1|v2` (default `v1` for max renderer compat)
+- `--output=<path>` — write to file
+- `--render=svg|png` — invoke `mmdc` (soft dep)
+- `--browser` — open the diagram on mermaid.live via the OS default browser (cross-platform: `open`/`xdg-open`/`rundll32`)
+
+### `--browser` and mermaid.live's editor theme
+
+The `--browser` flag opens the diagram in the mermaid.live editor with the
+diagram-level theme set to `default` (light). The **editor chrome** (toolbar,
+background) is controlled by mermaid.live's `mode-watcher` library which reads
+only `localStorage` — there is no URL-controllable way to force the editor
+chrome to light or dark. To make the chrome light persistently, click the
+theme toggle once in the bottom-right of mermaid.live; the choice is stored
+in `localStorage` and applies to every future `--browser` invocation in the
+same browser.
+
+## Investigation lifecycle
+
+The `investigations.status` field is a small state machine:
+
+```mermaid
+stateDiagram-v2
+   [*] --> active : create
+   active --> active : annotate / branch
+   active --> merged : merge --into
+   active --> dead_end : dead-end --reason
+   active --> archived : (manual)
+   merged --> [*]
+   dead_end --> [*]
+   archived --> [*]
+```
+
+- **active** — default on creation; can be annotated, branched from, used as
+  parent for child branches.
+- **merged** — set when `abc investigation merge <child> --into <parent>`
+  promotes the child's annotations into the parent. The child's annotations
+  are copied (not moved) with `carried_from` set, so the merge is auditable.
+- **dead-end** — set by `abc investigation dead-end <slug> --reason=<text>`.
+  The reason is preserved in `dead_end_reason` and surfaces in `branches`
+  visualisation as a Mermaid comment line beneath the abandoned branch.
+- **archived** — manual transition for long-finished work the user wants out
+  of the default `list` view.
