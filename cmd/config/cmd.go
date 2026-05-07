@@ -50,6 +50,9 @@ Subcommands:
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newUnsetCmd())
 	cmd.AddCommand(newFmtCmd())
+	// Per-context accounting and emissions blocks (spec abc-emissions-accounting §E).
+	cmd.AddCommand(newAccountingCmd())
+	cmd.AddCommand(newEmissionsCmd())
 
 	return cmd
 }

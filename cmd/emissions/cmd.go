@@ -21,10 +21,13 @@ func NewCmd() *cobra.Command {
 
 Uses --access-token / ABC_ACCESS_TOKEN and optional --workspace / ABC_WORKSPACE_ID
 (workspaceId query parameter when set).`,
-		RunE: runEmissions,
+		RunE: dispatchEmissions,
 	}
-	cmd.Flags().String("from", "", "optional reporting window start (query: from)")
-	cmd.Flags().String("to", "", "optional reporting window end (query: to)")
+	// Legacy cloud-API flags (used when --cloud is passed).
+	cmd.Flags().String("from", "", "optional reporting window start (query: from); used with --cloud")
+	cmd.Flags().String("to", "", "optional reporting window end (query: to); used with --cloud")
+	// New local-state report flags (default behaviour, see cmd/emissions/report.go).
+	addReportFlags(cmd)
 	return cmd
 }
 
