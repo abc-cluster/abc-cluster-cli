@@ -1,12 +1,17 @@
 package investigation
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +31,7 @@ func newVisualizeCmd() *cobra.Command {
 		branchesFilter string
 		noRuns         bool
 		mermaidVersion string
+		openBrowserFlg bool
 	)
 	c := &cobra.Command{
 		Use:   "visualize [<slug-or-id>]",
@@ -77,7 +83,22 @@ func newVisualizeCmd() *cobra.Command {
 				}
 			}
 
-			return writeOutput(cm.OutOrStdout(), src, output, render)
+			if err := writeOutput(cm.OutOrStdout(), src, output, render); err != nil {
+				return err
+			}
+			if openBrowserFlg {
+				url, err := mermaidLiveURL(src)
+				if err != nil {
+					return fmt.Errorf("build mermaid.live URL: %w", err)
+				}
+				if err := openInDefaultBrowser(url); err != nil {
+					fmt.Fprintf(os.Stderr, "[abc] could not open browser: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[abc] paste this URL manually:\n  %s\n", url)
+					return nil
+				}
+				fmt.Fprintln(os.Stderr, "[abc] opened in default browser (mermaid.live).")
+			}
+			return nil
 		},
 	}
 	c.Flags().StringVar(&projectRef, "project", "", "render a project rollup instead of a single investigation")
@@ -88,7 +109,57 @@ func newVisualizeCmd() *cobra.Command {
 	c.Flags().StringVar(&branchesFilter, "branches", "all", "alive|dead|all")
 	c.Flags().BoolVar(&noRuns, "no-runs", false, "annotation-only diagrams")
 	c.Flags().StringVar(&mermaidVersion, "mermaid-version", "v1", "v1|v2 — gitGraph syntax compatibility")
+	c.Flags().BoolVar(&openBrowserFlg, "browser", false, "open the diagram in the default browser via mermaid.live")
 	return c
+}
+
+// mermaidLiveURL builds a mermaid.live shareable URL with the diagram embedded
+// in the URL hash via pako (zlib) compression — the same encoding mermaid.live
+// uses for its own "Share" button. Works for diagrams up to several KB; larger
+// diagrams may exceed browser URL-length limits and should use --output instead.
+func mermaidLiveURL(source string) (string, error) {
+	payload := struct {
+		Code    string `json:"code"`
+		Mermaid string `json:"mermaid"`
+	}{
+		Code:    source,
+		Mermaid: `{"theme":"default"}`,
+	}
+	j, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	zw, err := zlib.NewWriterLevel(&buf, zlib.BestCompression)
+	if err != nil {
+		return "", err
+	}
+	if _, err := zw.Write(j); err != nil {
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	encoded := base64.URLEncoding.EncodeToString(buf.Bytes())
+	return "https://mermaid.live/edit#pako:" + encoded, nil
+}
+
+// openInDefaultBrowser opens a URL in the OS default browser. Cross-platform:
+// macOS, Linux (incl. WSL), Windows, and the major BSDs.
+func openInDefaultBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux", "freebsd", "openbsd", "netbsd":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		// rundll32 handles URL protocol via FileProtocolHandler.
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+	return cmd.Start()
 }
 
 type vizOptions struct {
@@ -258,7 +329,7 @@ func renderBranches(ctx context.Context, db *sql.DB, root state.Investigation, o
 				fmt.Fprintf(&b, "   merge %s\n", branchName(child))
 			}
 		} else if child.DeadEndReason.Valid {
-			fmt.Fprintf(&b, "   %% branch %s abandoned: %q\n", branchName(child), child.DeadEndReason.String)
+			fmt.Fprintf(&b, "   %%%% branch %s abandoned: %q\n", branchName(child), child.DeadEndReason.String)
 			fmt.Fprintf(&b, "   checkout main\n")
 		} else {
 			fmt.Fprintf(&b, "   checkout main\n")
