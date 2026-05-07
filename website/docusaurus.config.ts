@@ -26,7 +26,10 @@ const config: Config = {
 
   markdown: {
     format: 'md',
+    mermaid: true,
   },
+
+  themes: ['@docusaurus/theme-mermaid'],
 
   // Browser-theme-aware favicon: dark variant when the user's OS is in dark
   // mode, light variant otherwise. The plain `favicon: 'img/favicon.svg'`
