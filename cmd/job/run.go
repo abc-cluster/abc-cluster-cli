@@ -198,6 +198,7 @@ EXAMPLES
 	cmd.Flags().Int("cores", 0, "CPU cores per task")
 	cmd.Flags().String("mem", "", "Memory per task (e.g. 8G, 512M)")
 	cmd.Flags().Int("gpus", 0, "GPU count")
+	cmd.Flags().Float64("scratch-gb", 0, "Scratch storage reservation (GB) — recorded for accounting/emissions reporting")
 	cmd.Flags().String("time", "", "Walltime limit HH:MM:SS")
 	cmd.Flags().String("chdir", "", "Working directory inside task sandbox")
 	cmd.Flags().String("depend", "", "Dependency spec (complete:<job-id>)")
@@ -291,7 +292,8 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) {
 	pflag, _ := cmd.Flags().GetString("project")
 	iflag, _ := cmd.Flags().GetString("investigation")
 	ns, _ := cmd.Flags().GetString("namespace")
-	gpus, _ := cmd.Flags().GetInt("gpus") // best-effort: CLI flag only; #ABC --gpus directive is parsed downstream
+	gpus, _ := cmd.Flags().GetInt("gpus")              // best-effort: CLI flag only; #ABC --gpus directive is parsed downstream
+	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb") // best-effort: CLI flag; future run-watcher overwrites from Nomad alloc
 
 	db, err := state.Open()
 	if err != nil {
@@ -308,6 +310,7 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) {
 		Verb:              "job",
 		Namespace:         ns,
 		GpuCount:          gpus,
+		ScratchGB:         scratchGB,
 	}
 	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing)\n", err)

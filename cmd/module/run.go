@@ -77,6 +77,7 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().String("nf-plugin-version", "", "nf-nomad plugin version for generated pipeline execution config")
 	cmd.Flags().Int("cpu", 0, "Main Nextflow task CPU in MHz (default: 1500)")
 	cmd.Flags().Int("memory", 0, "Main Nextflow task memory in MB (default: 4096)")
+	cmd.Flags().Float64("scratch-gb", 0, "Scratch storage reservation (GB) for accounting/emissions reporting")
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
 	cmd.Flags().String("s3-endpoint", "", "S3 endpoint URL for the generated driver (sets NF_S3_ENDPOINT in the run task; e.g. http://rustfs.aither:9900)")
 	cmd.Flags().String("s3-access-key", "", "S3 access key for the generated driver (sets AWS_ACCESS_KEY_ID; falls back to AWS_ACCESS_KEY_ID env var)")
@@ -444,6 +445,7 @@ func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: state DB unavailable (%v); skipping run record\n", err)
 		return
 	}
+	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb")
 	req := state.AutoAttachRequest{
 		ContextName:       state.ActiveContextName(),
 		NoProject:         noProj,
@@ -453,6 +455,7 @@ func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) {
 		WorkloadRef:       moduleName,
 		Verb:              "module",
 		Namespace:         namespace,
+		ScratchGB:         scratchGB,
 	}
 	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing)\n", err)
