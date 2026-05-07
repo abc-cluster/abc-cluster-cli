@@ -36,15 +36,19 @@ import {
   policyGroupAdmin,
   policyMember,
 } from "./naming";
-import { ALLOW_DESTROY, mkAttachCommand } from "./minio";
+import { ALLOW_DESTROY, mkAttachCommand, mkGroupMembershipCommand } from "./minio";
 import { isCollabActive } from "./validate";
 
 // Per-workspace IAM policy resources, keyed by ns. Passed in from index.ts.
 export interface WorkspaceIamHandles {
-  /** RustFS IAM policies. */
+  /** RustFS IAM policies (kept for collaborator attachments + bucket-policy
+   *  audit visibility; per-user member/admin attach has moved to groups). */
   groupAdminMinio: minio.IamPolicy;
   memberMinio: minio.IamPolicy;
   collabMinio: Record<string, minio.IamPolicy>;
+  /** RustFS IAM groups — per-user role membership goes here (members+admins). */
+  memberMinioGroup: minio.IamGroup;
+  groupAdminMinioGroup: minio.IamGroup;
   /** Nomad ACL policies. */
   groupAdminNomad: nomad.AclPolicy;
   memberNomad: nomad.AclPolicy;
@@ -150,22 +154,27 @@ export function provisionUser(
     opts,
   );
 
-  // ---- 4. Policy attachments via mc admin policy attach -----------------
-  // One local.Command per (user, policy) pair. We attach exactly the
-  // role-appropriate policies — for a group-admin we attach the admin policy
-  // ONLY (it's a superset of the member policy on RustFS); for a member we
-  // attach the member policy.
+  // ---- 4. Group memberships + collaborator policy attachments -----------
+  // Member / group-admin roles → IamGroupUserAttachment (the group already
+  //   carries the corresponding policy via IamGroupPolicyAttachment in
+  //   minio.ts). One Pulumi resource per (user, group) pair.
+  // Collaborator role → mkAttachCommand (per-collab policy is unique to that
+  //   user, so a per-collab IAM group adds zero deduplication value).
   const attachDeps: pulumi.Resource[] = [];
   for (const m of activeMembers) {
     const ns = m.workspace.resourceName;
     const handles = workspaceHandles.get(ns)!;
-    const policyResource = m.role === "group-admin" ? handles.groupAdminMinio : handles.memberMinio;
+    const groupResource = m.role === "group-admin" ? handles.groupAdminMinioGroup : handles.memberMinioGroup;
     const slug = `${ns}-${m.role === "group-admin" ? "ga" : "m"}`;
-    const cmd = mkAttachCommand(
-      `user-${principal}-attach-${slug}`,
+    // Use mkGroupMembershipCommand (mc admin group add) instead of the native
+    // IamGroupUserAttachment because the native resource depends on a group-
+    // policy attach that hits a content-length bug against RustFS in
+    // @pulumi/minio@0.16.8 (see mkGroupPolicyAttachCommand in minio.ts).
+    const cmd = mkGroupMembershipCommand(
+      `user-${principal}-membership-${slug}`,
+      groupResource.name,
       iamUser.name,
-      policyResource.name,
-      [iamUser, policyResource],
+      [iamUser, groupResource],
       opts,
     );
     attachDeps.push(cmd);

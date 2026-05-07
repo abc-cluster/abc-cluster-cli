@@ -32,6 +32,20 @@ export const minioPolicyMember     = (ns: string): string => `ns-${ns}-member`;
 export const minioPolicyCollab     = (ns: string, user: string): string => `ns-${ns}-collab-${user}`;
 export const minioPolicySubmit     = (ns: string): string => `ns-${ns}-pipeline-submit`;
 
+// ---- RustFS IAM group names (per workspace × role) -------------------------
+// Mirrors the Nomad ACL policy / namespace structure: each research group
+// gets a member group and a group-admin group on RustFS, with the matching
+// per-namespace IamPolicy attached to it. Users join the appropriate group
+// based on their role; their per-bucket access derives from the group's
+// policy attachment, not from a per-user policy attach.
+
+export const minioGroupMember     = (ns: string): string => `g-${ns}-member`;
+export const minioGroupGroupAdmin = (ns: string): string => `g-${ns}-group-admin`;
+/** Map a role to the single RustFS group a user should join. */
+export function minioGroupForRole(ns: string, role: "group-admin" | "group-member"): string {
+  return role === "group-admin" ? minioGroupGroupAdmin(ns) : minioGroupMember(ns);
+}
+
 // ---- Principal names (= Nomad token Name = RustFS IAM username) ------------
 
 /** A user's principal name — same string everywhere across Nomad and RustFS. */

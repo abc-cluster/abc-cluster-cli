@@ -84,6 +84,8 @@ export class WorkspaceComponent extends pulumi.ComponentResource {
       groupAdminMinio: minioOut.groupAdminPolicy,
       memberMinio: minioOut.memberPolicy,
       collabMinio: minioOut.collabPolicies,
+      memberMinioGroup: minioOut.memberGroup,
+      groupAdminMinioGroup: minioOut.groupAdminGroup,
       groupAdminNomad: nomadOut.groupAdminPolicy,
       memberNomad: nomadOut.memberPolicy,
     };

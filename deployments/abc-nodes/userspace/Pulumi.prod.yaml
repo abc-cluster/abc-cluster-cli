@@ -13,7 +13,7 @@ config:
   nomad:secretId:
     secure: AAABAM+8vLwgIA9vW9hp/q5Oug2b1O8xbZRBkBdp18BTB4ahLuzVw+H0UQfal51FwiAIBc3jOyV0gA6JP5Pl7vF1ii4=
   minio:minioPassword:
-    secure: AAABAAg4RABlSSql3HNH3QPu5VsBxqjDfOA9El4uAHVhNqZjmcGr4/yz3Q==
+    secure: AAABAPokfvCZUTlmnT4TpnuJAchGqOkg5Zqcxs8Y/38nNk7LuCC7OpcUFA==
   abc-userspace:allowDestroy: "true"
   abc-userspace:collabPassword_dave-uct:
     secure: AAABAEEA7uyN24OEN3iZfkJ5JHLX1SeYKZHeubD+USCHjYPRUVhOYoXMo2u5jXP+NNVFk/0JGccYLF/r

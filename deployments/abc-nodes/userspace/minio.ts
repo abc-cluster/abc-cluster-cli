@@ -28,6 +28,8 @@ import {
   minioPolicyMember,
   minioPolicyCollab,
   minioPolicySubmit,
+  minioGroupMember,
+  minioGroupGroupAdmin,
   principalSubmit,
 } from "./naming";
 import {
@@ -76,6 +78,10 @@ export interface WorkspaceMinioOutputs {
   memberPolicy: minio.IamPolicy;
   /** Per-collaborator IAM policies, keyed by collaborator user name. */
   collabPolicies: Record<string, minio.IamPolicy>;
+  /** RustFS group for plain members (mirrors Nomad's <ns>-member ACL policy). */
+  memberGroup: minio.IamGroup;
+  /** RustFS group for workspace admins. */
+  groupAdminGroup: minio.IamGroup;
   /** Submit account resources (if the workspace defined a submitAccount). */
   submit?: SubmitAccountOutputs;
 }
@@ -182,6 +188,39 @@ export function provisionWorkspaceMinio(
   );
 
   // ------------------------------------------------------------------
+  // 3b. IAM groups (mirror of the Nomad ACL policy structure)
+  //     One group per role per workspace; the role's policy attaches to
+  //     the group so per-user attachments collapse to a single
+  //     IamGroupUserAttachment per (user, group). Adding/removing a user
+  //     from a research group becomes one resource change.
+  // ------------------------------------------------------------------
+  const memberGroup = new minio.IamGroup(
+    `${ns}-group-member`,
+    { name: minioGroupMember(ns), forceDestroy: ALLOW_DESTROY },
+    opts,
+  );
+  mkGroupPolicyAttachCommand(
+    `${ns}-group-member-attach`,
+    memberGroup.name,
+    memberPolicy.name,
+    [memberGroup, memberPolicy],
+    opts,
+  );
+
+  const groupAdminGroup = new minio.IamGroup(
+    `${ns}-group-group-admin`,
+    { name: minioGroupGroupAdmin(ns), forceDestroy: ALLOW_DESTROY },
+    opts,
+  );
+  mkGroupPolicyAttachCommand(
+    `${ns}-group-group-admin-attach`,
+    groupAdminGroup.name,
+    groupAdminPolicy.name,
+    [groupAdminGroup, groupAdminPolicy],
+    opts,
+  );
+
+  // ------------------------------------------------------------------
   // 4. Per-collaborator IAM policies (one per active collaborator)
   // ------------------------------------------------------------------
   const collabPolicies: Record<string, minio.IamPolicy> = {};
@@ -233,6 +272,8 @@ export function provisionWorkspaceMinio(
     groupAdminPolicy,
     memberPolicy,
     collabPolicies,
+    memberGroup,
+    groupAdminGroup,
     submit,
   };
 }
@@ -266,6 +307,69 @@ export function mkAttachCommand(
       environment: {
         TARGET_USER: pulumi.output(username) as unknown as pulumi.Input<string>,
         POLICY: pulumi.output(policyName) as unknown as pulumi.Input<string>,
+        MC_HOST_userspace: MC_HOST_URL,
+      },
+    },
+    { ...opts, dependsOn },
+  );
+}
+
+/**
+ * Attach an IAM policy to an IAM group via `mc admin policy attach … --group`.
+ * Used in place of the native `minio.IamGroupPolicyAttachment` resource because
+ * @pulumi/minio@0.16.8 ships an HTTP request that omits Content-Length on the
+ * attach call; RustFS rejects it with `missing header: content-length`.
+ * `mc` issues the same admin call with the header included, so it works.
+ */
+export function mkGroupPolicyAttachCommand(
+  resourceName: string,
+  groupName: pulumi.Input<string>,
+  policyName: pulumi.Input<string>,
+  dependsOn: pulumi.Resource[],
+  opts: pulumi.ComponentResourceOptions,
+): command.local.Command {
+  return new command.local.Command(
+    resourceName,
+    {
+      create: `mc admin policy attach userspace "$POLICY" --group "$GROUP"`,
+      delete: `mc admin policy detach userspace "$POLICY" --group "$GROUP" || true`,
+      triggers: [pulumi.all([groupName, policyName]).apply(([g, p]) => `${g}|${p}`)],
+      environment: {
+        GROUP: pulumi.output(groupName) as unknown as pulumi.Input<string>,
+        POLICY: pulumi.output(policyName) as unknown as pulumi.Input<string>,
+        MC_HOST_userspace: MC_HOST_URL,
+      },
+    },
+    { ...opts, dependsOn },
+  );
+}
+
+/**
+ * Add a user to a RustFS IAM group via `mc admin group add`. Replaces the
+ * native `minio.IamGroupUserAttachment` which depends on the broken policy
+ * attach above. Includes a user-disable/enable cycle to flush the IAM cache,
+ * mirroring the per-user policy-attach pattern.
+ */
+export function mkGroupMembershipCommand(
+  resourceName: string,
+  groupName: pulumi.Input<string>,
+  username: pulumi.Input<string>,
+  dependsOn: pulumi.Resource[],
+  opts: pulumi.ComponentResourceOptions,
+): command.local.Command {
+  return new command.local.Command(
+    resourceName,
+    {
+      create:
+        `mc admin group add userspace "$GROUP" "$TARGET_USER" && ` +
+        `mc admin user disable userspace "$TARGET_USER" && ` +
+        `mc admin user enable userspace "$TARGET_USER"`,
+      delete:
+        `mc admin group remove userspace "$GROUP" "$TARGET_USER" || true`,
+      triggers: [pulumi.all([groupName, username]).apply(([g, u]) => `${g}|${u}`)],
+      environment: {
+        GROUP: pulumi.output(groupName) as unknown as pulumi.Input<string>,
+        TARGET_USER: pulumi.output(username) as unknown as pulumi.Input<string>,
         MC_HOST_userspace: MC_HOST_URL,
       },
     },
