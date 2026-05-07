@@ -36,6 +36,30 @@ abc accounting [flags]
 | `--rate-memory-gb-hour=N` | — | Layer 2 cost-rate override (per GB·hour) |
 | `--all-contexts` | rejected | Phase 2 — currently errors with a clear message |
 
+## Storage in accounting
+
+Cost includes **scratch storage** (transient, per-run) when runs were
+submitted with a `--scratch-gb=<N>` flag on `abc {pipeline,job,module}
+run`. The scratch contribution to a run's total is
+
+```
+scratch_gb_hours = scratch_gb × walltime_hours
+scratch_cost     = scratch_gb_hours × cost.storage_scratch_gb_hour
+```
+
+mirroring how GPU hours are derived from `gpu_count × walltime`.
+
+**Persistent storage** (output buckets, results that survive past the
+producing run) is not in the per-run total. It is project-scoped and
+lives under a future `abc accounting storage` verb that joins against
+periodic `project_storage_snapshots` captures. Charging a run for the
+perpetual footprint of its outputs would produce nonsense numbers; the
+producing run completed in hours, the data sits for years.
+
+The default Layer 0 SA constants are documented in
+`design/exploring/permissions-accounting.md` and
+`brainstorms/emissions-accounting/2026-05-07-storage-accounting.md`.
+
 ## Worked example
 
 ```
@@ -47,10 +71,11 @@ su-mbhg-bioinformatics       124.50
 su-mbhg-hostgen                78.20
 
 Rate card (effective):
-  cost.cpu_hour        0.45  config     (~/.abc/config.yaml mtime 2026-05-06 14:23)
-  cost.gpu_hour        9     built-in   (abc-cluster-cli v0.1.25 — SA on-prem indicative, 2026-05-07)
-  cost.memory_gb_hour  0.05  built-in   (abc-cluster-cli v0.1.25 — SA on-prem indicative, 2026-05-07)
-  currency             ZAR   built-in   (SA market default)
+  cost.cpu_hour                 0.45    config     (~/.abc/config.yaml mtime 2026-05-06 14:23)
+  cost.gpu_hour                 9       built-in   (abc-cluster-cli v0.1.25 — SA on-prem indicative, 2026-05-07)
+  cost.memory_gb_hour           0.05    built-in   (abc-cluster-cli v0.1.25 — SA on-prem indicative, 2026-05-07)
+  cost.storage_scratch_gb_hour  0.0001  built-in   (amortised enterprise NVMe + power, 2026-05-07)
+  currency                      ZAR     built-in   (SA market default)
 
 These rates are showback estimates; not invoice-grade. To override:
   abc config accounting set cost.cpu_hour=0.55
