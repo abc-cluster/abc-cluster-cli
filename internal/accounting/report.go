@@ -78,11 +78,12 @@ type Row struct {
 	// Total is in the report's currency / emissions unit.
 	Total float64 `json:"total"`
 	// Inputs (for transparency).
-	CpuHours       float64 `json:"cpu_hours"`
-	MemoryGbHours  float64 `json:"memory_gb_hours"`
-	GpuHours       float64 `json:"gpu_hours"`
-	WalltimeHours  float64 `json:"walltime_hours"`
-	Runs           int64   `json:"runs"`
+	CpuHours         float64 `json:"cpu_hours"`
+	MemoryGbHours    float64 `json:"memory_gb_hours"`
+	GpuHours         float64 `json:"gpu_hours"`
+	ScratchGbHours   float64 `json:"scratch_gb_hours"`
+	WalltimeHours    float64 `json:"walltime_hours"`
+	Runs             int64   `json:"runs"`
 }
 
 // Report is the full computed result: header + rows + effective rate card.
@@ -135,6 +136,7 @@ func Aggregate(ctx context.Context, db *sql.DB, opts ReportOptions, card RateCar
 		       COALESCE(SUM(cpu_hours), 0)            AS cpu_hours,
 		       COALESCE(SUM(memory_gb_hours), 0)      AS memory_gb_hours,
 		       COALESCE(SUM(CAST(gpu_count AS REAL) * (CAST(walltime_seconds AS REAL) / 3600.0)), 0) AS gpu_hours,
+		       COALESCE(SUM(CAST(scratch_gb AS REAL) * (CAST(walltime_seconds AS REAL) / 3600.0)), 0) AS scratch_gb_hours,
 		       COALESCE(SUM(CAST(walltime_seconds AS REAL) / 3600.0), 0) AS walltime_hours,
 		       COUNT(*) AS runs
 		FROM runs
@@ -161,7 +163,7 @@ func Aggregate(ctx context.Context, db *sql.DB, opts ReportOptions, card RateCar
 	for rows.Next() {
 		var r Row
 		var gc sql.NullString
-		if err := rows.Scan(&gc, &r.CpuHours, &r.MemoryGbHours, &r.GpuHours, &r.WalltimeHours, &r.Runs); err != nil {
+		if err := rows.Scan(&gc, &r.CpuHours, &r.MemoryGbHours, &r.GpuHours, &r.ScratchGbHours, &r.WalltimeHours, &r.Runs); err != nil {
 			return rep, err
 		}
 		if !gc.Valid || gc.String == "" {
@@ -170,14 +172,23 @@ func Aggregate(ctx context.Context, db *sql.DB, opts ReportOptions, card RateCar
 		r.Group = gc.String
 		switch opts.Mode {
 		case ModeAccounting:
+			// Compute cost includes scratch GB·hour. Persistent storage is
+			// project-scoped (not per-run) and arrives via a separate
+			// `abc accounting storage` verb in Phase 1.D.
 			r.Total = r.CpuHours*card.Cost.CpuHour.Value +
 				r.GpuHours*card.Cost.GpuHour.Value +
-				r.MemoryGbHours*card.Cost.MemoryGbHour.Value
+				r.MemoryGbHours*card.Cost.MemoryGbHour.Value +
+				r.ScratchGbHours*card.Cost.StorageScratchGbHour.Value
 		case ModeEmissions:
+			// Scratch contribution: GB·hour × (W/TB ÷ 1000 GB/TB) = W·hour
+			//                      ÷ 1000 → kWh; PUE applied to the sum.
+			scratchEnergyKwh := r.ScratchGbHours * card.Emissions.StorageScratchWPerTb.Value /
+				1000.0 / 1000.0
 			energyKwh := ((r.CpuHours*card.Emissions.CpuW.Value +
 				r.GpuHours*card.Emissions.GpuW.Value +
 				r.MemoryGbHours*card.Emissions.MemoryGbW.Value) / 1000.0) *
 				card.Emissions.Pue.Value
+			energyKwh += scratchEnergyKwh * card.Emissions.Pue.Value
 			co2Kg := energyKwh * card.Emissions.GridFactorGco2PerKwh.Value / 1000.0
 			r.Total = convertCO2Kg(co2Kg, opts.EmissionsUnit)
 		}
@@ -351,6 +362,7 @@ func relevantRates(rep Report) []rateRow {
 			fromRateValue("cost.cpu_hour", rc.Cost.CpuHour),
 			fromRateValue("cost.gpu_hour", rc.Cost.GpuHour),
 			fromRateValue("cost.memory_gb_hour", rc.Cost.MemoryGbHour),
+			fromRateValue("cost.storage_scratch_gb_hour", rc.Cost.StorageScratchGbHour),
 			fromRateString("currency", rc.Currency),
 		)
 	} else {
@@ -360,6 +372,7 @@ func relevantRates(rep Report) []rateRow {
 			fromRateValue("emissions.gpu_w", rc.Emissions.GpuW),
 			fromRateValue("emissions.memory_gb_w", rc.Emissions.MemoryGbW),
 			fromRateValue("emissions.pue", rc.Emissions.Pue),
+			fromRateValue("emissions.storage_scratch_w_per_tb", rc.Emissions.StorageScratchWPerTb),
 		)
 	}
 	return out
@@ -432,7 +445,7 @@ func renderJSON(w io.Writer, rep Report) error {
 func renderCSV(w io.Writer, rep Report) error {
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
-	header := []string{string(rep.By), "total", "unit", "cpu_hours", "memory_gb_hours", "gpu_hours", "walltime_hours", "runs"}
+	header := []string{string(rep.By), "total", "unit", "cpu_hours", "memory_gb_hours", "gpu_hours", "scratch_gb_hours", "walltime_hours", "runs"}
 	if err := cw.Write(header); err != nil {
 		return err
 	}
@@ -444,6 +457,7 @@ func renderCSV(w io.Writer, rep Report) error {
 			strconv.FormatFloat(r.CpuHours, 'f', -1, 64),
 			strconv.FormatFloat(r.MemoryGbHours, 'f', -1, 64),
 			strconv.FormatFloat(r.GpuHours, 'f', -1, 64),
+			strconv.FormatFloat(r.ScratchGbHours, 'f', -1, 64),
 			strconv.FormatFloat(r.WalltimeHours, 'f', -1, 64),
 			strconv.FormatInt(r.Runs, 10),
 		}

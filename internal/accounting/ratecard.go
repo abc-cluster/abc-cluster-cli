@@ -45,13 +45,22 @@ type RateString struct {
 }
 
 // CostRates is the cost section of a RateCard.
+//
+// Storage cost splits cleanly into two attribution shapes — see
+// brainstorms/emissions-accounting/2026-05-07-storage-accounting.md:
+//   • scratch (transient, per-run, GB·hour)
+//   • persistent (project-scoped, GB·month)
 type CostRates struct {
-	CpuHour       RateValue
-	GpuHour       RateValue
-	MemoryGbHour  RateValue
-	// Reserved Phase 2 (config accepts; reports ignore).
-	StorageGbMonth RateValue
-	EgressGb       RateValue
+	CpuHour      RateValue
+	GpuHour      RateValue
+	MemoryGbHour RateValue
+	// Storage — used by reports when runs.scratch_gb is populated and (for
+	// persistent) when project_storage_snapshots rows exist.
+	StorageScratchGbHour     RateValue
+	StoragePersistentGbMonth RateValue
+	// StorageEgressGb is non-zero only when an external cross-boundary
+	// transfer happens (cloud bridge); on-prem reports leave it at zero.
+	StorageEgressGb RateValue
 }
 
 // EmissionsRates is the emissions section of a RateCard.
@@ -61,6 +70,13 @@ type EmissionsRates struct {
 	GpuW                 RateValue
 	MemoryGbW            RateValue
 	Pue                  RateValue
+	// Storage emissions — split mirrors CostRates. The amplification
+	// factor captures erasure-coding overhead (3+1 default → 1.33×) so
+	// future configurations override it without re-deriving per-drive
+	// wattage.
+	StorageScratchWPerTb    RateValue
+	StoragePersistentWPerTb RateValue
+	StorageEcAmplification  RateValue
 }
 
 // RateCard is the resolved set of rates for a (context, invocation) pair.

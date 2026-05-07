@@ -51,8 +51,8 @@ func readContextBlocks(data []byte, contextName string) (map[string]string, map[
 				{"cpu_hour", KeyCostCpuHour},
 				{"gpu_hour", KeyCostGpuHour},
 				{"memory_gb_hour", KeyCostMemoryGbHour},
-				{"storage_gb_month", KeyCostStorageGbMo},
-				{"egress_gb", KeyCostEgressGb},
+				{"storage_gb_month", KeyCostStoragePersistentGbMonth},
+				{"egress_gb", KeyCostStorageEgressGb},
 			} {
 				if v := mapKey(cost, k.yamlKey); v != nil && v.Kind == yaml.ScalarNode {
 					acct[k.ourKey] = v.Value
@@ -147,10 +147,10 @@ func applyAccountingEdits(block *yaml.Node, setKV map[string]string, unsetKeys [
 		case KeyCostMemoryGbHour:
 			cost := ensureMap(block, "cost")
 			setScalar(cost, "memory_gb_hour", v)
-		case KeyCostStorageGbMo:
+		case KeyCostStoragePersistentGbMonth:
 			cost := ensureMap(block, "cost")
 			setScalar(cost, "storage_gb_month", v)
-		case KeyCostEgressGb:
+		case KeyCostStorageEgressGb:
 			cost := ensureMap(block, "cost")
 			setScalar(cost, "egress_gb", v)
 		}
@@ -172,11 +172,11 @@ func applyAccountingEdits(block *yaml.Node, setKV map[string]string, unsetKeys [
 			if cost := mapKey(block, "cost"); cost != nil {
 				deleteKey(cost, "memory_gb_hour")
 			}
-		case KeyCostStorageGbMo:
+		case KeyCostStoragePersistentGbMonth:
 			if cost := mapKey(block, "cost"); cost != nil {
 				deleteKey(cost, "storage_gb_month")
 			}
-		case KeyCostEgressGb:
+		case KeyCostStorageEgressGb:
 			if cost := mapKey(block, "cost"); cost != nil {
 				deleteKey(cost, "egress_gb")
 			}

@@ -23,12 +23,22 @@ const (
 	ZADefaultCostMemoryGbHour = 0.05 // ZAR per GB·hour
 	ZADefaultCurrency         = "ZAR"
 
+	// Storage cost rates (see brainstorms/emissions-accounting/2026-05-07-storage-accounting.md).
+	ZADefaultCostStorageScratchGbHour     = 0.0001 // ZAR per GB·hour, NVMe scratch (capex amortised + power)
+	ZADefaultCostStoragePersistentGbMonth = 0.10   // ZAR per GB·month, RustFS HDD JBOD with 3+1 EC
+	ZADefaultCostStorageEgressGb          = 0.0    // ZAR per GB egress; non-zero only with cloud bridge
+
 	// Emissions coefficients.
-	ZADefaultGridFactorGco2PerKwh = 900.0   // Eskom IAR 2023 average (g CO2e / kWh)
-	ZADefaultCpuW                 = 12.0    // CCF v3 coefficient (W per CPU)
-	ZADefaultGpuW                 = 250.0   // CCF v3 coefficient (W per GPU)
-	ZADefaultMemoryGbW            = 0.3725  // CCF v3 coefficient (W per GB DRAM)
-	ZADefaultPue                  = 1.5     // generic on-prem average
+	ZADefaultGridFactorGco2PerKwh = 900.0  // Eskom IAR 2023 average (g CO2e / kWh)
+	ZADefaultCpuW                 = 12.0   // CCF v3 coefficient (W per CPU)
+	ZADefaultGpuW                 = 250.0  // CCF v3 coefficient (W per GPU)
+	ZADefaultMemoryGbW            = 0.3725 // CCF v3 coefficient (W per GB DRAM)
+	ZADefaultPue                  = 1.5    // generic on-prem average
+
+	// Storage emissions coefficients.
+	ZADefaultStorageScratchWPerTb    = 8.0  // W per TB, NVMe SSD active+amortised (Samsung PM9A3 envelope)
+	ZADefaultStoragePersistentWPerTb = 4.0  // W per TB, HDD idle-dominated (WD Ultrastar DC HC560)
+	ZADefaultStorageEcAmplification  = 1.33 // 3+1 erasure coding default; overrideable for replication / wider stripes
 )
 
 // cliReleaseDate is set at build time via -ldflags
@@ -97,6 +107,36 @@ func pueCitation() string {
 	return "Uptime Institute 2023 Global Data Center Survey — generic on-prem average" + dateSuffixSemicolon()
 }
 
+// storageScratchCostCitation cites the NVMe scratch cost derivation.
+func storageScratchCostCitation() string {
+	return "amortised enterprise NVMe (4TB SSD ~R8k, 5y, ~6W active) + R3/kWh power" + dateSuffixSemicolon()
+}
+
+// storagePersistentCostCitation cites the RustFS HDD JBOD cost derivation.
+func storagePersistentCostCitation() string {
+	return "RustFS 24-bay HDD JBOD with 3+1 EC, 5y amortisation + power" + dateSuffixSemicolon()
+}
+
+// storageEgressCitation marks egress as a cross-boundary trigger.
+func storageEgressCitation() string {
+	return "0 on-prem (Tailscale); set non-zero only when crossing an external boundary"
+}
+
+// storageScratchEmissionsCitation cites the NVMe wattage envelope.
+func storageScratchEmissionsCitation() string {
+	return "Samsung PM9A3 typical-active envelope amortised over capacity (controller + PCIe share included)" + dateSuffixSemicolon()
+}
+
+// storagePersistentEmissionsCitation cites the HDD wattage envelope.
+func storagePersistentEmissionsCitation() string {
+	return "WD Ultrastar DC HC560 idle-dominated (object workload)" + dateSuffixSemicolon()
+}
+
+// storageEcCitation cites the erasure-coding amplification default.
+func storageEcCitation() string {
+	return "RustFS 3+1 erasure coding default; override for replication / wider stripes"
+}
+
 // currencyCitation is the citation surfaced for the default currency tag.
 func currencyCitation() string {
 	return "SA market default"
@@ -127,9 +167,18 @@ func ZADefaults() RateCard {
 				Value: ZADefaultCostMemoryGbHour, Source: SourceBuiltIn, UpdatedAt: now,
 				Citation: costCitation(),
 			},
-			// Storage + egress are reserved (Phase 2). Not used by reports.
-			StorageGbMonth: RateValue{Source: SourceBuiltIn, UpdatedAt: now},
-			EgressGb:       RateValue{Source: SourceBuiltIn, UpdatedAt: now},
+			StorageScratchGbHour: RateValue{
+				Value: ZADefaultCostStorageScratchGbHour, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: storageScratchCostCitation(),
+			},
+			StoragePersistentGbMonth: RateValue{
+				Value: ZADefaultCostStoragePersistentGbMonth, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: storagePersistentCostCitation(),
+			},
+			StorageEgressGb: RateValue{
+				Value: ZADefaultCostStorageEgressGb, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: storageEgressCitation(),
+			},
 		},
 		Emissions: EmissionsRates{
 			GridFactorGco2PerKwh: RateValue{
@@ -151,6 +200,18 @@ func ZADefaults() RateCard {
 			Pue: RateValue{
 				Value: ZADefaultPue, Source: SourceBuiltIn, UpdatedAt: now,
 				Citation: pueCitation(),
+			},
+			StorageScratchWPerTb: RateValue{
+				Value: ZADefaultStorageScratchWPerTb, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: storageScratchEmissionsCitation(),
+			},
+			StoragePersistentWPerTb: RateValue{
+				Value: ZADefaultStoragePersistentWPerTb, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: storagePersistentEmissionsCitation(),
+			},
+			StorageEcAmplification: RateValue{
+				Value: ZADefaultStorageEcAmplification, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: storageEcCitation(),
 			},
 		},
 	}
