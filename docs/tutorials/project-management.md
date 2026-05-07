@@ -12,7 +12,7 @@ approaches, dead-ending failed attempts with reasoning preserved, citing
 upstream insights, auto-attaching pipeline runs, project-level rollups for
 status reviews, and exporting for methods sections.
 
-> **Persona:** Abhi, group-admin of `su-mbhg-tbgenomics`. Three months of work
+> **Persona:** Abhi, group-admin of `bioinformatics`. Three months of work
 > on a *Mycobacterium tuberculosis* cohort: QC pipeline selection → variant
 > calling → resistance profiling → manuscript draft.
 
@@ -28,11 +28,11 @@ each investigation is a self-contained unit of inquiry.
 
 ```bash
 # Adopt the right context (this is who Abhi is on the cluster)
-abc context use su-mbhg-tbgenomics_abhi
+abc context use bioinformatics_abhi
 
 # Create the project
 abc project create "TB resistance cohort 2026" \
-  --slug=tb-cohort-2026 \
+  --name=tb-cohort-2026 \
   --tag=cohort \
   --tag=manuscript-target
 
@@ -42,7 +42,7 @@ abc project use tb-cohort-2026
 abc project show tb-cohort-2026
 ```
 
-The slug `tb-cohort-2026` is now your project handle. You'll see it in the
+The name `tb-cohort-2026` is now your project handle. You'll see it in the
 auto-attach banner of every pipeline / job submission.
 
 ## Part 2 — Pipeline QC benchmarking with branching (15 min)
@@ -124,6 +124,12 @@ The output (also pastable into [mermaid.live](https://mermaid.live)):
 ---
 title: warm-cedar-2 — Choose a QC pipeline for the cohort
 ---
+%%{init: {'themeVariables': {
+  'git0':'#a8c590','git1':'#a8c0dc','git2':'#e0a8a0','git3':'#c8c5be',
+  'gitBranchLabel0':'#1a1a1a','gitBranchLabel1':'#1a1a1a',
+  'gitBranchLabel2':'#1a1a1a','gitBranchLabel3':'#1a1a1a',
+  'commitLabelColor':'#1a1a1a','commitLabelBackground':'#fafaf7'
+}}}%%
 gitGraph
    commit id: "A-hypothesis"  tag: "hypothesis"  type: HIGHLIGHT
    commit id: "RUN-fastp"     tag: "qc-fastp@2.1.0"
@@ -244,6 +250,12 @@ abc investigation visualize --project tb-cohort-2026 --type=kanban \
 ---
 title: tb-cohort-2026 — kanban
 ---
+%%{init: {'themeVariables': {
+  'cScale0':'#e3f1d9','cScaleLabel0':'#1a1a1a',
+  'cScale1':'#dde8f5','cScaleLabel1':'#1a1a1a',
+  'cScale2':'#fbe9e7','cScaleLabel2':'#1a1a1a',
+  'cScale3':'#ececea','cScaleLabel3':'#1a1a1a'
+}}}%%
 kanban
   Active
     cosmic-pelican-7[cosmic-pelican-7 — Resistance profiling: TBProfiler vs Mykrobe]
@@ -265,6 +277,18 @@ abc investigation visualize --project tb-cohort-2026 --type=gantt \
 ---
 title: tb-cohort-2026 — investigation timeline
 ---
+%%{init: {'themeVariables': {
+  'cScale0':'#e3f1d9','cScaleLabel0':'#1a1a1a',
+  'cScale1':'#dde8f5','cScaleLabel1':'#1a1a1a',
+  'cScale2':'#fbe9e7','cScaleLabel2':'#1a1a1a',
+  'cScale3':'#ececea','cScaleLabel3':'#1a1a1a',
+  'taskBkgColor':'#dde8f5','taskBorderColor':'#2c5a96',
+  'doneTaskBkgColor':'#dde8f5','doneTaskBorderColor':'#2c5a96',
+  'activeTaskBkgColor':'#e3f1d9','activeTaskBorderColor':'#3f7a2a',
+  'critBkgColor':'#fbe9e7','critBorderColor':'#a8332a',
+  'sectionBkgColor':'#ffffff','altSectionBkgColor':'#f1efea',
+  'gridColor':'#e6e4dc'
+}}}%%
 gantt
    title TB resistance cohort 2026
    dateFormat YYYY-MM-DD
@@ -298,15 +322,16 @@ flowchart LR
    I_tidy -.->|merged| I_bright
    I_bright -.->|cites A-002| I_warm
 
-   classDef active fill:#dcfce7,stroke:#16a34a
-   classDef merged fill:#dbeafe,stroke:#3b82f6
-   classDef deadend fill:#fee2e2,stroke:#dc2626,stroke-dasharray:3 3
-   classDef archived fill:#f3f4f6,stroke:#6b7280
-   classDef run fill:#dcfce7,stroke:#16a34a
-   classDef hyp fill:#dbeafe,stroke:#3b82f6
-   classDef issue fill:#fee2e2,stroke:#dc2626
-   classDef insight fill:#dbeafe,stroke:#3b82f6
-   classDef inv fill:#dbeafe,stroke:#3b82f6
+   classDef active   fill:#e3f1d9,stroke:#3f7a2a,color:#1a1a1a
+   classDef merged   fill:#dde8f5,stroke:#2c5a96,color:#1a1a1a
+   classDef deadend  fill:#fbe9e7,stroke:#a8332a,stroke-dasharray:3 3,color:#1a1a1a
+   classDef archived fill:#ececea,stroke:#6b6a64,color:#1a1a1a
+   classDef run      fill:#e3f1d9,stroke:#3f7a2a,color:#1a1a1a
+   classDef hyp      fill:#dde8f5,stroke:#2c5a96,color:#1a1a1a
+   classDef issue    fill:#fbe9e7,stroke:#a8332a,color:#1a1a1a
+   classDef insight  fill:#dde8f5,stroke:#2c5a96,color:#1a1a1a
+   classDef inv      fill:#dde8f5,stroke:#2c5a96,color:#1a1a1a
+   classDef obs      fill:#ececea,stroke:#6b6a64,color:#1a1a1a
 
    class I_warm,I_bright,I_tidy merged
    class I_cosmic active
@@ -366,7 +391,7 @@ When the project ends, you have two choices:
 
 ```bash
 abc investigation list --project=tb-cohort-2026 \
-  --status=active --output=json | jq -r '.[].slug' | \
+  --status=active --output=json | jq -r '.[].name' | \
   while read s; do abc investigation tag $s --add=archived; done
 ```
 
@@ -383,6 +408,152 @@ Archive is the recommended path. Even after the manuscript ships, future
 Replay with `abc investigation visualize warm-cedar-2 --type=flow` two years
 later and the reasoning chain — including the Falco dead-end — comes right
 back.
+
+## Reference: all six view types
+
+The tutorial showed `branches`, `kanban`, `gantt`, and project-level `lineage`. The
+remaining two — `timeline` and `flow` — are alternate projections of the same
+SQLite state. Plus a single-investigation gantt for the warm-cedar-2 branch
+topology and the dead-end-branch pattern for bright-otter-3.
+
+### `--type=timeline` (chronological)
+
+```bash
+abc investigation visualize warm-cedar-2 --type=timeline
+```
+
+```mermaid
+timeline
+   title warm-cedar-2 timeline
+   2026-02-10 : hypothesis "fastp with adaptor trimming should be sufficient"
+              : RUN-fastp qc-fastp@2.1.0
+              : observation "Q30 96.4%, ~9 CPU-min/sample"
+              : insight "MultiQC aggregation non-negotiable"
+   2026-02-13 : branch quiet-falcon-9
+              : RUN-falco qc-falco@1.4
+              : observation "11x faster than FastQC"
+              : issue "crashes on >300M-read samples"
+              : dead-end "read-count limit blocks deep-coverage cohort"
+   2026-02-25 : decision "adopt fastp + MultiQC"
+              : insight "MultiQC is the cohort-overview tool"
+```
+
+### `--type=flow` (reasoning shape)
+
+```bash
+abc investigation visualize warm-cedar-2 --type=flow
+```
+
+```mermaid
+---
+title: warm-cedar-2 flow
+---
+flowchart TD
+   H1["hypothesis: fastp with adaptor trimming should be sufficient"]:::hyp
+   R1["RUN-fastp qc-fastp@2.1.0"]:::run
+   O1["observation: Q30 96.4%, ~9 CPU-min/sample"]:::obs
+   N1["insight: MultiQC aggregation non-negotiable"]:::insight
+   R2["RUN-falco qc-falco@1.4"]:::run
+   I1["issue: crashes on >300M-read samples"]:::issue
+   D1["dead-end: read-count limit blocks deep-coverage cohort"]:::issue
+   D2["decision: adopt fastp + MultiQC"]:::insight
+   N2["insight: MultiQC is the cohort-overview tool"]:::insight
+
+   H1 --> R1 --> O1 --> N1
+   N1 -.->|branch| R2 --> I1 --> D1
+   N1 --> D2 --> N2
+
+   classDef hyp     fill:#dde8f5,stroke:#2c5a96,color:#1a1a1a
+   classDef run     fill:#e3f1d9,stroke:#3f7a2a,color:#1a1a1a
+   classDef obs     fill:#ececea,stroke:#6b6a64,color:#1a1a1a
+   classDef issue   fill:#fbe9e7,stroke:#a8332a,color:#1a1a1a
+   classDef insight fill:#dde8f5,stroke:#2c5a96,color:#1a1a1a
+```
+
+### `--type=gantt` on a single investigation (Main + Branches)
+
+```bash
+abc investigation visualize warm-cedar-2 --type=gantt
+```
+
+```mermaid
+---
+title: warm-cedar-2 — branches over time
+---
+%%{init: {'themeVariables': {
+  'taskBkgColor':'#dde8f5','taskBorderColor':'#2c5a96',
+  'doneTaskBkgColor':'#dde8f5','doneTaskBorderColor':'#2c5a96',
+  'activeTaskBkgColor':'#e3f1d9','activeTaskBorderColor':'#3f7a2a',
+  'critBkgColor':'#fbe9e7','critBorderColor':'#a8332a',
+  'sectionBkgColor':'#ffffff','altSectionBkgColor':'#f1efea',
+  'gridColor':'#e6e4dc'
+}}}%%
+gantt
+   title Choose a QC pipeline for the cohort
+   dateFormat YYYY-MM-DD
+   axisFormat %Y-%m-%d
+   section Main
+   warm-cedar-2 — Choose a QC pipeline :done, 2026-02-10, 2026-02-25
+   section Branches
+   quiet-falcon-9 — falco speed comparison :crit, 2026-02-13, 2026-02-19
+```
+
+### `--type=branches` with a dead-end branch (no merge)
+
+The bright-otter-3 investigation tried Strelka in parallel; it dead-ended
+with the reason preserved. Renders as an orphan branch with a Mermaid
+`%%` comment beneath it:
+
+```bash
+abc investigation visualize bright-otter-3 --type=branches
+```
+
+```mermaid
+---
+title: bright-otter-3 — Variant calling Q1 cohort (dead-end pattern)
+---
+%%{init: {'themeVariables': {
+  'git0':'#a8c590','git1':'#a8c0dc','git2':'#e0a8a0','git3':'#c8c5be',
+  'gitBranchLabel0':'#1a1a1a','gitBranchLabel1':'#1a1a1a',
+  'gitBranchLabel2':'#1a1a1a','gitBranchLabel3':'#1a1a1a',
+  'commitLabelColor':'#1a1a1a','commitLabelBackground':'#fafaf7'
+}}}%%
+gitGraph
+   commit id: "A-hypothesis"   tag: "hypothesis"  type: HIGHLIGHT
+   commit id: "RUN-deepvariant" tag: "deepvariant@1.6.1"
+   commit id: "A-observation"  tag: "observation"
+   branch tidy-beaver-5
+   commit id: "RUN-gatk"       tag: "gatk@4.5.0"
+   commit id: "A-issue"        tag: "issue"       type: REVERSE
+   commit id: "A-deadend"      tag: "dead-end"    type: REVERSE
+   %% branch tidy-beaver-5 abandoned: "memory ceiling and concordance lower than DeepVariant"
+   checkout main
+   commit id: "A-decision"     tag: "decision"    type: HIGHLIGHT
+```
+
+(In the actual workflow shown earlier, `tidy-beaver-5` was the GATK
+*comparison* that successfully merged. The block above shows the
+dead-end pattern for completeness — substitute any failed comparison.)
+
+### Investigation lifecycle (static reference)
+
+The `investigations.status` field is a small state machine. Embedded
+here as documentation; not generated by the CLI:
+
+```mermaid
+---
+title: Investigation lifecycle
+---
+stateDiagram-v2
+   [*] --> active : create
+   active --> active : annotate / branch
+   active --> merged : merge --into
+   active --> dead_end : dead-end --reason
+   active --> archived : (manual)
+   merged --> [*]
+   dead_end --> [*]
+   archived --> [*]
+```
 
 ## What you've practised
 
