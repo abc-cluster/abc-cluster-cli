@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -81,6 +82,9 @@ func runEmissionsShow(cmd *cobra.Command, _ []string) error {
 	printRateF(out, "gpu_w", card.Emissions.GpuW)
 	printRateF(out, "memory_gb_w", card.Emissions.MemoryGbW)
 	printRateF(out, "pue", card.Emissions.Pue)
+	printRateF(out, "storage_scratch_w_per_tb", card.Emissions.StorageScratchWPerTb)
+	printRateF(out, "storage_persistent_w_per_tb", card.Emissions.StoragePersistentWPerTb)
+	printRateF(out, "storage_ec_amplification", card.Emissions.StorageEcAmplification)
 	return nil
 }
 
@@ -102,7 +106,13 @@ func runEmissionsSet(cmd *cobra.Command, args []string) error {
 		}
 		setKV[k] = v
 	}
-	_, _ = cfg.Create()
+	// Only invoke Create() when the config file is missing — calling it
+	// unconditionally would round-trip through the typed Config struct
+	// which strips unknown YAML blocks (accounting:, emissions:) that
+	// previous invocations may have written.
+	if _, err := os.Stat(cfg.DefaultConfigPath()); os.IsNotExist(err) {
+		_, _ = cfg.Create()
+	}
 	if err := acct.SetContextBlock("emissions", contextName, setKV, nil); err != nil {
 		return err
 	}

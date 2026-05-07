@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
@@ -79,6 +80,9 @@ func runAccountingShow(cmd *cobra.Command, _ []string) error {
 	printRateF(out, "cost.cpu_hour", card.Cost.CpuHour)
 	printRateF(out, "cost.gpu_hour", card.Cost.GpuHour)
 	printRateF(out, "cost.memory_gb_hour", card.Cost.MemoryGbHour)
+	printRateF(out, "cost.storage_scratch_gb_hour", card.Cost.StorageScratchGbHour)
+	printRateF(out, "cost.storage_persistent_gb_month", card.Cost.StoragePersistentGbMonth)
+	printRateF(out, "cost.storage_egress_gb", card.Cost.StorageEgressGb)
 	return nil
 }
 
@@ -102,7 +106,13 @@ func runAccountingSet(cmd *cobra.Command, args []string) error {
 		setKV[k] = v
 	}
 	// Ensure the config file at least exists (so contextName resolves).
-	_, _ = cfg.Create()
+	// Only invoke Create() when the file is missing — calling it
+	// unconditionally would round-trip through the typed Config struct
+	// which strips unknown YAML blocks (accounting:, emissions:) that
+	// previous invocations may have written.
+	if _, err := os.Stat(cfg.DefaultConfigPath()); os.IsNotExist(err) {
+		_, _ = cfg.Create()
+	}
 	if err := acct.SetContextBlock("accounting", contextName, setKV, nil); err != nil {
 		return err
 	}

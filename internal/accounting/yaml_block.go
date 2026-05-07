@@ -15,10 +15,12 @@ import (
 //
 //	currency
 //	cost.cpu_hour, cost.gpu_hour, cost.memory_gb_hour
-//	cost.storage_gb_month, cost.egress_gb (Phase 2 reserved)
+//	cost.storage_scratch_gb_hour, cost.storage_persistent_gb_month,
+//	cost.storage_egress_gb
 //
 // The emissions block recognises grid_factor_gco2_per_kwh, cpu_w, gpu_w,
-// memory_gb_w, pue.
+// memory_gb_w, pue, storage_scratch_w_per_tb, storage_persistent_w_per_tb,
+// and storage_ec_amplification.
 func readContextBlocks(data []byte, contextName string) (map[string]string, map[string]string, error) {
 	acct := map[string]string{}
 	em := map[string]string{}
@@ -51,8 +53,9 @@ func readContextBlocks(data []byte, contextName string) (map[string]string, map[
 				{"cpu_hour", KeyCostCpuHour},
 				{"gpu_hour", KeyCostGpuHour},
 				{"memory_gb_hour", KeyCostMemoryGbHour},
-				{"storage_gb_month", KeyCostStoragePersistentGbMonth},
-				{"egress_gb", KeyCostStorageEgressGb},
+				{"storage_scratch_gb_hour", KeyCostStorageScratchGbHour},
+				{"storage_persistent_gb_month", KeyCostStoragePersistentGbMonth},
+				{"storage_egress_gb", KeyCostStorageEgressGb},
 			} {
 				if v := mapKey(cost, k.yamlKey); v != nil && v.Kind == yaml.ScalarNode {
 					acct[k.ourKey] = v.Value
@@ -61,7 +64,10 @@ func readContextBlocks(data []byte, contextName string) (map[string]string, map[
 		}
 	}
 	if e := mapKey(ctx, "emissions"); e != nil && e.Kind == yaml.MappingNode {
-		for _, k := range []string{KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue} {
+		for _, k := range []string{
+			KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue,
+			KeyStorageScratchWPerTb, KeyStoragePersistentWPerTb, KeyStorageEcAmplification,
+		} {
 			if v := mapKey(e, k); v != nil && v.Kind == yaml.ScalarNode {
 				em[k] = v.Value
 			}
@@ -147,12 +153,15 @@ func applyAccountingEdits(block *yaml.Node, setKV map[string]string, unsetKeys [
 		case KeyCostMemoryGbHour:
 			cost := ensureMap(block, "cost")
 			setScalar(cost, "memory_gb_hour", v)
+		case KeyCostStorageScratchGbHour:
+			cost := ensureMap(block, "cost")
+			setScalar(cost, "storage_scratch_gb_hour", v)
 		case KeyCostStoragePersistentGbMonth:
 			cost := ensureMap(block, "cost")
-			setScalar(cost, "storage_gb_month", v)
+			setScalar(cost, "storage_persistent_gb_month", v)
 		case KeyCostStorageEgressGb:
 			cost := ensureMap(block, "cost")
-			setScalar(cost, "egress_gb", v)
+			setScalar(cost, "storage_egress_gb", v)
 		}
 	}
 	// Unset.
@@ -172,13 +181,17 @@ func applyAccountingEdits(block *yaml.Node, setKV map[string]string, unsetKeys [
 			if cost := mapKey(block, "cost"); cost != nil {
 				deleteKey(cost, "memory_gb_hour")
 			}
+		case KeyCostStorageScratchGbHour:
+			if cost := mapKey(block, "cost"); cost != nil {
+				deleteKey(cost, "storage_scratch_gb_hour")
+			}
 		case KeyCostStoragePersistentGbMonth:
 			if cost := mapKey(block, "cost"); cost != nil {
-				deleteKey(cost, "storage_gb_month")
+				deleteKey(cost, "storage_persistent_gb_month")
 			}
 		case KeyCostStorageEgressGb:
 			if cost := mapKey(block, "cost"); cost != nil {
-				deleteKey(cost, "egress_gb")
+				deleteKey(cost, "storage_egress_gb")
 			}
 		}
 		// Tidy: remove empty cost map.
@@ -191,13 +204,15 @@ func applyAccountingEdits(block *yaml.Node, setKV map[string]string, unsetKeys [
 func applyEmissionsEdits(block *yaml.Node, setKV map[string]string, unsetKeys []string) {
 	for k, v := range setKV {
 		switch k {
-		case KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue:
+		case KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue,
+			KeyStorageScratchWPerTb, KeyStoragePersistentWPerTb, KeyStorageEcAmplification:
 			setScalar(block, k, v)
 		}
 	}
 	for _, k := range unsetKeys {
 		switch k {
-		case KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue:
+		case KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue,
+			KeyStorageScratchWPerTb, KeyStoragePersistentWPerTb, KeyStorageEcAmplification:
 			deleteKey(block, k)
 		}
 	}
