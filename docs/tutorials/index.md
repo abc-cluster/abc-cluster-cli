@@ -8,13 +8,12 @@ Hands-on exercises for the full ABC CLI workflow. Each exercise takes roughly te
 
 | Exercise | Topic | Cluster needed? |
 |---|---|---|
-| [Hands-on walkthrough](./demo) §1 | Workspace, context, crypt | No |
-| [Hands-on walkthrough](./demo) §2 | Encrypted secrets | No |
-| [Hands-on walkthrough](./demo) §3 | File encrypt / decrypt | No |
-| [Hands-on walkthrough](./demo) §4 | TUS upload concepts | No |
-| [Hands-on walkthrough](./demo) §5 | Download workflows | Yes |
-| [Hands-on walkthrough](./demo) §6 | Large-file upload | Yes |
-| [Hands-on walkthrough](./demo) §7 | `job run`, `#ABC` directives, Nomad | Yes (for `--submit`) |
-| [Hands-on walkthrough](./demo) §8 | `pipeline`, `module`, `infra` overview | No |
-| [Your first investigation](./first-investigation) | `abc project` + `abc investigation` end-to-end | No |
-| [Bioinformatics project management](./bioinformatics-project-management) | Multi-investigation cohort workflow with citations + manuscript export | No (illustrative cluster runs only) |
+| [Project management](./project-management) | Multi-investigation cohort workflow with citations + manuscript export | No (illustrative cluster runs only) |
+| [Interacting with the cluster](./demo) §1 | Workspace, context, crypt | No |
+| [Interacting with the cluster](./demo) §2 | Encrypted secrets | No |
+| [Interacting with the cluster](./demo) §3 | File encrypt / decrypt | No |
+| [Interacting with the cluster](./demo) §4 | TUS upload concepts | No |
+| [Interacting with the cluster](./demo) §5 | Download workflows | Yes |
+| [Interacting with the cluster](./demo) §6 | Large-file upload | Yes |
+| [Interacting with the cluster](./demo) §7 | `job run`, `#ABC` directives, Nomad | Yes (for `--submit`) |
+| [Interacting with the cluster](./demo) §8 | `pipeline`, `module`, `infra` overview | No |

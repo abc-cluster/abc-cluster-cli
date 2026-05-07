@@ -1,8 +1,9 @@
 ---
-sidebar_position: 4
+sidebar_position: 2
+title: Project management
 ---
 
-# Bioinformatics project management
+# Project management
 
 This tutorial walks through a realistic multi-month research project using
 `abc project` and `abc investigation` end-to-end. It exercises the verbs you'll
@@ -11,7 +12,7 @@ approaches, dead-ending failed attempts with reasoning preserved, citing
 upstream insights, auto-attaching pipeline runs, project-level rollups for
 status reviews, and exporting for methods sections.
 
-> **Persona:** Hanno, group-admin of `su-mbhg-tbgenomics`. Three months of work
+> **Persona:** Abhi, group-admin of `su-mbhg-tbgenomics`. Three months of work
 > on a *Mycobacterium tuberculosis* cohort: QC pipeline selection → variant
 > calling → resistance profiling → manuscript draft.
 
@@ -26,8 +27,8 @@ A project is the umbrella. Everything in this tutorial lives under one project;
 each investigation is a self-contained unit of inquiry.
 
 ```bash
-# Adopt the right context (this is who Hanno is on the cluster)
-abc context use su-mbhg-tbgenomics_hanno
+# Adopt the right context (this is who Abhi is on the cluster)
+abc context use su-mbhg-tbgenomics_abhi
 
 # Create the project
 abc project create "TB resistance cohort 2026" \
@@ -46,7 +47,7 @@ auto-attach banner of every pipeline / job submission.
 
 ## Part 2 — Pipeline QC benchmarking with branching (15 min)
 
-The first decision: which QC pipeline to standardise on? Hanno has three
+The first decision: which QC pipeline to standardise on? Abhi has three
 candidates and wants to compare them.
 
 ```bash
@@ -98,7 +99,7 @@ abc investigation dead-end quiet-falcon-9 \
   --reason="cannot handle high-coverage samples; fastp covers our use case at acceptable speed"
 ```
 
-Now Hanno commits to fastp:
+Now Abhi commits to fastp:
 
 ```bash
 abc investigation use warm-cedar-2
@@ -117,14 +118,35 @@ Render to confirm what was decided:
 abc investigation visualize warm-cedar-2 --type=branches > qc-decision.mmd
 ```
 
-Paste into [mermaid.live](https://mermaid.live) — main branch with the fastp
-chain HIGHLIGHTed (decision + insight commits in green), and the abandoned
-`quiet-falcon-9` branch shown as orphan with the dead-end reason as a Mermaid
-comment.
+The output (also pastable into [mermaid.live](https://mermaid.live)):
+
+```mermaid
+---
+title: warm-cedar-2 — Choose a QC pipeline for the cohort
+---
+gitGraph
+   commit id: "A-hypothesis"  tag: "hypothesis"  type: HIGHLIGHT
+   commit id: "RUN-fastp"     tag: "qc-fastp@2.1.0"
+   commit id: "A-observation" tag: "observation"
+   commit id: "A-insight"     tag: "insight"     type: HIGHLIGHT
+   commit id: "A-decision"    tag: "decision"    type: HIGHLIGHT
+   commit id: "A-insight-2"   tag: "insight"     type: HIGHLIGHT
+   branch quiet-falcon-9
+   commit id: "RUN-falco"     tag: "qc-falco@1.4"
+   commit id: "A-falco-obs"   tag: "observation"
+   commit id: "A-falco-issue" tag: "issue"       type: REVERSE
+   commit id: "A-deadend"     tag: "dead-end"    type: REVERSE
+   %% branch quiet-falcon-9 abandoned: "cannot handle high-coverage samples; fastp covers our use case"
+   checkout main
+```
+
+Main branch shows the fastp chain (HIGHLIGHTed decision + insight commits).
+The abandoned `quiet-falcon-9` branch sits visually orphan with the
+dead-end reason as a Mermaid `%%` comment.
 
 ## Part 3 — Variant calling that cites the QC insight (15 min)
 
-Three weeks later. Hanno's running variant calling. Multiple options: GATK
+Three weeks later. Abhi's running variant calling. Multiple options: GATK
 HaplotypeCaller, DeepVariant, BCFtools call. He cites an insight from the QC
 investigation:
 
@@ -210,26 +232,86 @@ until the Mykrobe leg lands.
 
 ## Part 5 — Project-level rollups (5 min)
 
-Now the manuscript is being drafted. Hanno's supervisor wants a status review
+Now the manuscript is being drafted. Abhi's supervisor wants a status review
 of the whole project. Project-level views answer that:
 
 ```bash
-# Kanban board: all investigations grouped by status
 abc investigation visualize --project tb-cohort-2026 --type=kanban \
   > status.mmd
+```
 
-# Gantt timeline: when each investigation started/finished
+```mermaid
+---
+title: tb-cohort-2026 — kanban
+---
+kanban
+  Active
+    cosmic-pelican-7[cosmic-pelican-7 — Resistance profiling: TBProfiler vs Mykrobe]
+  Merged
+    warm-cedar-2[warm-cedar-2 — Choose a QC pipeline for the cohort]
+    bright-otter-3[bright-otter-3 — Variant calling: GATK vs DeepVariant]
+    tidy-beaver-5[tidy-beaver-5 — GATK comparison]
+  Dead-end
+    quiet-falcon-9[quiet-falcon-9 — falco speed comparison]
+  Archived
+```
+
+```bash
 abc investigation visualize --project tb-cohort-2026 --type=gantt \
   > timeline.mmd
+```
 
-# Lineage: investigations + their citations and outputs
+```mermaid
+---
+title: tb-cohort-2026 — investigation timeline
+---
+gantt
+   title TB resistance cohort 2026
+   dateFormat YYYY-MM-DD
+   axisFormat %Y-%m-%d
+   section Active
+   cosmic-pelican-7 — Resistance profiling :active, 2026-04-22, 2026-05-07
+   section Merged
+   warm-cedar-2 — Choose a QC pipeline      :done, 2026-02-10, 2026-02-25
+   bright-otter-3 — Variant calling         :done, 2026-03-05, 2026-04-15
+   tidy-beaver-5 — GATK comparison          :done, 2026-03-18, 2026-04-12
+   section Dead-end
+   quiet-falcon-9 — falco speed comparison  :crit, 2026-02-13, 2026-02-19
+```
+
+```bash
 abc investigation visualize --project tb-cohort-2026 --type=lineage \
   > lineage.mmd
 ```
 
-The lineage diagram will show the dotted citation arrow from
+```mermaid
+---
+title: tb-cohort-2026 lineage
+---
+flowchart LR
+   I_warm[warm-cedar-2\nQC pipeline choice]
+   I_bright[bright-otter-3\nVariant calling]
+   I_cosmic[cosmic-pelican-7\nResistance profiling]
+   I_tidy[tidy-beaver-5\nGATK comparison]
+   I_quiet[quiet-falcon-9\nfalco speed comparison]
+
+   I_tidy -.->|merged| I_bright
+   I_bright -.->|cites A-002| I_warm
+
+   classDef merged   fill:#dbeafe,stroke:#3b82f6
+   classDef active   fill:#dcfce7,stroke:#16a34a,stroke-width:3px
+   classDef deadend  fill:#fee2e2,stroke:#dc2626,stroke-dasharray:3 3
+
+   class I_warm,I_bright,I_tidy merged
+   class I_cosmic active
+   class I_quiet deadend
+```
+
+The lineage diagram shows the dotted citation arrow from
 `bright-otter-3 → warm-cedar-2:A-002` — visual proof that the variant-calling
-hypothesis was grounded in the QC observation.
+hypothesis was grounded in the QC observation. The merge arrow from
+`tidy-beaver-5 → bright-otter-3` records that GATK was compared and the
+finding rolled up to the parent investigation.
 
 Paste any `.mmd` file into [mermaid.live](https://mermaid.live), or pop it in
 the browser directly:
@@ -333,8 +415,8 @@ back.
 
 ## Where to go next
 
-- The shorter [first-investigation](./first-investigation) tutorial drills the
-  same primitives over a single 30-min session.
+- The [Interacting with the cluster](./demo) walkthrough covers the rest of
+  the CLI surface: `abc job run`, file uploads, encryption, contexts.
 - The [`abc investigation` reference](../reference/abc-investigation) covers
   every flag and schema field.
 - The [`abc cache` reference](../reference/local-state) covers the local

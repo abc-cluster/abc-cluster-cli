@@ -17,9 +17,8 @@ const sidebars: SidebarsConfig = {
       label: 'Tutorials',
       link: {type: 'doc', id: 'tutorials/index'},
       items: [
-        {type: 'doc', id: 'tutorials/demo',                              label: 'Hands-on walkthrough'},
-        {type: 'doc', id: 'tutorials/first-investigation',               label: 'Your first investigation'},
-        {type: 'doc', id: 'tutorials/bioinformatics-project-management', label: 'Bioinformatics project management'},
+        {type: 'doc', id: 'tutorials/project-management', label: 'Project management'},
+        {type: 'doc', id: 'tutorials/demo',               label: 'Interacting with the cluster'},
       ],
     },
     {

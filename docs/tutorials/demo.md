@@ -1,14 +1,17 @@
 ---
-sidebar_position: 2
+sidebar_position: 5
+title: Interacting with the cluster
 ---
 
 <!--
   Synced from ../../DEMO.md
   Single source of truth: analysis/packages/abc-cluster-cli/DEMO.md
   Re-sync with: cp ../../DEMO.md tutorials/demo.md && prepend frontmatter
+  Note: the sidebar label is driven by the frontmatter `title` field;
+  the H1 below is kept as the long-form page heading.
 -->
 
-# ABC CLI Hands-On Walkthrough
+# Interacting with the cluster
 
 A focused walkthrough of the **ABC CLI** built around the three things researchers do every day.
 
