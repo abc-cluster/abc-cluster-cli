@@ -89,7 +89,7 @@ func OpenAt(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("set %s: %w", p, err)
 		}
 	}
-	if err := migrations.Apply(db); err != nil {
+	if err := migrations.Apply(db, path, CLIVersion); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply migrations: %w", err)
 	}

@@ -32,6 +32,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -172,6 +173,10 @@ func buildVersionString() string {
 }
 
 func init() {
+	// Couple the build-time CLI version to the state package so the
+	// migrations layer can record which CLI version applied each migration.
+	state.CLIVersion = buildVersionString()
+
 	cfg, err := config.Load()
 	activeCtx := config.Context{}
 	if err == nil {
