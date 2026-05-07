@@ -84,6 +84,7 @@ EXAMPLES
 	cmd.Flags().String("nf-plugin-version", "", "nf-nomad plugin version (default: 0.4.0-edge3)")
 	cmd.Flags().Int("cpu", 0, "Head job CPU in MHz (default: 1000)")
 	cmd.Flags().Int("memory", 0, "Head job memory in MB (default: 2048)")
+	cmd.Flags().Float64("scratch-gb", 0, "Scratch storage reservation (GB) for accounting/emissions reporting")
 
 	// Job identity
 	cmd.Flags().String("name", "", "Override Nomad job name (default: nextflow-head)")
@@ -423,6 +424,7 @@ func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) {
 		return
 	}
 	contextName := state.ActiveContextName()
+	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb")
 	req := state.AutoAttachRequest{
 		ContextName:       contextName,
 		NoProject:         noProj,
@@ -433,6 +435,7 @@ func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) {
 		WorkloadVersion:   spec.Revision,
 		Verb:              "pipeline",
 		Namespace:         spec.Namespace,
+		ScratchGB:         scratchGB,
 	}
 	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing without run record)\n", err)

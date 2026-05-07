@@ -22,6 +22,11 @@ type AutoAttachRequest struct {
 	Workspace          string
 	ParamsJSON         string
 	GpuCount           int // 0 == NULL on insert
+	// ScratchGB is the per-run scratch reservation in GB (0 == NULL on
+	// insert). Source today is the `--scratch-gb` flag on
+	// `abc {pipeline,job,module} run`; the future run-watcher will
+	// overwrite with the actual provisioned disk_mb from the Nomad alloc.
+	ScratchGB          float64
 }
 
 // AutoAttachResult is the resolved row that gets inserted into runs.
@@ -105,6 +110,7 @@ func AutoAttachAndInsertRun(ctx context.Context, db *sql.DB, banner io.Writer, r
 		Namespace:       sql.NullString{String: req.Namespace, Valid: req.Namespace != ""},
 		Workspace:       sql.NullString{String: req.Workspace, Valid: req.Workspace != ""},
 		GpuCount:        sql.NullInt64{Int64: int64(req.GpuCount), Valid: req.GpuCount > 0},
+		ScratchGB:       sql.NullFloat64{Float64: req.ScratchGB, Valid: req.ScratchGB > 0},
 		Status:          "running",
 	}
 	if err := InsertRun(ctx, db, run); err != nil {

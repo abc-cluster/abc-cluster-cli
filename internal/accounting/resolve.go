@@ -12,32 +12,37 @@ import (
 
 // Acceptable keys for the accounting block.
 const (
-	KeyCurrency         = "currency"
-	KeyCostCpuHour      = "cost.cpu_hour"
-	KeyCostGpuHour      = "cost.gpu_hour"
-	KeyCostMemoryGbHour = "cost.memory_gb_hour"
-	KeyCostStorageGbMo  = "cost.storage_gb_month"
-	KeyCostEgressGb     = "cost.egress_gb"
+	KeyCurrency                       = "currency"
+	KeyCostCpuHour                    = "cost.cpu_hour"
+	KeyCostGpuHour                    = "cost.gpu_hour"
+	KeyCostMemoryGbHour               = "cost.memory_gb_hour"
+	KeyCostStorageScratchGbHour       = "cost.storage_scratch_gb_hour"
+	KeyCostStoragePersistentGbMonth   = "cost.storage_persistent_gb_month"
+	KeyCostStorageEgressGb            = "cost.storage_egress_gb"
 )
 
 // Acceptable keys for the emissions block.
 const (
-	KeyGridFactor = "grid_factor_gco2_per_kwh"
-	KeyCpuW       = "cpu_w"
-	KeyGpuW       = "gpu_w"
-	KeyMemoryGbW  = "memory_gb_w"
-	KeyPue        = "pue"
+	KeyGridFactor                = "grid_factor_gco2_per_kwh"
+	KeyCpuW                      = "cpu_w"
+	KeyGpuW                      = "gpu_w"
+	KeyMemoryGbW                 = "memory_gb_w"
+	KeyPue                       = "pue"
+	KeyStorageScratchWPerTb      = "storage_scratch_w_per_tb"
+	KeyStoragePersistentWPerTb   = "storage_persistent_w_per_tb"
+	KeyStorageEcAmplification    = "storage_ec_amplification"
 )
 
 // AccountingKeys lists supported accounting keys (set/show/unset).
 var AccountingKeys = []string{
 	KeyCurrency, KeyCostCpuHour, KeyCostGpuHour, KeyCostMemoryGbHour,
-	KeyCostStorageGbMo, KeyCostEgressGb,
+	KeyCostStorageScratchGbHour, KeyCostStoragePersistentGbMonth, KeyCostStorageEgressGb,
 }
 
 // EmissionsKeys lists supported emissions keys.
 var EmissionsKeys = []string{
 	KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue,
+	KeyStorageScratchWPerTb, KeyStoragePersistentWPerTb, KeyStorageEcAmplification,
 }
 
 var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
@@ -52,7 +57,8 @@ func ValidateAccountingValue(key, raw string) (string, float64, error) {
 			return "", 0, fmt.Errorf("%s: %q is not an ISO-4217 alpha currency code (want ^[A-Z]{3}$)", key, raw)
 		}
 		return raw, 0, nil
-	case KeyCostCpuHour, KeyCostGpuHour, KeyCostMemoryGbHour, KeyCostStorageGbMo, KeyCostEgressGb:
+	case KeyCostCpuHour, KeyCostGpuHour, KeyCostMemoryGbHour,
+		KeyCostStorageScratchGbHour, KeyCostStoragePersistentGbMonth, KeyCostStorageEgressGb:
 		v, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
 			return "", 0, fmt.Errorf("%s: cannot parse %q as a number: %w", key, raw, err)
@@ -78,13 +84,18 @@ func ValidateEmissionsValue(key, raw string) (float64, error) {
 		if v < 0 || v > 2000 {
 			return 0, fmt.Errorf("%s: must be in [0, 2000] g CO2e/kWh (got %v)", key, v)
 		}
-	case KeyCpuW, KeyGpuW, KeyMemoryGbW:
+	case KeyCpuW, KeyGpuW, KeyMemoryGbW,
+		KeyStorageScratchWPerTb, KeyStoragePersistentWPerTb:
 		if v < 0 {
 			return 0, fmt.Errorf("%s: must be ≥ 0 (got %v)", key, v)
 		}
 	case KeyPue:
 		if v < 1.0 || v > 3.0 {
 			return 0, fmt.Errorf("%s: must be in [1.0, 3.0] (got %v)", key, v)
+		}
+	case KeyStorageEcAmplification:
+		if v < 1.0 || v > 5.0 {
+			return 0, fmt.Errorf("%s: must be in [1.0, 5.0] (got %v) — 1.0 = no overhead, ~6.0 caps far-fetched 5x replication", key, v)
 		}
 	default:
 		return 0, fmt.Errorf("unknown emissions key %q (allowed: %v)", key, EmissionsKeys)
@@ -135,10 +146,12 @@ func Resolve(z RateCard, layer1 LayeredOverrides, layer2 FlagOverrides) (RateCar
 				card.Cost.GpuHour = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			case KeyCostMemoryGbHour:
 				card.Cost.MemoryGbHour = RateValue{Value: fv, Source: src, UpdatedAt: ts}
-			case KeyCostStorageGbMo:
-				card.Cost.StorageGbMonth = RateValue{Value: fv, Source: src, UpdatedAt: ts}
-			case KeyCostEgressGb:
-				card.Cost.EgressGb = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyCostStorageScratchGbHour:
+				card.Cost.StorageScratchGbHour = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyCostStoragePersistentGbMonth:
+				card.Cost.StoragePersistentGbMonth = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyCostStorageEgressGb:
+				card.Cost.StorageEgressGb = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			}
 		}
 		// Emissions block.
@@ -158,6 +171,12 @@ func Resolve(z RateCard, layer1 LayeredOverrides, layer2 FlagOverrides) (RateCar
 				card.Emissions.MemoryGbW = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			case KeyPue:
 				card.Emissions.Pue = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyStorageScratchWPerTb:
+				card.Emissions.StorageScratchWPerTb = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyStoragePersistentWPerTb:
+				card.Emissions.StoragePersistentWPerTb = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyStorageEcAmplification:
+				card.Emissions.StorageEcAmplification = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			}
 		}
 		return nil

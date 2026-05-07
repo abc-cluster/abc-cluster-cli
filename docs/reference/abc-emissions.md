@@ -46,10 +46,17 @@ Per
 ```
 Energy_kWh = ((cpu_hours      × cpu_w
             + gpu_hours       × gpu_w
-            + memory_gb_hours × memory_gb_w) / 1000) × pue
+            + memory_gb_hours × memory_gb_w) / 1000
+            + scratch_gb_hours × storage_scratch_w_per_tb / 1000 / 1000
+           ) × pue
 
 CO2_kg     = Energy_kWh × grid_factor_gco2_per_kwh / 1000
 ```
+
+The scratch term divides by 1000 twice — once to convert TB to GB, and
+once to convert W·hour to kWh. Scratch is included only when runs were
+submitted with `--scratch-gb=<N>` (the future run-watcher will overwrite
+with the actual provisioned `disk_mb` from the Nomad alloc).
 
 Source citations for the default coefficients:
 
@@ -60,6 +67,15 @@ Source citations for the default coefficients:
 | `memory_gb_w` | 0.3725 | Cloud Carbon Footprint v3 coefficient set |
 | `pue` | 1.5 | Uptime Institute 2023 Global Data Center Survey — generic on-prem average |
 | `grid_factor_gco2_per_kwh` | 900 | Eskom Integrated Annual Report 2023 (Greentech VP doc 2024-09) |
+| `storage_scratch_w_per_tb` | 8 | Samsung PM9A3 active envelope amortised over capacity |
+| `storage_persistent_w_per_tb` | 4 | WD Ultrastar DC HC560 idle-dominated |
+| `storage_ec_amplification` | 1.33 | RustFS 3+1 erasure coding default |
+
+Persistent storage is project-scoped, not per-run. It surfaces under a
+future `abc emissions storage` verb that joins against periodic
+`project_storage_snapshots` captures — see
+[`design/exploring/permissions-accounting.md`](#) and
+[`brainstorms/emissions-accounting/2026-05-07-storage-accounting.md`](#).
 
 ## Worked example
 
