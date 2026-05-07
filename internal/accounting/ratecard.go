@@ -24,7 +24,7 @@ const (
 	// canonical reports.
 	SourceBuiltIn Source = "built-in"
 	// SourceLocal — overridden in ~/.abc/config.yaml. Per the permissions
-	// model (brainstorms/emissions-accounting/2026-05-07-permissions-model.md)
+	// model (design/exploring/permissions-accounting.md)
 	// these values are ADVISORY ONLY: a future `--signed` report will refuse
 	// to sign if any field resolves to SourceLocal because the user's local
 	// override is not reproducible by anyone else.

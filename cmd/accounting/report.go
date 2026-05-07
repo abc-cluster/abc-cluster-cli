@@ -34,7 +34,7 @@ func runLocalAccountingReport(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--all-contexts requires --currency=<code> in Phase 1; mixed-currency conversion is deferred (see specs/completed/abc-emissions-accounting.md \"Defers\")")
 	}
 	if signed, _ := cmd.Flags().GetBool("signed"); signed {
-		return fmt.Errorf("--signed is not yet implemented; see brainstorms/emissions-accounting/2026-05-07-permissions-model.md (signing requires server-side rate cards which arrive with abc-grove)")
+		return fmt.Errorf("--signed is not yet implemented; see design/exploring/permissions-accounting.md (signing requires server-side rate cards which arrive with abc-grove)")
 	}
 	by, _ := cmd.Flags().GetString("by")
 	output, _ := cmd.Flags().GetString("output")
