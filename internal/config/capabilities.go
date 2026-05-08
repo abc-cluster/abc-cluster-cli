@@ -5,18 +5,49 @@ import "time"
 // Capabilities describes which services are detected on an abc-nodes cluster.
 // Populated by "abc cluster capabilities sync". Treat as read-only in all other commands.
 type Capabilities struct {
-	Storage       string    `yaml:"storage,omitempty"`       // minio | rustfs | none
-	Uploads       bool      `yaml:"uploads,omitempty"`       // tusd running
-	UploadUI      bool      `yaml:"upload_ui,omitempty"`     // uppy running
-	Logging       bool      `yaml:"logging,omitempty"`       // loki running
-	Monitoring    bool      `yaml:"monitoring,omitempty"`    // prometheus running
-	Observability bool      `yaml:"observability,omitempty"` // alloy running
-	Notifications bool      `yaml:"notifications,omitempty"` // ntfy running
-	Secrets       string    `yaml:"secrets,omitempty"`       // nomad | vault | vault+sealed | none
-	Proxy         bool      `yaml:"proxy,omitempty"`         // traefik running
+	// ── abc-nodes-tier shorthand booleans (legacy / seedling) ──
+	Storage       string `yaml:"storage,omitempty"`       // minio | rustfs | none
+	Uploads       bool   `yaml:"uploads,omitempty"`       // tusd running
+	UploadUI      bool   `yaml:"upload_ui,omitempty"`     // uppy running
+	Logging       bool   `yaml:"logging,omitempty"`       // loki running
+	Monitoring    bool   `yaml:"monitoring,omitempty"`    // prometheus running
+	Observability bool   `yaml:"observability,omitempty"` // alloy running
+	Notifications bool   `yaml:"notifications,omitempty"` // ntfy running
+	Secrets       string `yaml:"secrets,omitempty"`       // nomad | vault | vault+sealed | none
+	Proxy         bool   `yaml:"proxy,omitempty"`         // traefik running
 	// Nodes lists per-node driver capabilities. Updated by "abc cluster capabilities sync".
 	Nodes      []NodeCapability `yaml:"nodes,omitempty"`
 	LastSynced time.Time        `yaml:"last_synced,omitempty"`
+
+	// ── per-service-with-version-and-features model (Stage A 2026-05-08) ──
+	// Per `brainstorms/cli-capability-discovery/2026-05-08-capability-probe-and-version-skew.md`.
+	// All `omitempty`: existing config.yaml files load fine without these fields;
+	// next `abc cluster capabilities sync` populates them.
+	SchemaVersion int                          `yaml:"schema_version,omitempty"`
+	Services      map[string]ServiceCapability `yaml:"services,omitempty"`
+	ProbeSource   string                       `yaml:"probe_source,omitempty"`   // khan-aggregate | pulumi-snapshot | nomad-introspection | config-pin | tier-default
+	ProbeWarnings []string                     `yaml:"probe_warnings,omitempty"`
+}
+
+// ServiceCapability is one service's entry in the Capabilities.Services map.
+// Keyed by technical name (e.g. "abc-bitemporal-svc"); the codename
+// (e.g. "Chiranjivi") is in the Codename field for pretty-print rendering.
+type ServiceCapability struct {
+	Codename           string                     `yaml:"codename,omitempty"`
+	Available          bool                       `yaml:"available"`
+	Version            string                     `yaml:"version,omitempty"`             // semver, or migration name for local-state
+	Features           []string                   `yaml:"features,omitempty"`
+	DeprecatedFeatures map[string]DeprecationInfo `yaml:"deprecated_features,omitempty"`
+	Endpoints          map[string]string          `yaml:"endpoints,omitempty"`           // e.g. {"http": "...", "pgwire": "..."}
+	Reason             string                     `yaml:"reason,omitempty"`              // when available=false
+	Fallback           string                     `yaml:"fallback,omitempty"`            // hint when degraded
+}
+
+// DeprecationInfo describes a feature on a sunset path.
+type DeprecationInfo struct {
+	RemovedIn   string    `yaml:"removed_in,omitempty"`
+	Replacement string    `yaml:"replacement,omitempty"`
+	SunsetDate  time.Time `yaml:"sunset_date,omitempty"`
 }
 
 // NodeCapability records the driver capabilities of a single Nomad client node,

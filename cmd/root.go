@@ -267,6 +267,27 @@ func init() {
 	rootCmd.AddCommand(localdbcmd.NewCmd())
 	// `abc cache` is a deprecated alias of `abc localdb` (kept for one release).
 	rootCmd.AddCommand(localdbcmd.NewDeprecatedCacheAlias())
+	// `abc capability` typo redirect — users learning the codename surface
+	// from docs sometimes type the singular form. Forward to the canonical
+	// `abc cluster capabilities` with a one-line note. Hidden from help.
+	rootCmd.AddCommand(capabilityTypoRedirect())
+}
+
+// capabilityTypoRedirect makes `abc capability ...` print a one-line
+// hint pointing at the canonical command. Hidden from help so it
+// doesn't pollute the verb listing.
+func capabilityTypoRedirect() *cobra.Command {
+	return &cobra.Command{
+		Use:                "capability",
+		Hidden:             true,
+		DisableFlagParsing: true,
+		Short:              "(typo redirect) Did you mean 'abc cluster capabilities'?",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(os.Stderr,
+				"[abc] no such command 'abc capability'; did you mean 'abc cluster capabilities'?")
+			return fmt.Errorf("unknown command 'abc capability' — see 'abc cluster capabilities'")
+		},
+	}
 }
 
 // deprecatedRootContextAlias returns a root-level `abc context` command that

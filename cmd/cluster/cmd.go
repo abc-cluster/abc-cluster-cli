@@ -1,7 +1,9 @@
 // Package cluster implements the "abc cluster" command group.
 //
-// All cluster operations require --cloud. Requests carry X-ABC-Cloud: 1 to
-// the cloud gateway, which handles multi-cluster fleet operations and cloud
+// Most cluster operations require --cloud (capabilities sync/show is the
+// exception — runs against any Nomad endpoint, including pre-cloud
+// seedling and grove). Cloud-mode requests carry X-ABC-Cloud: 1 to the
+// cloud gateway, which handles multi-cluster fleet operations and cloud
 // provider API calls. The CLI generates intent; the gateway enforces policy.
 package cluster
 
@@ -16,15 +18,18 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",
-		Short: "Manage the cluster fleet (requires --cloud)",
+		Short: "Manage the cluster fleet",
 		Long: `Commands for listing and managing Nomad clusters in the fleet.
 
-All cluster operations require --cloud and an infrastructure-tier token.
+Most cluster operations require --cloud and an infrastructure-tier token;
+'cluster capabilities {sync,show}' is the exception and runs against any
+Nomad endpoint (including pre-cloud seedling and grove deployments).
 
   abc cluster list --cloud
   abc cluster status --cloud --cluster=za-cpt
   abc cluster provision --cloud --name=nf-genomics-gpu --region=eu-west --size=5
-  abc cluster decommission --cloud nf-old-cluster`,
+  abc cluster decommission --cloud nf-old-cluster
+  abc cluster capabilities sync         # no --cloud needed`,
 	}
 
 	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
