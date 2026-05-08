@@ -19,13 +19,12 @@
   --brand-mark:#c8a84c;
 }
 :root[data-system="grid"][data-theme="light"] {
-  /* Tightened 2026-05-08: in light mode the eye reads chroma deltas more
-     strongly than in dark mode, so the previous bg / bg-1 / bg-2 stack
-     (#f0faf7 → #e5f5f0 → #d8ede7) read as three obviously different
-     greens rather than as one quiet card. Pulled bg-1 and bg-2 closer
-     to bg so the install/cmd cards feel like a subtle inset, not a
-     separate colour scheme. Rule colours softened in lockstep. */
-  --bg:#f4faf7;--bg-1:#eef5f1;--bg-2:#e6efe9;
+  /* Flat fill 2026-05-08: bg / bg-1 / bg-2 collapsed to a single tone so
+     install cards, code blocks, and search inputs no longer read as a
+     tinted column against the page. Cards are still distinguishable by
+     their borders + rule lines; the layered-tint affordance is dark-mode
+     only. */
+  --bg:#fafdfb;--bg-1:#fafdfb;--bg-2:#fafdfb;
   --text:#1a4a3a;--text-dim:#2d7060;--text-mute:#6aaa96;
   --ink:#0a2820;--ink-dim:#907028;--accent:#907028;
   --rule:#cbe4dc;--rule-soft:#dceee7;
@@ -43,9 +42,8 @@
   --brand-mark:#d4923a;
 }
 :root[data-system="brush"][data-theme="light"] {
-  /* Tightened in lockstep with the grid+light variant — see the
-     grid+light block above for rationale. */
-  --bg:#faf7f0;--bg-1:#f3eee2;--bg-2:#ebe5d3;
+  /* Flat fill — see the grid+light block above for rationale. */
+  --bg:#fdfbf6;--bg-1:#fdfbf6;--bg-2:#fdfbf6;
   --text:#4a3520;--text-dim:#7a5830;--text-mute:#b08860;
   --ink:#1e1208;--ink-dim:#a06820;--accent:#c07828;
   --rule:#e2cea8;--rule-soft:#ecddc1;
