@@ -29,6 +29,11 @@ type TextOptions struct {
 
 	// Window is rendered in the header.
 	Window Window
+
+	// ContextName is the active context the summary is scoped to. Must
+	// match the ContextName passed to QueryOptions so the headline
+	// breakdown and metric pipeline see the same row set.
+	ContextName string
 }
 
 // RenderText writes the §5.10 mockup-style summary to w. Reads the
@@ -46,7 +51,7 @@ func RenderText(ctx context.Context, db *sql.DB, w io.Writer, opts TextOptions, 
 		yearLabel = fmt.Sprintf("%s–%s", opts.Window.Since.Format("2006-01-02"), opts.Window.Until.Format("2006-01-02"))
 	}
 
-	investigations, runsTotal, runsSucceeded, runsRetried, cpuHours, gpuHours, err := summaryAggregates(ctx, db, opts.Window)
+	investigations, runsTotal, runsSucceeded, runsRetried, cpuHours, gpuHours, err := summaryAggregates(ctx, db, opts.Window, opts.ContextName)
 	if err != nil {
 		return err
 	}
@@ -62,7 +67,7 @@ func RenderText(ctx context.Context, db *sql.DB, w io.Writer, opts TextOptions, 
 
 	// Time-saved breakdown.
 	fmt.Fprintln(w, "Research time saved (estimated):")
-	rows := timeSavedRows(ctx, db, opts.Window)
+	rows := timeSavedRows(ctx, db, opts.Window, opts.ContextName)
 	maxLabel := 0
 	for _, r := range rows {
 		if n := len(r.label); n > maxLabel {
@@ -118,9 +123,9 @@ type tsRow struct {
 // timeSavedRows builds the per-heuristic breakdown lines. Each row's
 // "value" is either a "~X.Y hrs" string or "n/a (reason)" if the
 // underlying counter isn't computable.
-func timeSavedRows(ctx context.Context, db *sql.DB, w Window) []tsRow {
+func timeSavedRows(ctx context.Context, db *sql.DB, w Window, contextName string) []tsRow {
 	out := []tsRow{}
-	whereRuns, argsRuns := runWindowClause(QueryOptions{Window: w})
+	whereRuns, argsRuns := runWindowClause(QueryOptions{Window: w, ContextName: contextName})
 
 	// Auto-retry → stabilisation_runs as the proxy.
 	var stab int
@@ -178,13 +183,13 @@ func timeSavedRows(ctx context.Context, db *sql.DB, w Window) []tsRow {
 // summaryAggregates returns the headline numbers that sit above the
 // time-saved block. Pulled directly from runs/investigations rather than
 // going through the metric framework (these are summary, not metrics).
-func summaryAggregates(ctx context.Context, db *sql.DB, w Window) (
+func summaryAggregates(ctx context.Context, db *sql.DB, w Window, contextName string) (
 	investigations int,
 	runsTotal int, runsSucceeded int, runsRetried int,
 	cpuHours float64, gpuHours float64,
 	err error,
 ) {
-	whereRuns, argsRuns := runWindowClause(QueryOptions{Window: w})
+	whereRuns, argsRuns := runWindowClause(QueryOptions{Window: w, ContextName: contextName})
 
 	if err = db.QueryRowContext(ctx,
 		"SELECT COUNT(DISTINCT investigation_id) FROM runs WHERE "+whereRuns+" AND investigation_id IS NOT NULL",

@@ -20,6 +20,11 @@ type Window struct {
 type QueryOptions struct {
 	Window      Window
 	ContextName string // limit to a single context; "" = all contexts
+	// GroupColumn / GroupKey scope the metric query to a single group
+	// (investigation_id / project_id / workload_ref / context_name). Set
+	// by the JSON --by=<axis> path; empty in the personal-summary path.
+	GroupColumn string
+	GroupKey    string
 }
 
 // MetricResult is the per-metric output. Computable=false with a Reason
@@ -108,6 +113,13 @@ func runWindowClause(opts QueryOptions) (string, []any) {
 	if opts.ContextName != "" {
 		clauses = append(clauses, "context_name = ?")
 		args = append(args, opts.ContextName)
+	}
+	if opts.GroupColumn != "" {
+		// GroupColumn is internal-only (set by cmd/report from a fixed
+		// allowlist); GroupKey may be a sentinel "(none)" matching the
+		// COALESCE in the group-key discovery query.
+		clauses = append(clauses, fmt.Sprintf("COALESCE(%s, '(none)') = ?", opts.GroupColumn))
+		args = append(args, opts.GroupKey)
 	}
 	return strings.Join(clauses, " AND "), args
 }
