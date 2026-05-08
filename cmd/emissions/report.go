@@ -5,10 +5,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/internal/capability"
 	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
+
+// emissionsReportCapabilities declares what `abc emissions report` needs.
+// Same shape as the accounting report's declaration since both verbs
+// aggregate the same `runs` table; the emission valuation is applied
+// at render time.
+var emissionsReportCapabilities = capability.Required{
+	AnyOf: []capability.Need{
+		{Service: "abc-accounting-svc", MinVersion: "0.4.0",
+			Features: []string{"per-run-aggregate", "emissions-aggregate"}},
+		{Service: "local-state", MinVersion: "0001_initial",
+			Features: []string{"runs", "projects", "investigations"}},
+	},
+	OptionalFor: map[string]capability.Need{
+		"signed": {Service: "abc-fleet-svc", MinVersion: "0.5.0"},
+		"all-contexts": {Service: "abc-accounting-svc", MinVersion: "0.6.0",
+			Features: []string{"federation-aggregate"}},
+	},
+}
 
 // addReportFlags wires the spec abc-emissions-accounting §D flags onto the
 // parent emissions command for the new local-state report. Existing
@@ -33,6 +53,40 @@ func addReportFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("cloud", false, "Use the cloud GET /v1/emissions API instead of the local report")
 }
 
+// loadActiveContextCapabilities returns the active context's
+// Capabilities block, or nil when config can't be loaded / no active
+// context is set. capability.Require treats nil as "Services map empty".
+func loadActiveContextCapabilities() *config.Capabilities {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	ctxName := cfg.ResolveContextName(cfg.ActiveContext)
+	if ctxName == "" {
+		return nil
+	}
+	ctx := cfg.Contexts[ctxName]
+	return ctx.Capabilities
+}
+
+func boolFlag(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	v, _ := cmd.Flags().GetBool(name)
+	return v
+}
+
+func quietMode(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if v, _ := cmd.Root().PersistentFlags().GetBool("quiet"); v {
+		return true
+	}
+	return false
+}
+
 // dispatchEmissions chooses between local SQLite report (default) and the
 // existing cloud GET /v1/emissions API call (when --cloud is passed).
 func dispatchEmissions(cmd *cobra.Command, args []string) error {
@@ -43,12 +97,20 @@ func dispatchEmissions(cmd *cobra.Command, args []string) error {
 }
 
 func runLocalEmissionsReport(cmd *cobra.Command, _ []string) error {
-	if all, _ := cmd.Flags().GetBool("all-contexts"); all {
-		return fmt.Errorf("--all-contexts requires --currency=<code> in Phase 1; mixed-currency conversion is deferred (see specs/completed/abc-emissions-accounting.md \"Defers\")")
+	// ── Capability gate (Stage A wiring) ──────────────────────────────────────
+	caps := loadActiveContextCapabilities()
+	flagsSet := map[string]bool{
+		"signed":       boolFlag(cmd, "signed"),
+		"all-contexts": boolFlag(cmd, "all-contexts"),
 	}
-	if signed, _ := cmd.Flags().GetBool("signed"); signed {
-		return fmt.Errorf("--signed is not yet implemented; see design/exploring/permissions-accounting.md (signing requires server-side rate cards which arrive with abc-grove)")
+	decision := capability.Require(emissionsReportCapabilities, caps, flagsSet)
+	if decision.Failed() {
+		return decision.AsError()
 	}
+	if decision.Banner != "" && !quietMode(cmd) {
+		fmt.Fprintln(cmd.ErrOrStderr(), decision.Banner)
+	}
+
 	by, _ := cmd.Flags().GetString("by")
 	output, _ := cmd.Flags().GetString("output")
 	rateSource, _ := cmd.Flags().GetString("rate-source")

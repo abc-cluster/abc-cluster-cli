@@ -98,6 +98,13 @@ type Context struct {
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
+	// ControllerURL is the abc-controller-svc endpoint for the cluster's
+	// capability probe. When set, `abc cluster capabilities sync` probes
+	// abc-controller-svc's /v1/capabilities; when empty, sync falls back to Nomad
+	// services-API introspection. Per ADR-0019 (abc-controller-svc as single user-trust
+	// boundary), an unreachable abc-controller-svc does NOT silently fall through to
+	// Nomad — sync errors with cache-fallback explanation.
+	ControllerURL string `yaml:"controller_url,omitempty"`
 	// ClusterType is one of abc-nodes | abc-cluster | abc-cloud (platform tier).
 	ClusterType  string        `yaml:"cluster_type,omitempty"`
 	Admin        Admin         `yaml:"admin,omitempty"`

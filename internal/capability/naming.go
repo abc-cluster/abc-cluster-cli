@@ -14,19 +14,25 @@ func Codename(techName string) string {
 	return ""
 }
 
-// FormatService renders a service identifier following the naming
-// convention: technical name first, codename in parentheses if present.
-// Used for error messages, banners, and `abc cluster capabilities show`.
+// FormatService renders a service identifier for CLI output.
+//
+// Per the 2026-05-08 UX decision: the CLI uses **technical names only**.
+// Codenames (Veld, Kayastha, Mimir, …) stay in docs, glossary, and
+// manuscripts but never appear in stderr / stdout output. Researchers
+// who learn a codename from a paper can still grep the CLI surface
+// for `abc-fleet-svc` (the tech name is in repos, Nomad job names,
+// log labels — operationally consistent).
+//
+// The codename table (Codename() above) is preserved for potential
+// future docs / glossary tooling, but is not consumed by the CLI's
+// user-facing output paths.
 //
 // Examples:
 //
-//	FormatService("abc-fleet-svc")    → "abc-fleet-svc (Veld)"
-//	FormatService("abc-data-api")     → "abc-data-api"  (no codename)
-//	FormatService("local-state")      → "local-state"   (no codename)
+//	FormatService("abc-fleet-svc")    → "abc-fleet-svc"
+//	FormatService("abc-data-api")     → "abc-data-api"
+//	FormatService("local-state")      → "local-state"
 func FormatService(techName string) string {
-	if cn := Codename(techName); cn != "" {
-		return techName + " (" + cn + ")"
-	}
 	return techName
 }
 

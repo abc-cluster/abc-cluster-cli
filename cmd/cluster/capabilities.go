@@ -10,6 +10,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -83,19 +84,32 @@ func newCapabilitiesCmd() *cobra.Command {
 }
 
 func newCapabilitiesSyncCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Sync capabilities from Nomad (services API with job-listing fallback)",
-		Long: `Queries the Nomad service registry for running abc-nodes services and updates the
-active context's capabilities block and admin.services endpoints in config.yaml.
+		Short: "Sync capabilities from abc-controller-svc or Nomad (cascade per active context)",
+		Long: `Probes the cluster's capability surface and updates the active context's
+capabilities block in config.yaml.
 
-Falls back to job listing if the services API returns 403 (requires only list-jobs
-capability rather than read-job). Endpoint URLs are populated from service instances
-when available, or from allocation port assignments otherwise.
+Cascade (per OQ-CAP-4 of the capability brainstorm):
 
-Only populates endpoint fields that are not already set by the operator.`,
+  1. controller_url set in context  → probe abc-controller-svc /v1/capabilities (preferred);
+                                 NO fallback to Nomad on failure (preserves
+                                 ADR-0019 trust boundary).
+  2. controller_url empty           → probe Nomad services API (with job-listing
+                                 fallback on 403). This is the pre-controller /
+                                 seedling / grove path used today.
+
+Use --source=controller|nomad to force a specific cascade entry point (debug or
+testing). Use --source=tier-default to skip the probe and seed from
+cluster_type only (useful when both abc-controller-svc and Nomad are unreachable).
+
+Endpoint URLs are populated from service instances when available, or from
+allocation port assignments otherwise. Only populates endpoint fields that
+are not already set by the operator.`,
 		RunE: runCapabilitiesSync,
 	}
+	cmd.Flags().String("source", "", "force probe source (controller | nomad | tier-default); default = cascade based on context config")
+	return cmd
 }
 
 func newCapabilitiesShowCmd() *cobra.Command {
@@ -157,11 +171,38 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("cannot resolve active context %q", cfg.ActiveContext)
 	}
 	ctx := cfg.Contexts[ctxName]
+	bg := context.Background()
+	source, _ := cmd.Flags().GetString("source")
+
+	// ── Resolve probe source (the discovery cascade) ─────────────────────────
+	// Per OQ-CAP-4: when controller_url is configured, abc-controller-svc is the ONLY probe path
+	// (no fallback to Nomad on failure — preserves ADR-0019). --source= forces
+	// a specific entry point for debug / testing.
+
+	probeVia := source
+	if probeVia == "" {
+		if strings.TrimSpace(ctx.ControllerURL) != "" {
+			probeVia = "controller"
+		} else {
+			probeVia = "nomad"
+		}
+	}
+
+	switch probeVia {
+	case "controller":
+		return runCapabilitiesSyncController(cmd, cfg, ctxName, ctx)
+	case "nomad":
+		// Continue to the Nomad path below (existing behaviour).
+	case "tier-default":
+		return runCapabilitiesSyncTierDefault(cmd, cfg, ctxName, ctx)
+	default:
+		return fmt.Errorf("--source must be one of: controller, nomad, tier-default (got %q)", source)
+	}
+
 	nc, err := nomadClientForCapabilities(cmd)
 	if err != nil {
 		return err
 	}
-	bg := context.Background()
 
 	// ── Step 1: Build service set ─────────────────────────────────────────────
 
@@ -173,7 +214,10 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 
 	// ── Step 2: Map services to capabilities ──────────────────────────────────
 
-	caps := &config.Capabilities{LastSynced: time.Now()}
+	caps := &config.Capabilities{
+		LastSynced:  time.Now(),
+		ProbeSource: "nomad-introspection",
+	}
 
 	switch {
 	case svcSet["abc-nodes-minio-s3"]:
@@ -248,6 +292,132 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 				"  Run: abc admin services vault cli -- operator unseal\n\n")
 	}
 	return nil
+}
+
+// runCapabilitiesSyncController runs the abc-controller-svc probe path (cascade step 1).
+// Per OQ-CAP-4: NO fallback to Nomad on abc-controller-svc failure — the trust
+// boundary stays preserved even during abc-controller-svc outages. Operators who
+// need the CLI to keep working through an abc-controller-svc outage can rerun sync
+// with `--source=nomad` (debug) or set `ABC_NO_PROBE=1` and rely on
+// the cached capabilities block + tier-default fallback.
+func runCapabilitiesSyncController(cmd *cobra.Command, cfg *config.Config, ctxName string, ctx config.Context) error {
+	bg := context.Background()
+	controllerURL := strings.TrimSpace(ctx.ControllerURL)
+	if controllerURL == "" {
+		return fmt.Errorf("--source=controller was forced but controller_url is not set in context %q", ctxName)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Probing abc-controller-svc at %s ...\n", controllerURL)
+	resp, err := probeController(bg, controllerURL, ctx.AccessToken, state.CLIVersion)
+	if err != nil {
+		return fmt.Errorf(
+			"abc-controller-svc probe failed: %w\n  ADR-0019 forbids silent fallback to Nomad when controller_url is configured.\n"+
+				"  Use 'abc cluster capabilities sync --source=nomad' to bypass this guard for debugging,\n"+
+				"  or set ABC_NO_PROBE=1 and rely on the cached capabilities block.",
+			err,
+		)
+	}
+
+	caps := ctx.Capabilities
+	if caps == nil {
+		caps = &config.Capabilities{}
+	}
+	applyControllerResponse(caps, resp)
+
+	ctx.Capabilities = caps
+	cfg.Contexts[ctxName] = ctx
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(),
+		"Capabilities synced for context %q via controller-aggregate (%d services, schema v%d):\n",
+		ctxName, len(caps.Services), caps.SchemaVersion)
+	printCapabilities(cmd, caps)
+	return nil
+}
+
+// runCapabilitiesSyncTierDefault populates the capabilities block from
+// hardcoded tier-default assumptions keyed off ctx.ClusterType. Used as
+// the cascade-step-4 fallback when both abc-controller-svc and Nomad are unreachable
+// (or via --source=tier-default for testing).
+//
+// Note: writes only the new Services map (per the brainstorm); the
+// abc-nodes shorthand booleans are NOT populated by tier-default —
+// those reflect actual Nomad-detected services and stay zero-valued
+// when no probe runs.
+func runCapabilitiesSyncTierDefault(cmd *cobra.Command, cfg *config.Config, ctxName string, ctx config.Context) error {
+	if ctx.ClusterType == "" {
+		return fmt.Errorf(
+			"--source=tier-default needs cluster_type set in context %q\n"+
+				"  set with: abc config set contexts.%s.cluster_type abc-grove",
+			ctxName, ctxName,
+		)
+	}
+
+	caps := ctx.Capabilities
+	if caps == nil {
+		caps = &config.Capabilities{}
+	}
+	caps.SchemaVersion = 1
+	caps.ProbeSource = "tier-default"
+	caps.Services = tierDefaultServices(ctx.ClusterType)
+	caps.LastSynced = time.Now()
+	caps.ProbeWarnings = []string{
+		fmt.Sprintf("seeded from cluster_type=%q (tier-default); no live probe was performed", ctx.ClusterType),
+	}
+
+	ctx.Capabilities = caps
+	cfg.Contexts[ctxName] = ctx
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(),
+		"Capabilities seeded for context %q via tier-default (cluster_type=%s, %d services):\n",
+		ctxName, ctx.ClusterType, len(caps.Services))
+	printCapabilities(cmd, caps)
+	return nil
+}
+
+// tierDefaultServices returns the seeded Services map for a tier. Mirrors
+// the tier-appearance table in design/exploring/service-naming-map.md.
+// Keep in lockstep with internal/capability/mock.go's tierDefault().
+func tierDefaultServices(clusterType string) map[string]config.ServiceCapability {
+	out := map[string]config.ServiceCapability{
+		"local-state": {Available: true, Version: "0001_initial"},
+	}
+	add := func(tech, codename string) {
+		out[tech] = config.ServiceCapability{Available: true, Codename: codename}
+	}
+	switch clusterType {
+	case "abc-nodes":
+		// seedling — local-state only
+	case "abc-grove":
+		add("abc-bitemporal-svc", "Chiranjivi")
+		add("abc-policy-svc", "Jurist")
+	case "abc-grove-tended":
+		add("abc-bitemporal-svc", "Chiranjivi")
+		add("abc-policy-svc", "Jurist")
+		add("abc-controller-svc", "")
+		add("abc-accounting-svc", "Kayastha")
+		add("abc-fleet-svc", "Veld")
+		add("abc-telemetry-svc", "Voron")
+		add("abc-chat-svc", "Mimir")
+	case "abc-cloud":
+		add("abc-bitemporal-svc", "Chiranjivi")
+		add("abc-policy-svc", "Jurist")
+		add("abc-controller-svc", "")
+		add("abc-accounting-svc", "Kayastha")
+		add("abc-fleet-svc", "Veld")
+		add("abc-telemetry-svc", "Voron")
+		add("abc-chat-svc", "Mimir")
+		add("abc-client-web", "Khatoon")
+		add("abc-marketplace-svc", "Bazaar")
+		add("abc-billing-bridge", "Hisaab")
+		add("abc-signup-svc", "")
+	}
+	return out
 }
 
 // buildServiceSet returns a set of running abc-nodes service names.

@@ -27,7 +27,7 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'reference/index'},
       items: [
         {type: 'doc', id: 'reference/global-flags',      label: 'Global flags'},
-        {type: 'doc', id: 'reference/context',           label: 'context / config'},
+        {type: 'doc', id: 'reference/auth-context',      label: 'auth context / config'},
         {type: 'doc', id: 'reference/auth',              label: 'auth'},
         {type: 'doc', id: 'reference/secrets',           label: 'secrets'},
         {type: 'doc', id: 'reference/abc-project',       label: 'project'},
@@ -42,7 +42,7 @@ const sidebars: SidebarsConfig = {
         {type: 'doc', id: 'reference/admin',             label: 'admin services'},
         {type: 'doc', id: 'reference/admin-tools',       label: 'admin tools'},
         {type: 'doc', id: 'reference/cluster',           label: 'cluster'},
-        {type: 'doc', id: 'reference/local-state',       label: 'local state (~/.abc/state.db)'},
+        {type: 'doc', id: 'reference/local-state',       label: 'local state (~/.abc/local.db)'},
       ],
     },
   ],

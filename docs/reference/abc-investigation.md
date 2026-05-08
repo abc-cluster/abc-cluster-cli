@@ -1,8 +1,14 @@
-# `abc investigation`
+# `abc project investigation`
 
 A research-oriented record primitive: every investigation is a
 branchable, mergeable, annotateable thread of attempts. Backed by
 `~/.abc/local.db` (see `docs/reference/local-state.md`).
+
+> **Relocated 2026-05-08:** the canonical command is now
+> `abc project investigation ...` (with `abc project inv ...` as a
+> short alias). The root-level `abc investigation ...` is kept as a
+> deprecated alias for one release; it prints a stderr note and
+> forwards to the new location.
 
 ## Verbs
 
@@ -43,7 +49,7 @@ A one-line banner is printed on every submit:
 
 ## Visualize
 
-`abc investigation visualize` is a pure projection of local SQLite
+`abc project investigation visualize` is a pure projection of local SQLite
 into Mermaid source. It does not call any service. By default it
 prints to stdout; pass `--output=<path>` to write a file, and
 `--render=svg|png` to invoke `mmdc` (Mermaid CLI) when present on PATH.
@@ -82,6 +88,27 @@ theme toggle once in the bottom-right of mermaid.live; the choice is stored
 in `localStorage` and applies to every future `--browser` invocation in the
 same browser.
 
+## Annotation management — `abc project investigation annotation`
+
+Annotations created with `abc project investigation annotate` are
+mutable. Every edit / tag change / move / withdraw / restore writes a
+row to the `annotation_revisions` table so research history is
+preserved.
+
+| Subverb | Purpose |
+|---|---|
+| `annotation list <inv> [--include-withdrawn] [--tag=<t>]` | List annotations on an investigation |
+| `annotation show <ann-id> [--history]` | Render full annotation; `--history` walks the revision table oldest-first |
+| `annotation edit <ann-id> [--note=<text>] [--reason=<text>]` | Replace body in-place; opens `$EDITOR` when `--note` omitted |
+| `annotation tag <ann-id> [--add=<t>]... [--remove=<t>]... [--replace=<t1>,...]` | Mutate the tag set |
+| `annotation move <ann-id> --to=<inv-id> [--reason=<text>]` | Re-target the annotation; project association follows the destination |
+| `annotation withdraw <ann-id> [--reason=<text>]` | Soft-delete (sets `withdrawn_at`); `show` and `list` hide by default |
+| `annotation restore <ann-id>` | Clear `withdrawn_at`; idempotent on non-withdrawn |
+
+Withdrawn annotations are hidden from `abc project investigation show`
+by default; pass `--include-withdrawn` to surface them with a marker
+and the withdrawal reason.
+
 ## Investigation lifecycle
 
 The `investigations.status` field is a small state machine:
@@ -100,10 +127,10 @@ stateDiagram-v2
 
 - **active** — default on creation; can be annotated, branched from, used as
   parent for child branches.
-- **merged** — set when `abc investigation merge <child> --into <parent>`
+- **merged** — set when `abc project investigation merge <child> --into <parent>`
   promotes the child's annotations into the parent. The child's annotations
   are copied (not moved) with `carried_from` set, so the merge is auditable.
-- **dead-end** — set by `abc investigation dead-end <slug> --reason=<text>`.
+- **dead-end** — set by `abc project investigation dead-end <slug> --reason=<text>`.
   The reason is preserved in `dead_end_reason` and surfaces in `branches`
   visualisation as a Mermaid comment line beneath the abandoned branch.
 - **archived** — manual transition for long-finished work the user wants out

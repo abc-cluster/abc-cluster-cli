@@ -5,10 +5,39 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/internal/capability"
 	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
+
+// reportCapabilities declares what `abc accounting report` needs.
+//
+// AnyOf: prefer abc-accounting-svc (Kayastha); fall back to local-state
+// (the local SQLite). Today only local-state is deployed at every tier;
+// abc-accounting-svc lands with abc-grove + Kayastha v0. Either backend
+// is sufficient for the per-run aggregation surface.
+//
+// OptionalFor:
+//   - --signed requires abc-fleet-svc (Veld; Layer-1 rate-card source).
+//     Without Veld, signed reports cannot be produced — fail-fast.
+//   - --all-contexts requires the Kayastha service with the
+//     federation-aggregate feature; cross-context aggregation needs
+//     server-side joining over multiple clusters' event streams.
+var reportCapabilities = capability.Required{
+	AnyOf: []capability.Need{
+		{Service: "abc-accounting-svc", MinVersion: "0.4.0",
+			Features: []string{"per-run-aggregate"}},
+		{Service: "local-state", MinVersion: "0001_initial",
+			Features: []string{"runs", "projects", "investigations"}},
+	},
+	OptionalFor: map[string]capability.Need{
+		"signed": {Service: "abc-fleet-svc", MinVersion: "0.5.0"},
+		"all-contexts": {Service: "abc-accounting-svc", MinVersion: "0.6.0",
+			Features: []string{"federation-aggregate"}},
+	},
+}
 
 // addReportFlags wires the spec abc-emissions-accounting §D flags onto the
 // parent accounting command. The new local-state report runs as the
@@ -30,12 +59,26 @@ func addReportFlags(cmd *cobra.Command) {
 }
 
 func runLocalAccountingReport(cmd *cobra.Command, _ []string) error {
-	if all, _ := cmd.Flags().GetBool("all-contexts"); all {
-		return fmt.Errorf("--all-contexts requires --currency=<code> in Phase 1; mixed-currency conversion is deferred (see specs/completed/abc-emissions-accounting.md \"Defers\")")
+	// ── Capability gate (Stage A wiring) ──────────────────────────────────────
+	// Resolve the verb's capability needs against the active context's
+	// Capabilities block. Without a populated Services map (the common
+	// case today since Khan isn't deployed), local-state pseudo-service
+	// satisfies the AnyOf and the verb runs locally. --signed and
+	// --all-contexts surface clean capability errors when their backing
+	// services aren't deployed.
+	caps := loadActiveContextCapabilities()
+	flagsSet := map[string]bool{
+		"signed":       boolFlag(cmd, "signed"),
+		"all-contexts": boolFlag(cmd, "all-contexts"),
 	}
-	if signed, _ := cmd.Flags().GetBool("signed"); signed {
-		return fmt.Errorf("--signed is not yet implemented; see design/exploring/permissions-accounting.md (signing requires server-side rate cards which arrive with abc-grove)")
+	decision := capability.Require(reportCapabilities, caps, flagsSet)
+	if decision.Failed() {
+		return decision.AsError()
 	}
+	if decision.Banner != "" && !quietMode(cmd) {
+		fmt.Fprintln(cmd.ErrOrStderr(), decision.Banner)
+	}
+
 	by, _ := cmd.Flags().GetString("by")
 	output, _ := cmd.Flags().GetString("output")
 	rateSource, _ := cmd.Flags().GetString("rate-source")
@@ -139,4 +182,43 @@ func resolveWindow(cmd *cobra.Command) (time.Time, time.Time, error) {
 
 func fmtFloat(f float64) string {
 	return fmt.Sprintf("%g", f)
+}
+
+// loadActiveContextCapabilities returns the Capabilities block stored
+// for the active context. Returns nil if config can't be loaded or no
+// active context is set — capability.Require treats nil as "Services
+// map empty; local-state available via fallback".
+func loadActiveContextCapabilities() *config.Capabilities {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	ctxName := cfg.ResolveContextName(cfg.ActiveContext)
+	if ctxName == "" {
+		return nil
+	}
+	ctx := cfg.Contexts[ctxName]
+	return ctx.Capabilities
+}
+
+// boolFlag is a helper that returns false if the flag isn't defined or
+// can't be read. Saves four lines per call site at the verb level.
+func boolFlag(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	v, _ := cmd.Flags().GetBool(name)
+	return v
+}
+
+// quietMode returns true when --quiet/-q is set or ABC_QUIET=1 in env.
+// Used to suppress capability degradation banners for scripted use.
+func quietMode(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if v, _ := cmd.Root().PersistentFlags().GetBool("quiet"); v {
+		return true
+	}
+	return false
 }
