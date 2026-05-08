@@ -58,11 +58,13 @@ func TestRequire_DegradedToLocalState(t *testing.T) {
 	if !d.Degraded {
 		t.Error("expected Degraded=true")
 	}
-	if !strings.Contains(d.Banner, "Kayastha") {
-		t.Errorf("expected banner to surface Kayastha codename; got %q", d.Banner)
-	}
 	if !strings.Contains(d.Banner, "abc-accounting-svc") {
 		t.Errorf("expected banner to surface tech name; got %q", d.Banner)
+	}
+	// Per the 2026-05-08 UX decision: CLI output uses tech names only.
+	// The banner must NOT include the codename ("Kayastha").
+	if strings.Contains(d.Banner, "Kayastha") {
+		t.Errorf("banner must not include the codename; got %q", d.Banner)
 	}
 }
 
@@ -98,8 +100,12 @@ func TestRequire_OptionalFlagBlocked(t *testing.T) {
 		t.Errorf("expected --signed blocked; got %q", d.UnusableFlags[0].Flag)
 	}
 	err := d.AsError()
-	if err == nil || !strings.Contains(err.Error(), "Veld") {
-		t.Errorf("error should surface Veld codename; got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "abc-fleet-svc") {
+		t.Errorf("error should surface tech name; got %v", err)
+	}
+	// Per the 2026-05-08 UX decision: CLI output uses tech names only.
+	if err != nil && strings.Contains(err.Error(), "Veld") {
+		t.Errorf("error must not include the codename; got %v", err)
 	}
 }
 
@@ -149,12 +155,15 @@ func TestRequire_AllOf(t *testing.T) {
 }
 
 func TestFormatService(t *testing.T) {
+	// Per the 2026-05-08 UX decision: CLI output uses tech names only.
+	// FormatService is a no-op pass-through; it does not append the
+	// codename. Codenames live in docs and glossary, not in CLI output.
 	tests := []struct{ tech, want string }{
-		{"abc-fleet-svc", "abc-fleet-svc (Veld)"},
-		{"abc-accounting-svc", "abc-accounting-svc (Kayastha)"},
-		{"abc-data-api", "abc-data-api"},        // codename-less
-		{"local-state", "local-state"},          // codename-less
-		{"abc-controller-svc", "abc-controller-svc (Khan)"},
+		{"abc-fleet-svc", "abc-fleet-svc"},
+		{"abc-accounting-svc", "abc-accounting-svc"},
+		{"abc-data-api", "abc-data-api"},
+		{"local-state", "local-state"},
+		{"abc-controller-svc", "abc-controller-svc"},
 	}
 	for _, tt := range tests {
 		got := FormatService(tt.tech)

@@ -25,7 +25,7 @@ type Capabilities struct {
 	// next `abc cluster capabilities sync` populates them.
 	SchemaVersion int                          `yaml:"schema_version,omitempty"`
 	Services      map[string]ServiceCapability `yaml:"services,omitempty"`
-	ProbeSource   string                       `yaml:"probe_source,omitempty"`   // khan-aggregate | pulumi-snapshot | nomad-introspection | config-pin | tier-default
+	ProbeSource   string                       `yaml:"probe_source,omitempty"`   // controller-aggregate | pulumi-snapshot | nomad-introspection | config-pin | tier-default
 	ProbeWarnings []string                     `yaml:"probe_warnings,omitempty"`
 }
 
