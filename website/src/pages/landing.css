@@ -19,10 +19,16 @@
   --brand-mark:#c8a84c;
 }
 :root[data-system="grid"][data-theme="light"] {
-  --bg:#f0faf7;--bg-1:#e5f5f0;--bg-2:#d8ede7;
+  /* Tightened 2026-05-08: in light mode the eye reads chroma deltas more
+     strongly than in dark mode, so the previous bg / bg-1 / bg-2 stack
+     (#f0faf7 → #e5f5f0 → #d8ede7) read as three obviously different
+     greens rather than as one quiet card. Pulled bg-1 and bg-2 closer
+     to bg so the install/cmd cards feel like a subtle inset, not a
+     separate colour scheme. Rule colours softened in lockstep. */
+  --bg:#f4faf7;--bg-1:#eef5f1;--bg-2:#e6efe9;
   --text:#1a4a3a;--text-dim:#2d7060;--text-mute:#6aaa96;
   --ink:#0a2820;--ink-dim:#907028;--accent:#907028;
-  --rule:#a8d8cc;--rule-soft:#c8e8e0;
+  --rule:#cbe4dc;--rule-soft:#dceee7;
   --selection:rgba(144,112,40,0.22);
   --brush-grad-start:#907028;--brush-grad-end:#c8a84c;
   --brand-mark:#2d7060;
@@ -37,10 +43,12 @@
   --brand-mark:#d4923a;
 }
 :root[data-system="brush"][data-theme="light"] {
-  --bg:#faf7f0;--bg-1:#f2ece0;--bg-2:#e8deca;
+  /* Tightened in lockstep with the grid+light variant — see the
+     grid+light block above for rationale. */
+  --bg:#faf7f0;--bg-1:#f3eee2;--bg-2:#ebe5d3;
   --text:#4a3520;--text-dim:#7a5830;--text-mute:#b08860;
   --ink:#1e1208;--ink-dim:#a06820;--accent:#c07828;
-  --rule:#d8c09a;--rule-soft:#e4d4b8;
+  --rule:#e2cea8;--rule-soft:#ecddc1;
   --selection:rgba(192,120,40,0.22);
   --brush-grad-start:#c07828;--brush-grad-end:#d4923a;
   --brand-mark:#7a5830;
