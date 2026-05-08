@@ -2,16 +2,21 @@
 sidebar_position: 3
 ---
 
-# context / config
+# auth context / config
 
 Manage cluster contexts and local configuration.
 
-## context add
+> **Relocated 2026-05-08:** `abc context ...` was moved under `abc auth context ...`.
+> The root-level `abc context` is kept as a deprecated alias for one release —
+> it prints a one-line stderr note and forwards to the new location. Update
+> scripts to `abc auth context ...` at your convenience.
+
+## auth context add
 
 Create a new named context and optionally make it active:
 
 ```bash
-abc context add <name> \
+abc auth context add <name> \
   --url https://api.abc-cluster.io \
   --access-token <token> \
   --workspace <workspace-id> \
@@ -19,26 +24,26 @@ abc context add <name> \
   [--org <org-id>]
 ```
 
-## context list
+## auth context list
 
 ```bash
-abc context list
+abc auth context list
 ```
 
-## context use
+## auth context use
 
 Switch the active context:
 
 ```bash
-abc context use <name>
+abc auth context use <name>
 # or via env var (one-shot override):
 ABC_ACTIVE_CONTEXT=dev abc job list
 ```
 
-## context remove
+## auth context remove
 
 ```bash
-abc context remove <name>
+abc auth context remove <name>
 ```
 
 ## config init
@@ -66,3 +71,5 @@ Common config keys:
 | `contexts.<name>.url` | API endpoint |
 | `contexts.<name>.access_token` | Access token |
 | `contexts.<name>.workspace_id` | Workspace ID |
+| `contexts.<name>.controller_url` | abc-controller-svc endpoint for the capability probe (optional; when set, `abc cluster capabilities sync` probes here instead of Nomad) |
+| `contexts.<name>.cluster_type` | `abc-nodes` \| `abc-grove` \| `abc-cloud` — used by tier-default capability seeding |

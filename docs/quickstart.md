@@ -21,10 +21,10 @@ cp ~/Downloads/<your-name>.yaml ~/.abc/config.yaml
 ## 2. Activate the aither context
 
 ```bash
-abc context use aither
+abc auth context use aither
 
 # Confirm the active context and your identity:
-abc context show
+abc auth context show
 abc auth whoami
 ```
 
@@ -52,8 +52,8 @@ abc job show <job-id>
 | Symptom | Try |
 |---|---|
 | `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
-| `403 Forbidden` on submit | `abc context show` — confirm the **aither** context is active and your token is set |
-| Job goes to wrong namespace | `abc context show` — the `nomad_namespace` field in your config controls the default |
+| `403 Forbidden` on submit | `abc auth context show` — confirm the **aither** context is active and your token is set |
+| Job goes to wrong namespace | `abc auth context show` — the `nomad_namespace` field in your config controls the default |
 | `unknown command` | `abc --help`, then `abc <verb> --help` |
 
 ## Next steps

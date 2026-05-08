@@ -4,6 +4,11 @@ The abc CLI keeps local state in a single SQLite database at
 `~/.abc/local.db`. The driver is pure Go (`modernc.org/sqlite`), so the
 binary remains CGO-free.
 
+> **Renamed 2026-05-08:** the file was previously `~/.abc/state.db`. On
+> first invocation post-upgrade, the CLI auto-renames the legacy file +
+> WAL/SHM sidecars + any `state.db.backup-pre-*` files in place, prints
+> a one-line stderr note, and continues. No manual action required.
+
 ## Tables
 
 | Table | Purpose |

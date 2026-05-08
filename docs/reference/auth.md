@@ -46,6 +46,21 @@ Force a token refresh:
 abc auth refresh
 ```
 
+## auth context
+
+Manage saved authentication contexts (subgroup; relocated from root-level
+`abc context` on 2026-05-08).
+
+```bash
+abc auth context list
+abc auth context show
+abc auth context use <name>
+abc auth context add <name> --url <api> --access-token <token>
+abc auth context delete <name>
+```
+
+See [auth context / config](./auth-context.md) for the full reference.
+
 ## Environment-variable auth
 
 All token values can be passed via env var instead of stored config:
