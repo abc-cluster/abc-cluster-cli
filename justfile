@@ -107,7 +107,14 @@ docs-serve:
     npm --prefix website run start
 
 # Build static docs site output.
+#
+# Sources the rich landing page from the canonical Caddy landing tree
+# (deployments/abc-nodes/caddy/landing/) into website/static/ so it's
+# served at the docs root. website/static/ is gitignored — single source
+# of truth lives in deployments/.
 docs-build:
+    mkdir -p website/static
+    cp deployments/abc-nodes/caddy/landing/index.html website/static/index.html
     npm --prefix website run build
 
 # Build docs and push the output to the abc-nodes "scratch" host volume on aither.
