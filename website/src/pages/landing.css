@@ -59,25 +59,10 @@
 .abc-landing ::selection{background:var(--selection);color:var(--ink);}
 .abc-landing a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--ink-dim);}
 .abc-landing a:hover{color:var(--accent);border-bottom-color:var(--accent);}
-.abc-landing .topbar{border-bottom:1px solid var(--rule);background:var(--bg);position:sticky;top:0;z-index:10;backdrop-filter:blur(6px);}
-.abc-landing .topbar-inner{max-width:1180px;margin:0 auto;padding:14px 32px;display:flex;align-items:center;gap:12px;}
-.abc-landing .brand{display:flex;align-items:center;gap:10px;font-weight:600;color:var(--ink);border:none;}
-.abc-landing .brand-mark{width:28px;height:28px;color:var(--brand-mark);flex-shrink:0;}
-.abc-landing .brand-name{letter-spacing:-0.01em;}
-.abc-landing .brand-name .dim{color:var(--text-dim);}
-.abc-landing .top-spacer{flex:1;}
-.abc-landing .top-link{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:4px;border:1px solid var(--rule);background:var(--bg-1);color:var(--text);font-size:13px;font-weight:500;letter-spacing:-0.01em;text-decoration:none;transition:color .12s,border-color .12s,background .12s;}
-.abc-landing .top-link:hover{color:var(--ink);border-color:var(--ink-dim);background:var(--bg-2);}
-.abc-landing .top-link-ico{width:18px;height:18px;display:block;color:var(--ink);}
-.abc-landing .top-link:hover .top-link-ico{color:var(--accent);}
-.abc-landing .theme-toggle{appearance:none;cursor:pointer;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--rule);border-radius:4px;background:var(--bg-1);color:var(--ink);position:relative;transition:border-color .12s,background .12s,color .12s;}
-.abc-landing .theme-toggle:hover{border-color:var(--ink-dim);color:var(--accent);background:var(--bg-2);}
-.abc-landing .theme-toggle .ti{width:22px;height:22px;position:absolute;inset:0;margin:auto;transition:opacity 220ms ease,transform 320ms cubic-bezier(.4,0,.2,1);}
-:root[data-theme="dark"] .abc-landing .theme-toggle .ti-sun{opacity:0;transform:scale(.6) rotate(-30deg);}
-:root[data-theme="dark"] .abc-landing .theme-toggle .ti-moon{opacity:1;transform:scale(1) rotate(0);}
-:root[data-theme="light"] .abc-landing .theme-toggle .ti-sun{opacity:1;transform:scale(1) rotate(0);}
-:root[data-theme="light"] .abc-landing .theme-toggle .ti-moon{opacity:0;transform:scale(.6) rotate(30deg);}
-@media(prefers-reduced-motion:reduce){.abc-landing .theme-toggle .ti{transition:opacity 1ms;}}
+/* No .topbar / .brand / .top-link / .theme-toggle styles — those belong to
+   Docusaurus' own navbar (configured in docusaurus.config.ts). The landing
+   used to ship its own topbar; removed when Docusaurus' navbar took over so
+   the chrome wouldn't double up. */
 .abc-landing .seg{display:inline-flex;border:1px solid var(--rule);border-radius:4px;overflow:hidden;}
 .abc-landing .seg button{appearance:none;background:transparent;border:none;cursor:pointer;color:var(--text-dim);font-family:inherit;font-size:11px;font-weight:500;padding:7px 12px;letter-spacing:.14em;text-transform:uppercase;border-right:1px solid var(--rule);}
 .abc-landing .seg button:last-child{border-right:none;}
@@ -141,7 +126,9 @@
 .abc-landing .stack .sep{color:var(--text-mute);margin:0 6px;}
 
 .abc-landing .svc-pivot{
-  position:sticky;top:51px;z-index:9;
+  /* Stick under the Docusaurus navbar; --ifm-navbar-height is set globally
+     by Docusaurus and falls back to 60px on first paint. */
+  position:sticky;top:var(--ifm-navbar-height,60px);z-index:9;
   background:linear-gradient(var(--bg) 60%, transparent);
   padding:14px 0 18px;margin-bottom:6px;
   display:flex;align-items:center;gap:14px;flex-wrap:wrap;

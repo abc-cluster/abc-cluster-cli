@@ -327,8 +327,11 @@ function CopyButton({label, getText}: CopyButtonProps) {
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function Home(): JSX.Element {
   const detected = useMemo(detectInitialState, []);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [system] = useState<'grid' | 'brush'>('grid');
+  // Docusaurus' colorMode owns data-theme on <html>; the landing CSS keys off
+  // that same attribute so the colour scheme tracks the navbar's theme toggle.
+  // We only own the visual system ("grid" vs "brush") which Docusaurus knows
+  // nothing about — kept as a constant for now (no UI to switch).
+  const system: 'grid' | 'brush' = 'grid';
   const [viewNetwork, setViewNetwork] = useState<ViewNetwork>('auto');
   const [network, setNetwork] = useState<NetworkSurface>(detected.network);
   const [format, setFormat] = useState<URLFormat>(detected.format);
@@ -346,11 +349,11 @@ export default function Home(): JSX.Element {
   const tsIP = NETWORK_CONFIG.tsIP;
   const domain = NETWORK_CONFIG.domain;
 
-  // ── Mount: theme + hostname auto-detect + key shortcut ──────────────────
+  // Set the visual system on <html> so the landing.css [data-system="..."]
+  // selectors apply. Docusaurus already manages data-theme.
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.system = system;
-  }, [theme, system]);
+  }, [system]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -370,11 +373,13 @@ export default function Home(): JSX.Element {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  // ── Hero SVG draw — re-runs whenever the visual system changes ──────────
+  // ── Hero SVG draw — runs once on mount; visual system is constant. ──────
+  // The dot/ring colours come from CSS variables, so theme changes pick up
+  // automatically without a redraw.
   useEffect(() => {
     if (!heroGRef.current) return;
     drawHeroMark(heroGRef.current, system);
-  }, [system, theme]);
+  }, [system]);
 
   // ── Acronym rotator: cycles through ACRONYM_WORDS every 2.2s ────────────
   useEffect(() => {
@@ -458,74 +463,10 @@ abc job run hello-abc --sleep=120s`;
 
       <div className="abc-landing">
 
-        {/* ── Topbar ────────────────────────────────────────────────────── */}
-        <header className="topbar">
-          <div className="topbar-inner">
-            <a className="brand" href="/">
-              <svg className="brand-mark" viewBox="0 0 64 64" aria-label="abc-cluster ABC" role="img">
-                <g fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <circle cx="14" cy="32" r="9"/>
-                  <circle cx="32" cy="32" r="9"/>
-                  <circle cx="50" cy="32" r="9"/>
-                </g>
-                <g fill="currentColor" fontFamily="'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace"
-                   fontWeight="700" fontSize="11" textAnchor="middle" letterSpacing="-0.02em">
-                  <text x="14" y="35.9">A</text>
-                  <text x="32" y="35.9">B</text>
-                  <text x="50" y="35.9">C</text>
-                </g>
-              </svg>
-              <span className="brand-name">abc<span className="dim">-cluster</span></span>
-            </a>
-            <div className="top-spacer" />
-            <a className="top-link" href="/docs/">
-              <svg className="top-link-ico" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M5 4h6a3 3 0 0 1 3 3v13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M19 4h-6a3 3 0 0 0-3 3v13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                <circle cx="7" cy="8.5" r="0.9" fill="currentColor"/>
-                <circle cx="7" cy="12" r="0.9" fill="currentColor"/>
-                <circle cx="7" cy="15.5" r="0.9" fill="currentColor"/>
-              </svg>
-              <span>Docs</span>
-            </a>
-            <a className="top-link" href="https://github.com/abc-cluster/abc-cluster-cli" target="_blank" rel="noreferrer">
-              <svg className="top-link-ico" viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.04 1.78 2.72 1.27 3.38.97.1-.76.4-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.18-3.09-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.04 11.04 0 0 1 5.78 0c2.21-1.49 3.18-1.18 3.18-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.83 1.18 3.09 0 4.43-2.69 5.41-5.25 5.69.41.36.78 1.06.78 2.13v3.16c0 .31.21.68.8.56A11.5 11.5 0 0 0 12 .5"/>
-              </svg>
-              <span>GitHub</span>
-            </a>
-            <a className="top-link" href="https://github.com/abc-cluster/abc-cluster-cli/releases" target="_blank" rel="noreferrer">
-              <svg className="top-link-ico" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/>
-                <path d="M2 17l10 5 10-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 12l10 5 10-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <span>Releases</span>
-            </a>
-            <button
-              className="theme-toggle"
-              type="button"
-              aria-label="Toggle theme"
-              onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-            >
-              <svg className="ti ti-sun" viewBox="0 0 28 28" aria-hidden="true">
-                <circle cx="14" cy="14" r="4.2" fill="none" stroke="currentColor" strokeWidth="1.6"/>
-                <circle cx="14" cy="14" r="1.4" fill="currentColor"/>
-                <g fill="currentColor">
-                  <circle cx="14" cy="3.5" r="1.1"/><circle cx="14" cy="24.5" r="1.1"/>
-                  <circle cx="3.5" cy="14" r="1.1"/><circle cx="24.5" cy="14" r="1.1"/>
-                  <circle cx="6.5" cy="6.5" r="0.9"/><circle cx="21.5" cy="6.5" r="0.9"/>
-                  <circle cx="6.5" cy="21.5" r="0.9"/><circle cx="21.5" cy="21.5" r="0.9"/>
-                </g>
-              </svg>
-              <svg className="ti ti-moon" viewBox="0 0 28 28" aria-hidden="true">
-                <path d="M19.6 17.8a8.4 8.4 0 1 1-9.4-12.6 7 7 0 0 0 9.4 12.6Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round"/>
-                <circle cx="22" cy="8" r="0.8" fill="currentColor"/>
-                <circle cx="6" cy="6" r="0.7" fill="currentColor"/>
-              </svg>
-            </button>
-          </div>
-        </header>
+        {/* No custom topbar — Docusaurus' navbar (configured in
+            docusaurus.config.ts) handles brand, docs link, GitHub link,
+            cluster link, releases link, and the theme toggle. Having a
+            second header underneath would just duplicate the chrome. */}
 
         <main className="page" id="top">
 
