@@ -1,10 +1,13 @@
-// Package cache registers the `abc cache` command group: status, migrate, vacuum.
+// Package localdb registers the `abc localdb` command group: status, migrate, vacuum.
 //
-// Manages the local SQLite at ~/.abc/state.db (the per-user CLI cache that
-// stores projects, investigations, runs, the cli_audit trail, and forward-
+// Manages the local SQLite at ~/.abc/state.db (the per-user CLI store that
+// holds projects, investigations, runs, the cli_audit trail, and forward-
 // compatible substrate for the freezes / container-digest / pipeline-metadata
 // tables consumed by `abc freeze`).
-package cache
+//
+// This package was renamed from `cmd/cache` on 2026-05-08; `abc cache`
+// remains as a deprecated alias for one release.
+package localdb
 
 import (
 	"fmt"
@@ -17,11 +20,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the `abc cache` command group.
+// NewCmd returns the `abc localdb` command group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cache",
-		Short: "Inspect and maintain the local SQLite cache at ~/.abc/state.db",
+		Use:   "localdb",
+		Short: "Inspect and maintain the local SQLite at ~/.abc/state.db",
+	}
+	cmd.AddCommand(newStatusCmd())
+	cmd.AddCommand(newMigrateCmd())
+	cmd.AddCommand(newVacuumCmd())
+	return cmd
+}
+
+// NewDeprecatedCacheAlias returns a `cache` command that proxies to localdb,
+// printing a one-line deprecation note. Kept for one release after the rename.
+func NewDeprecatedCacheAlias() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:    "cache",
+		Short:  "(deprecated) renamed to `abc localdb`",
+		Hidden: false,
+		PersistentPreRun: func(c *cobra.Command, _ []string) {
+			fmt.Fprintln(os.Stderr, "[abc] note: 'abc cache' has been renamed to 'abc localdb'; alias kept for one release")
+		},
 	}
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newMigrateCmd())
@@ -43,7 +63,6 @@ func newStatusCmd() *cobra.Command {
 			fmt.Fprintf(c.OutOrStdout(), "Binary version: %s\n", state.CLIVersion)
 			fmt.Fprintf(c.OutOrStdout(), "Path:           %s\n", path)
 
-			// Highest applied migration = schema version.
 			applied, err := migrations.AppliedVersions(db)
 			if err != nil {
 				return err
@@ -61,7 +80,7 @@ func newStatusCmd() *cobra.Command {
 			if len(pending) == 0 {
 				fmt.Fprintln(c.OutOrStdout(), "Pending:        none")
 			} else {
-				fmt.Fprintf(c.OutOrStdout(), "Pending:        %d (%v) — run `abc cache migrate` to apply\n",
+				fmt.Fprintf(c.OutOrStdout(), "Pending:        %d (%v) — run `abc localdb migrate` to apply\n",
 					len(pending), pending)
 			}
 
@@ -87,7 +106,7 @@ func newStatusCmd() *cobra.Command {
 			fmt.Fprintln(c.OutOrStdout(), "Table row counts:")
 			tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
 			for _, t := range []string{
-				"projects", "investigations", "annotations", "runs",
+				"projects", "investigations", "annotations", "annotation_revisions", "runs",
 				"active_pointers", "cli_audit", "citations",
 				"freezes", "container_digests", "pipeline_metadata",
 				"telemetry_queue",

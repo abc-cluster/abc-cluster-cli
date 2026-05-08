@@ -1,4 +1,5 @@
-// Package investigation registers `abc investigation` verbs.
+// Package investigation registers `abc project investigation` verbs (canonical
+// path; relocated from the standalone `abc investigation` group on 2026-05-08).
 package investigation
 
 import (
@@ -6,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,11 +17,38 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the `abc investigation` command group.
+// NewCmd returns the canonical `investigation` Cobra tree. Registered as a
+// subcommand of `abc project` (also as the `inv` alias via NewInvAlias).
 func NewCmd() *cobra.Command {
+	return buildCmd("investigation",
+		"Manage research investigations (branchable, mergeable explorations)")
+}
+
+// NewInvAlias returns the same Cobra tree under the short name `inv`. Wired
+// as a sibling of `investigation` under `abc project`.
+func NewInvAlias() *cobra.Command {
+	return buildCmd("inv", "Alias for `abc project investigation`")
+}
+
+// NewDeprecatedRootAlias returns the tree wired under the legacy root-level
+// path `abc investigation`, and emits a one-line deprecation note at
+// invocation. Kept for one release after the move under `abc project`.
+func NewDeprecatedRootAlias() *cobra.Command {
+	cmd := buildCmd("investigation",
+		"(deprecated) moved to `abc project investigation`")
+	cmd.PersistentPreRun = func(c *cobra.Command, _ []string) {
+		fmt.Fprintln(os.Stderr, "[abc] note: 'abc investigation' has moved to 'abc project investigation'; alias kept for one release")
+	}
+	return cmd
+}
+
+// buildCmd constructs the investigation Cobra tree. Re-invoked per
+// registration so each parent gets its own subtree (Cobra does not allow
+// command sharing across multiple parents).
+func buildCmd(use, short string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "investigation",
-		Short: "Manage research investigations (branchable, mergeable explorations)",
+		Use:   use,
+		Short: short,
 	}
 	cmd.AddCommand(newCreateCmd())
 	cmd.AddCommand(newListCmd())
@@ -35,6 +64,7 @@ func NewCmd() *cobra.Command {
 	cmd.AddCommand(newVisualizeCmd())
 	cmd.AddCommand(newExportCmd())
 	cmd.AddCommand(newDiffCmd())
+	cmd.AddCommand(newAnnotationCmd())
 	return cmd
 }
 

@@ -18,7 +18,7 @@ import (
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
-	cachecmd "github.com/abc-cluster/abc-cluster-cli/cmd/cache"
+	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/investigation"
@@ -259,8 +259,12 @@ func init() {
 	rootCmd.AddCommand(emissions.NewCmd())
 	rootCmd.AddCommand(compliance.NewCmd())
 	rootCmd.AddCommand(project.NewCmd())
-	rootCmd.AddCommand(investigation.NewCmd())
-	rootCmd.AddCommand(cachecmd.NewCmd())
+	// `abc investigation` is registered as a deprecated root-level alias for
+	// one release; the canonical command is `abc project investigation`.
+	rootCmd.AddCommand(investigation.NewDeprecatedRootAlias())
+	rootCmd.AddCommand(localdbcmd.NewCmd())
+	// `abc cache` is a deprecated alias of `abc localdb` (kept for one release).
+	rootCmd.AddCommand(localdbcmd.NewDeprecatedCacheAlias())
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
