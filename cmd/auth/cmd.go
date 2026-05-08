@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/auth/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/oklog/ulid/v2"
@@ -38,7 +39,8 @@ workspace and region settings.
   abc auth logout          Clear the active session
   abc auth whoami          Show the current authenticated identity
   abc auth token           Print the active access token (pipe-safe)
-  abc auth refresh         Refresh an expiring token (stub)`,
+  abc auth refresh         Refresh an expiring token (stub)
+  abc auth context ...     Manage saved authentication contexts (list/show/use/add/delete)`,
 	}
 
 	cmd.AddCommand(newLoginCmd())
@@ -46,6 +48,7 @@ workspace and region settings.
 	cmd.AddCommand(newWhoamiCmd())
 	cmd.AddCommand(newTokenCmd())
 	cmd.AddCommand(newRefreshCmd())
+	cmd.AddCommand(contextcmd.NewCmd())
 
 	return cmd
 }
