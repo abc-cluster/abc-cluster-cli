@@ -19,12 +19,12 @@
   --brand-mark:#c8a84c;
 }
 :root[data-system="grid"][data-theme="light"] {
-  /* Flat fill 2026-05-08: bg / bg-1 / bg-2 collapsed to a single tone so
-     install cards, code blocks, and search inputs no longer read as a
-     tinted column against the page. Cards are still distinguishable by
-     their borders + rule lines; the layered-tint affordance is dark-mode
-     only. */
-  --bg:#fafdfb;--bg-1:#fafdfb;--bg-2:#fafdfb;
+  /* Pure white 2026-05-08: bg / bg-1 / bg-2 all #ffffff so the page
+     reads as plain white in light mode. The mint-leaning rule colours
+     are kept — borders + dotted underlines still carry the design's
+     warm-green character without tinting any region. The layered-tint
+     affordance (--bg / --bg-1 / --bg-2 stack) is dark-mode only. */
+  --bg:#ffffff;--bg-1:#ffffff;--bg-2:#ffffff;
   --text:#1a4a3a;--text-dim:#2d7060;--text-mute:#6aaa96;
   --ink:#0a2820;--ink-dim:#907028;--accent:#907028;
   --rule:#cbe4dc;--rule-soft:#dceee7;
@@ -42,8 +42,8 @@
   --brand-mark:#d4923a;
 }
 :root[data-system="brush"][data-theme="light"] {
-  /* Flat fill — see the grid+light block above for rationale. */
-  --bg:#fdfbf6;--bg-1:#fdfbf6;--bg-2:#fdfbf6;
+  /* Pure white — see the grid+light block above for rationale. */
+  --bg:#ffffff;--bg-1:#ffffff;--bg-2:#ffffff;
   --text:#4a3520;--text-dim:#7a5830;--text-mute:#b08860;
   --ink:#1e1208;--ink-dim:#a06820;--accent:#c07828;
   --rule:#e2cea8;--rule-soft:#ecddc1;
