@@ -42,6 +42,7 @@ which uses SSH or the local shell only (no --sudo on the abc command).
 		newAddCmd(),
 		newTerminateCmd(),
 		newProbeCmd(),
+		newProbeScheduleCmd(),
 		newNodeCmd(),
 	)
 	return cmd
