@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         {type: 'doc', id: 'reference/abc-investigation', label: 'investigation'},
         {type: 'doc', id: 'reference/abc-accounting',    label: 'accounting'},
         {type: 'doc', id: 'reference/abc-emissions',     label: 'emissions'},
+        {type: 'doc', id: 'reference/abc-report',        label: 'report'},
         {type: 'doc', id: 'reference/jobs',              label: 'job run'},
         {type: 'doc', id: 'reference/pipeline',          label: 'pipeline run'},
         {type: 'doc', id: 'reference/module',            label: 'module run'},

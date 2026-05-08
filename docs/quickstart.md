@@ -47,6 +47,20 @@ abc job list --status running
 abc job show <job-id>
 ```
 
+## See what you got
+
+After a few runs, ask the CLI how much accidental time it returned to you:
+
+```bash
+abc report
+```
+
+`abc report` reads `~/.abc/local.db` only — no network calls — and prints a
+year-to-date personal summary: investigations explored, runs (succeeded vs.
+retried), compute consumed, and an estimate of "research time saved" with a
+postdoc-rate translation. See [Reference → report](./reference/abc-report) for
+the full metric mapping and JSON schema.
+
 ## Trouble?
 
 | Symptom | Try |
