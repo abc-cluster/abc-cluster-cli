@@ -89,7 +89,15 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	}
 	defer db.Close()
 
-	opts := rep.QueryOptions{Window: window, ContextName: contextName}
+	// Layer-0/1 rate card resolved exactly as `abc accounting` and
+	// `abc emissions` do. Spec §D' (BINDING): one resolver across the
+	// three verbs is the contract; drift is a regression.
+	card, err := rep.LoadRateCard(contextName)
+	if err != nil {
+		return err
+	}
+
+	opts := rep.QueryOptions{Window: window, ContextName: contextName, RateCard: card}
 	results := rep.Compute(cmd.Context(), db, opts)
 
 	if jsonOut {
@@ -100,10 +108,10 @@ func runReport(cmd *cobra.Command, _ []string) error {
 				return err
 			}
 		}
-		return rep.RenderJSON(cmd.OutOrStdout(), window, contextName, results, groups)
+		return rep.RenderJSON(cmd.OutOrStdout(), window, contextName, card, results, groups)
 	}
 
-	textOpts := rep.TextOptions{Window: window, Technical: technical, ContextName: contextName}
+	textOpts := rep.TextOptions{Window: window, Technical: technical, ContextName: contextName, RateCard: card}
 	return rep.RenderText(cmd.Context(), db, cmd.OutOrStdout(), textOpts, results)
 }
 

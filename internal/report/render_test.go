@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
 )
 
 // TestRenderText_AcceptanceShape: the §"Acceptance: end-to-end" sample
@@ -32,10 +34,14 @@ func TestRenderText_AcceptanceShape(t *testing.T) {
 		"Auto-retry handled it for you",
 		"Failure summaries (vs. log diving)",
 		"Reused protocols (vs. from scratch)",
+		"Spend this period:",
+		"Emissions this period:",
 		"Research time saved:",
 		"Hourly compensation:",
 		"Amount:",
-		PostdocRateProvenance,
+		"Rate card (effective):",
+		"cost.postdoc_per_hour",
+		"emissions.grid_factor_gco2_per_kwh",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("RenderText output missing %q\nfull output:\n%s", want, out)
@@ -55,7 +61,7 @@ func TestRenderText_TechnicalMode(t *testing.T) {
 		t.Fatalf("RenderText: %v", err)
 	}
 	out := buf.String()
-	for _, id := range []string{"investigations_count", "runs_count", "compute_hours", "hours_saved", "hourly_rate_zar", "amount_zar"} {
+	for _, id := range []string{"investigations_count", "runs_count", "compute_hours", "hours_saved", "postdoc_per_hour", "amount_zar", "spend_zar", "emissions_kgco2e"} {
 		if !strings.Contains(out, id) {
 			t.Errorf("--technical text missing %q", id)
 		}
@@ -70,7 +76,7 @@ func TestRenderJSON_HoursSavedShape(t *testing.T) {
 	insertRun(t, db, "r1", "completed", 1700000000, 1700003600, 3600, 1.0)
 	res := Compute(context.Background(), db, QueryOptions{Window: fullWindow, ContextName: "ctx"})
 	var buf bytes.Buffer
-	if err := RenderJSON(&buf, fullWindow, "ctx", res, nil); err != nil {
+	if err := RenderJSON(&buf, fullWindow, "ctx", acct.ZADefaults(), res, nil); err != nil {
 		t.Fatalf("RenderJSON: %v", err)
 	}
 
@@ -100,13 +106,15 @@ func TestRenderJSON_HoursSavedShape(t *testing.T) {
 }
 
 // TestRenderJSON_RateCardFooter: the JSON output includes a structured
-// rate_card object with hourly_rate_zar and the citation. Mirrors what
-// scripts will read.
+// rate_card object enumerating every rate value with its provenance.
+// Spec §D' (BINDING): "the `rate_card` block at the JSON top level
+// must list every value with `{value, source, citation}` for each —
+// not just the postdoc rate."
 func TestRenderJSON_RateCardFooter(t *testing.T) {
 	db := openFixtureDB(t)
 	res := Compute(context.Background(), db, QueryOptions{Window: fullWindow, ContextName: "ctx"})
 	var buf bytes.Buffer
-	if err := RenderJSON(&buf, fullWindow, "ctx", res, nil); err != nil {
+	if err := RenderJSON(&buf, fullWindow, "ctx", acct.ZADefaults(), res, nil); err != nil {
 		t.Fatalf("RenderJSON: %v", err)
 	}
 	var top map[string]any
@@ -117,11 +125,29 @@ func TestRenderJSON_RateCardFooter(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing rate_card; got %T", top["rate_card"])
 	}
-	if v, _ := rc["hourly_rate_zar"].(float64); int(v) != HourlyRateZAR {
-		t.Errorf("rate_card.hourly_rate_zar = %v, want %d", rc["hourly_rate_zar"], HourlyRateZAR)
+	// Every required key present with {value, source, citation}.
+	for _, key := range []string{
+		"currency", "cost.cpu_hour", "cost.gpu_hour", "cost.memory_gb_hour",
+		"cost.storage_scratch_gb_hour", "cost.postdoc_per_hour",
+		"emissions.grid_factor_gco2_per_kwh", "emissions.cpu_w", "emissions.gpu_w",
+		"emissions.memory_gb_w", "emissions.pue", "emissions.storage_scratch_w_per_tb",
+	} {
+		entry, ok := rc[key].(map[string]any)
+		if !ok {
+			t.Errorf("rate_card[%q] missing or wrong type: %T", key, rc[key])
+			continue
+		}
+		if _, ok := entry["value"]; !ok {
+			t.Errorf("rate_card[%q].value missing", key)
+		}
+		if _, ok := entry["source"]; !ok {
+			t.Errorf("rate_card[%q].source missing", key)
+		}
 	}
-	if rc["citation"] != "HSRC 2025" {
-		t.Errorf("rate_card.citation = %v, want HSRC 2025", rc["citation"])
+	// Postdoc rate specifically: must be R350 from Layer 0 ZA defaults.
+	pd, _ := rc["cost.postdoc_per_hour"].(map[string]any)
+	if v, _ := pd["value"].(float64); v != acct.ZADefaultCostPostdocPerHour {
+		t.Errorf("cost.postdoc_per_hour.value = %v, want %v", pd["value"], acct.ZADefaultCostPostdocPerHour)
 	}
 }
 

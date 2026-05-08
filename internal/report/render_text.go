@@ -5,20 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
+
+	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
 )
-
-// HourlyRateZAR is the postdoc hourly rate (R/hr) used to translate
-// `hours_saved` into a currency amount in the headline footer. Spec
-// abc-report.md §"Acceptance: end-to-end" sample. Sourced from the
-// HSRC 2025 South African postdoctoral compensation guidance via the
-// Layer-0 ZA defaults.
-const HourlyRateZAR = 350
-
-// PostdocRateProvenance is the citation string surfaced in the footer.
-// Mirrors the shape `abc accounting` uses ("Rate card: …").
-const PostdocRateProvenance = "Rate card: Layer-0 ZA defaults (postdoc R350/hr, citation: HSRC 2025)."
 
 // TextOptions tunes the text renderer.
 type TextOptions struct {
@@ -34,6 +26,12 @@ type TextOptions struct {
 	// match the ContextName passed to QueryOptions so the headline
 	// breakdown and metric pipeline see the same row set.
 	ContextName string
+
+	// RateCard is the resolved Layer-0/1 rate card (and grid intensity).
+	// Used to print the postdoc compensation line and the unified
+	// provenance footer. When zero, the renderer falls back to the
+	// Layer-0 ZA defaults so unit tests stay deterministic.
+	RateCard acct.RateCard
 }
 
 // RenderText writes the §5.10 mockup-style summary to w. Reads the
@@ -56,6 +54,13 @@ func RenderText(ctx context.Context, db *sql.DB, w io.Writer, opts TextOptions, 
 		return err
 	}
 
+	card := resolvedTextCard(opts)
+	currency := card.Currency.Value
+	if currency == "" {
+		currency = "ZAR"
+	}
+	currencySym := currencySymbol(currency)
+
 	fmt.Fprintf(w, "Your %s so far:\n", yearLabel)
 	fmt.Fprintln(w, strings.Repeat("─", 52))
 	fmt.Fprintf(w, "%-37s %d\n", labelOrTech(opts, "Questions explored (investigations):", "investigations_count"), investigations)
@@ -63,6 +68,26 @@ func RenderText(ctx context.Context, db *sql.DB, w io.Writer, opts TextOptions, 
 		labelOrTech(opts, "Pipeline runs:", "runs_count"), runsTotal, runsSucceeded, runsRetried)
 	fmt.Fprintf(w, "%-37s %.0f CPU-hrs, %.0f GPU-hrs\n",
 		labelOrTech(opts, "Total compute:", "compute_hours"), cpuHours, gpuHours)
+	fmt.Fprintln(w)
+
+	// §D' BINDING: spend + emissions headline, sandwiched between the
+	// compute line and the time-saved block. The metric IDs come from
+	// the locked label table; values come from the resolver-backed
+	// queries so this verb mirrors `abc accounting` and `abc emissions`
+	// for the same window.
+	if r, ok := ResultByID(results, "spend_zar"); ok && r.Computable {
+		if v, ok := r.Value.(float64); ok {
+			fmt.Fprintf(w, "%-37s %s %s\n",
+				labelOrTech(opts, "Spend this period:", "spend_zar"),
+				currencySym, formatThousands(v))
+		}
+	}
+	if r, ok := ResultByID(results, "emissions_kgco2e"); ok && r.Computable {
+		if v, ok := r.Value.(float64); ok {
+			fmt.Fprintf(w, "%-37s %.1f kg CO₂e\n",
+				labelOrTech(opts, "Emissions this period:", "emissions_kgco2e"), v)
+		}
+	}
 	fmt.Fprintln(w)
 
 	// Time-saved breakdown.
@@ -88,21 +113,140 @@ func RenderText(ctx context.Context, db *sql.DB, w io.Writer, opts TextOptions, 
 	fmt.Fprintf(w, "  %-*s    %s\n", maxLabel, "Total:", totalStr)
 	fmt.Fprintln(w)
 
-	// Currency translation.
+	// Currency translation. Postdoc rate flows through the same Layer
+	// 0/1 resolver `abc accounting` uses — drift between the report and
+	// accounting verbs is a regression (see the integration test in
+	// integration_test.go).
 	hours := 0.0
 	if hoursSaved.Computable {
 		if v, ok := hoursSaved.Value.(float64); ok {
 			hours = v
 		}
 	}
-	rateZAR := HourlyRateZAR
-	amount := hours * float64(rateZAR)
+	postdocRate := card.Cost.PostdocPerHour.Value
+	amount := hours * postdocRate
 	fmt.Fprintf(w, "%-23s %.1f hours\n", labelOrTech(opts, "Research time saved:", "hours_saved"), hours)
-	fmt.Fprintf(w, "%-23s R %d\n", labelOrTech(opts, "Hourly compensation:", "hourly_rate_zar"), rateZAR)
-	fmt.Fprintf(w, "%-23s R %s\n", labelOrTech(opts, "Amount:", "amount_zar"), formatThousands(amount))
+	fmt.Fprintf(w, "%-23s %s %s\n",
+		labelOrTech(opts, "Hourly compensation:", "postdoc_per_hour"),
+		currencySym, formatRate(postdocRate))
+	fmt.Fprintf(w, "%-23s %s %s\n",
+		labelOrTech(opts, "Amount:", "amount_zar"),
+		currencySym, formatThousands(amount))
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, PostdocRateProvenance)
+
+	// Unified provenance footer: every rate-card AND grid-intensity
+	// value used, with layer + citation. Same shape as
+	// `abc accounting --rate-source=full`. One block, no duplication.
+	writeProvenanceFooter(w, card)
 	return nil
+}
+
+// resolvedTextCard returns opts.RateCard if populated, otherwise the
+// Layer-0 ZA defaults. Lets unit tests skip the wiring boilerplate.
+func resolvedTextCard(opts TextOptions) acct.RateCard {
+	if opts.RateCard.Currency.Value == "" {
+		return acct.ZADefaults()
+	}
+	return opts.RateCard
+}
+
+// currencySymbol returns the ASCII / single-glyph symbol for an ISO
+// currency code. We only special-case ZAR (the report verb's seed-tier
+// home currency); everything else falls through to the alpha code, with
+// a leading space added at the call site so e.g. "USD 1,420" renders
+// readably.
+func currencySymbol(code string) string {
+	if code == "ZAR" {
+		return "R"
+	}
+	return code
+}
+
+// formatRate renders a rate value compactly: integer if the value is a
+// whole number, two-decimal otherwise. Matches the §"Acceptance" sample
+// for the postdoc rate (R 350) while still rendering sub-rand rates
+// cleanly (R 0.50/CPU·hr).
+func formatRate(v float64) string {
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
+// rateRow is one line in the unified provenance footer. Mirrors the
+// shape `internal/accounting.relevantRates` returns so the two verbs
+// produce structurally identical footers.
+type rateRow struct {
+	Key      string
+	Value    string
+	Source   string
+	Citation string
+	Updated  time.Time
+}
+
+// writeProvenanceFooter emits one footer block enumerating every rate
+// card + grid intensity value used. Spec abc-report.md §D' (BINDING):
+// "Provenance footer enumerates every rate-card and grid-intensity
+// value used, with layer + citation, in the same shape as
+// `abc accounting`'s footer. One unified footer; no duplication."
+func writeProvenanceFooter(w io.Writer, card acct.RateCard) {
+	rows := []rateRow{
+		{Key: "currency", Value: card.Currency.Value,
+			Source: string(card.Currency.Source), Citation: card.Currency.Citation,
+			Updated: card.Currency.UpdatedAt},
+		{Key: "cost.cpu_hour", Value: formatRate(card.Cost.CpuHour.Value),
+			Source: string(card.Cost.CpuHour.Source), Citation: card.Cost.CpuHour.Citation,
+			Updated: card.Cost.CpuHour.UpdatedAt},
+		{Key: "cost.gpu_hour", Value: formatRate(card.Cost.GpuHour.Value),
+			Source: string(card.Cost.GpuHour.Source), Citation: card.Cost.GpuHour.Citation,
+			Updated: card.Cost.GpuHour.UpdatedAt},
+		{Key: "cost.memory_gb_hour", Value: formatRate(card.Cost.MemoryGbHour.Value),
+			Source: string(card.Cost.MemoryGbHour.Source), Citation: card.Cost.MemoryGbHour.Citation,
+			Updated: card.Cost.MemoryGbHour.UpdatedAt},
+		{Key: "cost.storage_scratch_gb_hour", Value: strconv.FormatFloat(card.Cost.StorageScratchGbHour.Value, 'g', -1, 64),
+			Source: string(card.Cost.StorageScratchGbHour.Source), Citation: card.Cost.StorageScratchGbHour.Citation,
+			Updated: card.Cost.StorageScratchGbHour.UpdatedAt},
+		{Key: "cost.postdoc_per_hour", Value: formatRate(card.Cost.PostdocPerHour.Value),
+			Source: string(card.Cost.PostdocPerHour.Source), Citation: card.Cost.PostdocPerHour.Citation,
+			Updated: card.Cost.PostdocPerHour.UpdatedAt},
+		{Key: "emissions.grid_factor_gco2_per_kwh", Value: formatRate(card.Emissions.GridFactorGco2PerKwh.Value),
+			Source: string(card.Emissions.GridFactorGco2PerKwh.Source), Citation: card.Emissions.GridFactorGco2PerKwh.Citation,
+			Updated: card.Emissions.GridFactorGco2PerKwh.UpdatedAt},
+		{Key: "emissions.cpu_w", Value: formatRate(card.Emissions.CpuW.Value),
+			Source: string(card.Emissions.CpuW.Source), Citation: card.Emissions.CpuW.Citation,
+			Updated: card.Emissions.CpuW.UpdatedAt},
+		{Key: "emissions.gpu_w", Value: formatRate(card.Emissions.GpuW.Value),
+			Source: string(card.Emissions.GpuW.Source), Citation: card.Emissions.GpuW.Citation,
+			Updated: card.Emissions.GpuW.UpdatedAt},
+		{Key: "emissions.memory_gb_w", Value: strconv.FormatFloat(card.Emissions.MemoryGbW.Value, 'g', -1, 64),
+			Source: string(card.Emissions.MemoryGbW.Source), Citation: card.Emissions.MemoryGbW.Citation,
+			Updated: card.Emissions.MemoryGbW.UpdatedAt},
+		{Key: "emissions.pue", Value: formatRate(card.Emissions.Pue.Value),
+			Source: string(card.Emissions.Pue.Source), Citation: card.Emissions.Pue.Citation,
+			Updated: card.Emissions.Pue.UpdatedAt},
+		{Key: "emissions.storage_scratch_w_per_tb", Value: formatRate(card.Emissions.StorageScratchWPerTb.Value),
+			Source: string(card.Emissions.StorageScratchWPerTb.Source), Citation: card.Emissions.StorageScratchWPerTb.Citation,
+			Updated: card.Emissions.StorageScratchWPerTb.UpdatedAt},
+	}
+
+	fmt.Fprintln(w, "Rate card (effective):")
+	maxKey := 0
+	for _, r := range rows {
+		if len(r.Key) > maxKey {
+			maxKey = len(r.Key)
+		}
+	}
+	for _, r := range rows {
+		src := r.Source
+		if src == "" {
+			src = string(acct.SourceBuiltIn)
+		}
+		fmt.Fprintf(w, "  %-*s  %-8s  %-10s  (%s)\n", maxKey, r.Key, r.Value, src, r.Citation)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "These rates are showback estimates; not invoice-grade. To override:")
+	fmt.Fprintln(w, "  abc config accounting set cost.postdoc_per_hour=400")
+	fmt.Fprintln(w, "  abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950")
 }
 
 // labelOrTech returns the technical key when --technical, otherwise the

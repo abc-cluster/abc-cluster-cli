@@ -7,6 +7,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
 )
 
 // Window is the time range a metric is computed over. Always inclusive
@@ -25,6 +27,26 @@ type QueryOptions struct {
 	// by the JSON --by=<axis> path; empty in the personal-summary path.
 	GroupColumn string
 	GroupKey    string
+	// RateCard is the resolved Layer-0/1 rate card. Required for the
+	// spend_zar / cost_per_investigation / emissions_kgco2e /
+	// emissions_per_investigation metrics — these multiply per-run
+	// SQL aggregates by the resolver's rate values so the report verb
+	// is self-consistent with `abc accounting` and `abc emissions` for
+	// the same window. When zero (e.g. unit tests that don't load a
+	// card), the cost/emissions metrics fall back to the Layer-0 ZA
+	// defaults so test fixtures remain deterministic.
+	RateCard acct.RateCard
+}
+
+// resolvedCard returns opts.RateCard if it has been populated, otherwise
+// the Layer-0 ZA defaults. The "populated" probe checks Currency.Value;
+// the resolver always sets at least the currency tag, so a zero RateCard
+// is unambiguously "caller didn't bother".
+func resolvedCard(opts QueryOptions) acct.RateCard {
+	if opts.RateCard.Currency.Value == "" {
+		return acct.ZADefaults()
+	}
+	return opts.RateCard
 }
 
 // MetricResult is the per-metric output. Computable=false with a Reason
@@ -95,6 +117,12 @@ func computeOne(ctx context.Context, db *sql.DB, id string, opts QueryOptions) M
 		return queryResourceFit(ctx, db, opts)
 	case "cost_per_investigation":
 		return queryCostPerInvestigation(ctx, db, opts)
+	case "emissions_per_investigation":
+		return queryEmissionsPerInvestigation(ctx, db, opts)
+	case "spend_zar":
+		return querySpendZAR(ctx, db, opts)
+	case "emissions_kgco2e":
+		return queryEmissionsKgCO2e(ctx, db, opts)
 	case "hours_saved":
 		// hours_saved depends on several other queries; compute them
 		// inline here rather than re-running.
@@ -642,31 +670,155 @@ func queryResourceFit(ctx context.Context, db *sql.DB, opts QueryOptions) Metric
 	return MetricResult{ID: "resource_fit", Value: sum / float64(n), Computable: true}
 }
 
-// queryCostPerInvestigation: cumulative cpu_hours per investigation in
-// the window. Currency conversion stays in `abc accounting`; we surface
-// cpu_hours-per-investigation as a placeholder until the v2 reporter
-// imports the rate-card directly. Returns a map[investigation_id]hours.
-func queryCostPerInvestigation(ctx context.Context, db *sql.DB, opts QueryOptions) MetricResult {
+// invAgg holds the per-investigation rolled-up resource aggregates
+// needed to compute spend / emissions via the resolver. All fields are
+// already in the units the formula expects (cpu_hours, memory_gb_hours,
+// gpu_hours = gpu_count·walltime_hours, scratch_gb_hours =
+// scratch_gb·walltime_hours). Same shape as `internal/accounting.Row`
+// so both verbs feed the same arithmetic.
+type invAgg struct {
+	cpuHours       float64
+	memGbHours     float64
+	gpuHours       float64
+	scratchGbHours float64
+}
+
+func loadPerInvestigation(ctx context.Context, db *sql.DB, opts QueryOptions) (map[string]invAgg, error) {
 	whereRuns, argsRuns := runWindowClause(opts)
 	q := fmt.Sprintf(`
-		SELECT COALESCE(investigation_id,'(none)'), COALESCE(SUM(cpu_hours), 0)
+		SELECT COALESCE(investigation_id,'(none)'),
+		       COALESCE(SUM(cpu_hours), 0),
+		       COALESCE(SUM(memory_gb_hours), 0),
+		       COALESCE(SUM(CAST(gpu_count AS REAL) * (CAST(walltime_seconds AS REAL) / 3600.0)), 0),
+		       COALESCE(SUM(CAST(scratch_gb AS REAL) * (CAST(walltime_seconds AS REAL) / 3600.0)), 0)
 		FROM runs WHERE %s
 		GROUP BY investigation_id`, whereRuns)
 	rows, err := db.QueryContext(ctx, q, argsRuns...)
 	if err != nil {
-		return MetricResult{ID: "cost_per_investigation", Computable: false, Reason: err.Error()}
+		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]float64{}
+	out := map[string]invAgg{}
 	for rows.Next() {
 		var id string
-		var cpuh float64
-		if err := rows.Scan(&id, &cpuh); err != nil {
-			return MetricResult{ID: "cost_per_investigation", Computable: false, Reason: err.Error()}
+		var a invAgg
+		if err := rows.Scan(&id, &a.cpuHours, &a.memGbHours, &a.gpuHours, &a.scratchGbHours); err != nil {
+			return nil, err
 		}
-		out[id] = cpuh
+		out[id] = a
+	}
+	return out, rows.Err()
+}
+
+// queryCostPerInvestigation: ZAR per investigation in the window,
+// computed via the rate-card resolver:
+//
+//   cost = cpu_hours * cpu_per_hour
+//        + memory_gb_hours * mem_per_hour
+//        + gpu_count * walltime_hours * gpu_per_hour
+//        + scratch_gb_hours * scratch_per_hour_gb
+//
+// Returns a map[investigation_id]ZAR. Spec abc-report.md §D'.
+func queryCostPerInvestigation(ctx context.Context, db *sql.DB, opts QueryOptions) MetricResult {
+	aggs, err := loadPerInvestigation(ctx, db, opts)
+	if err != nil {
+		return MetricResult{ID: "cost_per_investigation", Computable: false, Reason: err.Error()}
+	}
+	card := resolvedCard(opts)
+	out := map[string]float64{}
+	for id, a := range aggs {
+		out[id] = a.cpuHours*card.Cost.CpuHour.Value +
+			a.memGbHours*card.Cost.MemoryGbHour.Value +
+			a.gpuHours*card.Cost.GpuHour.Value +
+			a.scratchGbHours*card.Cost.StorageScratchGbHour.Value
 	}
 	return MetricResult{ID: "cost_per_investigation", Value: out, Computable: true}
+}
+
+// queryEmissionsPerInvestigation: kg CO₂e per investigation in the
+// window, via the same resolver `abc emissions` uses. Mirrors the
+// formula in `internal/accounting.Aggregate(ModeEmissions)` exactly so
+// the per-investigation rollup sums to the windowed total `abc
+// emissions` reports. Returns a map[investigation_id]kgCO2e.
+func queryEmissionsPerInvestigation(ctx context.Context, db *sql.DB, opts QueryOptions) MetricResult {
+	aggs, err := loadPerInvestigation(ctx, db, opts)
+	if err != nil {
+		return MetricResult{ID: "emissions_per_investigation", Computable: false, Reason: err.Error()}
+	}
+	card := resolvedCard(opts)
+	em := card.Emissions
+	out := map[string]float64{}
+	for id, a := range aggs {
+		scratchEnergyKwh := a.scratchGbHours * em.StorageScratchWPerTb.Value / 1000.0 / 1000.0
+		energyKwh := ((a.cpuHours*em.CpuW.Value +
+			a.gpuHours*em.GpuW.Value +
+			a.memGbHours*em.MemoryGbW.Value) / 1000.0) * em.Pue.Value
+		energyKwh += scratchEnergyKwh * em.Pue.Value
+		out[id] = energyKwh * em.GridFactorGco2PerKwh.Value / 1000.0
+	}
+	return MetricResult{ID: "emissions_per_investigation", Value: out, Computable: true}
+}
+
+// windowAggregates returns the window-wide rolled-up resource totals.
+// Same SQL `abc accounting` runs (just without the GROUP BY) so the
+// `spend_zar` and `emissions_kgco2e` headlines align with `abc
+// accounting` / `abc emissions` for the same window.
+type windowAgg struct {
+	cpuHours       float64
+	memGbHours     float64
+	gpuHours       float64
+	scratchGbHours float64
+}
+
+func loadWindowAggregates(ctx context.Context, db *sql.DB, opts QueryOptions) (windowAgg, error) {
+	whereRuns, argsRuns := runWindowClause(opts)
+	q := fmt.Sprintf(`
+		SELECT COALESCE(SUM(cpu_hours), 0),
+		       COALESCE(SUM(memory_gb_hours), 0),
+		       COALESCE(SUM(CAST(gpu_count AS REAL) * (CAST(walltime_seconds AS REAL) / 3600.0)), 0),
+		       COALESCE(SUM(CAST(scratch_gb AS REAL) * (CAST(walltime_seconds AS REAL) / 3600.0)), 0)
+		FROM runs WHERE %s`, whereRuns)
+	var a windowAgg
+	if err := db.QueryRowContext(ctx, q, argsRuns...).Scan(
+		&a.cpuHours, &a.memGbHours, &a.gpuHours, &a.scratchGbHours,
+	); err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
+// querySpendZAR: window-wide ZAR aggregate. Matches `abc accounting`
+// for the same window — drift between the two is a regression. Spec
+// abc-report.md §D'.
+func querySpendZAR(ctx context.Context, db *sql.DB, opts QueryOptions) MetricResult {
+	a, err := loadWindowAggregates(ctx, db, opts)
+	if err != nil {
+		return MetricResult{ID: "spend_zar", Computable: false, Reason: err.Error()}
+	}
+	card := resolvedCard(opts)
+	v := a.cpuHours*card.Cost.CpuHour.Value +
+		a.memGbHours*card.Cost.MemoryGbHour.Value +
+		a.gpuHours*card.Cost.GpuHour.Value +
+		a.scratchGbHours*card.Cost.StorageScratchGbHour.Value
+	return MetricResult{ID: "spend_zar", Value: v, Computable: true}
+}
+
+// queryEmissionsKgCO2e: window-wide kg CO₂e aggregate. Matches `abc
+// emissions` for the same window. Spec abc-report.md §D'.
+func queryEmissionsKgCO2e(ctx context.Context, db *sql.DB, opts QueryOptions) MetricResult {
+	a, err := loadWindowAggregates(ctx, db, opts)
+	if err != nil {
+		return MetricResult{ID: "emissions_kgco2e", Computable: false, Reason: err.Error()}
+	}
+	card := resolvedCard(opts)
+	em := card.Emissions
+	scratchEnergyKwh := a.scratchGbHours * em.StorageScratchWPerTb.Value / 1000.0 / 1000.0
+	energyKwh := ((a.cpuHours*em.CpuW.Value +
+		a.gpuHours*em.GpuW.Value +
+		a.memGbHours*em.MemoryGbW.Value) / 1000.0) * em.Pue.Value
+	energyKwh += scratchEnergyKwh * em.Pue.Value
+	v := energyKwh * em.GridFactorGco2PerKwh.Value / 1000.0
+	return MetricResult{ID: "emissions_kgco2e", Value: v, Computable: true}
 }
 
 // queryHoursSaved: composite. Sums:

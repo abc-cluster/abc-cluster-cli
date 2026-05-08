@@ -85,7 +85,11 @@ func TestNoNetworkOnRender(t *testing.T) {
 	if err := rep.RenderText(context.Background(), db, &bufText, rep.TextOptions{Window: rep.DefaultWindowYTD(time.Now())}, results); err != nil {
 		t.Fatalf("RenderText: %v", err)
 	}
-	if err := rep.RenderJSON(&bufJSON, rep.DefaultWindowYTD(time.Now()), "ctx", results, nil); err != nil {
+	card, err := rep.LoadRateCard("ctx")
+	if err != nil {
+		t.Fatalf("LoadRateCard: %v", err)
+	}
+	if err := rep.RenderJSON(&bufJSON, rep.DefaultWindowYTD(time.Now()), "ctx", card, results, nil); err != nil {
 		t.Fatalf("RenderJSON: %v", err)
 	}
 	if got := atomic.LoadInt64(&hits); got != 0 {

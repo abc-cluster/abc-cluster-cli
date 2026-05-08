@@ -47,7 +47,10 @@ revisable user-facing Title and Gloss (revisable without an ADR).
 | `workflows_unattended` | Hands-off completions | Pipelines that finished without you stepping in |
 | `submission_source` | Submission source | How the run was authored: template / handwritten / rerun |
 | `resource_fit` | Right-sized requests | How close requested CPU/RAM matched what was used |
-| `cost_per_investigation` | Spend per question | Already in `abc accounting --by=investigation`; surfaced here |
+| `cost_per_investigation` | Spend per question | ZAR per investigation, resolved via `internal/accounting` rate card |
+| `emissions_per_investigation` | Carbon per question | kg CO₂e attributed to each investigation, resolved via `internal/emissions` |
+| `spend_zar` | Total spend | Window-wide ZAR aggregate (matches `abc accounting` for same window) |
+| `emissions_kgco2e` | Total emissions | Window-wide kg CO₂e (matches `abc emissions` for same window) |
 | `hours_saved` | Research time saved | Headline composite: estimated busywork avoided |
 
 Adding a metric requires populating all four fields (ID, Title, Gloss, Unit) in
@@ -68,6 +71,26 @@ asks.
 | `TemplateReuseSavedMinutes` | 60 | template / rerun vs. setup from scratch |
 | `AsyncRunSpectatorAvoidedMin` | 30 | spectator_hours; median observed monitoring session |
 
+## Three verbs, three lenses on one ledger
+
+`abc report` is the third lens onto the same accounting + emissions
+ledger that `abc accounting` and `abc emissions` operate on. All three
+verbs share one Layer-0/1/2 rate-card resolver (`internal/accounting`)
+and one grid-intensity resolver (the same package's `Emissions` block).
+For a given window:
+
+- `abc accounting --since=… --until=…` reports total ZAR spend.
+- `abc emissions --since=… --until=…` reports total kg CO₂e.
+- `abc report --since=… --until=…` produces the closed-loop researcher
+  view: spend, emissions, and postdoc-hours-returned together, with
+  per-investigation rollups.
+
+The three verbs return identical numbers for the spend and emissions
+totals when given the same window — the drift regression test in
+`internal/report/integration_test.go` enforces this. If you see drift,
+the report verb is using a different formula or a different rate card,
+which is a bug, not configuration.
+
 ## Sample output
 
 ```
@@ -77,6 +100,9 @@ Your 2026 so far:
 Questions explored (investigations):  3
 Pipeline runs:                        12  (10 worked, 2 retried)
 Total compute:                        47 CPU-hrs, 0 GPU-hrs
+
+Spend this period:                    R 1,420
+Emissions this period:                47.3 kg CO₂e
 
 Research time saved (estimated):
   Auto-retry handled it for you      →  ~0.5 hrs
@@ -90,8 +116,31 @@ Research time saved:    3.5 hours
 Hourly compensation:    R 350
 Amount:                 R 1,225
 
-Rate card: Layer-0 ZA defaults (postdoc R350/hr, citation: HSRC 2025).
+Rate card (effective):
+  currency                            ZAR       built-in    (SA market default)
+  cost.cpu_hour                       0.5       built-in    (abc-cluster-cli vX — SA on-prem indicative)
+  cost.gpu_hour                       9         built-in    (abc-cluster-cli vX — SA on-prem indicative)
+  cost.memory_gb_hour                 0.05      built-in    (abc-cluster-cli vX — SA on-prem indicative)
+  cost.storage_scratch_gb_hour        0.0001    built-in    (amortised enterprise NVMe + power)
+  cost.postdoc_per_hour               350       built-in    (HSRC 2025 SA postdoctoral compensation guidance)
+  emissions.grid_factor_gco2_per_kwh  900       built-in    (Eskom Integrated Annual Report 2023)
+  emissions.cpu_w                     12        built-in    (Cloud Carbon Footprint v3 coefficient set)
+  emissions.gpu_w                     250       built-in    (Cloud Carbon Footprint v3 coefficient set)
+  emissions.memory_gb_w               0.3725    built-in    (Cloud Carbon Footprint v3 coefficient set)
+  emissions.pue                       1.5       built-in    (Uptime Institute 2023 — generic on-prem average)
+  emissions.storage_scratch_w_per_tb  8         built-in    (Samsung PM9A3 envelope amortised)
+
+These rates are showback estimates; not invoice-grade. To override:
+  abc config accounting set cost.postdoc_per_hour=400
+  abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950
 ```
+
+The provenance footer is generated from the resolved rate card — every
+value carries its layer (`built-in` / `local` / `flag`) and citation. A
+Layer-1 override in `~/.abc/config.yaml` (e.g. `cost.postdoc_per_hour:
+525`) flows through the same path the other two verbs use, so the
+postdoc rate displayed here is the same value `abc accounting --by=user`
+would multiply against. One ledger, three lenses.
 
 ## JSON schema
 
@@ -111,9 +160,18 @@ Rate card: Layer-0 ZA defaults (postdoc R350/hr, citation: HSRC 2025).
     }
   },
   "rate_card": {
-    "hourly_rate_zar": 350,
-    "citation":        "HSRC 2025",
-    "source":          "Layer-0 ZA defaults"
+    "currency":                          {"value": "ZAR",   "source": "built-in", "citation": "SA market default"},
+    "cost.cpu_hour":                     {"value": 0.5,     "source": "built-in", "citation": "abc-cluster-cli vX — SA on-prem indicative"},
+    "cost.gpu_hour":                     {"value": 9,       "source": "built-in", "citation": "..."},
+    "cost.memory_gb_hour":               {"value": 0.05,    "source": "built-in", "citation": "..."},
+    "cost.storage_scratch_gb_hour":      {"value": 0.0001,  "source": "built-in", "citation": "..."},
+    "cost.postdoc_per_hour":             {"value": 350,     "source": "built-in", "citation": "HSRC 2025 SA postdoctoral compensation guidance"},
+    "emissions.grid_factor_gco2_per_kwh": {"value": 900,    "source": "built-in", "citation": "Eskom IAR 2023"},
+    "emissions.cpu_w":                   {"value": 12,      "source": "built-in", "citation": "CCF v3"},
+    "emissions.gpu_w":                   {"value": 250,     "source": "built-in", "citation": "CCF v3"},
+    "emissions.memory_gb_w":             {"value": 0.3725,  "source": "built-in", "citation": "CCF v3"},
+    "emissions.pue":                     {"value": 1.5,     "source": "built-in", "citation": "Uptime Institute 2023"},
+    "emissions.storage_scratch_w_per_tb": {"value": 8,      "source": "built-in", "citation": "Samsung PM9A3 envelope"}
   },
   "groups": [          // present only when --by=<axis> set
     {

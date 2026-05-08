@@ -31,6 +31,11 @@ const (
 	UnitCount    Unit = "count"
 	UnitPercent  Unit = "percent"
 	UnitCurrency Unit = "currency"
+	// UnitKgCO2e is the emissions display unit. Carried alongside
+	// UnitCurrency so the report verb can mirror `abc accounting` and
+	// `abc emissions` against the same window without unit conversions
+	// at the renderer.
+	UnitKgCO2e Unit = "kgco2e"
 )
 
 // MetricLabel is the immutable description of a metric. ID and Unit are
@@ -73,7 +78,10 @@ var Metrics = []MetricLabel{
 	{ID: "workflows_unattended", Title: "Hands-off completions", Gloss: "Pipelines that finished without you stepping in", Unit: UnitCount},
 	{ID: "submission_source", Title: "Submission source", Gloss: "How the run was authored: template / handwritten / rerun", Unit: UnitCount},
 	{ID: "resource_fit", Title: "Right-sized requests", Gloss: "How close requested CPU/RAM matched what was used", Unit: UnitPercent},
-	{ID: "cost_per_investigation", Title: "Spend per question", Gloss: "Already in `abc accounting --by=investigation`; surfaced here", Unit: UnitCurrency},
+	{ID: "cost_per_investigation", Title: "Spend per question", Gloss: "ZAR per investigation, resolved via internal/accounting rate card", Unit: UnitCurrency},
+	{ID: "emissions_per_investigation", Title: "Carbon per question", Gloss: "kg CO₂e attributed to each investigation, resolved via internal/emissions", Unit: UnitKgCO2e},
+	{ID: "spend_zar", Title: "Total spend", Gloss: "Window-wide ZAR aggregate (matches abc accounting for same window)", Unit: UnitCurrency},
+	{ID: "emissions_kgco2e", Title: "Total emissions", Gloss: "Window-wide kg CO₂e (matches abc emissions for same window)", Unit: UnitKgCO2e},
 	{ID: "hours_saved", Title: "Research time saved", Gloss: "Headline composite: estimated busywork avoided", Unit: UnitHours},
 }
 

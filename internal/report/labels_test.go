@@ -62,10 +62,10 @@ func TestMetricByID(t *testing.T) {
 
 // TestMetrics_KnownUnits: only the four whitelisted units may appear.
 func TestMetrics_KnownUnits(t *testing.T) {
-	allowed := map[Unit]bool{UnitHours: true, UnitCount: true, UnitPercent: true, UnitCurrency: true}
+	allowed := map[Unit]bool{UnitHours: true, UnitCount: true, UnitPercent: true, UnitCurrency: true, UnitKgCO2e: true}
 	for _, m := range Metrics {
 		if !allowed[m.Unit] {
-			t.Errorf("metric %q: unit %q not in {hours,count,percent,currency}", m.ID, m.Unit)
+			t.Errorf("metric %q: unit %q not in {hours,count,percent,currency,kgco2e}", m.ID, m.Unit)
 		}
 	}
 }
