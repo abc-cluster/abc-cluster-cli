@@ -257,11 +257,11 @@ function drawHeroMark(g: SVGGElement, system: 'grid' | 'brush'): void {
     }));
     ([['A',-32,98],['B',0,98],['C',32,98]] as const).forEach(([letter, cx, cy]) => {
       g.appendChild(svgEl('circle', {
-        cx, cy, r: 9, fill: 'var(--bg)', stroke: 'var(--ink)', 'stroke-width': 1.6,
+        cx, cy, r: 9, fill: 'var(--abc-bg)', stroke: 'var(--abc-ink)', 'stroke-width': 1.6,
       }));
       const t = svgEl('text', {
         x: cx, y: cy + 3.5, 'text-anchor': 'middle',
-        'font-family': 'JetBrains Mono', 'font-size': 9, 'font-weight': 700, fill: 'var(--ink)',
+        'font-family': 'JetBrains Mono', 'font-size': 9, 'font-weight': 700, fill: 'var(--abc-ink)',
       });
       t.textContent = letter;
       g.appendChild(t);
@@ -273,17 +273,17 @@ function drawHeroMark(g: SVGGElement, system: 'grid' | 'brush'): void {
     for (let gy = -78; gy <= 78; gy += 6) {
       for (let gx = -60; gx <= 60; gx += 6) {
         if (isInsideAfrica(gx, gy)) {
-          g.appendChild(svgEl('circle', {cx: gx, cy: gy, r: 1.3, fill: 'var(--ink)', opacity: 0.7}));
+          g.appendChild(svgEl('circle', {cx: gx, cy: gy, r: 1.3, fill: 'var(--abc-ink)', opacity: 0.7}));
         }
       }
     }
     ([['A',-32,20],['B',0,30],['C',32,20]] as const).forEach(([letter, cx, cy]) => {
       g.appendChild(svgEl('circle', {
-        cx, cy, r: 9, fill: 'var(--bg)', stroke: 'var(--accent)', 'stroke-width': 1.4,
+        cx, cy, r: 9, fill: 'var(--abc-bg)', stroke: 'var(--abc-accent)', 'stroke-width': 1.4,
       }));
       const t = svgEl('text', {
         x: cx, y: cy + 3, 'text-anchor': 'middle',
-        'font-family': 'JetBrains Mono', 'font-size': 9, 'font-weight': 700, fill: 'var(--accent)',
+        'font-family': 'JetBrains Mono', 'font-size': 9, 'font-weight': 700, fill: 'var(--abc-accent)',
       });
       t.textContent = letter;
       g.appendChild(t);
@@ -470,18 +470,14 @@ abc job run hello-abc --sleep=120s`;
             <div className="hero-headline">
               <div className="hero-mark" aria-label="abc-cluster mark">
                 <svg viewBox="0 0 200 200" aria-hidden="true">
-                  <defs>
-                    <linearGradient id="hero-brush-grad" x1="0" x2="1" y1="0" y2="0">
-                      <stop offset="0" stopColor="var(--brush-grad-start, var(--ink))" />
-                      <stop offset="1" stopColor="var(--brush-grad-end, var(--accent))" />
-                    </linearGradient>
-                  </defs>
+                  {/* Brush gradient was for an unused alternate visual system;
+                      removed when the system constant was dropped. */}
                   <g transform="translate(100 85)" ref={heroGRef} />
                   <g>
                     <text x="100" y="178" textAnchor="middle"
-                          style={{font: "600 13px 'JetBrains Mono',monospace", fill: 'var(--ink)', letterSpacing: '-0.01em'}}>abc-cluster</text>
+                          style={{font: "600 13px 'JetBrains Mono',monospace", fill: 'var(--abc-ink)', letterSpacing: '-0.01em'}}>abc-cluster</text>
                     <text x="100" y="192" textAnchor="middle"
-                          style={{font: "500 6px 'JetBrains Mono',monospace", fill: 'var(--text-dim)', letterSpacing: '0.22em'}}>OPEN · SOVEREIGN · FEDERATED · COMPUTING</text>
+                          style={{font: "500 6px 'JetBrains Mono',monospace", fill: 'var(--abc-text-dim)', letterSpacing: '0.22em'}}>OPEN · SOVEREIGN · FEDERATED · COMPUTING</text>
                   </g>
                 </svg>
               </div>
@@ -794,15 +790,15 @@ abc job run hello-abc --sleep=120s`;
                   {' '}<code>{dom ? `.${domain}` : '/<service>'}</code> in the Tailscale admin console to resolve them on any
                   tailnet device. <a href="/docs/">abc CLI docs →</a>
                 </p>
-                <div style={{color: 'var(--text-mute)', fontSize: 11.5, lineHeight: 1.7, borderTop: '1px solid var(--rule-soft)', paddingTop: 12}}>
-                  <b style={{color: 'var(--text-dim)'}}>Stack</b>
+                <div style={{color: 'var(--abc-text-mute)', fontSize: 11.5, lineHeight: 1.7, borderTop: '1px solid var(--abc-rule-soft)', paddingTop: 12}}>
+                  <b style={{color: 'var(--abc-text-dim)'}}>Stack</b>
                   <span className="sep">·</span> Tailscale (overlay)
                   <span className="sep">→</span> Caddy (vhost / TLS)
                   <span className="sep">→</span> Traefik (Consul-catalog LB)
                   <span className="sep">→</span> Nomad services
-                  <span className="sep">·</span> discovery via <b style={{color: 'var(--text-dim)'}}>Consul</b>
-                  <span className="sep">·</span> secrets &amp; SSH CA via <b style={{color: 'var(--text-dim)'}}>Vault</b>
-                  <span className="sep">·</span> SSH sessions via <b style={{color: 'var(--text-dim)'}}>Boundary</b>
+                  <span className="sep">·</span> discovery via <b style={{color: 'var(--abc-text-dim)'}}>Consul</b>
+                  <span className="sep">·</span> secrets &amp; SSH CA via <b style={{color: 'var(--abc-text-dim)'}}>Vault</b>
+                  <span className="sep">·</span> SSH sessions via <b style={{color: 'var(--abc-text-dim)'}}>Boundary</b>
                 </div>
               </div>
             </div>
@@ -827,7 +823,7 @@ function ServiceCard({svc, network, format}: ServiceCardProps): JSX.Element {
       </div>
       <p className="svc-card-desc">
         {svc.desc}
-        {svc.noteSuffix && <em style={{color: 'var(--text-mute)'}}> {svc.noteSuffix}</em>}
+        {svc.noteSuffix && <em style={{color: 'var(--abc-text-mute)'}}> {svc.noteSuffix}</em>}
       </p>
       <div className="svc-card-foot">
         <span className="svc-card-host">{applyNetworkToLabel(svc.hostLabel, network, format)}</span>
