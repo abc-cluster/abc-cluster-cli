@@ -16,7 +16,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/cluster"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/compliance"
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
-	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/context"
+	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/auth/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
@@ -253,7 +253,9 @@ func init() {
 	rootCmd.AddCommand(accounting.NewCmd())
 	rootCmd.AddCommand(service.NewStatusCmd())
 	rootCmd.AddCommand(auth.NewCmd())
-	rootCmd.AddCommand(contextcmd.NewCmd())
+	// `abc context` is a deprecated alias of `abc auth context` (kept for one
+	// release). The canonical command lives under abc auth context.
+	rootCmd.AddCommand(deprecatedRootContextAlias())
 	rootCmd.AddCommand(cfgcmd.NewCmd())
 	rootCmd.AddCommand(secrets.NewCmd())
 	rootCmd.AddCommand(emissions.NewCmd())
@@ -265,6 +267,40 @@ func init() {
 	rootCmd.AddCommand(localdbcmd.NewCmd())
 	// `abc cache` is a deprecated alias of `abc localdb` (kept for one release).
 	rootCmd.AddCommand(localdbcmd.NewDeprecatedCacheAlias())
+}
+
+// deprecatedRootContextAlias returns a root-level `abc context` command that
+// delegates to `abc auth context` and prints a one-line stderr deprecation
+// note on every invocation. Kept for one release window; remove after.
+func deprecatedRootContextAlias() *cobra.Command {
+	c := contextcmd.NewCmd()
+	c.Short = "(deprecated) Manage saved authentication contexts — use 'abc auth context'"
+	prev := c.PersistentPreRun
+	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if !quietMode() {
+			fmt.Fprintln(os.Stderr,
+				"[abc] note: 'abc context' has been relocated under 'abc auth context'; "+
+					"this alias is kept for one release. Update scripts to 'abc auth context ...'.")
+		}
+		if prev != nil {
+			prev(cmd, args)
+		}
+	}
+	return c
+}
+
+// quietMode returns true when -q / --quiet is set or ABC_QUIET=1 in env.
+// Suppresses the deprecation banner above for scripted use.
+func quietMode() bool {
+	if os.Getenv("ABC_QUIET") == "1" {
+		return true
+	}
+	if rootCmd != nil {
+		if v, _ := rootCmd.PersistentFlags().GetBool("quiet"); v {
+			return true
+		}
+	}
+	return false
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
