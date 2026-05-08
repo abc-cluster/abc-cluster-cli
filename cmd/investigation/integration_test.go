@@ -16,7 +16,7 @@ import (
 // visualize. Full headless flow without TUI.
 func TestIntegrationFullFlow(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "state.db")
+	dbPath := filepath.Join(dir, "local.db")
 	db, err := state.OpenAt(dbPath)
 	if err != nil {
 		t.Fatal(err)

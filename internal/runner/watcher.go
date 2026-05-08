@@ -1,6 +1,6 @@
 // Package runner spawns a background goroutine that polls Nomad allocation
 // status for a submitted job and writes the completion fields back to the
-// runs row in ~/.abc/state.db. Resolves spec abc-investigation §E + OQ-6.
+// runs row in ~/.abc/local.db. Resolves spec abc-investigation §E + OQ-6.
 //
 // Lifecycle: started at the END of `abc pipeline run` / `abc job run` /
 // `abc module run` AFTER auto-attach has inserted the runs row. Polls every
@@ -91,7 +91,7 @@ func run(addr, token, region string, t WatchTarget, cfg Config, logTo io.Writer)
 	for {
 		if final, ok := pollOnce(ctx, db, nc, t, logTo); ok {
 			if logTo != nil {
-				fmt.Fprintf(logTo, "[abc] run-watcher: run %s reached terminal status %q; wrote completion to state.db\n",
+				fmt.Fprintf(logTo, "[abc] run-watcher: run %s reached terminal status %q; wrote completion to local.db\n",
 					t.RunID, final)
 			}
 			return

@@ -15,7 +15,7 @@ import (
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	db, err := state.OpenAt(path)
 	if err != nil {
 		t.Fatalf("OpenAt: %v", err)

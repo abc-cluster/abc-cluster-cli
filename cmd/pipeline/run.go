@@ -422,7 +422,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 }
 
 // autoAttachPipelineRun resolves project/investigation per the precedence in
-// spec abc-investigation §E and inserts a row into ~/.abc/state.db runs.
+// spec abc-investigation §E and inserts a row into ~/.abc/local.db runs.
 // Best-effort: failures only log a warning and never block the submit.
 // Returns the runID so the caller can spawn the run-watcher post-submit.
 func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) string {

@@ -6,7 +6,7 @@ sidebar_position: 11
 
 # `abc accounting`
 
-Per-context cost report over the local `~/.abc/state.db` `runs` table,
+Per-context cost report over the local `~/.abc/local.db` `runs` table,
 multiplied by a layered rate card. Showback estimates only — not
 invoice-grade.
 

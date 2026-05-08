@@ -1,6 +1,6 @@
 # `abc project`
 
-Top-level grouping for investigations. Backed by `~/.abc/state.db`.
+Top-level grouping for investigations. Backed by `~/.abc/local.db`.
 
 ## Verbs
 

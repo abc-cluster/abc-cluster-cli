@@ -443,7 +443,7 @@ func newRunUUID() string {
 }
 
 // autoAttachModuleRun resolves project / investigation per spec §E and
-// inserts a runs row in ~/.abc/state.db. Best-effort. Returns the runID so
+// inserts a runs row in ~/.abc/local.db. Best-effort. Returns the runID so
 // the caller can spawn the run-watcher post-submit.
 func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) string {
 	noProj, _ := cmd.Flags().GetBool("no-project")

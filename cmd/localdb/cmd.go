@@ -1,6 +1,6 @@
 // Package localdb registers the `abc localdb` command group: status, migrate, vacuum.
 //
-// Manages the local SQLite at ~/.abc/state.db (the per-user CLI store that
+// Manages the local SQLite at ~/.abc/local.db (the per-user CLI store that
 // holds projects, investigations, runs, the cli_audit trail, and forward-
 // compatible substrate for the freezes / container-digest / pipeline-metadata
 // tables consumed by `abc freeze`).
@@ -24,7 +24,7 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "localdb",
-		Short: "Inspect and maintain the local SQLite at ~/.abc/state.db",
+		Short: "Inspect and maintain the local SQLite at ~/.abc/local.db",
 	}
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newMigrateCmd())

@@ -286,7 +286,7 @@ EXAMPLES
 }
 
 // autoAttachJobRun resolves project / investigation per spec §E and inserts a
-// runs row in ~/.abc/state.db. Best-effort. Returns the runID so the caller
+// runs row in ~/.abc/local.db. Best-effort. Returns the runID so the caller
 // can spawn the run-watcher post-submit (spec §E + OQ-6).
 func autoAttachJobRun(cmd *cobra.Command, scriptPath string) string {
 	noProj, _ := cmd.Flags().GetBool("no-project")

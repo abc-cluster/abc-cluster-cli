@@ -7,7 +7,7 @@ sidebar_position: 12
 # `abc emissions`
 
 Per-context carbon-emissions report (kg CO₂e) over the local
-`~/.abc/state.db` `runs` table, multiplied by a layered emissions rate
+`~/.abc/local.db` `runs` table, multiplied by a layered emissions rate
 card.
 
 When invoked with no `--cloud`, runs the local SQLite report. Pass

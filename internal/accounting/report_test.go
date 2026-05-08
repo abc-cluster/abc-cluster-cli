@@ -16,7 +16,7 @@ import (
 func openTestDB(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

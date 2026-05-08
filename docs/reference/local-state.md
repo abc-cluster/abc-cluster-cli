@@ -1,7 +1,7 @@
-# Local state — `~/.abc/state.db`
+# Local state — `~/.abc/local.db`
 
 The abc CLI keeps local state in a single SQLite database at
-`~/.abc/state.db`. The driver is pure Go (`modernc.org/sqlite`), so the
+`~/.abc/local.db`. The driver is pure Go (`modernc.org/sqlite`), so the
 binary remains CGO-free.
 
 ## Tables
@@ -46,7 +46,7 @@ On every `state.Open()` (which fires on every DB-backed verb) the CLI:
    open with `ErrSchemaAhead` and a clear "upgrade `abc`" message. Prevents
    an old binary from operating against a future schema.
 3. **Binary ahead of DB** (embedded migrations not yet applied) — write a
-   pre-migration backup to `~/.abc/state.db.backup-pre-<version>-<unix>`,
+   pre-migration backup to `~/.abc/local.db.backup-pre-<version>-<unix>`,
    then apply each pending migration in its own IMMEDIATE transaction.
    The most recent 5 backups are retained automatically; older ones pruned.
 4. **Equal** — no-op.
@@ -60,7 +60,7 @@ chain.
 Migrations are **forward-only**. The rule has three parts:
 
 1. **Never edit a shipped migration file.** Once a `0NNN_*.sql` has been
-   applied to any user's `state.db`, its content is frozen. To change the
+   applied to any user's `local.db`, its content is frozen. To change the
    schema, write a new migration that walks the schema forward.
 2. **New migration filename = `NNNN_<short_description>.sql`** where `NNNN`
    is one greater than the current highest filename in
@@ -84,15 +84,15 @@ DB stays at the pre-migration version, and the error message points at
 the backup file written before the attempt:
 
 ```
-~/.abc/state.db.backup-pre-NNNN_<name>-<unix>
+~/.abc/local.db.backup-pre-NNNN_<name>-<unix>
 ```
 
-To restore: stop all `abc` processes, replace `~/.abc/state.db` with the
+To restore: stop all `abc` processes, replace `~/.abc/local.db` with the
 backup, then re-run `abc localdb status` to confirm the schema version.
 
 ## Backup
 
-`~/.abc/state.db` is a single file. Copy it (with the `-wal` and `-shm`
+`~/.abc/local.db` is a single file. Copy it (with the `-wal` and `-shm`
 sidecars while idle) to back up. The CLI never writes anything cluster-side
 that depends on this file. Pre-migration backups (above) are an automatic
 form of this for the migration boundary specifically.

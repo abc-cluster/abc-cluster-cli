@@ -3,7 +3,7 @@
 Produce a researcher productivity report from local state — runs, annotations,
 and command history — for an investigation, a branch comparison, or a whole project.
 
-No server calls. Everything comes from `~/.abc/state.db`.
+No server calls. Everything comes from `~/.abc/local.db`.
 
 ## Usage
 
@@ -101,7 +101,7 @@ $ abc report --project=tb-cohort-2026
 
 ## Derived metrics
 
-All metrics are computed from `~/.abc/state.db` with no network calls.
+All metrics are computed from `~/.abc/local.db` with no network calls.
 
 | Metric | Source | Definition |
 |---|---|---|
@@ -184,7 +184,7 @@ abc report --project=tb-cohort-2026 --trend --format=csv > metrics.csv
 
 ## Tier availability
 
-`abc report` is available at all tiers — it reads only from `~/.abc/state.db`
+`abc report` is available at all tiers — it reads only from `~/.abc/local.db`
 and never contacts the cluster. At abc-cloud (L5), the same metrics are
 available in Metabase dashboards backed by the server-side researcher-event
 table, which joins this local data with cluster-side telemetry when the user

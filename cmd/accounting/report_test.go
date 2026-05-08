@@ -15,7 +15,7 @@ import (
 )
 
 // TestIntegration_AccountingReportEndToEnd seeds two completed runs into
-// a temp ~/.abc/state.db, then runs the parent `abc accounting` command
+// a temp ~/.abc/local.db, then runs the parent `abc accounting` command
 // and asserts that the table + rate-card footer both appear in the
 // output with the correct totals.
 //
@@ -42,8 +42,8 @@ contexts:
 		t.Fatal(err)
 	}
 
-	// Open a fresh DB at the spot state.Open() will look (~/.abc/state.db).
-	homeDB := filepath.Join(dir, ".abc", "state.db")
+	// Open a fresh DB at the spot state.Open() will look (~/.abc/local.db).
+	homeDB := filepath.Join(dir, ".abc", "local.db")
 	dsn := "file:" + homeDB + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
