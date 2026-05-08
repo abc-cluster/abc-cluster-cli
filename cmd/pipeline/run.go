@@ -421,6 +421,20 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// resolveSubmissionSource picks the right submission_source value for this
+// invocation. Pipelines do not yet support --template / `pipeline rerun`,
+// so the only signal today is ABC_AUTOMATION=1 vs. handwritten. The helper
+// keeps the call site identical to job/module and ready for the rerun /
+// template work that's pending.
+func resolveSubmissionSource(cmd *cobra.Command) string {
+	templateID, _ := cmd.Flags().GetString("template")
+	rerun, _ := cmd.Flags().GetBool("rerun")
+	return state.SubmissionSourceClassifier{
+		TemplateID: templateID,
+		Rerun:      rerun,
+	}.Resolve()
+}
+
 // autoAttachPipelineRun resolves project/investigation per the precedence in
 // spec abc-investigation §E and inserts a row into ~/.abc/local.db runs.
 // Best-effort: failures only log a warning and never block the submit.
@@ -438,6 +452,17 @@ func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) string {
 	}
 	contextName := state.ActiveContextName()
 	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb")
+	// CPU request: pipeline spec carries MHz; convert to cores so the
+	// runs.cpu_request column is consistent across verbs (job uses
+	// cores natively). 1000 MHz ≈ 1 core under our defaults.
+	var cpuReqCores float64
+	if spec.CPU > 0 {
+		cpuReqCores = float64(spec.CPU) / 1000.0
+	}
+	var memReqGB float64
+	if spec.MemoryMB > 0 {
+		memReqGB = float64(spec.MemoryMB) / 1024.0
+	}
 	req := state.AutoAttachRequest{
 		ContextName:       contextName,
 		NoProject:         noProj,
@@ -449,6 +474,9 @@ func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) string {
 		Verb:              "pipeline",
 		Namespace:         spec.Namespace,
 		ScratchGB:         scratchGB,
+		CPURequest:        cpuReqCores,
+		MemRequestGB:      memReqGB,
+		SubmissionSource:  resolveSubmissionSource(cmd),
 	}
 	res, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req)
 	if err != nil {

@@ -457,6 +457,21 @@ func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) strin
 		return ""
 	}
 	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb")
+	cpuMHz, _ := cmd.Flags().GetInt("cpu")
+	memMB, _ := cmd.Flags().GetInt("memory")
+	var cpuReqCores, memReqGB float64
+	if cpuMHz > 0 {
+		cpuReqCores = float64(cpuMHz) / 1000.0
+	}
+	if memMB > 0 {
+		memReqGB = float64(memMB) / 1024.0
+	}
+	templateID, _ := cmd.Flags().GetString("template")
+	rerun, _ := cmd.Flags().GetBool("rerun")
+	subSrc := state.SubmissionSourceClassifier{
+		TemplateID: templateID,
+		Rerun:      rerun,
+	}.Resolve()
 	req := state.AutoAttachRequest{
 		ContextName:       state.ActiveContextName(),
 		NoProject:         noProj,
@@ -467,6 +482,9 @@ func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) strin
 		Verb:              "module",
 		Namespace:         namespace,
 		ScratchGB:         scratchGB,
+		CPURequest:        cpuReqCores,
+		MemRequestGB:      memReqGB,
+		SubmissionSource:  subSrc,
 	}
 	res, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req)
 	if err != nil {

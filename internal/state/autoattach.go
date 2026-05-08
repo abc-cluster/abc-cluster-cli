@@ -27,6 +27,15 @@ type AutoAttachRequest struct {
 	// `abc {pipeline,job,module} run`; the future run-watcher will
 	// overwrite with the actual provisioned disk_mb from the Nomad alloc.
 	ScratchGB          float64
+	// CPURequest / MemRequestGB are what the user asked for at submit
+	// time, in cores (REAL — pipelines convert MHz/1000) and GB. 0 ==
+	// NULL on insert. Spec abc-report.md §A migration 0009.
+	CPURequest         float64
+	MemRequestGB       float64
+	// SubmissionSource records how the run was authored. One of
+	// "template:<id>" / "handwritten" / "rerun" / "automation".
+	// Empty == NULL on insert. Spec abc-report.md §A migration 0010.
+	SubmissionSource   string
 }
 
 // AutoAttachResult is the resolved row that gets inserted into runs.
@@ -111,6 +120,9 @@ func AutoAttachAndInsertRun(ctx context.Context, db *sql.DB, banner io.Writer, r
 		Workspace:       sql.NullString{String: req.Workspace, Valid: req.Workspace != ""},
 		GpuCount:        sql.NullInt64{Int64: int64(req.GpuCount), Valid: req.GpuCount > 0},
 		ScratchGB:       sql.NullFloat64{Float64: req.ScratchGB, Valid: req.ScratchGB > 0},
+		CPURequest:      sql.NullFloat64{Float64: req.CPURequest, Valid: req.CPURequest > 0},
+		MemRequestGB:    sql.NullFloat64{Float64: req.MemRequestGB, Valid: req.MemRequestGB > 0},
+		SubmissionSource: sql.NullString{String: req.SubmissionSource, Valid: req.SubmissionSource != ""},
 		Status:          "running",
 	}
 	if err := InsertRun(ctx, db, run); err != nil {

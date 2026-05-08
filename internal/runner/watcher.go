@@ -203,6 +203,23 @@ func pollOnce(ctx context.Context, db *sql.DB, nc *utils.NomadClient, t WatchTar
 			fmt.Fprintf(logTo, "[abc] run-watcher: CompleteRun: %v\n", err)
 		}
 	}
+	// pending_seconds = first-task StartedAt - runs.submitted_at.
+	// Best-effort, per spec abc-report.md §B: if either timestamp is
+	// missing or the difference is negative, leave the column NULL.
+	if !startedAt.IsZero() {
+		var submittedAt sql.NullInt64
+		if err := db.QueryRowContext(ctx,
+			`SELECT submitted_at FROM runs WHERE run_id = ?`, t.RunID).Scan(&submittedAt); err == nil && submittedAt.Valid {
+			pending := startedAt.Unix() - submittedAt.Int64
+			if pending >= 0 {
+				if _, err := db.ExecContext(ctx,
+					`UPDATE runs SET pending_seconds = ? WHERE run_id = ?`,
+					pending, t.RunID); err != nil && logTo != nil {
+					fmt.Fprintf(logTo, "[abc] run-watcher: pending_seconds update: %v\n", err)
+				}
+			}
+		}
+	}
 	if exitCode != 0 || status == "failed" {
 		if _, err := db.ExecContext(ctx,
 			`UPDATE runs SET exit_code = ? WHERE run_id = ?`, exitCode, t.RunID); err != nil && logTo != nil {
