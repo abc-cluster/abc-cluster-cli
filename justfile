@@ -108,13 +108,13 @@ docs-serve:
 
 # Build static docs site output.
 #
-# Sources the rich landing page from the canonical Caddy landing tree
-# (deployments/abc-nodes/caddy/landing/) into website/static/ so it's
-# served at the docs root. website/static/ is gitignored — single source
-# of truth lives in deployments/.
+# The site landing page (website/src/pages/index.tsx) is a native React
+# port of the Caddy landing under deployments/abc-nodes/caddy/landing/.
+# The two copies are intentional — Caddy serves the static HTML directly
+# at vhosts on the cluster, while the React port owns the docs site root
+# so it goes through the Docusaurus build/deploy pipeline. Keep them in
+# loose visual parity by hand when the design changes.
 docs-build:
-    mkdir -p website/static
-    cp deployments/abc-nodes/caddy/landing/index.html website/static/index.html
     npm --prefix website run build
 
 # Build docs and push the output to the abc-nodes "scratch" host volume on aither.
