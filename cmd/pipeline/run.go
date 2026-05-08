@@ -18,6 +18,7 @@ import (
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
+	"github.com/abc-cluster/abc-cluster-cli/internal/runner"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/abc-cluster/abc-cluster-cli/internal/wave"
 	"github.com/spf13/cobra"
@@ -404,15 +405,27 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	// Auto-attach to active project / investigation (spec abc-investigation §E).
-	autoAttachPipelineRun(cmd, spec)
+	runID := autoAttachPipelineRun(cmd, spec)
 
-	return submitAndWatch(cmd.Context(), cmd, nc, spec, hcl)
+	if err := submitAndWatch(cmd.Context(), cmd, nc, spec, hcl); err != nil {
+		return err
+	}
+	// Spawn the run-watcher to write back completion fields. spec §E + OQ-6.
+	// Best-effort: if the CLI exits before the alloc terminates, the row
+	// stays at status='running'. Watcher uses its own DB handle.
+	if runID != "" {
+		runner.Watch(nomadAddr, nomadToken, "",
+			runner.WatchTarget{RunID: runID, JobID: spec.Name, Namespace: spec.Namespace},
+			runner.Config{}, cmd.ErrOrStderr())
+	}
+	return nil
 }
 
 // autoAttachPipelineRun resolves project/investigation per the precedence in
 // spec abc-investigation §E and inserts a row into ~/.abc/state.db runs.
 // Best-effort: failures only log a warning and never block the submit.
-func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) {
+// Returns the runID so the caller can spawn the run-watcher post-submit.
+func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) string {
 	noProj, _ := cmd.Flags().GetBool("no-project")
 	noInv, _ := cmd.Flags().GetBool("no-investigation")
 	pflag, _ := cmd.Flags().GetString("project")
@@ -421,7 +434,7 @@ func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) {
 	db, err := state.Open()
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: state DB unavailable (%v); skipping run record\n", err)
-		return
+		return ""
 	}
 	contextName := state.ActiveContextName()
 	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb")
@@ -437,9 +450,12 @@ func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) {
 		Namespace:         spec.Namespace,
 		ScratchGB:         scratchGB,
 	}
-	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
+	res, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req)
+	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing without run record)\n", err)
+		return ""
 	}
+	return res.RunID
 }
 
 func nomadConnFromCmd(cmd *cobra.Command) (string, string) {

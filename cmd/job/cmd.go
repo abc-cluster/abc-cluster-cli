@@ -72,6 +72,19 @@ func nomadClientFromCmd(cmd *cobra.Command) *nomadClient {
 		WithCloud(utils.CloudFromCmd(cmd))
 }
 
+// nomadTokenFromCmd returns the Nomad token for the run-watcher.
+func nomadTokenFromCmd(cmd *cobra.Command) string {
+	token, _ := cmd.Flags().GetString("nomad-token")
+	if token == "" {
+		token, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
+	}
+	if token == "" {
+		_, cfgToken, _ := utils.NomadDefaultsFromConfig()
+		token = cfgToken
+	}
+	return token
+}
+
 // nomadAddrFromCmd returns the Nomad address string for display.
 func nomadAddrFromCmd(cmd *cobra.Command) string {
 	addr, _ := cmd.Flags().GetString("nomad-addr")

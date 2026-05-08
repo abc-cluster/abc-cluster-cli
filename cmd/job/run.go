@@ -22,6 +22,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
 	"github.com/abc-cluster/abc-cluster-cli/internal/jurist"
+	"github.com/abc-cluster/abc-cluster-cli/internal/runner"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -285,20 +286,21 @@ EXAMPLES
 }
 
 // autoAttachJobRun resolves project / investigation per spec §E and inserts a
-// runs row in ~/.abc/state.db. Best-effort.
-func autoAttachJobRun(cmd *cobra.Command, scriptPath string) {
+// runs row in ~/.abc/state.db. Best-effort. Returns the runID so the caller
+// can spawn the run-watcher post-submit (spec §E + OQ-6).
+func autoAttachJobRun(cmd *cobra.Command, scriptPath string) string {
 	noProj, _ := cmd.Flags().GetBool("no-project")
 	noInv, _ := cmd.Flags().GetBool("no-investigation")
 	pflag, _ := cmd.Flags().GetString("project")
 	iflag, _ := cmd.Flags().GetString("investigation")
 	ns, _ := cmd.Flags().GetString("namespace")
 	gpus, _ := cmd.Flags().GetInt("gpus")              // best-effort: CLI flag only; #ABC --gpus directive is parsed downstream
-	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb") // best-effort: CLI flag; future run-watcher overwrites from Nomad alloc
+	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb") // best-effort: CLI flag; run-watcher will overwrite walltime/cpu fields from Nomad alloc
 
 	db, err := state.Open()
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: state DB unavailable (%v); skipping run record\n", err)
-		return
+		return ""
 	}
 	req := state.AutoAttachRequest{
 		ContextName:       state.ActiveContextName(),
@@ -312,9 +314,12 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) {
 		GpuCount:          gpus,
 		ScratchGB:         scratchGB,
 	}
-	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
+	res, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req)
+	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing)\n", err)
+		return ""
 	}
+	return res.RunID
 }
 
 func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
@@ -528,7 +533,10 @@ func detectJobFormat(path string) string {
 
 func runJob(cmd *cobra.Command, args []string) error {
 	scriptPath := args[0]
-	autoAttachJobRun(cmd, scriptPath)
+	runID := autoAttachJobRun(cmd, scriptPath)
+	// Run-watcher (spec §E + OQ-6) is best-effort and stashed on the cobra
+	// command for the inner native-HCL path to pick up after Nomad register.
+	cmd.SetContext(withRunID(cmd.Context(), runID))
 
 	// Resolve --format (shell | hcl); auto-detect from extension when omitted.
 	format, _ := cmd.Flags().GetString("format")
@@ -868,12 +876,39 @@ func runJobNativeHCL(cmd *cobra.Command, path string) error {
 	fmt.Fprintf(out, "    abc job logs %s --follow\n", jobID)
 	fmt.Fprintf(out, "    abc job show %s\n", jobID)
 
+	// Spawn run-watcher (spec abc-investigation §E + OQ-6).
+	if rid := runIDFrom(ctx); rid != "" {
+		ns, _ := cmd.Flags().GetString("namespace")
+		runner.Watch(nomadAddrFromCmd(cmd), nomadTokenFromCmd(cmd), "",
+			runner.WatchTarget{RunID: rid, JobID: jobID, Namespace: ns},
+			runner.Config{}, cmd.ErrOrStderr())
+	}
+
 	if watch, _ := cmd.Flags().GetBool("watch"); watch {
 		watchTimeout, _ := cmd.Flags().GetDuration("watch-timeout")
 		fmt.Fprintln(cmd.ErrOrStderr(), "\n  Waiting for allocation...")
 		return watchJobLogs(ctx, nc, jobID, "", out, watchDelay, watchTimeout)
 	}
 	return nil
+}
+
+// runIDCtxKey is an unexported context key for the auto-attached runID.
+type runIDCtxKey struct{}
+
+func withRunID(ctx context.Context, runID string) context.Context {
+	if runID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, runIDCtxKey{}, runID)
+}
+
+func runIDFrom(ctx context.Context) string {
+	if v := ctx.Value(runIDCtxKey{}); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // extractJobIDFromJSON extracts the job ID from a Nomad job JSON blob (returned by ParseHCL).
@@ -953,6 +988,13 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 	fmt.Fprintf(out, "  Evaluation ID  %s\n", resp.EvalID)
 	if resp.Warnings != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ Warnings: %s\n", resp.Warnings)
+	}
+
+	// Spawn run-watcher (spec abc-investigation §E + OQ-6).
+	if rid := runIDFrom(ctx); rid != "" {
+		runner.Watch(nomadAddrFromCmd(cmd), nomadTokenFromCmd(cmd), region,
+			runner.WatchTarget{RunID: rid, JobID: spec.Name, Namespace: spec.Namespace},
+			runner.Config{}, cmd.ErrOrStderr())
 	}
 
 	if watch, _ := cmd.Flags().GetBool("watch"); watch {
