@@ -10,13 +10,13 @@ import (
 )
 
 // TestConcurrentWriters exercises spec §A acceptance: concurrent CLI processes
-// hitting the same state.db succeed without errors. Two goroutines share a
+// hitting the same local.db succeed without errors. Two goroutines share a
 // single *sql.DB (same as a single CLI process), but the modernc.org/sqlite
 // driver routes writes through SQLite's WAL serialisation, and busy_timeout
 // covers contention. This is a softer version of the §H multi-process test.
 func TestConcurrentWriters(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	db, err := OpenAt(path)
 	if err != nil {
 		t.Fatal(err)

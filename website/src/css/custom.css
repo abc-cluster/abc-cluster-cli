@@ -23,10 +23,13 @@
   --abc-accent:      #907028;
   --abc-accent-dim:  #c8a84c;
 
-  /* Surface */
-  --abc-bg:          #f0faf7;
-  --abc-bg-1:        #e5f5f0;
-  --abc-bg-2:        #d8ede7;
+  /* Surface — page is pure white in light mode. Card tints live on the
+     landing's own --bg-1 / --bg-2 in landing.css (and on Docusaurus'
+     --ifm-background-surface-color below for any Docusaurus-rendered
+     surface like the navbar's hover state). */
+  --abc-bg:          #ffffff;
+  --abc-bg-1:        #eef6f2;
+  --abc-bg-2:        #e3eee8;
   --abc-text:        #1a4a3a;
   --abc-text-dim:    #2d7060;
   --abc-text-mute:   #6aaa96;

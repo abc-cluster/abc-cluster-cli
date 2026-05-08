@@ -31,7 +31,7 @@ func openTestDB(t *testing.T, path string) *sql.DB {
 // the time of Apply, so a backup IS written.
 func TestApplyFreshDB(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	db := openTestDB(t, path)
 
 	if err := Apply(db, path, "v1.2.3-test"); err != nil {
@@ -78,7 +78,7 @@ func TestApplyFreshDB(t *testing.T) {
 // TestApplyIdempotent: calling Apply twice in a row is a no-op the second time.
 func TestApplyIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	db := openTestDB(t, path)
 
 	if err := Apply(db, path, "v1.2.3"); err != nil {
@@ -106,7 +106,7 @@ func TestApplyIdempotent(t *testing.T) {
 // does not contain. Apply() must return ErrSchemaAhead.
 func TestSchemaAhead(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	db := openTestDB(t, path)
 
 	// First, apply embedded migrations normally.
@@ -146,7 +146,7 @@ func TestSchemaAhead(t *testing.T) {
 // a backup pass an empty path.
 func TestBackupSkippedWhenPathEmpty(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	db := openTestDB(t, path)
 
 	if err := Apply(db, "", "v1.0.0"); err != nil {
@@ -161,7 +161,7 @@ func TestBackupSkippedWhenPathEmpty(t *testing.T) {
 // TestBackupPruning: more than maxBackups backups exist; older ones are removed.
 func TestBackupPruning(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
+	path := filepath.Join(dir, "local.db")
 	// Touch the DB so backup() has a source to copy.
 	if err := os.WriteFile(path, []byte("dummy"), 0o600); err != nil {
 		t.Fatal(err)
@@ -169,7 +169,7 @@ func TestBackupPruning(t *testing.T) {
 
 	// Create maxBackups + 2 fake backups with staggered mtimes.
 	for i := 0; i < maxBackups+2; i++ {
-		name := filepath.Join(dir, "state.db.backup-pre-0001_initial-"+string(rune('a'+i)))
+		name := filepath.Join(dir, "local.db.backup-pre-0001_initial-"+string(rune('a'+i)))
 		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}

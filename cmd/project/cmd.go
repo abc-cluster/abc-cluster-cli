@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/investigation"
 	"github.com/abc-cluster/abc-cluster-cli/internal/slug"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/abc-cluster/abc-cluster-cli/internal/style"
@@ -33,6 +34,10 @@ func NewCmd() *cobra.Command {
 	cmd.AddCommand(newRenameCmd())
 	cmd.AddCommand(newTagCmd())
 	cmd.AddCommand(newDeleteCmd())
+	// Investigation lives under project: `abc project investigation ...`
+	// `inv` is a sibling alias with the same implementation.
+	cmd.AddCommand(investigation.NewCmd())
+	cmd.AddCommand(investigation.NewInvAlias())
 	return cmd
 }
 

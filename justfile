@@ -107,6 +107,13 @@ docs-serve:
     npm --prefix website run start
 
 # Build static docs site output.
+#
+# The site landing page (website/src/pages/index.tsx) is a native React
+# port of the Caddy landing under deployments/abc-nodes/caddy/landing/.
+# The two copies are intentional — Caddy serves the static HTML directly
+# at vhosts on the cluster, while the React port owns the docs site root
+# so it goes through the Docusaurus build/deploy pipeline. Keep them in
+# loose visual parity by hand when the design changes.
 docs-build:
     npm --prefix website run build
 

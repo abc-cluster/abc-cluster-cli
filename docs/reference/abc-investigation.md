@@ -2,7 +2,7 @@
 
 A research-oriented record primitive: every investigation is a
 branchable, mergeable, annotateable thread of attempts. Backed by
-`~/.abc/state.db` (see `docs/reference/local-state.md`).
+`~/.abc/local.db` (see `docs/reference/local-state.md`).
 
 ## Verbs
 

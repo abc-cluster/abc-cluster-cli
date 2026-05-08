@@ -112,6 +112,11 @@ const config: Config = {
           position: 'right',
         },
         {
+          href: 'https://github.com/abc-cluster/abc-cluster-cli/releases',
+          label: 'Releases',
+          position: 'right',
+        },
+        {
           href: 'https://github.com/abc-cluster/abc-cluster-cli',
           label: 'GitHub',
           position: 'right',

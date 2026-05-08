@@ -18,6 +18,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/runner"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -119,7 +120,8 @@ func runModule(cmd *cobra.Command, args []string) error {
 	ns := namespaceFromCmd(cmd)
 	nc := nomadClientFromCmd(cmd)
 
-	autoAttachModuleRun(cmd, moduleName, ns)
+	runID := autoAttachModuleRun(cmd, moduleName, ns)
+	cmd.SetContext(withRunID(cmd.Context(), runID))
 
 	spec := &RunSpec{
 		Module: moduleName,
@@ -403,6 +405,14 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Warnings: %s\n", resp.Warnings)
 	}
 
+	// Spawn run-watcher (spec abc-investigation §E + OQ-6).
+	if rid := runIDFrom(ctx); rid != "" {
+		addr, token := nomadAddrTokenFromCmd(cmd)
+		runner.Watch(addr, token, "",
+			runner.WatchTarget{RunID: rid, JobID: spec.JobName, Namespace: spec.Namespace},
+			runner.Config{}, cmd.ErrOrStderr())
+	}
+
 	wait, _ := cmd.Flags().GetBool("wait")
 	streamLogs, _ := cmd.Flags().GetBool("logs")
 
@@ -433,8 +443,9 @@ func newRunUUID() string {
 }
 
 // autoAttachModuleRun resolves project / investigation per spec §E and
-// inserts a runs row in ~/.abc/state.db. Best-effort.
-func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) {
+// inserts a runs row in ~/.abc/local.db. Best-effort. Returns the runID so
+// the caller can spawn the run-watcher post-submit.
+func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) string {
 	noProj, _ := cmd.Flags().GetBool("no-project")
 	noInv, _ := cmd.Flags().GetBool("no-investigation")
 	pflag, _ := cmd.Flags().GetString("project")
@@ -443,7 +454,7 @@ func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) {
 	db, err := state.Open()
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: state DB unavailable (%v); skipping run record\n", err)
-		return
+		return ""
 	}
 	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb")
 	req := state.AutoAttachRequest{
@@ -457,7 +468,55 @@ func autoAttachModuleRun(cmd *cobra.Command, moduleName, namespace string) {
 		Namespace:         namespace,
 		ScratchGB:         scratchGB,
 	}
-	if _, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req); err != nil {
+	res, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req)
+	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing)\n", err)
+		return ""
 	}
+	return res.RunID
+}
+
+// runIDCtxKey is an unexported context key for the auto-attached runID.
+type runIDCtxKey struct{}
+
+func withRunID(ctx context.Context, runID string) context.Context {
+	if runID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, runIDCtxKey{}, runID)
+}
+
+func runIDFrom(ctx context.Context) string {
+	if v := ctx.Value(runIDCtxKey{}); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// nomadAddrTokenFromCmd returns Nomad addr/token, falling back to
+// ~/.abc/config.yaml defaults. Used by the run-watcher.
+func nomadAddrTokenFromCmd(cmd *cobra.Command) (string, string) {
+	addr, _ := cmd.Flags().GetString("nomad-addr")
+	if addr == "" {
+		addr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
+	}
+	token, _ := cmd.Flags().GetString("nomad-token")
+	if token == "" {
+		token, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
+	}
+	if addr == "" || token == "" {
+		cfgAddr, cfgToken, _ := utils.NomadDefaultsFromConfig()
+		if addr == "" {
+			addr = cfgAddr
+		}
+		if token == "" {
+			token = cfgToken
+		}
+	}
+	if addr == "" {
+		addr = "http://127.0.0.1:4646"
+	}
+	return addr, token
 }

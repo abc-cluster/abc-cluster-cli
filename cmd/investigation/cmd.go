@@ -1,4 +1,5 @@
-// Package investigation registers `abc investigation` verbs.
+// Package investigation registers `abc project investigation` verbs (canonical
+// path; relocated from the standalone `abc investigation` group on 2026-05-08).
 package investigation
 
 import (
@@ -6,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,11 +17,38 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the `abc investigation` command group.
+// NewCmd returns the canonical `investigation` Cobra tree. Registered as a
+// subcommand of `abc project` (also as the `inv` alias via NewInvAlias).
 func NewCmd() *cobra.Command {
+	return buildCmd("investigation",
+		"Manage research investigations (branchable, mergeable explorations)")
+}
+
+// NewInvAlias returns the same Cobra tree under the short name `inv`. Wired
+// as a sibling of `investigation` under `abc project`.
+func NewInvAlias() *cobra.Command {
+	return buildCmd("inv", "Alias for `abc project investigation`")
+}
+
+// NewDeprecatedRootAlias returns the tree wired under the legacy root-level
+// path `abc investigation`, and emits a one-line deprecation note at
+// invocation. Kept for one release after the move under `abc project`.
+func NewDeprecatedRootAlias() *cobra.Command {
+	cmd := buildCmd("investigation",
+		"(deprecated) moved to `abc project investigation`")
+	cmd.PersistentPreRun = func(c *cobra.Command, _ []string) {
+		fmt.Fprintln(os.Stderr, "[abc] note: 'abc investigation' has moved to 'abc project investigation'; alias kept for one release")
+	}
+	return cmd
+}
+
+// buildCmd constructs the investigation Cobra tree. Re-invoked per
+// registration so each parent gets its own subtree (Cobra does not allow
+// command sharing across multiple parents).
+func buildCmd(use, short string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "investigation",
-		Short: "Manage research investigations (branchable, mergeable explorations)",
+		Use:   use,
+		Short: short,
 	}
 	cmd.AddCommand(newCreateCmd())
 	cmd.AddCommand(newListCmd())
@@ -35,6 +64,7 @@ func NewCmd() *cobra.Command {
 	cmd.AddCommand(newVisualizeCmd())
 	cmd.AddCommand(newExportCmd())
 	cmd.AddCommand(newDiffCmd())
+	cmd.AddCommand(newAnnotationCmd())
 	return cmd
 }
 
@@ -221,6 +251,7 @@ func shortID(id string) string {
 func newShowCmd() *cobra.Command {
 	var output string
 	var tuiFlag bool
+	var includeWithdrawn bool
 	c := &cobra.Command{
 		Use:   "show [<slug-or-id>]",
 		Short: "Show investigation details",
@@ -246,16 +277,25 @@ func newShowCmd() *cobra.Command {
 				return err
 			}
 			runs, _ := state.ListRunsForInvestigation(ctx, db, inv.InvestigationID)
-			anns, _ := state.ListAnnotations(ctx, db, inv.InvestigationID)
+			// Active vs withdrawn split for header counts.
+			active, _ := state.ListAnnotationsFiltered(ctx, db, inv.InvestigationID, false)
+			allAnns, _ := state.ListAnnotationsFiltered(ctx, db, inv.InvestigationID, true)
+			anns := active
+			if includeWithdrawn {
+				anns = allAnns
+			}
+			withdrawnCount := len(allAnns) - len(active)
 			children, _ := state.ChildInvestigations(ctx, db, inv.InvestigationID)
 			if output == "json" {
 				enc := json.NewEncoder(cm.OutOrStdout())
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]any{
-					"investigation": inv,
-					"runs":          runs,
-					"annotations":   anns,
-					"children":      children,
+					"investigation":    inv,
+					"runs":             runs,
+					"annotations":      anns,
+					"annotations_active":    len(active),
+					"annotations_withdrawn": withdrawnCount,
+					"children":         children,
 				})
 			}
 			tw := tabwriter.NewWriter(cm.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -275,8 +315,16 @@ func newShowCmd() *cobra.Command {
 			fmt.Fprintf(tw, "Created:\t%s\n", time.Unix(inv.CreatedAt, 0).Format(time.RFC3339))
 			fmt.Fprintf(tw, "Children:\t%d\n", len(children))
 			fmt.Fprintf(tw, "Runs:\t%d\n", len(runs))
-			fmt.Fprintf(tw, "Annotations:\t%d\n", len(anns))
+			if withdrawnCount > 0 {
+				fmt.Fprintf(tw, "Annotations:\t%d active, %d withdrawn\n", len(active), withdrawnCount)
+			} else {
+				fmt.Fprintf(tw, "Annotations:\t%d\n", len(active))
+			}
 			tw.Flush()
+			if includeWithdrawn && withdrawnCount > 0 {
+				fmt.Fprintln(cm.OutOrStdout(), "")
+				fmt.Fprintln(cm.OutOrStdout(), "(--include-withdrawn: showing withdrawn rows in JSON output / annotation list)")
+			}
 			if tuiFlag {
 				fmt.Fprintln(cm.OutOrStdout(), "(TUI deferred to a follow-up commit; --tui currently a no-op.)")
 			}
@@ -285,6 +333,7 @@ func newShowCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&output, "output", "table", "table|json")
 	c.Flags().BoolVar(&tuiFlag, "tui", false, "open the interactive TUI (deferred)")
+	c.Flags().BoolVar(&includeWithdrawn, "include-withdrawn", false, "include soft-deleted annotations in the list")
 	return c
 }
 
@@ -376,7 +425,7 @@ func newBranchCmd() *cobra.Command {
 
 func newAnnotateCmd() *cobra.Command {
 	var (
-		tag      string
+		tags     []string
 		note     string
 		citesArr []string
 	)
@@ -395,9 +444,13 @@ func newAnnotateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			seedTag := ""
+			if len(tags) > 0 {
+				seedTag = tags[0]
+			}
 			body := note
 			if body == "" {
-				edited, editTag, err := openEditorTemplate(tag)
+				edited, editTag, err := openEditorTemplate(seedTag)
 				if err != nil {
 					return err
 				}
@@ -406,17 +459,20 @@ func newAnnotateCmd() *cobra.Command {
 					return nil
 				}
 				body = edited
-				if editTag != "" && tag == "" {
-					tag = editTag
+				if editTag != "" && len(tags) == 0 {
+					// Tag pulled from front-matter; may be comma-separated.
+					for _, t := range strings.Split(editTag, ",") {
+						if t = strings.TrimSpace(t); t != "" {
+							tags = append(tags, t)
+						}
+					}
 				}
 			}
 			a := state.Annotation{
 				AnnotationID:    state.NewAnnotationID(),
 				InvestigationID: inv.InvestigationID,
+				Tags:            tags,
 				Body:            body,
-			}
-			if tag != "" {
-				a.Tag = sql.NullString{String: tag, Valid: true}
 			}
 			if _, err := state.AddAnnotation(ctx, db, a); err != nil {
 				return err
@@ -452,7 +508,7 @@ func newAnnotateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&tag, "tag", "", "annotation tag (e.g. hypothesis, insight, decision)")
+	c.Flags().StringArrayVar(&tags, "tag", nil, "annotation tag (repeatable; e.g. --tag=hypothesis --tag=insight)")
 	c.Flags().StringVar(&note, "note", "", "one-shot annotation body (skips editor)")
 	c.Flags().StringArrayVar(&citesArr, "cites", nil, "<inv-slug>:<annotation-id> citation, repeatable")
 	return c
@@ -531,6 +587,7 @@ func newMergeCmd() *cobra.Command {
 					AnnotationID:    state.NewAnnotationID(),
 					InvestigationID: parent.InvestigationID,
 					Tag:             a.Tag,
+					Tags:            a.Tags,
 					Body:            a.Body,
 					CarriedFrom:     sql.NullString{String: a.AnnotationID, Valid: true},
 				}
