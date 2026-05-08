@@ -183,3 +183,83 @@ func TestBackupPruning(t *testing.T) {
 		t.Errorf("after prune: %d backups, want ≤ %d", len(matches), maxBackups)
 	}
 }
+
+// TestRunsReportColumns_Writeable: 0008/0009/0010 add new nullable columns
+// to runs. After Apply() they must be writeable + readable + NULL-tolerant.
+// Each column is exercised once with a concrete value and once left NULL.
+func TestRunsReportColumns_Writeable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.db")
+	db := openTestDB(t, path)
+	if err := Apply(db, path, "v0-test"); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	// Insert a row with all three new columns set.
+	if _, err := db.Exec(`
+		INSERT INTO runs (run_id, context_name, verb, workload_ref, submitted_at, status,
+		                  pending_seconds, cpu_request, mem_request_gb, submission_source,
+		                  created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"r-set", "ctx", "pipeline", "wf", 1700000000, "running",
+		42, 4.0, 16.0, "template:nf-core/rnaseq", 1700000000); err != nil {
+		t.Fatalf("insert with values: %v", err)
+	}
+	// Insert a row leaving the new columns NULL.
+	if _, err := db.Exec(`
+		INSERT INTO runs (run_id, context_name, verb, workload_ref, submitted_at, status,
+		                  created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"r-null", "ctx", "pipeline", "wf", 1700000001, "running", 1700000001); err != nil {
+		t.Fatalf("insert with NULLs: %v", err)
+	}
+
+	// Read both back.
+	var (
+		ps   sql.NullInt64
+		cpu  sql.NullFloat64
+		mem  sql.NullFloat64
+		src  sql.NullString
+	)
+	if err := db.QueryRow(`SELECT pending_seconds, cpu_request, mem_request_gb, submission_source
+	                         FROM runs WHERE run_id = ?`, "r-set").Scan(&ps, &cpu, &mem, &src); err != nil {
+		t.Fatalf("read r-set: %v", err)
+	}
+	if !ps.Valid || ps.Int64 != 42 {
+		t.Errorf("pending_seconds = %v, want 42", ps)
+	}
+	if !cpu.Valid || cpu.Float64 != 4.0 {
+		t.Errorf("cpu_request = %v, want 4.0", cpu)
+	}
+	if !mem.Valid || mem.Float64 != 16.0 {
+		t.Errorf("mem_request_gb = %v, want 16.0", mem)
+	}
+	if !src.Valid || src.String != "template:nf-core/rnaseq" {
+		t.Errorf("submission_source = %v, want template:nf-core/rnaseq", src)
+	}
+
+	if err := db.QueryRow(`SELECT pending_seconds, cpu_request, mem_request_gb, submission_source
+	                         FROM runs WHERE run_id = ?`, "r-null").Scan(&ps, &cpu, &mem, &src); err != nil {
+		t.Fatalf("read r-null: %v", err)
+	}
+	if ps.Valid || cpu.Valid || mem.Valid || src.Valid {
+		t.Errorf("expected all NULL on r-null; got ps=%v cpu=%v mem=%v src=%v", ps, cpu, mem, src)
+	}
+}
+
+// TestFeaturesIntroducedBy_NewMigrations: the 0008/0009/0010 entries appear
+// in the feature table so the local-state pseudo-service advertises them
+// through the capability layer.
+func TestFeaturesIntroducedBy_NewMigrations(t *testing.T) {
+	cases := map[string]string{
+		"0008_runs_queue_wait":        "queue-wait-fraction",
+		"0009_runs_resource_request":  "resource-fit",
+		"0010_runs_submission_source": "template-vs-handwritten",
+	}
+	for version, want := range cases {
+		got := FeaturesIntroducedBy(version)
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("FeaturesIntroducedBy(%q) = %v, want [%s]", version, got, want)
+		}
+	}
+}

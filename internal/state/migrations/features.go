@@ -43,6 +43,15 @@ var migrationFeatures = map[string][]string{
 		"annotation-multi-tags",
 		"annotation-soft-delete",
 	},
+	"0008_runs_queue_wait": {
+		"queue-wait-fraction",
+	},
+	"0009_runs_resource_request": {
+		"resource-fit",
+	},
+	"0010_runs_submission_source": {
+		"template-vs-handwritten",
+	},
 }
 
 // FeaturesIntroducedBy returns the features a single migration adds.
