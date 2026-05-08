@@ -28,6 +28,11 @@ const (
 	ZADefaultCostStoragePersistentGbMonth = 0.10   // ZAR per GB·month, RustFS HDD JBOD with 3+1 EC
 	ZADefaultCostStorageEgressGb          = 0.0    // ZAR per GB egress; non-zero only with cloud bridge
 
+	// Postdoc compensation — used by `abc report` to translate hours_saved
+	// into a ZAR amount. Layer-0 default is the HSRC 2025 SA postdoctoral
+	// guidance figure (R350/hr).
+	ZADefaultCostPostdocPerHour = 350.0 // ZAR per researcher-hour
+
 	// Emissions coefficients.
 	ZADefaultGridFactorGco2PerKwh = 900.0  // Eskom IAR 2023 average (g CO2e / kWh)
 	ZADefaultCpuW                 = 12.0   // CCF v3 coefficient (W per CPU)
@@ -117,6 +122,12 @@ func storagePersistentCostCitation() string {
 	return "RustFS 24-bay HDD JBOD with 3+1 EC, 5y amortisation + power" + dateSuffixSemicolon()
 }
 
+// postdocCostCitation builds the citation for the postdoc hourly rate.
+// HSRC 2025 South African postdoctoral compensation guidance.
+func postdocCostCitation() string {
+	return "HSRC 2025 SA postdoctoral compensation guidance" + dateSuffixSemicolon()
+}
+
 // storageEgressCitation marks egress as a cross-boundary trigger.
 func storageEgressCitation() string {
 	return "0 on-prem (Tailscale); set non-zero only when crossing an external boundary"
@@ -178,6 +189,10 @@ func ZADefaults() RateCard {
 			StorageEgressGb: RateValue{
 				Value: ZADefaultCostStorageEgressGb, Source: SourceBuiltIn, UpdatedAt: now,
 				Citation: storageEgressCitation(),
+			},
+			PostdocPerHour: RateValue{
+				Value: ZADefaultCostPostdocPerHour, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: postdocCostCitation(),
 			},
 		},
 		Emissions: EmissionsRates{

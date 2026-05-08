@@ -19,6 +19,7 @@ const (
 	KeyCostStorageScratchGbHour       = "cost.storage_scratch_gb_hour"
 	KeyCostStoragePersistentGbMonth   = "cost.storage_persistent_gb_month"
 	KeyCostStorageEgressGb            = "cost.storage_egress_gb"
+	KeyCostPostdocPerHour             = "cost.postdoc_per_hour"
 )
 
 // Acceptable keys for the emissions block.
@@ -37,6 +38,7 @@ const (
 var AccountingKeys = []string{
 	KeyCurrency, KeyCostCpuHour, KeyCostGpuHour, KeyCostMemoryGbHour,
 	KeyCostStorageScratchGbHour, KeyCostStoragePersistentGbMonth, KeyCostStorageEgressGb,
+	KeyCostPostdocPerHour,
 }
 
 // EmissionsKeys lists supported emissions keys.
@@ -58,7 +60,8 @@ func ValidateAccountingValue(key, raw string) (string, float64, error) {
 		}
 		return raw, 0, nil
 	case KeyCostCpuHour, KeyCostGpuHour, KeyCostMemoryGbHour,
-		KeyCostStorageScratchGbHour, KeyCostStoragePersistentGbMonth, KeyCostStorageEgressGb:
+		KeyCostStorageScratchGbHour, KeyCostStoragePersistentGbMonth, KeyCostStorageEgressGb,
+		KeyCostPostdocPerHour:
 		v, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
 			return "", 0, fmt.Errorf("%s: cannot parse %q as a number: %w", key, raw, err)
@@ -152,6 +155,8 @@ func Resolve(z RateCard, layer1 LayeredOverrides, layer2 FlagOverrides) (RateCar
 				card.Cost.StoragePersistentGbMonth = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			case KeyCostStorageEgressGb:
 				card.Cost.StorageEgressGb = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyCostPostdocPerHour:
+				card.Cost.PostdocPerHour = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			}
 		}
 		// Emissions block.
