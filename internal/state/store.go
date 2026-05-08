@@ -39,13 +39,22 @@ type Investigation struct {
 }
 
 // Annotation mirrors the annotations row.
+//
+// Tag is the legacy singular column (kept for backward compat; populated on
+// reads of pre-0007 rows). Tags is the canonical multi-tag list, persisted
+// as `tags_json`. New writes populate Tags; the legacy `tag` column is
+// written as the first element if present, for cross-version readers.
 type Annotation struct {
-	AnnotationID    string
-	InvestigationID string
-	Tag             sql.NullString
-	Body            string
-	CarriedFrom     sql.NullString
-	CreatedAt       int64
+	AnnotationID     string
+	InvestigationID  string
+	Tag              sql.NullString // legacy singular tag (read-only on write path)
+	Tags             []string       // tags_json — canonical
+	Body             string
+	CarriedFrom      sql.NullString
+	CreatedAt        int64
+	UpdatedAt        int64
+	WithdrawnAt      sql.NullInt64
+	WithdrawnReason  sql.NullString
 }
 
 // Run mirrors the runs row (subset most callers need).
@@ -480,23 +489,74 @@ func GetActivePointer(ctx context.Context, db *sql.DB, contextName, kind string)
 
 // ----- Annotations -----
 
-// AddAnnotation inserts an annotation row.
+// AddAnnotation inserts an annotation row. Writes both legacy `tag` (first
+// element of Tags if present, else a.Tag.String) and canonical `tags_json`.
 func AddAnnotation(ctx context.Context, db *sql.DB, a Annotation) (Annotation, error) {
 	if a.CreatedAt == 0 {
 		a.CreatedAt = time.Now().Unix()
 	}
+	if a.UpdatedAt == 0 {
+		a.UpdatedAt = a.CreatedAt
+	}
+	// Reconcile legacy/canonical tag fields. Prefer Tags slice; fall back to
+	// the singular Tag column if the caller only set that.
+	if len(a.Tags) == 0 && a.Tag.Valid && a.Tag.String != "" {
+		a.Tags = []string{a.Tag.String}
+	}
+	legacyTag := sql.NullString{}
+	if len(a.Tags) > 0 {
+		legacyTag = sql.NullString{String: a.Tags[0], Valid: true}
+	} else if a.Tag.Valid {
+		legacyTag = a.Tag
+	}
+	tagsJSON := sql.NullString{}
+	if len(a.Tags) > 0 {
+		b, _ := json.Marshal(a.Tags)
+		tagsJSON = sql.NullString{String: string(b), Valid: true}
+	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO annotations (annotation_id, investigation_id, tag, body, carried_from, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		a.AnnotationID, a.InvestigationID, nullableString(a.Tag), a.Body, nullableString(a.CarriedFrom), a.CreatedAt)
+		INSERT INTO annotations (annotation_id, investigation_id, tag, tags_json, body, carried_from, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.AnnotationID, a.InvestigationID, nullableString(legacyTag), nullableString(tagsJSON),
+		a.Body, nullableString(a.CarriedFrom), a.CreatedAt, a.UpdatedAt)
 	return a, err
 }
 
+// annotationSelectCols is the canonical select list for reading annotations.
+const annotationSelectCols = `annotation_id, investigation_id, tag, tags_json, body, carried_from,
+	created_at, COALESCE(updated_at, created_at), withdrawn_at, withdrawn_reason`
+
+// scanAnnotation scans a single row produced by annotationSelectCols.
+func scanAnnotation(rows *sql.Rows, a *Annotation) error {
+	var tagsJSON sql.NullString
+	if err := rows.Scan(&a.AnnotationID, &a.InvestigationID, &a.Tag, &tagsJSON,
+		&a.Body, &a.CarriedFrom, &a.CreatedAt, &a.UpdatedAt,
+		&a.WithdrawnAt, &a.WithdrawnReason); err != nil {
+		return err
+	}
+	if tagsJSON.Valid && tagsJSON.String != "" {
+		_ = json.Unmarshal([]byte(tagsJSON.String), &a.Tags)
+	} else if a.Tag.Valid && a.Tag.String != "" {
+		a.Tags = []string{a.Tag.String}
+	}
+	return nil
+}
+
 // ListAnnotations returns all annotations on an investigation in chrono order.
+// By default, withdrawn annotations are excluded unless includeWithdrawn=true.
 func ListAnnotations(ctx context.Context, db *sql.DB, investigationID string) ([]Annotation, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT annotation_id, investigation_id, tag, body, carried_from, created_at
-		FROM annotations WHERE investigation_id = ? ORDER BY created_at`, investigationID)
+	return ListAnnotationsFiltered(ctx, db, investigationID, false)
+}
+
+// ListAnnotationsFiltered returns annotations on an investigation. If
+// includeWithdrawn is false, soft-deleted rows are excluded.
+func ListAnnotationsFiltered(ctx context.Context, db *sql.DB, investigationID string, includeWithdrawn bool) ([]Annotation, error) {
+	q := `SELECT ` + annotationSelectCols + ` FROM annotations WHERE investigation_id = ?`
+	if !includeWithdrawn {
+		q += ` AND withdrawn_at IS NULL`
+	}
+	q += ` ORDER BY created_at`
+	rows, err := db.QueryContext(ctx, q, investigationID)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +564,7 @@ func ListAnnotations(ctx context.Context, db *sql.DB, investigationID string) ([
 	out := []Annotation{}
 	for rows.Next() {
 		var a Annotation
-		if err := rows.Scan(&a.AnnotationID, &a.InvestigationID, &a.Tag, &a.Body, &a.CarriedFrom, &a.CreatedAt); err != nil {
+		if err := scanAnnotation(rows, &a); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -514,8 +574,7 @@ func ListAnnotations(ctx context.Context, db *sql.DB, investigationID string) ([
 
 // FindAnnotation looks up an annotation by ID prefix scoped to an investigation.
 func FindAnnotation(ctx context.Context, db *sql.DB, investigationID, ref string) (Annotation, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT annotation_id, investigation_id, tag, body, carried_from, created_at
+	rows, err := db.QueryContext(ctx, `SELECT `+annotationSelectCols+`
 		FROM annotations WHERE investigation_id = ? AND annotation_id LIKE ?`,
 		investigationID, ref+"%")
 	if err != nil {
@@ -525,7 +584,7 @@ func FindAnnotation(ctx context.Context, db *sql.DB, investigationID, ref string
 	matches := []Annotation{}
 	for rows.Next() {
 		var a Annotation
-		if err := rows.Scan(&a.AnnotationID, &a.InvestigationID, &a.Tag, &a.Body, &a.CarriedFrom, &a.CreatedAt); err != nil {
+		if err := scanAnnotation(rows, &a); err != nil {
 			return Annotation{}, err
 		}
 		matches = append(matches, a)
@@ -537,6 +596,145 @@ func FindAnnotation(ctx context.Context, db *sql.DB, investigationID, ref string
 		return Annotation{}, fmt.Errorf("ambiguous annotation ref %q", ref)
 	}
 	return matches[0], nil
+}
+
+// FindAnnotationGlobal looks up an annotation by ID prefix across all
+// investigations. Used by `abc project investigation annotation <verb>` where
+// the user supplies just the annotation prefix.
+func FindAnnotationGlobal(ctx context.Context, db *sql.DB, ref string) (Annotation, error) {
+	rows, err := db.QueryContext(ctx, `SELECT `+annotationSelectCols+`
+		FROM annotations WHERE annotation_id LIKE ?`, ref+"%")
+	if err != nil {
+		return Annotation{}, err
+	}
+	defer rows.Close()
+	matches := []Annotation{}
+	for rows.Next() {
+		var a Annotation
+		if err := scanAnnotation(rows, &a); err != nil {
+			return Annotation{}, err
+		}
+		matches = append(matches, a)
+	}
+	if len(matches) == 0 {
+		return Annotation{}, ErrNotFound
+	}
+	if len(matches) > 1 {
+		return Annotation{}, fmt.Errorf("ambiguous annotation ref %q", ref)
+	}
+	return matches[0], nil
+}
+
+// AnnotationRevision mirrors annotation_revisions.
+type AnnotationRevision struct {
+	RevisionID            int64
+	AnnotationID          string
+	PrevBody              sql.NullString
+	PrevTagsJSON          sql.NullString
+	PrevInvestigationID   sql.NullString
+	EditedAt              int64
+	EditKind              string // 'body' | 'tag' | 'move' | 'withdraw' | 'restore'
+	EditReason            sql.NullString
+}
+
+// AddAnnotationRevision records one previous-state row for an annotation
+// mutation. Caller is responsible for performing this within the same
+// transaction as the underlying annotations UPDATE for atomicity. For
+// simplicity in this codebase we do best-effort separate writes; SQLite
+// IMMEDIATE serialises writers regardless.
+func AddAnnotationRevision(ctx context.Context, db *sql.DB, r AnnotationRevision) error {
+	if r.EditedAt == 0 {
+		r.EditedAt = time.Now().Unix()
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO annotation_revisions
+		  (annotation_id, prev_body, prev_tags_json, prev_investigation_id, edited_at, edit_kind, edit_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		r.AnnotationID, nullableString(r.PrevBody), nullableString(r.PrevTagsJSON),
+		nullableString(r.PrevInvestigationID), r.EditedAt, r.EditKind, nullableString(r.EditReason))
+	return err
+}
+
+// ListAnnotationRevisions returns all revisions for an annotation, oldest first.
+func ListAnnotationRevisions(ctx context.Context, db *sql.DB, annotationID string) ([]AnnotationRevision, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT revision_id, annotation_id, prev_body, prev_tags_json, prev_investigation_id,
+		       edited_at, edit_kind, edit_reason
+		FROM annotation_revisions
+		WHERE annotation_id = ?
+		ORDER BY edited_at ASC, revision_id ASC`, annotationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AnnotationRevision{}
+	for rows.Next() {
+		var r AnnotationRevision
+		if err := rows.Scan(&r.RevisionID, &r.AnnotationID, &r.PrevBody, &r.PrevTagsJSON,
+			&r.PrevInvestigationID, &r.EditedAt, &r.EditKind, &r.EditReason); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpdateAnnotationBody replaces the body in-place and bumps updated_at.
+// The previous body (and previous tags_json snapshot) are NOT written here —
+// callers must invoke AddAnnotationRevision in their flow with edit_kind='body'
+// before calling this so the revision row reflects the prior state.
+func UpdateAnnotationBody(ctx context.Context, db *sql.DB, annotationID, body string) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE annotations SET body = ?, updated_at = ? WHERE annotation_id = ?`,
+		body, time.Now().Unix(), annotationID)
+	return err
+}
+
+// UpdateAnnotationTags replaces the tags_json column. Also writes the legacy
+// `tag` column to the first element (or NULL if tags is empty) for cross-version
+// readers.
+func UpdateAnnotationTags(ctx context.Context, db *sql.DB, annotationID string, tags []string) error {
+	var tagsJSON, legacyTag sql.NullString
+	if len(tags) > 0 {
+		b, _ := json.Marshal(tags)
+		tagsJSON = sql.NullString{String: string(b), Valid: true}
+		legacyTag = sql.NullString{String: tags[0], Valid: true}
+	}
+	_, err := db.ExecContext(ctx, `
+		UPDATE annotations SET tags_json = ?, tag = ?, updated_at = ? WHERE annotation_id = ?`,
+		nullableString(tagsJSON), nullableString(legacyTag), time.Now().Unix(), annotationID)
+	return err
+}
+
+// MoveAnnotation re-targets an annotation to a different investigation.
+func MoveAnnotation(ctx context.Context, db *sql.DB, annotationID, newInvestigationID string) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE annotations SET investigation_id = ?, updated_at = ? WHERE annotation_id = ?`,
+		newInvestigationID, time.Now().Unix(), annotationID)
+	return err
+}
+
+// WithdrawAnnotation soft-deletes an annotation. Idempotent on already-withdrawn rows.
+func WithdrawAnnotation(ctx context.Context, db *sql.DB, annotationID, reason string) error {
+	now := time.Now().Unix()
+	var rsn sql.NullString
+	if reason != "" {
+		rsn = sql.NullString{String: reason, Valid: true}
+	}
+	_, err := db.ExecContext(ctx, `
+		UPDATE annotations SET withdrawn_at = ?, withdrawn_reason = ?, updated_at = ?
+		WHERE annotation_id = ? AND withdrawn_at IS NULL`,
+		now, nullableString(rsn), now, annotationID)
+	return err
+}
+
+// RestoreAnnotation clears the withdrawn_at fields. Idempotent on non-withdrawn rows.
+func RestoreAnnotation(ctx context.Context, db *sql.DB, annotationID string) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE annotations SET withdrawn_at = NULL, withdrawn_reason = NULL, updated_at = ?
+		WHERE annotation_id = ? AND withdrawn_at IS NOT NULL`,
+		time.Now().Unix(), annotationID)
+	return err
 }
 
 // ----- Citations -----
