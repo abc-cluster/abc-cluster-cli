@@ -10,11 +10,12 @@ binary remains CGO-free.
 |---|---|
 | `projects` | Top-level research project (slug + ULID, scoped per cluster context) |
 | `investigations` | Branchable, mergeable explorations under a project |
-| `annotations` | Free-form notes attached to investigations (with optional `tag`) |
-| `runs` | Every pipeline / job / module submission, auto-attached to active project + investigation. Carries `cpu_hours`, `memory_gb_hours`, `walltime_seconds`, `gpu_count`, and `scratch_gb` (transient scratch reservation) for cost / emissions reporting (`abc accounting`, `abc emissions`). |
+| `annotations` | Free-form notes attached to investigations. Tags stored as a JSON array in `tags_json`; soft-delete via `withdrawn_at` / `withdrawn_reason`. The legacy singular `tag` column is preserved (additive migration) for cross-version readers. |
+| `annotation_revisions` | Audit trail for every annotation mutation. One row per body edit / tag change / move / withdraw / restore, capturing the previous state of whichever field changed. Walked oldest→newest to reconstruct history. |
+| `runs` | Every pipeline / job / module submission, auto-attached to active project + investigation. Carries `cpu_hours`, `memory_gb_hours`, `walltime_seconds`, `gpu_count`, `scratch_gb` (transient scratch reservation), `exit_code`, and `exit_reason` for cost / emissions reporting (`abc accounting`, `abc emissions`). The completion fields are written by the run-watcher (`internal/runner/watcher.go`) — best-effort, polled from Nomad every 5 s up to a 24 h ceiling. |
 | `active_pointers` | Per-context "active project" / "active investigation" pointers |
 | `cli_audit` | Per-invocation command log: verb, redacted argv, exit code, duration ms, user ULID. Set `ABC_NO_AUDIT=1` to disable. Feeds `abc report`. |
-| `citations` | Cross-investigation citation edges |
+| `citations` | Cross-investigation citation edges (populated by `abc project investigation annotate --cites=<inv>:<aid>`). |
 | `freezes`, `container_digests`, `pipeline_metadata`, `telemetry_queue` | Forward-compatible substrate (no consumers in this release) |
 
 ## Operational rules
@@ -26,9 +27,13 @@ binary remains CGO-free.
 
 ## Admin verbs
 
-- `abc cache status` — binary version, DB path, schema version, applied/pending/future migrations, table row counts, WAL size, applied-migration history.
-- `abc cache migrate` — explicitly apply pending migrations.
-- `abc cache vacuum` — reclaim space (`VACUUM`).
+- `abc localdb status` — binary version, DB path, schema version, applied/pending/future migrations, table row counts, WAL size, applied-migration history.
+- `abc localdb migrate` — explicitly apply pending migrations.
+- `abc localdb vacuum` — reclaim space (`VACUUM`).
+
+> The `abc cache` group is the deprecated former name of `abc localdb`. It
+> remains as an alias for one release and prints a one-line deprecation note
+> at invocation; new scripts should use `abc localdb`.
 
 ## Schema versioning and migrations
 
@@ -47,21 +52,30 @@ On every `state.Open()` (which fires on every DB-backed verb) the CLI:
 4. **Equal** — no-op.
 
 Each `schema_migrations` row records the CLI version that applied it
-(`applied_by_cli_version`), so `abc cache status` shows the full provenance
+(`applied_by_cli_version`), so `abc localdb status` shows the full provenance
 chain.
 
-### Adding a new migration
+### Migration authoring rule
 
-1. Create `internal/state/migrations/NNNN_short_description.sql` where
-   `NNNN` is one greater than the current highest migration filename. Use
-   `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE … ADD COLUMN` for
-   forward-only changes.
-2. Migrations are forward-only; **never edit a migration file once shipped**.
-   To revert, write a new migration that walks back the change.
-3. Bump the CLI version in the next release (`-ldflags "-X cmd.version=…"`)
-   so the audit trail is meaningful.
-4. Add or update unit tests in `internal/state/migrations/migrations_test.go`
-   to exercise the new schema.
+Migrations are **forward-only**. The rule has three parts:
+
+1. **Never edit a shipped migration file.** Once a `0NNN_*.sql` has been
+   applied to any user's `state.db`, its content is frozen. To change the
+   schema, write a new migration that walks the schema forward.
+2. **New migration filename = `NNNN_<short_description>.sql`** where `NNNN`
+   is one greater than the current highest filename in
+   `internal/state/migrations/`. Use `CREATE TABLE IF NOT EXISTS`,
+   `ALTER TABLE … ADD COLUMN`, and `CREATE INDEX IF NOT EXISTS` so the
+   migration is idempotent against partial replays.
+3. **The numeric sequence may have gaps** — `0003` is intentionally absent
+   (it was renumbered to `0005` historically). The migration driver applies
+   files in lexicographic order from whatever set is embedded; gaps are
+   harmless. Do NOT renumber existing files to "fill" the gap.
+
+After writing the migration, add or update unit tests in
+`internal/state/migrations/migrations_test.go` to exercise the new schema,
+and bump the CLI version in the next release (`-ldflags "-X cmd.version=…"`)
+so the audit trail records which binary applied which migration.
 
 ### Recovering from a failed migration
 
@@ -74,7 +88,7 @@ the backup file written before the attempt:
 ```
 
 To restore: stop all `abc` processes, replace `~/.abc/state.db` with the
-backup, then re-run `abc cache status` to confirm the schema version.
+backup, then re-run `abc localdb status` to confirm the schema version.
 
 ## Backup
 
