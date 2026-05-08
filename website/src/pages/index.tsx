@@ -327,11 +327,10 @@ function CopyButton({label, getText}: CopyButtonProps) {
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function Home(): JSX.Element {
   const detected = useMemo(detectInitialState, []);
-  // Docusaurus' colorMode owns data-theme on <html>; the landing CSS keys off
-  // that same attribute so the colour scheme tracks the navbar's theme toggle.
-  // We only own the visual system ("grid" vs "brush") which Docusaurus knows
-  // nothing about — kept as a constant for now (no UI to switch).
-  const system: 'grid' | 'brush' = 'grid';
+  // Docusaurus' colorMode owns data-theme on <html>; the landing CSS keys
+  // entirely off that attribute. The brush-system variant was dropped to
+  // avoid a hydration race where --bg was undefined until the JS effect
+  // ran — the page now resolves to the right colours from first paint.
   const [viewNetwork, setViewNetwork] = useState<ViewNetwork>('auto');
   const [network, setNetwork] = useState<NetworkSurface>(detected.network);
   const [format, setFormat] = useState<URLFormat>(detected.format);
@@ -349,11 +348,8 @@ export default function Home(): JSX.Element {
   const tsIP = NETWORK_CONFIG.tsIP;
   const domain = NETWORK_CONFIG.domain;
 
-  // Set the visual system on <html> so the landing.css [data-system="..."]
-  // selectors apply. Docusaurus already manages data-theme.
-  useEffect(() => {
-    document.documentElement.dataset.system = system;
-  }, [system]);
+  // No useEffect for system — landing.css keys off data-theme alone now,
+  // so the variables resolve from the server-rendered HTML's first paint.
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -373,13 +369,12 @@ export default function Home(): JSX.Element {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  // ── Hero SVG draw — runs once on mount; visual system is constant. ──────
-  // The dot/ring colours come from CSS variables, so theme changes pick up
-  // automatically without a redraw.
+  // ── Hero SVG draw — runs once on mount. The dot/ring colours come
+  // from CSS variables, so theme changes pick up without a redraw.
   useEffect(() => {
     if (!heroGRef.current) return;
-    drawHeroMark(heroGRef.current, system);
-  }, [system]);
+    drawHeroMark(heroGRef.current, 'grid');
+  }, []);
 
   // ── Acronym rotator: cycles through ACRONYM_WORDS every 2.2s ────────────
   useEffect(() => {

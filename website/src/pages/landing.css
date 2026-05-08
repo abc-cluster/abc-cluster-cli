@@ -9,7 +9,11 @@
  * data-system attributes; Docusaurus already sets data-theme on <html>
  * for its own light/dark switch, so the landing reads the same attribute. */
 
-:root[data-system="grid"][data-theme="dark"] {
+/* The variables are keyed off data-theme alone (Docusaurus sets it on
+ * <html> from first paint). The brush system was an unused dark-mode
+ * variant — dropped to keep the variables resolving without waiting for
+ * a JS effect to write data-system. */
+:root[data-theme="dark"] {
   --bg:#070f0c;--bg-1:#0b1a15;--bg-2:#0f2219;
   --text:#c5e5dc;--text-dim:#7db8a8;--text-mute:#4a7d6f;
   --ink:#e8f9f4;--ink-dim:#c8a84c;--accent:#c8a84c;
@@ -18,38 +22,18 @@
   --brush-grad-start:#c8a84c;--brush-grad-end:#a87c2c;
   --brand-mark:#c8a84c;
 }
-:root[data-system="grid"][data-theme="light"] {
-  /* Pure white 2026-05-08: bg / bg-1 / bg-2 all #ffffff so the page
-     reads as plain white in light mode. The mint-leaning rule colours
-     are kept — borders + dotted underlines still carry the design's
-     warm-green character without tinting any region. The layered-tint
-     affordance (--bg / --bg-1 / --bg-2 stack) is dark-mode only. */
-  --bg:#ffffff;--bg-1:#ffffff;--bg-2:#ffffff;
+:root[data-theme="light"] {
+  /* Page is pure white. Cards (--bg-1, --bg-2) carry a faint mint tint
+     so install/code blocks read as inset surfaces against a white page. */
+  --bg:#ffffff;
+  --bg-1:#eef6f2;
+  --bg-2:#e3eee8;
   --text:#1a4a3a;--text-dim:#2d7060;--text-mute:#6aaa96;
   --ink:#0a2820;--ink-dim:#907028;--accent:#907028;
   --rule:#cbe4dc;--rule-soft:#dceee7;
   --selection:rgba(144,112,40,0.22);
   --brush-grad-start:#907028;--brush-grad-end:#c8a84c;
   --brand-mark:#2d7060;
-}
-:root[data-system="brush"][data-theme="dark"] {
-  --bg:#100e0b;--bg-1:#1a1610;--bg-2:#231e14;
-  --text:#d8c4a0;--text-dim:#a8865a;--text-mute:#6b5236;
-  --ink:#f5e8cc;--ink-dim:#d4923a;--accent:#d4923a;
-  --rule:#3a2e1e;--rule-soft:#2a2218;
-  --selection:rgba(212,146,58,0.22);
-  --brush-grad-start:#d4923a;--brush-grad-end:#e8b86d;
-  --brand-mark:#d4923a;
-}
-:root[data-system="brush"][data-theme="light"] {
-  /* Pure white — see the grid+light block above for rationale. */
-  --bg:#ffffff;--bg-1:#ffffff;--bg-2:#ffffff;
-  --text:#4a3520;--text-dim:#7a5830;--text-mute:#b08860;
-  --ink:#1e1208;--ink-dim:#a06820;--accent:#c07828;
-  --rule:#e2cea8;--rule-soft:#ecddc1;
-  --selection:rgba(192,120,40,0.22);
-  --brush-grad-start:#c07828;--brush-grad-end:#d4923a;
-  --brand-mark:#7a5830;
 }
 .abc-landing *,
 .abc-landing *::before,
