@@ -73,22 +73,26 @@ abc cluster capabilities show
 Outputs a structured table of: available datacenters, node drivers
 (containerd, docker), installed service versions, and feature flags.
 
-## accounting / emissions / compliance
+## report / accounting / compliance
 
-High-level cluster reporting commands. **`abc accounting`** and
-**`abc emissions`** have local-state subcommands that work without
-`--cloud` (read from `~/.abc/local.db`); the cloud paths require
-`--cloud` elevation:
+High-level cluster reporting commands. **`abc report`** is the read-side
+showback (spend, emissions, hours saved) and works at every tier from
+`~/.abc/local.db`. **`abc accounting`** is the write-side budget surface
+and requires grove+/cloud (gated by the capability layer):
 
 ```bash
-abc accounting report          # local SQLite report (default)
-abc accounting list --cloud    # cloud spend report
-abc emissions report           # local emissions report
-abc emissions report --cloud   # cloud emissions API
-abc compliance --cloud         # compliance status summary
+abc report                                # closed-loop showback (all tiers)
+abc --cloud accounting budget list        # cloud namespace cap list
+abc --cloud accounting budget set \
+    --namespace=genpath --monthly=50000   # set a cap
+abc compliance --cloud                    # compliance status summary
 ```
 
-`--signed` (server-signed reports) and `--all-contexts` (cross-context
-aggregation) are gated by the capability layer: passing them when the
-backing service isn't deployed produces a clear error pointing at the
-required service rather than a silent "not implemented".
+`--all-contexts` (cross-context aggregation) on `abc report` is gated by
+the capability layer: passing it when the controller service isn't
+deployed produces a clear error pointing at the required service rather
+than a silent "not implemented".
+
+For the per-metric showback table and JSON schema, see
+[`abc report`](./abc-report.md). For namespace cap management, see
+[`abc accounting`](./abc-accounting.md).
