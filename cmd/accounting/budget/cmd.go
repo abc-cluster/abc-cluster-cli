@@ -8,8 +8,51 @@ import (
 	"fmt"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/capability"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
+
+// budgetCapabilities declares what `abc accounting budget {list,set,show}`
+// requires. Budget caps are an admission gate; admission flows through
+// Jurist (abc-policy-svc), and the cap state itself lives in the cloud
+// gateway (abc-controller-svc). At seedling neither service is present,
+// so capability.Require returns the standard rejection message.
+//
+// Spec: cli-verb-tree-restructure §A, §E.
+var budgetCapabilities = capability.Required{
+	AllOf: []capability.Need{
+		{Service: "abc-controller-svc"},
+		{Service: "abc-policy-svc"},
+	},
+}
+
+// loadActiveContextCapabilities returns the active context's Capabilities
+// map. Mirrors the helper in cmd/report; nil result is fine —
+// capability.Require treats it as "Services map empty".
+func loadActiveContextCapabilities() *config.Capabilities {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	ctxName := cfg.ResolveContextName(cfg.ActiveContext)
+	if ctxName == "" {
+		return nil
+	}
+	return cfg.Contexts[ctxName].Capabilities
+}
+
+// requireBudgetCapabilities runs the capability gate for every budget
+// subverb. Returns the capability.Require failure error verbatim when
+// the active context lacks the required services.
+func requireBudgetCapabilities(_ *cobra.Command) error {
+	caps := loadActiveContextCapabilities()
+	decision := capability.Require(budgetCapabilities, caps, nil)
+	if decision.Failed() {
+		return decision.AsError()
+	}
+	return nil
+}
 
 // NewCmd returns the "budget" subgroup under "accounting".
 func NewCmd() *cobra.Command {
