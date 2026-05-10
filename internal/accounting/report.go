@@ -214,7 +214,9 @@ func convertCO2Kg(kg float64, unit EmissionsUnit) float64 {
 func groupColumn(by GroupBy) (string, error) {
 	switch by {
 	case GroupByNamespace:
-		return "namespace", nil
+		// COALESCE so runs with no explicit namespace (seedling tier, Nomad -dev)
+		// aggregate under "default" rather than being filtered out by HAVING IS NOT NULL.
+		return "COALESCE(namespace, 'default')", nil
 	case GroupByProject:
 		return "project_id", nil
 	case GroupByInvestigation:

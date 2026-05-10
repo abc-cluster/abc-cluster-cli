@@ -8,6 +8,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/capability"
 	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/runner"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -160,6 +161,24 @@ func runLocalEmissionsReport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("open state DB: %w", err)
 	}
+
+	// Reconcile runs whose background watcher goroutine died before writing back
+	// completion data. Best-effort: errors are logged; report continues regardless.
+	{
+		cfg, cfgErr := config.Load()
+		if cfgErr == nil {
+			ctx := cfg.ActiveCtx()
+			nomadAddr := ctx.NomadAddr()
+			nomadToken := ctx.NomadToken()
+			if nomadAddr != "" {
+				n := runner.ReconcileStuckRuns(cmd.Context(), nomadAddr, nomadToken, "", 30*time.Second, cmd.ErrOrStderr())
+				if n > 0 && !quietMode(cmd) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "[abc] reconciled %d stuck run(s)\n", n)
+				}
+			}
+		}
+	}
+
 	opts := acct.ReportOptions{
 		Mode:              acct.ModeEmissions,
 		By:                acct.GroupBy(by),

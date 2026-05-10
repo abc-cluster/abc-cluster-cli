@@ -95,6 +95,13 @@ type Run struct {
 	// "template:<id>" / "handwritten" / "rerun" / "automation".
 	// NULL on rows predating migration 0010.
 	SubmissionSource sql.NullString
+	// NomadJobID is the Nomad job ID for this run, stored synchronously by
+	// runner.Watch() before the background poll goroutine starts.
+	// NULL for historical rows and --dry-run/--no-submit submissions.
+	// Used by runner.ReconcileStuckRuns() to re-probe Nomad for runs that
+	// were not completed by the background goroutine (e.g. CLI exited early).
+	// NULL on rows predating migration 0011.
+	NomadJobID sql.NullString
 }
 
 // Citation mirrors the citations row.
@@ -853,6 +860,15 @@ func CompleteRun(ctx context.Context, db *sql.DB, runID, status, exitReason stri
 	_, err := db.ExecContext(ctx, `
 		UPDATE runs SET completed_at = ?, status = ?, exit_reason = ?, cpu_hours = ?, memory_gb_hours = ?, walltime_seconds = ?
 		WHERE run_id = ?`, completedAt, status, exitReason, cpuHours, memGBHours, walltimeSec, runID)
+	return err
+}
+
+// UpdateRunJobID stores the Nomad job ID for an already-inserted run.
+// Called synchronously by runner.Watch() before spawning the poll goroutine
+// so that ReconcileStuckRuns() can re-probe Nomad even if the goroutine died.
+func UpdateRunJobID(ctx context.Context, db *sql.DB, runID, jobID string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE runs SET nomad_job_id = ? WHERE run_id = ?`, jobID, runID)
 	return err
 }
 

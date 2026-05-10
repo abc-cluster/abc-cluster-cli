@@ -49,6 +49,10 @@ type WatchTarget struct {
 // continue (and exit) without affecting correctness — early CLI exit just
 // leaves the run row at status='running' (best-effort, per spec OQ-6).
 //
+// Before spawning the goroutine, Watch stores the Nomad job ID in the runs
+// table synchronously (migration 0011). This allows ReconcileStuckRuns() to
+// re-probe Nomad on a future invocation even when the goroutine died early.
+//
 // addr/token come from the caller's resolved Nomad config (typically via
 // `abc pipeline run` flags or ~/.abc/config.yaml). If addr is empty, no
 // poll runs (warning emitted to stderr if logTo is non-nil).
@@ -65,7 +69,96 @@ func Watch(addr, token, region string, target WatchTarget, cfg Config, logTo io.
 		}
 		return
 	}
+
+	// Store the Nomad job ID synchronously so ReconcileStuckRuns() can find it
+	// even if the goroutine below dies before writing back the completion row.
+	if db, err := state.Open(); err == nil {
+		if err := state.UpdateRunJobID(context.Background(), db, target.RunID, target.JobID); err != nil && logTo != nil {
+			fmt.Fprintf(logTo, "[abc] run-watcher: UpdateRunJobID: %v\n", err)
+		}
+		db.Close()
+	}
+
 	go run(addr, token, region, target, cfg, logTo)
+}
+
+// ReconcileStuckRuns queries the local state DB for runs that are still at
+// status='running' with a nomad_job_id set and submitted more than minAge ago,
+// polls Nomad for each, and writes back completion data. It is called at the
+// start of accounting/emissions reports to catch runs whose background watcher
+// goroutine died before completion (e.g. CLI was killed mid-run).
+//
+// Returns the number of runs successfully reconciled. Errors are logged to
+// logTo (non-fatal: the report continues with whatever data is available).
+func ReconcileStuckRuns(ctx context.Context, nomadAddr, token, region string, minAge time.Duration, logTo io.Writer) int {
+	if nomadAddr == "" {
+		return 0
+	}
+	if minAge <= 0 {
+		minAge = 30 * time.Second
+	}
+	// state.Open() returns a process-lifetime cached connection. Do NOT close
+	// it here — the caller (e.g. accounting report) may hold the same handle
+	// and will fail with "database is closed" if we defer db.Close().
+	db, err := state.Open()
+	if err != nil {
+		if logTo != nil {
+			fmt.Fprintf(logTo, "[abc] reconcile: state.Open: %v\n", err)
+		}
+		return 0
+	}
+
+	cutoff := time.Now().Add(-minAge).Unix()
+	rows, err := db.QueryContext(ctx, `
+		SELECT run_id, nomad_job_id, namespace
+		FROM runs
+		WHERE status = 'running'
+		  AND completed_at IS NULL
+		  AND nomad_job_id IS NOT NULL
+		  AND submitted_at < ?`, cutoff)
+	if err != nil {
+		if logTo != nil {
+			fmt.Fprintf(logTo, "[abc] reconcile: query stuck runs: %v\n", err)
+		}
+		return 0
+	}
+	defer rows.Close()
+
+	type stuckRun struct {
+		runID    string
+		jobID    string
+		ns       string
+	}
+	var stuck []stuckRun
+	for rows.Next() {
+		var r stuckRun
+		var nsNull sql.NullString
+		if err := rows.Scan(&r.runID, &r.jobID, &nsNull); err != nil {
+			continue
+		}
+		if nsNull.Valid {
+			r.ns = nsNull.String
+		}
+		stuck = append(stuck, r)
+	}
+	rows.Close()
+
+	if len(stuck) == 0 {
+		return 0
+	}
+
+	nc := utils.NewNomadClient(nomadAddr, token, region)
+	reconciled := 0
+	for _, r := range stuck {
+		target := WatchTarget{RunID: r.runID, JobID: r.jobID, Namespace: r.ns}
+		if final, ok := pollOnce(ctx, db, nc, target, logTo); ok {
+			if logTo != nil {
+				fmt.Fprintf(logTo, "[abc] reconcile: run %s completed → %s\n", r.runID, final)
+			}
+			reconciled++
+		}
+	}
+	return reconciled
 }
 
 func run(addr, token, region string, t WatchTarget, cfg Config, logTo io.Writer) {
@@ -195,10 +288,29 @@ func pollOnce(ctx context.Context, db *sql.DB, nc *utils.NomadClient, t WatchTar
 		}
 	}
 
+	// Compute resource hours from the run's stored cpu_request / mem_request_gb
+	// and the observed walltime. Both fields may be NULL (zero-value) for runs
+	// submitted before these columns existed or before the flag was set.
+	walltimeHours := float64(walltimeSec) / 3600.0
+	cpuHours := 0.0
+	memGBHours := 0.0
+	{
+		var cpuReq, memReq sql.NullFloat64
+		_ = db.QueryRowContext(ctx,
+			`SELECT cpu_request, mem_request_gb FROM runs WHERE run_id = ?`, t.RunID,
+		).Scan(&cpuReq, &memReq)
+		if cpuReq.Valid && cpuReq.Float64 > 0 {
+			cpuHours = cpuReq.Float64 * walltimeHours
+		}
+		if memReq.Valid && memReq.Float64 > 0 {
+			memGBHours = memReq.Float64 * walltimeHours
+		}
+	}
+
 	// Write back. CompleteRun handles status/exit_reason/cpu_hours/mem/wall;
 	// we additionally update exit_code separately (no helper exists).
 	if err := state.CompleteRun(ctx, db, t.RunID, status, exitReason,
-		finishedAt.Unix(), 0, 0, walltimeSec); err != nil {
+		finishedAt.Unix(), cpuHours, memGBHours, walltimeSec); err != nil {
 		if logTo != nil {
 			fmt.Fprintf(logTo, "[abc] run-watcher: CompleteRun: %v\n", err)
 		}

@@ -675,6 +675,14 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 	applyAbcNodesNomadNamespaceFromConfig(spec)
 
+	// hello-cluster: if capabilities are synced and show no containerd nodes,
+	// silently fall back to exec so the workload runs on bare seedling/HPC
+	// nodes where stress-ng is installed via apt but no container runtime exists.
+	// Must run AFTER applyCLIFlags so an explicit --driver is never overridden.
+	if isBuiltInHelloCluster {
+		adaptHelloClusterForAvailableDriver(spec)
+	}
+
 	if err := resolveAutoDriver(cmd, spec); err != nil {
 		return err
 	}
