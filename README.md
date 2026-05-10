@@ -91,6 +91,8 @@ abc <command> <subcommand> [flags]
 | `data`           | `upload`, `encrypt`, `decrypt`, `download`     | Upload and manage data files                 |
 | `secrets`        | `set`, `get`, `list`, `delete`, `ref`, `backend setup` | Manage secrets (local / Nomad Variables / Vault KV v2) |
 | `cluster`        | `capabilities sync`, `capabilities show`, `list`, `status`, `provision`, `decommission` | Inspect and manage clusters |
+| `report`         | (no subcommands)                               | Showback: spend + carbon + researcher-time, computed locally from `~/.abc/local.db` |
+| `accounting`     | `budget list`, `budget set`, `budget show`     | Namespace budget caps + admission-gate thresholds (grove tier and above) |
 
 For detailed flag references, examples, and preamble directive documentation, see **[USAGE.md](./USAGE.md)**.
 
@@ -123,6 +125,16 @@ abc module samplesheet emit nf-core/plink/extract
 
 # Run the module driver against an edited samplesheet — validated cluster-side before driver gen
 abc module run nf-core/plink/extract --samplesheet ./samples.csv
+
+# Showback: closed-loop spend + carbon + researcher-time, all from ~/.abc/local.db
+abc report
+abc report --since=2026-01-01 --until=2026-03-31
+abc report --json --by=investigation
+
+# Namespace budget caps (grove tier and above)
+abc accounting budget list
+abc accounting budget set --namespace genpath --monthly 50000 --currency ZAR --block-at 1.0
+abc accounting budget show --namespace genpath
 ```
 
 ### abc-nodes secrets & capabilities

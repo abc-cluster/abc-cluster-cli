@@ -68,8 +68,11 @@ This document describes every command available in the `abc` CLI.
 - [cluster](#cluster)
   - [cluster capabilities sync](#cluster-capabilities-sync)
   - [cluster capabilities show](#cluster-capabilities-show)
+- [report](#report)
 - [accounting](#accounting)
-- [emissions](#emissions)
+  - [accounting budget list](#accounting-budget-list)
+  - [accounting budget show](#accounting-budget-show)
+  - [accounting budget set](#accounting-budget-set)
 - [compliance](#compliance)
 - [admin services](#admin-services)
 - [status (alias)](#status-alias)
@@ -2136,33 +2139,171 @@ abc --cloud cluster decommission my-cluster --yes
 
 ---
 
-## `accounting`
+## `report`
 
-Accounting: cloud spend and per-namespace **budget** caps (via the cloud gateway).
-Aliases: **`cost`**, **`budget`** (same command).
+`abc report` is the **canonical showback verb**. It reads `~/.abc/local.db` only — no network calls, no controller dependency — and prints the closed-loop summary: investigations completed, pipeline runs, total compute, spend, carbon emissions, and estimated researcher-time saved.
 
-Optional parent flag **`--budget <id>`** is reserved for allocation / budget id filters when the gateway supports it.
+The same rate-card resolver feeds `abc accounting budget` (write-side caps) and `abc report` (read-side showback), so spend and emissions agree to within float epsilon for the same window.
 
-All subcommands below require **`--cloud`**.
-
-### `accounting list`
+### Synopsis
 
 ```bash
-abc --cloud accounting list
+abc report [flags]
 ```
 
-### `accounting show`
+### Flags
+
+| Flag             | Description                                                                  | Default |
+|------------------|------------------------------------------------------------------------------|---------|
+| `--since`        | Window start (`YYYY-MM-DD`)                                                  | Jan 1 of current year |
+| `--until`        | Window end (`YYYY-MM-DD`)                                                    | now     |
+| `--by`           | Aggregation axis: `investigation` \| `pipeline` \| `project` \| `user` (JSON-only in v1) | (personal summary) |
+| `--json`         | Emit machine-readable JSON; metric IDs as keys                               | `false` |
+| `--technical`    | Use frozen metric IDs instead of human titles in text output                 | `false` |
+| `--all-contexts` | (deferred) cross-context aggregation; currently rejects with a clear error  | `false` |
+
+### Default text output
+
+```text
+Your 2026 so far:
+────────────────────────────────────────────────────
+Questions explored (investigations):  3
+Pipeline runs:                        12  (10 worked, 2 retried)
+Total compute:                        47 CPU-hrs, 0 GPU-hrs
+
+Spend this period:                    R 1,420
+Emissions this period:                47.3 kg CO₂e
+
+Research time saved (estimated):
+  Auto-retry handled it for you      →  ~0.5 hrs
+  Smart resource defaults accepted   →  n/a (requires migration 0009 data)
+  Failure summaries (vs. log diving) →  ~1.0 hrs
+  Reused protocols (vs. from scratch)→  ~2.0 hrs
+  ──────────────────────────────────────────────────
+  Total:                                ~3.5 hrs
+
+Research time saved:    3.5 hours
+Hourly compensation:    R 350
+Amount:                 R 1,225
+
+Rate card (effective):
+  cost.cpu_hour                       0.50      built-in    (SA on-prem indicative)
+  cost.postdoc_per_hour               350       built-in    (HSRC 2025 SA postdoctoral compensation guidance)
+  emissions.grid_factor_gco2_per_kwh  900       built-in    (Eskom 2023)
+  emissions.pue                       1.50      built-in    (Uptime 2023)
+  ... (12 rows total)
+```
+
+### Examples
+
+```bash
+# YTD personal summary (default)
+abc report
+
+# Last quarter
+abc report --since=2026-01-01 --until=2026-03-31
+
+# Per-pipeline learning curve via JSON
+abc report --json --by=pipeline | jq '.groups[] | {pipeline: .key, mttfs: .metrics.mttfs.value, retries: .metrics.retry_depth.value}'
+
+# Headline number for a Slack update
+abc report --json | jq -r '"Time saved this year: \(.metrics.hours_saved.value) hrs"'
+
+# Stable IDs for a manuscript figure script
+abc report --technical --since=2026-01-01 > figures/2026q1-metrics.txt
+
+# Per-investigation ROI (combines accounting + report data)
+abc report --json --by=investigation | jq '.groups[] | {inv: .key, spend: .metrics.spend_zar.value, hours: .metrics.hours_saved.value}'
+```
+
+### What "n/a" means
+
+Each metric returns `(value, computable, reason)`. If a metric's prerequisite migration hasn't run (e.g. for runs predating it), the row prints `n/a (<reason>)` rather than silently zeroing.
+
+### 18 frozen metric IDs
+
+The `--json` and `--technical` outputs use stable IDs frozen at the v1 ship and safe to script against:
+
+| ID | Title (human) |
+|---|---|
+| `mttfs` | First-success time |
+| `failure_to_result_ratio` | Failed runs per result |
+| `retry_depth` | Tries before success |
+| `mttr_failure` | Recovery time |
+| `stabilisation_runs` | Runs to settle |
+| `queue_wait_fraction` | Waiting in queue |
+| `active_engagement_hours` | Hands-on time |
+| `spectator_hours` | Watching time |
+| `async_job_fraction` | Walked-away runs |
+| `cognitive_overhead_score` | Tools per workflow |
+| `workflows_unattended` | Hands-off completions |
+| `submission_source` | Submission source (template/handwritten/rerun/automation) |
+| `resource_fit` | Right-sized requests |
+| `cost_per_investigation` | Spend per question (ZAR) |
+| `emissions_per_investigation` | Carbon per question (kg CO₂e) |
+| `spend_zar` | Total spend (window aggregate, matches `accounting budget` for same window) |
+| `emissions_kgco2e` | Total emissions (window aggregate) |
+| `hours_saved` | Research time saved — headline composite |
+
+### Tuning the rate card
+
+The rate card is loaded from built-in Layer-0 South African defaults, overlaid with operator-specified Layer-1 overrides in `~/.abc/config.yaml`:
+
+```bash
+# Override the postdoc rate
+abc config accounting set cost.postdoc_per_hour=400
+
+# Override grid intensity (e.g. for non-SA Eskom-dominant grids)
+abc config emissions set emissions.grid_factor_gco2_per_kwh=950
+abc config emissions set emissions.pue=1.27
+```
+
+The `Rate card (effective)` footer reflects whichever layer each value came from.
+
+---
+
+## `accounting`
+
+`abc accounting` is the **write-side budget management surface**: monthly namespace spend caps and admission-gate thresholds enforced by `abc-policy-svc`.
+
+> For showback / cost reporting, see [`report`](#report). This section covers budget management only.
+
+The verb tree is:
 
 ```
-abc --cloud accounting show [--namespace <name>]
+abc accounting budget {list, set, show}
 ```
 
-### `accounting set`
-
-Set or update the spend cap (budget) for a namespace.
+The `budget` subgroup requires `abc-controller-svc` and `abc-policy-svc`. At seedling (no controller, no policy gate) the verbs reject with a clear capability message:
 
 ```
-abc --cloud accounting set [flags]
+error: abc accounting budget requires abc-controller-svc; not available in this context.
+```
+
+Top-level alias: **`cost`** (e.g. `abc cost budget list`).
+
+### `accounting budget list`
+
+List all configured spend caps:
+
+```bash
+abc accounting budget list
+```
+
+### `accounting budget show`
+
+Show one namespace's cap detail:
+
+```bash
+abc accounting budget show --namespace genpath
+```
+
+### `accounting budget set`
+
+Set or update a namespace spend cap:
+
+```bash
+abc accounting budget set [flags]
 ```
 
 | Flag          | Description                                                   | Default |
@@ -2174,24 +2315,14 @@ abc --cloud accounting set [flags]
 | `--block-at`  | Submission block threshold as a fraction of cap (0.0–1.0)     | `1.0`   |
 
 ```bash
-abc --cloud accounting set --namespace team-alpha --monthly 500 --currency USD --alert-at 0.8
+# 50,000 ZAR/month cap, alert at 80%, block at 100%
+abc accounting budget set --namespace genpath --monthly 50000 --currency ZAR --alert-at 0.8 --block-at 1.0
+
+# Unlimited (0 = no cap), alert-only at the 90% mark of zero (effectively disables alerts)
+abc accounting budget set --namespace lab-internal --monthly 0
 ```
 
----
-
-## `emissions`
-
-Fetch **carbon emissions** data from the ABC API (`GET /v1/emissions`). Uses global **`--url`**, **`--access-token`**, and optional **`--workspace`** (sent as `workspaceId` query parameter).
-
-| Flag     | Description                          |
-|----------|--------------------------------------|
-| `--from` | Optional reporting window start (`from` query) |
-| `--to`   | Optional reporting window end (`to` query)   |
-
-```bash
-abc emissions --workspace ws-123
-abc emissions --from 2026-01-01 --to 2026-03-31
-```
+When `current_spend / monthly` reaches `alert-at`, an alert is emitted; when it reaches `block-at`, new pipeline / job submissions in the namespace are rejected by the policy service until the next billing cycle or a `set --monthly` raise.
 
 ---
 
