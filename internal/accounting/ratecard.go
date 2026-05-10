@@ -81,6 +81,12 @@ type CostRates struct {
 	// StorageEgressGb is non-zero only when an external cross-boundary
 	// transfer happens (cloud bridge); on-prem reports leave it at zero.
 	StorageEgressGb RateValue
+	// PostdocPerHour is the hourly compensation rate used by `abc report`
+	// to translate `hours_saved` into a currency amount. Layer-0 default
+	// is the HSRC 2025 South African postdoctoral guidance figure.
+	// Surfaced through the same resolver chain as the other cost rates so
+	// the report verb's footer matches `abc accounting`'s shape.
+	PostdocPerHour RateValue
 }
 
 // EmissionsRates is the emissions section of a RateCard.

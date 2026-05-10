@@ -87,6 +87,21 @@ version = "latest"
 repo    = "seqeralabs/wave-cli"
 version = "latest"
 
+# stress-ng: CPU, memory, and I/O stress tester.
+# Used by `abc job run hello-cluster` when the cluster has no container runtime
+# (exec-driver fallback). The binary is downloaded via Nomad artifact stanza
+# from the abc-tools bucket rather than baked into the OS image.
+#
+# Push to cluster:
+#   abc admin tools fetch stress-ng
+#   abc admin tools push stress-ng
+#
+# Nomad artifact URL (after push):
+#   abc admin tools artifact-url stress-ng
+[tools.stress-ng]
+repo    = "ColinIanKing/stress-ng"
+version = "latest"
+
 
 # ── Locally built artifacts ────────────────────────────────────────────────────
 #

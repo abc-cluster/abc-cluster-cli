@@ -214,7 +214,9 @@ func convertCO2Kg(kg float64, unit EmissionsUnit) float64 {
 func groupColumn(by GroupBy) (string, error) {
 	switch by {
 	case GroupByNamespace:
-		return "namespace", nil
+		// COALESCE so runs with no explicit namespace (seedling tier, Nomad -dev)
+		// aggregate under "default" rather than being filtered out by HAVING IS NOT NULL.
+		return "COALESCE(namespace, 'default')", nil
 	case GroupByProject:
 		return "project_id", nil
 	case GroupByInvestigation:
@@ -250,8 +252,18 @@ func renderTable(w io.Writer, rep Report, opts ReportOptions) error {
 	if len(rep.Rows) == 0 {
 		fmt.Fprintln(w, "(no runs in this window)")
 	}
+	var grandTotal float64
 	for _, r := range rep.Rows {
 		fmt.Fprintf(w, "%-28s %.2f\n", truncate(r.Group, 28), r.Total)
+		grandTotal += r.Total
+	}
+	if len(rep.Rows) > 1 {
+		sep := strings.Repeat("-", 28+len(header))
+		fmt.Fprintf(w, "%s\n", sep)
+		fmt.Fprintf(w, "%-28s %.2f\n", "Total", grandTotal)
+	} else if len(rep.Rows) == 1 {
+		// Single namespace — still show Total so the line is always present.
+		fmt.Fprintf(w, "%-28s %.2f\n", "Total (estimated)", grandTotal)
 	}
 	verbosity := opts.RateSource
 	if verbosity == "" {
@@ -302,12 +314,13 @@ func writeFullRateCard(w io.Writer, rep Report) {
 	}
 	fmt.Fprintln(w)
 	if rep.Mode == ModeAccounting {
-		fmt.Fprintln(w, "These rates are showback estimates; not invoice-grade. To override:")
-		fmt.Fprintln(w, "  abc config accounting set cost.cpu_hour=0.55")
+		fmt.Fprintln(w, "These figures are rough estimates based on built-in default rates.")
+		fmt.Fprintln(w, "In future releases, values will reflect dynamic resource measurements")
+		fmt.Fprintln(w, "from the cluster (CPU utilisation, memory, walltime via Nomad telemetry).")
 	} else {
-		fmt.Fprintln(w, "These rates are estimates; the SA grid factor varies by hour and season.")
-		fmt.Fprintln(w, "For grant-justification or carbon-footprint disclosure use cases, override:")
-		fmt.Fprintln(w, "  abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950")
+		fmt.Fprintln(w, "These figures are rough estimates based on built-in default factors.")
+		fmt.Fprintln(w, "In future releases, emissions will be computed from live grid intensity")
+		fmt.Fprintln(w, "data and measured resource utilisation rather than static coefficients.")
 	}
 }
 

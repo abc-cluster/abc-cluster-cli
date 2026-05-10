@@ -26,6 +26,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/project"
+	reportcmd "github.com/abc-cluster/abc-cluster-cli/cmd/report"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
@@ -261,6 +262,7 @@ func init() {
 	rootCmd.AddCommand(emissions.NewCmd())
 	rootCmd.AddCommand(compliance.NewCmd())
 	rootCmd.AddCommand(project.NewCmd())
+	rootCmd.AddCommand(reportcmd.NewCmd())
 	// `abc investigation` is registered as a deprecated root-level alias for
 	// one release; the canonical command is `abc project investigation`.
 	rootCmd.AddCommand(investigation.NewDeprecatedRootAlias())

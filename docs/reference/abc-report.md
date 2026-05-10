@@ -1,191 +1,225 @@
 # `abc report`
 
-Produce a researcher productivity report from local state — runs, annotations,
-and command history — for an investigation, a branch comparison, or a whole project.
-
-No server calls. Everything comes from `~/.abc/local.db`.
+Researcher-productivity summary read entirely from `~/.abc/local.db`. No
+network calls — `abc report` is a seed-tier-native verb. Cross-institution
+aggregation, opt-in sharing, and dashboards are abc-cloud territory and gate
+behind the `abc-controller-svc` capability (see `--all-contexts` below).
 
 ## Usage
 
 ```
-abc report [<investigation>]  [flags]
-abc report --project=<name>   [flags]
+abc report                      # personal YTD summary, default text mode
+abc report --since=2026-01-01 --until=2026-04-30
+abc report --json               # machine-readable; metric IDs as keys
+abc report --json --by=investigation
+abc report --technical          # metric IDs replace human Titles
 ```
 
 ## Flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--project=<name>` | — | Project-level summary instead of single investigation |
-| `--since=YYYY-MM-DD` | — | Restrict to runs and annotations on or after this date |
-| `--trend` | `false` | Add a Trend section showing metrics bucketed by time period |
-| `--period=weekly\|monthly` | `weekly` | Bucket size for `--trend` |
-| `--format=table\|json\|csv` | `table` | Output format (`csv` with `--trend` for manuscript figures) |
-| `--no-audit` | `false` | Exclude the Commands section (same as setting `ABC_NO_AUDIT=1`) |
+| `--since=YYYY-MM-DD` | Jan 1 of current year | Window start (UTC) |
+| `--until=YYYY-MM-DD` | now | Window end (inclusive end-of-day) |
+| `--by=<axis>` | _unset_ | Aggregation axis: `investigation` / `project` / `pipeline` / `user`. **JSON-only in v1**; text mode rejects with a "deferred to v2" message. |
+| `--json` | `false` | Emit the structured JSON contract documented below |
+| `--technical` | `false` | Replace human Titles with metric IDs in the text headline (useful for reproducible doc snippets) |
+| `--all-contexts` | `false` | Cross-context aggregation. **Phase 2**: rejects with `--all-contexts requires abc-controller-svc; not available in this context.` |
 
-## Output sections
+## Two-layer metric naming
 
-### Single investigation (default)
+Every metric has a stable technical ID (frozen at first ship; used in JSON
+keys, `--by` flag values, SQL view names, and manuscript scripts) plus a
+revisable user-facing Title and Gloss (revisable without an ADR).
 
-When `<investigation>` has branches, a **branch comparison table** is rendered
-at the top — columns per branch, rows for runs, MTTFS, walltime, CPU-hours,
-issues logged, and dead-end reason.
-
-```
-╔══════════════════════════════════════════════════════════════════════════╗
-║  abc report  ·  bright-otter-3                                          ║
-║  Variant calling: GATK vs DeepVariant                                   ║
-║  Project: tb-cohort-2026  ·  Context: bioinformatics  ·  41 days        ║
-╚══════════════════════════════════════════════════════════════════════════╝
-
-  Overview
-  ────────────────────────────────────────────────────────────────────────
-  Status       merged  ·  Decision: adopt DeepVariant
-  Runs         12 total  ·  9 succeeded  ·  3 failed
-  Walltime     28h 14m  ·  CPU-hours 112.4  ·  GPU-hours 4.1
-  Branches     2  (1 dead-end, 1 merged)
-  Citations    1  (→ warm-cedar-2)
-
-  Branch comparison
-  ────────────────────────────────────────────────────────────────────────
-                         tidy-beaver-5       bright-otter-3 (main)
-                         GATK v4.4           DeepVariant 1.6.1
-                         ──────────────────  ───────────────────────
-  Status                 dead-end            merged
-  Runs                   7                   5
-  Success / fail         5 / 2               4 / 1
-  MTTFS                  3d 14h              1d 22h     ◀ 48% faster
-  Walltime total         19h 42m             8h 32m     ◀ 57% less
-  CPU-hours              78.2                34.2
-  Issues logged          3                   1
-  Dead-end reason        "CRAM index incompatibility; upstream bug"
-
-  Timeline
-  ────────────────────────────────────────────────────────────────────────
-  2026-03-05  hypothesis   "GATK handles mixed-ploidy better than DV"
-  2026-03-06  RUN ───────  nf-core/sarek@3.4.3  GATK  ✓ success  2h 48m
-  2026-03-08  observation  "Q30 95.1%, het-call rate 0.82 on chr1 pilot"
-  ...
-  2026-04-12  decision     "Adopt DeepVariant 1.6.1"
-
-  Productivity
-  ────────────────────────────────────────────────────────────────────────
-  Time-to-decision     38 days
-  Runs before decision 12
-  Issues per run       0.33
-  Async run fraction   67%  (no follow-up command within 30 min of completion)
-  Knowledge reuse      1 citation
-
-  Commands  (cli_audit)
-  ────────────────────────────────────────────────────────────────────────
-  Total issued         47  ·  failed 3  (6%)
-    investigation annotate  14  ████████████████
-    pipeline run            12  ██████████████
-    job logs                 8  █████████
-```
-
-### Project summary (`--project`)
-
-```
-$ abc report --project=tb-cohort-2026
-
-  tb-cohort-2026  ·  investigation summary
-  ──────────────────────────────────────────────────────────────────────
-                     Runs  Success  MTTFS      Walltime   CPU-h  Annotations
-  warm-cedar-2       6     5        2d 6h       9h 14m    38.1   9
-  bright-otter-3    12     9        1d 22h     28h 14m   112.4   14
-  tidy-beaver-5 [↳]  7     5        3d 14h     19h 42m    78.2   8
-  quiet-falcon-9     3     1        — dead-end  2h 01m     8.1   5
-  cosmic-pelican-7  (active — 4 runs so far)
-```
-
-## Derived metrics
-
-All metrics are computed from `~/.abc/local.db` with no network calls.
-
-| Metric | Source | Definition |
+| `ID` | `Title` | `Gloss` |
 |---|---|---|
-| MTTFS | `runs` | First `submitted_at` → first `completed_at` where `status='success'` per investigation |
-| Failure-to-result ratio | `runs` | Failed runs ÷ total runs |
-| Issues per run | `annotations`, `runs` | `COUNT(tag='issue')` ÷ `COUNT(runs)` |
-| Time-to-decision | `annotations` | `decision.created_at` − `hypothesis.created_at` |
-| Thinking gaps | `annotations`, `runs` | Δt between an observation/insight annotation and the next run submission |
-| Async run fraction | `runs`, `cli_audit` | Runs with no `job logs`/`job status` command within 30 min of `completed_at` |
-| Knowledge reuse | `citations` | Count of cross-investigation citation edges |
+| `mttfs` | First-success time | How long from first attempt to first working run |
+| `failure_to_result_ratio` | Failed runs per result | How many tries it took to get a usable answer |
+| `retry_depth` | Tries before success | Attempts before the run worked |
+| `mttr_failure` | Recovery time | How fast you got back on track after a failure |
+| `stabilisation_runs` | Runs to settle | Submissions before the pipeline ran reliably |
+| `queue_wait_fraction` | Waiting in queue | Share of total time spent waiting, not running |
+| `active_engagement_hours` | Hands-on time | Hours actually at the terminal |
+| `spectator_hours` | Watching time | Hours spent monitoring runs |
+| `async_job_fraction` | Walked-away runs | Runs you submitted and didn't babysit |
+| `cognitive_overhead_score` | Tools per workflow | Distinct commands touched to get one result |
+| `workflows_unattended` | Hands-off completions | Pipelines that finished without you stepping in |
+| `submission_source` | Submission source | How the run was authored: template / handwritten / rerun |
+| `resource_fit` | Right-sized requests | How close requested CPU/RAM matched what was used |
+| `cost_per_investigation` | Spend per question | ZAR per investigation, resolved via `internal/accounting` rate card |
+| `emissions_per_investigation` | Carbon per question | kg CO₂e attributed to each investigation, resolved via `internal/emissions` |
+| `spend_zar` | Total spend | Window-wide ZAR aggregate (matches `abc accounting` for same window) |
+| `emissions_kgco2e` | Total emissions | Window-wide kg CO₂e (matches `abc emissions` for same window) |
+| `hours_saved` | Research time saved | Headline composite: estimated busywork avoided |
 
-The **async run fraction** requires `cli_audit` to be populated. If `ABC_NO_AUDIT=1`
-was set during the investigation period, or `--no-audit` is passed, this row is omitted.
+Adding a metric requires populating all four fields (ID, Title, Gloss, Unit) in
+the same patch. The ID contract is enforced by tests; titles are capped at 32
+characters.
 
-## Annotation nudge
+## Time-saved heuristics
 
-When `abc pipeline run` or `abc job run` completes and an active investigation is set,
-the CLI prints a one-line tip if no annotation has been added in the last 4 hours:
+The `hours_saved` headline is the sum of five compile-time heuristics. Values
+are intentionally conservative; runtime tuning lands when at least one user
+asks.
 
-```
-[abc] Run RUN-01J… finished: ✓ success  (2h 48m)
-      Tip: abc investigation annotate --tag=observation to record what you found.
-      Disable: ABC_NO_ANNOTATION_TIP=1
-```
+| Constant | Minutes saved per applicable run | Source |
+|---|---|---|
+| `AutoRetrySavedMinutes` | 15 | brainstorm §5.10; manual re-submit round-trip |
+| `SmartDefaultSavedMinutes` | 10 | resource_fit metric rationale |
+| `FailureSummarySavedMinutes` | 30 | structured failure summary vs. log diving |
+| `TemplateReuseSavedMinutes` | 60 | template / rerun vs. setup from scratch |
+| `AsyncRunSpectatorAvoidedMin` | 30 | spectator_hours; median observed monitoring session |
 
-## Environment variables
+## Three verbs, three lenses on one ledger
 
-| Variable | Effect |
-|---|---|
-| `ABC_NO_AUDIT=1` | Disable `cli_audit` recording; Commands section omitted from `abc report` |
-| `ABC_NO_ANNOTATION_TIP=1` | Suppress the post-run annotation nudge |
+`abc report` is the third lens onto the same accounting + emissions
+ledger that `abc accounting` and `abc emissions` operate on. All three
+verbs share one Layer-0/1/2 rate-card resolver (`internal/accounting`)
+and one grid-intensity resolver (the same package's `Emissions` block).
+For a given window:
 
-## Longitudinal trend (`--trend`)
+- `abc accounting --since=… --until=…` reports total ZAR spend.
+- `abc emissions --since=… --until=…` reports total kg CO₂e.
+- `abc report --since=… --until=…` produces the closed-loop researcher
+  view: spend, emissions, and postdoc-hours-returned together, with
+  per-investigation rollups.
 
-Shows how metrics change week-over-week, revealing the reduction in accidental time as
-the researcher builds trust in the platform.
+The three verbs return identical numbers for the spend and emissions
+totals when given the same window — the drift regression test in
+`internal/report/integration_test.go` enforces this. If you see drift,
+the report verb is using a different formula or a different rate card,
+which is a bug, not configuration.
 
-```
-$ abc report --project=tb-cohort-2026 --trend
-
-  Trend  (weekly)
-  ──────────────────────────────────────────────────────────────────────────
-  Week         Runs  Fail%   MTTFS    Issues/run  Async%   Commands
-  2026-03-02     3   67%     4d 2h      0.67        42%       18
-  2026-03-09     2   50%     3d 6h      0.50        50%       12
-  2026-03-16     3   33%     2d 1h      0.33        58%        9
-  2026-03-23     2    0%     1d 8h      0.00        75%        7
-  2026-03-30     1    0%       22h      0.00        83%        5
-  ──────────────────────────────────────────────────────────────────────────
-  Change        —   ↓67%    ↓46%      ↓100%        ↑41pp    ↓72%
-
-  Scientific inquiry ratio  (Doing + Thinking) / (Watching + Overhead)
-  ──────────────────────────────────────────────────────────────────────────
-  Week         Doing   Watching   Thinking   Overhead   Ratio
-  2026-03-02     5        9          2           2        0.78
-  2026-03-09     4        5          3           0        1.17
-  2026-03-16     5        3          3           0        2.67
-  2026-03-23     4        2          2           1        2.00
-  2026-03-30     3        1          2           0        5.00
-  ──────────────────────────────────────────────────────────────────────────
-  Trend        doing ↑, watching ↓  →  platform trust increasing
-```
-
-The **scientific inquiry ratio** classifies every `cli_audit` verb:
-
-- **Doing** — `pipeline run`, `job run`, `module run`, `data upload`, `submit`
-- **Watching** — `job logs`, `job status`, `pipeline runs`, `job list` (monitoring; accidental time)
-- **Thinking** — `investigation annotate`, `investigation show`, `investigation tree` (recording insight; intrinsic)
-- **Overhead** — `job stop`, `config`, `secrets`, `auth`, `cache` (platform friction)
-
-A ratio above 1.0 means more time executing science and recording insight than monitoring
-and fighting the platform. The trend of this ratio rising is the headline evidence for
-platform value — in grant reports and in the academic manuscript.
-
-Use `--format=csv --trend` to export week-by-week data for manuscript figure scripts:
+## Sample output
 
 ```
-abc report --project=tb-cohort-2026 --trend --format=csv > metrics.csv
+$ abc report
+Your 2026 so far:
+────────────────────────────────────────────────────
+Questions explored (investigations):  3
+Pipeline runs:                        12  (10 worked, 2 retried)
+Total compute:                        47 CPU-hrs, 0 GPU-hrs
+
+Spend this period:                    R 1,420
+Emissions this period:                47.3 kg CO₂e
+
+Research time saved (estimated):
+  Auto-retry handled it for you      →  ~0.5 hrs
+  Smart resource defaults accepted   →  n/a (requires migration 0009 data)
+  Failure summaries (vs. log diving) →  ~1.0 hrs
+  Reused protocols (vs. from scratch)→  ~2.0 hrs
+  ──────────────────────────────────────────────────
+  Total:                                ~3.5 hrs
+
+Research time saved:    3.5 hours
+Hourly compensation:    R 350
+Amount:                 R 1,225
+
+Rate card (effective):
+  currency                            ZAR       built-in    (SA market default)
+  cost.cpu_hour                       0.5       built-in    (abc-cluster-cli vX — SA on-prem indicative)
+  cost.gpu_hour                       9         built-in    (abc-cluster-cli vX — SA on-prem indicative)
+  cost.memory_gb_hour                 0.05      built-in    (abc-cluster-cli vX — SA on-prem indicative)
+  cost.storage_scratch_gb_hour        0.0001    built-in    (amortised enterprise NVMe + power)
+  cost.postdoc_per_hour               350       built-in    (HSRC 2025 SA postdoctoral compensation guidance)
+  emissions.grid_factor_gco2_per_kwh  900       built-in    (Eskom Integrated Annual Report 2023)
+  emissions.cpu_w                     12        built-in    (Cloud Carbon Footprint v3 coefficient set)
+  emissions.gpu_w                     250       built-in    (Cloud Carbon Footprint v3 coefficient set)
+  emissions.memory_gb_w               0.3725    built-in    (Cloud Carbon Footprint v3 coefficient set)
+  emissions.pue                       1.5       built-in    (Uptime Institute 2023 — generic on-prem average)
+  emissions.storage_scratch_w_per_tb  8         built-in    (Samsung PM9A3 envelope amortised)
+
+These rates are showback estimates; not invoice-grade. To override:
+  abc config accounting set cost.postdoc_per_hour=400
+  abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950
 ```
 
-## Tier availability
+The provenance footer is generated from the resolved rate card — every
+value carries its layer (`built-in` / `local` / `flag`) and citation. A
+Layer-1 override in `~/.abc/config.yaml` (e.g. `cost.postdoc_per_hour:
+525`) flows through the same path the other two verbs use, so the
+postdoc rate displayed here is the same value `abc accounting --by=user`
+would multiply against. One ledger, three lenses.
 
-`abc report` is available at all tiers — it reads only from `~/.abc/local.db`
-and never contacts the cluster. At abc-cloud (L5), the same metrics are
-available in Metabase dashboards backed by the server-side researcher-event
-table, which joins this local data with cluster-side telemetry when the user
-opts in to data sharing.
+## JSON schema
+
+```json
+{
+  "window":       {"since": "<RFC3339>", "until": "<RFC3339>"},
+  "context_name": "abc-dev",
+  "metrics": {
+    "<metric-id>": {
+      "id":         "<metric-id>",
+      "label":      "<human Title>",
+      "gloss":      "<one-line gloss>",
+      "unit":       "hours|count|percent|currency",
+      "value":      <number | object>,
+      "computable": true,
+      "reason":     "(present only when computable=false)"
+    }
+  },
+  "rate_card": {
+    "currency":                          {"value": "ZAR",   "source": "built-in", "citation": "SA market default"},
+    "cost.cpu_hour":                     {"value": 0.5,     "source": "built-in", "citation": "abc-cluster-cli vX — SA on-prem indicative"},
+    "cost.gpu_hour":                     {"value": 9,       "source": "built-in", "citation": "..."},
+    "cost.memory_gb_hour":               {"value": 0.05,    "source": "built-in", "citation": "..."},
+    "cost.storage_scratch_gb_hour":      {"value": 0.0001,  "source": "built-in", "citation": "..."},
+    "cost.postdoc_per_hour":             {"value": 350,     "source": "built-in", "citation": "HSRC 2025 SA postdoctoral compensation guidance"},
+    "emissions.grid_factor_gco2_per_kwh": {"value": 900,    "source": "built-in", "citation": "Eskom IAR 2023"},
+    "emissions.cpu_w":                   {"value": 12,      "source": "built-in", "citation": "CCF v3"},
+    "emissions.gpu_w":                   {"value": 250,     "source": "built-in", "citation": "CCF v3"},
+    "emissions.memory_gb_w":             {"value": 0.3725,  "source": "built-in", "citation": "CCF v3"},
+    "emissions.pue":                     {"value": 1.5,     "source": "built-in", "citation": "Uptime Institute 2023"},
+    "emissions.storage_scratch_w_per_tb": {"value": 8,      "source": "built-in", "citation": "Samsung PM9A3 envelope"}
+  },
+  "groups": [          // present only when --by=<axis> set
+    {
+      "by":      "investigation",
+      "key":     "inv-abc",
+      "metrics": { "<metric-id>": { ... } }
+    }
+  ]
+}
+```
+
+## Required substrate (migrations)
+
+`abc report` reads existing columns where available and gracefully degrades to
+"n/a (reason)" otherwise.
+
+| Migration | Adds | Unlocks metric |
+|---|---|---|
+| `0008_runs_queue_wait` | `pending_seconds` | `queue_wait_fraction` |
+| `0009_runs_resource_request` | `cpu_request`, `mem_request_gb` | `resource_fit` |
+| `0010_runs_submission_source` | `submission_source` | `submission_source`, contributes to `hours_saved` |
+
+Run `abc localdb migrate` to apply pending migrations. `abc localdb status`
+lists feature flags advertised through the capability layer.
+
+## No network guarantee
+
+`abc report` declares `Required{ AllOf: [{Service: "local-state"}] }` — the
+local-state pseudo-service derived from the migration framework. The verb
+makes zero outbound HTTP calls in any code path. A test in
+`cmd/report/report_test.go` swaps `http.DefaultTransport` for a tripwire and
+asserts zero `RoundTrip` calls during render.
+
+## Capability layer
+
+| Need | Backend | Phase |
+|---|---|---|
+| AllOf `local-state` | local SQLite | seed (always) |
+| `--all-contexts` → `abc-controller-svc` (`federation-aggregate`) | controller service | abc-cloud |
+
+`--all-contexts` rejects with the standard capability.Require failure message
+when the controller service isn't deployed in the active context's capabilities
+map.
+
+## See also
+
+- [`abc accounting`](./abc-accounting) — spend per investigation / project /
+  user; same Layer-0 ZA rate card, same provenance footer shape.
+- [`abc emissions`](./abc-emissions) — kg CO2e per run.
+- [`abc localdb status`](./local-state) — schema version, applied migrations,
+  feature flags.

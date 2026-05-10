@@ -56,6 +56,7 @@ func readContextBlocks(data []byte, contextName string) (map[string]string, map[
 				{"storage_scratch_gb_hour", KeyCostStorageScratchGbHour},
 				{"storage_persistent_gb_month", KeyCostStoragePersistentGbMonth},
 				{"storage_egress_gb", KeyCostStorageEgressGb},
+				{"postdoc_per_hour", KeyCostPostdocPerHour},
 			} {
 				if v := mapKey(cost, k.yamlKey); v != nil && v.Kind == yaml.ScalarNode {
 					acct[k.ourKey] = v.Value
@@ -162,6 +163,9 @@ func applyAccountingEdits(block *yaml.Node, setKV map[string]string, unsetKeys [
 		case KeyCostStorageEgressGb:
 			cost := ensureMap(block, "cost")
 			setScalar(cost, "storage_egress_gb", v)
+		case KeyCostPostdocPerHour:
+			cost := ensureMap(block, "cost")
+			setScalar(cost, "postdoc_per_hour", v)
 		}
 	}
 	// Unset.
@@ -192,6 +196,10 @@ func applyAccountingEdits(block *yaml.Node, setKV map[string]string, unsetKeys [
 		case KeyCostStorageEgressGb:
 			if cost := mapKey(block, "cost"); cost != nil {
 				deleteKey(cost, "storage_egress_gb")
+			}
+		case KeyCostPostdocPerHour:
+			if cost := mapKey(block, "cost"); cost != nil {
+				deleteKey(cost, "postdoc_per_hour")
 			}
 		}
 		// Tidy: remove empty cost map.

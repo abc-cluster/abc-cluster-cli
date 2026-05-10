@@ -82,6 +82,26 @@ type Run struct {
 	// how gpu_hours is derived from gpu_count.
 	ScratchGB        sql.NullFloat64
 	FreezeID         sql.NullString
+	// PendingSeconds is the time the alloc spent in pending before
+	// transitioning to running. Set by the run-watcher; NULL on rows
+	// predating migration 0008.
+	PendingSeconds   sql.NullInt64
+	// CPURequest / MemRequestGB capture what the user asked for at submit
+	// time (in cores and GB respectively), regardless of what the alloc
+	// actually consumed. NULL on rows predating migration 0009.
+	CPURequest       sql.NullFloat64
+	MemRequestGB     sql.NullFloat64
+	// SubmissionSource records how the run was authored:
+	// "template:<id>" / "handwritten" / "rerun" / "automation".
+	// NULL on rows predating migration 0010.
+	SubmissionSource sql.NullString
+	// NomadJobID is the Nomad job ID for this run, stored synchronously by
+	// runner.Watch() before the background poll goroutine starts.
+	// NULL for historical rows and --dry-run/--no-submit submissions.
+	// Used by runner.ReconcileStuckRuns() to re-probe Nomad for runs that
+	// were not completed by the background goroutine (e.g. CLI exited early).
+	// NULL on rows predating migration 0011.
+	NomadJobID sql.NullString
 }
 
 // Citation mirrors the citations row.
@@ -811,13 +831,27 @@ func InsertRun(ctx context.Context, db *sql.DB, r Run) error {
 	if r.ScratchGB.Valid {
 		scratchArg = r.ScratchGB.Float64
 	}
+	var cpuReqArg any
+	if r.CPURequest.Valid {
+		cpuReqArg = r.CPURequest.Float64
+	}
+	var memReqArg any
+	if r.MemRequestGB.Valid {
+		memReqArg = r.MemRequestGB.Float64
+	}
+	var subSrcArg any
+	if r.SubmissionSource.Valid {
+		subSrcArg = r.SubmissionSource.String
+	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO runs (run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, status, freeze_id, gpu_count, scratch_gb, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO runs (run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, status, freeze_id, gpu_count, scratch_gb, cpu_request, mem_request_gb, submission_source, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.RunID, r.ContextName, nullableString(r.ProjectID), nullableString(r.InvestigationID),
 		r.Verb, r.WorkloadRef, nullableString(r.WorkloadVersion), nullableString(r.ParamsJSON),
 		nullableString(r.Namespace), nullableString(r.Workspace), r.SubmittedAt, r.Status,
-		nullableString(r.FreezeID), gpuArg, scratchArg, time.Now().Unix())
+		nullableString(r.FreezeID), gpuArg, scratchArg,
+		cpuReqArg, memReqArg, subSrcArg,
+		time.Now().Unix())
 	return err
 }
 
@@ -826,6 +860,15 @@ func CompleteRun(ctx context.Context, db *sql.DB, runID, status, exitReason stri
 	_, err := db.ExecContext(ctx, `
 		UPDATE runs SET completed_at = ?, status = ?, exit_reason = ?, cpu_hours = ?, memory_gb_hours = ?, walltime_seconds = ?
 		WHERE run_id = ?`, completedAt, status, exitReason, cpuHours, memGBHours, walltimeSec, runID)
+	return err
+}
+
+// UpdateRunJobID stores the Nomad job ID for an already-inserted run.
+// Called synchronously by runner.Watch() before spawning the poll goroutine
+// so that ReconcileStuckRuns() can re-probe Nomad even if the goroutine died.
+func UpdateRunJobID(ctx context.Context, db *sql.DB, runID, jobID string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE runs SET nomad_job_id = ? WHERE run_id = ?`, jobID, runID)
 	return err
 }
 

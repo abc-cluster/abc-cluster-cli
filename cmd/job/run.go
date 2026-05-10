@@ -285,6 +285,20 @@ EXAMPLES
 	return cmd
 }
 
+// resolveJobSubmissionSource picks the submission_source value for an
+// `abc job run` invocation. Mirrors the pipeline / module helper. The
+// underlying classifier handles the env-var (ABC_AUTOMATION) and
+// flag-precedence rules; today neither --template nor --rerun exists on
+// `abc job run`, so this resolves to "automation" or "handwritten".
+func resolveJobSubmissionSource(cmd *cobra.Command) string {
+	templateID, _ := cmd.Flags().GetString("template")
+	rerun, _ := cmd.Flags().GetBool("rerun")
+	return state.SubmissionSourceClassifier{
+		TemplateID: templateID,
+		Rerun:      rerun,
+	}.Resolve()
+}
+
 // autoAttachJobRun resolves project / investigation per spec §E and inserts a
 // runs row in ~/.abc/local.db. Best-effort. Returns the runID so the caller
 // can spawn the run-watcher post-submit (spec §E + OQ-6).
@@ -296,6 +310,22 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) string {
 	ns, _ := cmd.Flags().GetString("namespace")
 	gpus, _ := cmd.Flags().GetInt("gpus")              // best-effort: CLI flag only; #ABC --gpus directive is parsed downstream
 	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb") // best-effort: CLI flag; run-watcher will overwrite walltime/cpu fields from Nomad alloc
+	// Resource requests for the abc-report `resource_fit` metric. Best-
+	// effort from --cores / --mem; in-script #ABC directives that get
+	// applied later in the spec-build pipeline are not visible here, so
+	// runs submitted via #ABC-only directives leave these NULL. Spec
+	// abc-report.md §B accepts that miss.
+	cores, _ := cmd.Flags().GetInt("cores")
+	memStr, _ := cmd.Flags().GetString("mem")
+	var cpuReqCores, memReqGB float64
+	if cores > 0 {
+		cpuReqCores = float64(cores)
+	}
+	if memStr != "" {
+		if mb, err := parseMemoryMB(memStr); err == nil && mb > 0 {
+			memReqGB = float64(mb) / 1024.0
+		}
+	}
 
 	db, err := state.Open()
 	if err != nil {
@@ -313,6 +343,9 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) string {
 		Namespace:         ns,
 		GpuCount:          gpus,
 		ScratchGB:         scratchGB,
+		CPURequest:        cpuReqCores,
+		MemRequestGB:      memReqGB,
+		SubmissionSource:  resolveJobSubmissionSource(cmd),
 	}
 	res, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req)
 	if err != nil {
@@ -641,6 +674,14 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	applyAbcNodesNomadNamespaceFromConfig(spec)
+
+	// hello-cluster: if capabilities are synced and show no containerd nodes,
+	// silently fall back to exec so the workload runs on bare seedling/HPC
+	// nodes where stress-ng is installed via apt but no container runtime exists.
+	// Must run AFTER applyCLIFlags so an explicit --driver is never overridden.
+	if isBuiltInHelloCluster {
+		adaptHelloClusterForAvailableDriver(spec)
+	}
 
 	if err := resolveAutoDriver(cmd, spec); err != nil {
 		return err
