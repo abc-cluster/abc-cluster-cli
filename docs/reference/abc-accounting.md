@@ -11,31 +11,31 @@ sidebar_position: 11
 
 `abc accounting` is the namespace-budget management surface — monthly spend
 caps and admission-gate thresholds, enforced by Jurist (`abc-policy-svc`)
-and stored in the cloud gateway (`abc-controller-svc`). The verb tree is:
+and stored by the controller service (`abc-controller-svc`). The verb tree is:
 
 ```
 abc accounting budget {list, set, show}
 ```
 
-Available at **grove+ and cloud** tiers. At seedling the verbs reject with
-the standard capability message:
+Available at the **grove tier and above**. At seedling the verbs reject
+with the standard capability message:
 
 ```
 abc accounting budget requires abc-controller-svc; not available in this
-context. Configure controller_url or run in a grove/cloud-tier context.
+context. Configure controller_url to point at a grove-tier deployment.
 ```
 
 ## Synopsis
 
 ```
-abc --cloud accounting budget list
-abc --cloud accounting budget show --namespace=<name>
-abc --cloud accounting budget set  --namespace=<name> --monthly=<amount> [flags]
+abc accounting budget list
+abc accounting budget show --namespace=<name>
+abc accounting budget set  --namespace=<name> --monthly=<amount> [flags]
 ```
 
-`--cloud` is required (or set `ABC_CLI_CLOUD_MODE=1`). The verbs route
-through the cloud gateway today; admission-side enforcement happens in
-Jurist regardless of which client wrote the cap.
+The verbs require `controller_url` to be set on the active context (a
+grove-tier deployment of abc-controller-svc). Admission-side enforcement
+happens in Jurist regardless of which client wrote the cap.
 
 ## `abc accounting budget list`
 
@@ -43,7 +43,7 @@ Lists every namespace cap visible to the caller, with the current spend
 and admission-gate status.
 
 ```
-$ abc --cloud accounting budget list
+$ abc accounting budget list
   NAMESPACE                CAP/MONTH    CURRENT SPEND  CCY      STATUS
   ──────────────────────────────────────────────────────────────────────────
   genpath                  50000.00     12420.50       ZAR      ok
@@ -61,7 +61,7 @@ Detailed view for a single namespace, including the configured alert
 and block thresholds.
 
 ```
-$ abc --cloud accounting budget show --namespace=genpath
+$ abc accounting budget show --namespace=genpath
   Namespace      genpath
   Cap            50000.00 ZAR/month
   Current spend  12420.50 ZAR
@@ -81,7 +81,7 @@ in the workspace currency; `--alert-at` and `--block-at` are fractions
 of that ceiling.
 
 ```
-$ abc --cloud accounting budget set \
+$ abc accounting budget set \
     --namespace=genpath --monthly=75000 --currency=ZAR \
     --alert-at=0.8 --block-at=1.0
   Budget cap for "genpath" set to 75000.00 ZAR/month.
@@ -90,7 +90,7 @@ $ abc --cloud accounting budget set \
 To remove a cap (make the namespace unlimited), pass `--monthly=0`:
 
 ```
-$ abc --cloud accounting budget set --namespace=genpath --monthly=0
+$ abc accounting budget set --namespace=genpath --monthly=0
   Budget cap for "genpath" removed (unlimited).
 ```
 
@@ -125,7 +125,7 @@ These appear in the verb-tree restructure spec as out-of-scope for v1:
 - `abc accounting forecast` — bitemporal projection (Kayastha).
 - `abc accounting close` — end-of-period close + sign + lock.
 - `abc accounting export --funder=<id>` — funder-format export.
-- `abc accounting reconcile` — cross-grove ledger reconcile (cloud).
+- `abc accounting reconcile` — cross-grove ledger reconcile.
 - `abc accounting alerts` — extracted alert-management subverb.
 
 Each ships in its own spec when the underlying feature matures.
