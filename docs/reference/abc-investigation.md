@@ -139,8 +139,7 @@ stateDiagram-v2
 ## Cost-per-investigation reporting
 
 Because `runs.investigation_id` is auto-attached on every submission,
-`abc accounting --by=investigation` rolls cost up cleanly per
-investigation (including dead-ends — which is the point: "how much did
-the failed Strelka comparison cost?"). See
-[`abc accounting`](abc-accounting.md) and
-[`abc emissions`](abc-emissions.md).
+`abc report --json --by=investigation` rolls spend and emissions up
+cleanly per investigation (including dead-ends — which is the point:
+"how much did the failed Strelka comparison cost?"). See
+[`abc report`](abc-report.md).

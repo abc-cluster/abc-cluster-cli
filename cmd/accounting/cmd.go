@@ -1,13 +1,18 @@
-// Package accounting implements the "abc accounting" command group (cloud spend /
-// allocation caps via the cloud gateway). Aliases: cost, budget.
+// Package accounting implements the "abc accounting" command group —
+// namespace budget management (admission-gate spend caps via the cloud
+// gateway). The read-side showback verb (`abc accounting report` and
+// `abc emissions [report]`) is consolidated under the top-level
+// `abc report` per the cli-verb-tree-restructure spec.
 //
-// Read operations require --cloud. Write operations (set) require --cloud and
-// appropriate gateway policy.
+// Subverbs: `abc accounting budget {list,set,show}`. Available at
+// grove+ and cloud tiers; rejected at seedling via the capability
+// layer.
 package accounting
 
 import (
 	"fmt"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/accounting/budget"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
@@ -16,18 +21,31 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "accounting",
-		Aliases: []string{"cost", "budget"},
-		Short:   "Accounting: cloud spend and namespace budget caps",
-		Long: `View and manage cloud accounting data (namespace spend caps via the cloud gateway).
+		Aliases: []string{"cost"},
+		Short:   "Accounting: namespace budget management",
+		Long: `Manage per-namespace budget caps and admission-gate thresholds via the
+cloud gateway.
 
-Subcommands focus on per-namespace budgets (monthly caps, alerts). Use --budget on the
-parent command to pass an optional allocation / budget id when supported by the gateway.
+  abc --cloud accounting budget list
+  abc --cloud accounting budget show --namespace=nf-genomics-lab
+  abc --cloud accounting budget set --namespace=nf-genomics-lab --monthly=500
 
-  abc --cloud accounting list
-  abc --cloud accounting show --namespace=nf-genomics-lab
-  abc --cloud accounting set --namespace=nf-genomics-lab --monthly=500
+For showback (spend, emissions, hours saved), use the top-level
+` + "`abc report`" + ` verb.
 
-Legacy: abc cost … and abc budget … are aliases for abc accounting …`,
+Legacy: abc cost … is an alias for abc accounting ….`,
+		// Force "unknown command" for removed subverbs (report, list,
+		// set, show — moved under budget/ per spec §A). Without this
+		// RunE, cobra falls back to printing help with exit 0 when
+		// given an unknown subcommand. Spec §C requires the standard
+		// cobra error; this is the smallest hook that delivers it
+		// while preserving the help-on-no-args behaviour.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
+			}
+			return cmd.Help()
+		},
 	}
 
 	cmd.PersistentFlags().String("budget", "",
@@ -39,52 +57,6 @@ Legacy: abc cost … and abc budget … are aliases for abc accounting …`,
 	cmd.PersistentFlags().String("region", utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION"),
 		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
 
-	cmd.AddCommand(
-		newListCmd(),
-		newShowCmd(),
-		newSetCmd(),
-	)
-	// Default RunE: local SQLite cost report (spec abc-emissions-accounting §D).
-	// When invoked with no subcommand (e.g. `abc accounting --by=namespace`),
-	// the new local report runs. The cloud-budget verbs above remain
-	// reachable via `abc accounting list/show/set --cloud`.
-	addReportFlags(cmd)
+	cmd.AddCommand(budget.NewCmd())
 	return cmd
-}
-
-func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
-	addr, _ := cmd.Flags().GetString("nomad-addr")
-	if addr == "" {
-		addr, _ = cmd.Root().PersistentFlags().GetString("nomad-addr")
-	}
-	token, _ := cmd.Flags().GetString("nomad-token")
-	if token == "" {
-		token, _ = cmd.Root().PersistentFlags().GetString("nomad-token")
-	}
-	region, _ := cmd.Flags().GetString("region")
-	if region == "" {
-		region, _ = cmd.Root().PersistentFlags().GetString("region")
-	}
-	if addr == "" || token == "" || region == "" {
-		cfgAddr, cfgToken, cfgRegion := utils.NomadDefaultsFromConfig()
-		if addr == "" {
-			addr = cfgAddr
-		}
-		if token == "" {
-			token = cfgToken
-		}
-		if region == "" {
-			region = cfgRegion
-		}
-	}
-	return utils.NewNomadClient(addr, token, region).
-		WithSudo(utils.SudoFromCmd(cmd)).
-		WithCloud(utils.CloudFromCmd(cmd))
-}
-
-func requireCloud(cmd *cobra.Command) error {
-	if !utils.CloudFromCmd(cmd) {
-		return fmt.Errorf("accounting commands require --cloud (or ABC_CLI_CLOUD_MODE=1)")
-	}
-	return nil
 }

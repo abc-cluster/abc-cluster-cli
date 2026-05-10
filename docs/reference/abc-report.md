@@ -49,8 +49,8 @@ revisable user-facing Title and Gloss (revisable without an ADR).
 | `resource_fit` | Right-sized requests | How close requested CPU/RAM matched what was used |
 | `cost_per_investigation` | Spend per question | ZAR per investigation, resolved via `internal/accounting` rate card |
 | `emissions_per_investigation` | Carbon per question | kg CO₂e attributed to each investigation, resolved via `internal/emissions` |
-| `spend_zar` | Total spend | Window-wide ZAR aggregate (matches `abc accounting` for same window) |
-| `emissions_kgco2e` | Total emissions | Window-wide kg CO₂e (matches `abc emissions` for same window) |
+| `spend_zar` | Total spend | Window-wide ZAR aggregate, computed via the shared `internal/accounting` rate-card resolver |
+| `emissions_kgco2e` | Total emissions | Window-wide kg CO₂e, computed via the shared emissions resolver |
 | `hours_saved` | Research time saved | Headline composite: estimated busywork avoided |
 
 Adding a metric requires populating all four fields (ID, Title, Gloss, Unit) in
@@ -71,25 +71,23 @@ asks.
 | `TemplateReuseSavedMinutes` | 60 | template / rerun vs. setup from scratch |
 | `AsyncRunSpectatorAvoidedMin` | 30 | spectator_hours; median observed monitoring session |
 
-## Three verbs, three lenses on one ledger
+## One ledger, one read-side verb
 
-`abc report` is the third lens onto the same accounting + emissions
-ledger that `abc accounting` and `abc emissions` operate on. All three
-verbs share one Layer-0/1/2 rate-card resolver (`internal/accounting`)
-and one grid-intensity resolver (the same package's `Emissions` block).
-For a given window:
+`abc report` is the canonical read-side surface over the local SQLite
+runs ledger. The Layer-0/1/2 rate-card resolver (`internal/accounting`)
+and the grid-intensity resolver are consumed directly here; the prior
+`abc accounting report` and `abc emissions [report]` verbs were folded
+into this single closed-loop output (spec
+`cli-verb-tree-restructure`).
 
-- `abc accounting --since=… --until=…` reports total ZAR spend.
-- `abc emissions --since=… --until=…` reports total kg CO₂e.
-- `abc report --since=… --until=…` produces the closed-loop researcher
-  view: spend, emissions, and postdoc-hours-returned together, with
-  per-investigation rollups.
+```
+abc report --since=… --until=…
+```
 
-The three verbs return identical numbers for the spend and emissions
-totals when given the same window — the drift regression test in
-`internal/report/integration_test.go` enforces this. If you see drift,
-the report verb is using a different formula or a different rate card,
-which is a bug, not configuration.
+produces spend, emissions, and postdoc-hours-returned together, with
+per-investigation rollups. For namespace-budget management (the
+write-side, admission-gate surface), see
+[`abc accounting`](./abc-accounting.md).
 
 ## Sample output
 
@@ -218,8 +216,7 @@ map.
 
 ## See also
 
-- [`abc accounting`](./abc-accounting) — spend per investigation / project /
-  user; same Layer-0 ZA rate card, same provenance footer shape.
-- [`abc emissions`](./abc-emissions) — kg CO2e per run.
+- [`abc accounting`](./abc-accounting) — write-side namespace budget caps and
+  admission-gate thresholds (grove+ / cloud).
 - [`abc localdb status`](./local-state) — schema version, applied migrations,
   feature flags.

@@ -19,7 +19,6 @@ import (
 	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/auth/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/investigation"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
@@ -259,7 +258,6 @@ func init() {
 	rootCmd.AddCommand(deprecatedRootContextAlias())
 	rootCmd.AddCommand(cfgcmd.NewCmd())
 	rootCmd.AddCommand(secrets.NewCmd())
-	rootCmd.AddCommand(emissions.NewCmd())
 	rootCmd.AddCommand(compliance.NewCmd())
 	rootCmd.AddCommand(project.NewCmd())
 	rootCmd.AddCommand(reportcmd.NewCmd())
