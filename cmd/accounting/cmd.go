@@ -10,6 +10,8 @@
 package accounting
 
 import (
+	"fmt"
+
 	"github.com/abc-cluster/abc-cluster-cli/cmd/accounting/budget"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
@@ -32,6 +34,18 @@ For showback (spend, emissions, hours saved), use the top-level
 ` + "`abc report`" + ` verb.
 
 Legacy: abc cost … is an alias for abc accounting ….`,
+		// Force "unknown command" for removed subverbs (report, list,
+		// set, show — moved under budget/ per spec §A). Without this
+		// RunE, cobra falls back to printing help with exit 0 when
+		// given an unknown subcommand. Spec §C requires the standard
+		// cobra error; this is the smallest hook that delivers it
+		// while preserving the help-on-no-args behaviour.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
+			}
+			return cmd.Help()
+		},
 	}
 
 	cmd.PersistentFlags().String("budget", "",
