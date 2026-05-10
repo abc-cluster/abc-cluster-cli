@@ -1,4 +1,4 @@
-package accounting
+package budget
 
 import (
 	"fmt"
