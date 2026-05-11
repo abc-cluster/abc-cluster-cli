@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/spf13/cobra"
 )
 
@@ -99,7 +100,7 @@ func submitDataNomadScript(cmd *cobra.Command, opts dataNomadScriptOpts, taskBod
 	if err != nil {
 		return fmt.Errorf("failed to create temp script: %w", err)
 	}
-	if os.Getenv("ABC_DEBUG_KEEP_SCRIPT") == "" {
+	if !envvars.IsSet("ABC_CLI_DEBUG_KEEP_SCRIPT") {
 		defer os.Remove(tmpScript.Name())
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc-debug] keeping script at %s\n", tmpScript.Name())

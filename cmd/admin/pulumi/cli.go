@@ -8,6 +8,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/spf13/cobra"
 )
 
@@ -194,7 +195,7 @@ func minioCredsFromConfig() (server, user, password string) {
 		password = svc.Password
 	}
 
-	if os.Getenv("ABC_DEBUG") != "" && server != "" {
+	if envvars.IsSet("ABC_CLI_DEBUG") && server != "" {
 		fmt.Fprintf(os.Stderr, "[abc pulumi] injecting MinIO creds from %s (server=%s, user=%s)\n", source, server, user)
 	}
 	return server, user, password

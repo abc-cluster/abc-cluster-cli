@@ -65,6 +65,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 // CurrentVersion is the current config file schema version (written first in YAML).
@@ -77,9 +79,10 @@ const DefaultContextName = "default"
 const DefaultPublicAPIEndpoint = "https://api.abc-cluster.io"
 
 // DefaultConfigPath returns the path to the config file, honouring the
-// ABC_CONFIG_FILE environment variable.
+// ABC_CLI_CONFIG_FILE environment variable (legacy aliases: ABC_CONFIG_FILE,
+// ABC_CONFIG — accepted with a one-time deprecation warning).
 func DefaultConfigPath() string {
-	if v := os.Getenv("ABC_CONFIG_FILE"); v != "" {
+	if v := envvars.Get("ABC_CLI_CONFIG_FILE"); v != "" {
 		return v
 	}
 	home, err := os.UserHomeDir()
@@ -248,7 +251,7 @@ func LoadFrom(path string) (*Config, error) {
 }
 
 func applyActiveContextEnvOverride(cfg *Config) error {
-	name := strings.TrimSpace(os.Getenv("ABC_ACTIVE_CONTEXT"))
+	name := strings.TrimSpace(envvars.Get("ABC_CLI_CONTEXT"))
 	if name == "" {
 		return nil
 	}

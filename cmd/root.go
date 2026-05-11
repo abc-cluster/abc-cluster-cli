@@ -32,6 +32,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -63,10 +64,10 @@ from your terminal.`,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		// ── Debug logging ─────────────────────────────────────────────────────
 		// Resolve verbosity level: --debug[=N] flag takes precedence over
-		// ABC_DEBUG env var.
+		// ABC_CLI_DEBUG env var (legacy alias: ABC_DEBUG).
 		level, _ := cmd.Root().PersistentFlags().GetInt("debug")
 		if level == 0 {
-			if v := os.Getenv("ABC_DEBUG"); v != "" {
+			if v := envvars.Get("ABC_CLI_DEBUG"); v != "" {
 				level, _ = strconv.Atoi(v)
 			}
 		}
@@ -183,7 +184,7 @@ func init() {
 		activeCtx = cfg.ActiveCtx()
 	}
 
-	if v := os.Getenv("ABC_API_ENDPOINT"); v != "" {
+	if v := envvars.Get("ABC_API_ADDR"); v != "" {
 		serverURL = v
 	} else if activeCtx.Endpoint != "" {
 		serverURL = activeCtx.Endpoint
@@ -191,13 +192,13 @@ func init() {
 		serverURL = "https://api.abc-cluster.io"
 	}
 
-	if v := os.Getenv("ABC_ACCESS_TOKEN"); v != "" {
+	if v := envvars.Get("ABC_API_TOKEN"); v != "" {
 		accessToken = v
 	} else if activeCtx.AccessToken != "" {
 		accessToken = activeCtx.AccessToken
 	}
 
-	if v := os.Getenv("ABC_WORKSPACE_ID"); v != "" {
+	if v := envvars.Get("ABC_WORKSPACE"); v != "" {
 		workspace = v
 	} else if activeCtx.WorkspaceID != "" {
 		workspace = activeCtx.WorkspaceID
@@ -310,10 +311,10 @@ func deprecatedRootContextAlias() *cobra.Command {
 	return c
 }
 
-// quietMode returns true when -q / --quiet is set or ABC_QUIET=1 in env.
-// Suppresses the deprecation banner above for scripted use.
+// quietMode returns true when -q / --quiet is set or ABC_CLI_QUIET=1 in env
+// (legacy alias: ABC_QUIET). Suppresses the deprecation banner for scripted use.
 func quietMode() bool {
-	if os.Getenv("ABC_QUIET") == "1" {
+	if envvars.IsTruthy("ABC_CLI_QUIET") {
 		return true
 	}
 	if rootCmd != nil {

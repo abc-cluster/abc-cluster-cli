@@ -1,8 +1,7 @@
 package state
 
 import (
-	"os"
-	"strings"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 // SubmissionSourceClassifier resolves the submission_source string for a
@@ -33,7 +32,7 @@ func (c SubmissionSourceClassifier) Resolve() string {
 	if c.Rerun {
 		return "rerun"
 	}
-	if strings.TrimSpace(os.Getenv("ABC_AUTOMATION")) == "1" {
+	if envvars.IsTruthy("ABC_CLI_AUTOMATION") {
 		return "automation"
 	}
 	if c.TemplateID != "" {

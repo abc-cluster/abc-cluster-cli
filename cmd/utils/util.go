@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 const (
@@ -26,10 +28,10 @@ func EnvOrDefault(keys ...string) string {
 }
 
 // SudoFromCmd returns true when the caller has requested elevated admin scope,
-// either via the --sudo flag or the ABC_CLI_SUDO_MODE environment variable.
-// The env var takes priority over the flag.
+// either via the --sudo flag or the ABC_CLI_SUDO environment variable
+// (legacy alias: ABC_CLI_SUDO_MODE). The env var takes priority over the flag.
 func SudoFromCmd(cmd *cobra.Command) bool {
-	if os.Getenv("ABC_CLI_SUDO_MODE") != "" {
+	if envvars.IsSet("ABC_CLI_SUDO") {
 		return true
 	}
 	sudo, _ := cmd.Root().PersistentFlags().GetBool("sudo")
@@ -74,9 +76,10 @@ func ExpFromCmd(cmd *cobra.Command) bool {
 }
 
 // UserFromCmd returns the --user flag value (email address for impersonation).
-// Falls back to the ABC_AS_USER environment variable.
+// Falls back to the ABC_API_AS_USER environment variable (legacy alias:
+// ABC_AS_USER).
 func UserFromCmd(cmd *cobra.Command) string {
-	if v := os.Getenv("ABC_AS_USER"); v != "" {
+	if v := envvars.Get("ABC_API_AS_USER"); v != "" {
 		return v
 	}
 	user, _ := cmd.Root().PersistentFlags().GetString("user")
