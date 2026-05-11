@@ -1,6 +1,7 @@
 package rustfs
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -15,12 +16,14 @@ func newCLICmd() *cobra.Command {
 		Long:               "Run the local rustfs binary as a passthrough alias. Optional leading `--binary-location <path>` and `--config local|nomad|vault` (default local); use `--` for verbatim argv to rustfs. Without `--`, all arguments after any leading flags are passed through unchanged. When the active context has cluster_type abc-nodes, AWS_* defaults merge from admin.services.rustfs (cred_source + top-level fields), else admin.abc_nodes — only for keys not already set in the process environment.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runRustFSCLI,
 	}
 	return cmd
 }
 
 func runRustFSCLI(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli rustfs -- <args>' instead (this form is deprecated)")
 	configSelection, binaryLocation, passthroughArgs, err := utils.ParseAdminServiceCLIArgs(args, true)
 	if err != nil {
 		return err

@@ -33,6 +33,7 @@ rclone args, or the remaining argv is passed to rclone after stripping any leadi
 --abc-* flags.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runRcloneCLI,
 	}
 	return cmd
@@ -42,6 +43,7 @@ func runRcloneCLI(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && args[0] == "setup" {
 		return runRcloneCLISetup(cmd)
 	}
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli rclone -- <args>' instead (this form is deprecated)")
 
 	binaryLocation, serverConfig, localConfig, passthrough, err := extractRcloneCLIPassthrough(args)
 	if err != nil {

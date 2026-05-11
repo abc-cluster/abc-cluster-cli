@@ -102,11 +102,13 @@ func newCLICmd() *cobra.Command {
 		Long:               "Passthrough to the Grafana logcli binary. Optional `--config local|nomad|vault` (default local) resolves LOKI_ADDR from admin.services.loki (cred_source + top-level). Install logcli from https://github.com/grafana/loki/releases.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runCLI,
 	}
 }
 
 func runCLI(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli loki -- <args>' instead (this form is deprecated)")
 	configSelection, binaryLocation, passthroughArgs, err := utils.ParseAdminServiceCLIArgs(args, true)
 	if err != nil {
 		return err

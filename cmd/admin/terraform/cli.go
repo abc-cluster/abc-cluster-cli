@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -30,12 +31,14 @@ Optional leading --binary-location <path> before --:
   abc admin services terraform cli --binary-location /usr/local/bin/terraform -- plan`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runTerraformCLI,
 	}
 	return cmd
 }
 
 func runTerraformCLI(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli terraform -- <args>' instead (this form is deprecated)")
 	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
 	if err != nil {
 		return err

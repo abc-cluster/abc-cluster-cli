@@ -1,6 +1,7 @@
 package nebula
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -14,12 +15,14 @@ func newCLICmd() *cobra.Command {
 		Long:               "Run the local nebula binary as a passthrough alias. Use optional leading `--binary-location <path>` then `--` to pass all following arguments verbatim to nebula.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runNebulaCLI,
 	}
 	return cmd
 }
 
 func runNebulaCLI(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli nebula -- <args>' instead (this form is deprecated)")
 	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
 	if err != nil {
 		return err

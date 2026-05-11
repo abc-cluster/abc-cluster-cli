@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -15,12 +16,14 @@ func newCLICmd() *cobra.Command {
 		Long:               "Run the local vault or OpenBao (`bao`) binary as a passthrough alias. Use optional leading `--binary-location <path>`, `--config local|nomad` (default local), then `--` to pass all following arguments verbatim to the underlying binary. Vault service credentials use cred_source.local and cred_source.nomad only (not cred_source.vault). When the active context has cluster_type abc-nodes, VAULT_ADDR / VAULT_TOKEN merge from admin.services.vault — only for keys not already set in the process environment.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runVaultCLI,
 	}
 	return cmd
 }
 
 func runVaultCLI(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli vault -- <args>' instead (this form is deprecated)")
 	configSelection, binaryLocation, passthroughArgs, err := utils.ParseAdminServiceCLIArgs(args, false)
 	if err != nil {
 		return err

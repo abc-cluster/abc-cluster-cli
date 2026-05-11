@@ -16,6 +16,7 @@ func newCLICmd() *cobra.Command {
 		Long:               "Run the local nomad binary as a preconfigured alias. Nomad address, token, and region are resolved from the active abc config context when not provided via flags. For contexts with cluster_type abc-nodes, admin.abc_nodes.nomad_namespace (e.g. default) is exported as NOMAD_NAMESPACE only when that variable is not already set in the environment. Prefer the passthrough separator: `abc admin services nomad cli -- <nomad-args...>` so argv matches the upstream `nomad` CLI exactly (e.g. `... nomad cli -- job status -short`). To verify the stored ACL token against the same address, use upstream Nomad only, e.g. `... nomad cli -- acl token self` (flags depend on your nomad version). Optional leading `--binary-location <path>` before `--`. The lone subcommand `abc admin services nomad cli setup` is handled by abc (installs nomad + abc-node-probe into ~/.abc/binaries, or use `abc admin services cli setup` for tailscale and rclone too); it is not forwarded to the nomad binary. Without `--`, tokens after any `--binary-location` pairs are still forwarded to nomad for compatibility.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runNomadCLI,
 	}
 	return cmd
@@ -25,6 +26,7 @@ func runNomadCLI(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && args[0] == "setup" {
 		return runNomadCLISetup(cmd)
 	}
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli nomad -- <args>' instead (this form is deprecated)")
 
 	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
 	if err != nil {

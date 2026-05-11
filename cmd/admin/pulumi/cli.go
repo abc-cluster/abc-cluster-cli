@@ -50,12 +50,14 @@ Optional leading --binary-location <path> before --:
 Set ABC_DEBUG=1 to log which MinIO credential source is being injected.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runPulumiCLI,
 	}
 	return cmd
 }
 
 func runPulumiCLI(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli pulumi -- <args>' instead (this form is deprecated)")
 	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
 	if err != nil {
 		return err

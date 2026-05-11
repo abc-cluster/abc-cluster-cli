@@ -1,6 +1,7 @@
 package eget
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -14,12 +15,14 @@ func newCLICmd() *cobra.Command {
 		Long:               "Run the local eget binary as a passthrough alias. Optional leading `--binary-location <path>`; use `--` to pass the following argv verbatim to eget. Without `--`, all arguments after any leading `--binary-location` pairs are passed through unchanged.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
+		Hidden:             true,
 		RunE:               runEgetCLI,
 	}
 	return cmd
 }
 
 func runEgetCLI(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[abc] Use 'abc admin services cli eget -- <args>' instead (this form is deprecated)")
 	binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
 	if err != nil {
 		return err
