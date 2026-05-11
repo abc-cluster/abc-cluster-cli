@@ -92,11 +92,30 @@ tidy:
 mod-verify:
     go mod verify
 
+# Regenerate registry-derived docs (docs/reference/env-vars.md).
+gen:
+    go generate ./internal/envvars/...
+
+# CI: fail if `just gen` would produce a different env-vars.md (registry drift).
+gen-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp="$(mktemp)"
+    cp docs/reference/env-vars.md "$tmp"
+    go generate ./internal/envvars/... >/dev/null
+    if ! diff -q "$tmp" docs/reference/env-vars.md >/dev/null; then
+      echo "docs/reference/env-vars.md is stale; run 'just gen' and commit" >&2
+      diff -u "$tmp" docs/reference/env-vars.md >&2 || true
+      mv "$tmp" docs/reference/env-vars.md
+      exit 1
+    fi
+    rm -f "$tmp"
+
 # Quick pre-push gate (vet, module checksums, tests).
 check: vet mod-verify test
 
 # Stricter gate: formatting must already match gofmt (`just fmt` if this fails).
-ci: fmt-check check
+ci: fmt-check check gen-check
 
 # Install Docusaurus docs dependencies.
 docs-install:
