@@ -460,7 +460,7 @@ func ensureBucket(ctx context.Context, w io.Writer, s5cmd, endpoint string, envM
 		[]string{"--endpoint-url", endpoint, "mb", "s3://" + bucket},
 		s5cmd, []string{"s5cmd"},
 		envMap,
-		nil, w, w,
+		nil, io.Discard, w,
 	); err != nil {
 		return fmt.Errorf("failed to ensure bucket %q on %s: %w", bucket, endpoint, err)
 	}

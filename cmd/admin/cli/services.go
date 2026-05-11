@@ -44,6 +44,38 @@ func RegisterServices(parent *cobra.Command) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// -- separator enforcement helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+// requireDoubleDash checks that args contain "--" as the first non-binary-location
+// argument. If not, it prints a usage error to stderr and returns a non-nil error.
+// This enforces the canonical form: abc admin services cli <svc> -- <args>.
+func requireDoubleDash(svcName string, args []string) error {
+	check := args
+	// skip any leading --binary-location <val> pairs
+	for len(check) >= 2 && check[0] == "--binary-location" {
+		check = check[2:]
+	}
+	if len(check) > 0 && check[0] == "--" {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "Missing '--' separator. Use: abc admin services cli %s -- %s\n",
+		svcName, strings.Join(args, " "))
+	return fmt.Errorf("exit status 1")
+}
+
+// withDoubleDash wraps a RunE function to enforce the -- separator in the
+// unified passthrough form. The svcName is used in the error message.
+func withDoubleDash(svcName string, fn func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := requireDoubleDash(svcName, args); err != nil {
+			return err
+		}
+		return fn(cmd, args)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Generic passthrough factory (no credential injection)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -56,6 +88,9 @@ func newPassthrough(name, managedBinaryName, short string, binaries []string) *c
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireDoubleDash(name, args); err != nil {
+				return err
+			}
 			binaryLocation, passthroughArgs, err := utils.ExtractBinaryLocationFlag(args)
 			if err != nil {
 				return err
@@ -129,7 +164,7 @@ Changes working directory to admin.services.pulumi.deploy_dir before running.
   abc admin services cli pulumi -- stack output --json`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runPulumiCLI,
+		RunE:               withDoubleDash("pulumi", runPulumiCLI),
 	}
 }
 
@@ -239,7 +274,7 @@ Changes working directory to admin.services.terraform.deploy_dir before running.
   abc admin services cli terraform -- apply -auto-approve`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runTerraformCLI,
+		RunE:               withDoubleDash("terraform", runTerraformCLI),
 	}
 }
 
@@ -326,7 +361,7 @@ Injects from active context:
   abc admin services cli nomad -- acl token self`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runNomadCLI,
+		RunE:               withDoubleDash("nomad", runNomadCLI),
 	}
 }
 
@@ -368,7 +403,7 @@ Injects: NOMAD_ADDR, NOMAD_TOKEN, NOMAD_REGION, NOMAD_NAMESPACE
   abc admin services cli nomad-pack -- plan ./packs/hello-world`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runNomadPackCLI,
+		RunE:               withDoubleDash("nomad-pack", runNomadPackCLI),
 	}
 }
 
@@ -411,7 +446,7 @@ Credential injection from active context (admin.services.minio.*):
   abc admin services cli minio -- mb local/my-bucket`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runMinioCLI,
+		RunE:               withDoubleDash("minio", runMinioCLI),
 	}
 }
 
@@ -558,7 +593,7 @@ Injects from active context:
   abc admin services cli vault kv get secret/mykey`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runVaultCLI,
+		RunE:               withDoubleDash("vault", runVaultCLI),
 	}
 }
 
@@ -601,7 +636,7 @@ Injects: LOKI_ADDR — from admin.services.loki
   abc admin services cli loki -- query '{job="nomad"}' --limit 100`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runLokiCLI,
+		RunE:               withDoubleDash("loki", runLokiCLI),
 	}
 }
 
@@ -644,7 +679,7 @@ Injects: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_ENDPOINT_URL — admin.se
   abc admin services cli rustfs -- ls`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
-		RunE:               runRustfsCLI,
+		RunE:               withDoubleDash("rustfs", runRustfsCLI),
 	}
 }
 
