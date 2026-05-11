@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -393,12 +397,15 @@ func runNomadPackCLI(cmd *cobra.Command, args []string) error {
 func newMinioCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "minio [args...]",
-		Short: "Run the local MinIO client CLI (mcli/mc) with S3 credentials pre-loaded",
+		Short: "Run the local MinIO client CLI (mcli/mc) with context credentials pre-loaded",
 		Long: `Passthrough to mcli or mc.
 
-Injects from active context:
-  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_ENDPOINT_URL,
-  MINIO_ROOT_USER, MINIO_ROOT_PASSWORD
+Sets up an ephemeral mc alias "local" pointing to the context endpoint before
+invoking mc. Uses MC_CONFIG_DIR in a per-invocation temp dir — ~/.mc is never
+modified.
+
+Credential injection from active context (admin.services.minio.*):
+  mc alias "local"  — endpoint, access_key, secret_key
 
   abc admin services cli minio -- ls local
   abc admin services cli minio -- mb local/my-bucket`,
@@ -417,15 +424,115 @@ func runMinioCLI(cmd *cobra.Command, args []string) error {
 		binaryLocation = utils.EnvOrDefault("ABC_MINIO_CLI_BINARY", "MINIO_CLI_BINARY", "MCLI_BINARY", "MC_BINARY")
 	}
 
-	base := os.Environ()
-	if cfg, cerr := config.Load(); cerr == nil && cfg != nil {
-		env, rerr := utils.ResolvedAbcNodesStorageCLIEnv(cmd.Context(), cfg, "minio", "local")
-		if rerr != nil {
-			return rerr
-		}
-		base = utils.UpsertEnvOnlyMissing(base, env)
+	// Resolve minio credentials from admin.services.minio directly — no
+	// IsABCNodesCluster() gate so seedling and other cluster types work too.
+	endpoint, accessKey, secretKey, ctxName, err := resolveMinioCredentials(cmd.Context())
+	if err != nil {
+		return err
 	}
-	return utils.RunExternalCLIWithEnvAndBase(cmd.Context(), passthroughArgs, binaryLocation, []string{"mcli", "mc"}, base, nil, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	if endpoint == "" {
+		if ctxName == "" {
+			ctxName = "active"
+		}
+		return fmt.Errorf("minio endpoint not configured for context %q. Run: abc config set contexts.%s.admin.services.minio.endpoint http://<host>:9000", ctxName, ctxName)
+	}
+
+	// Create ephemeral MC_CONFIG_DIR so ~/.mc/config.json is never touched.
+	tmpDir, err := os.MkdirTemp("", "abc-mc-")
+	if err != nil {
+		return fmt.Errorf("create mc temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mcEnv := append(os.Environ(), "MC_CONFIG_DIR="+tmpDir)
+
+	// Step 1: set the "local" alias pointing to the context endpoint.
+	if err := runMCCommand(cmd.Context(), binaryLocation, []string{"mcli", "mc"}, mcEnv,
+		[]string{"alias", "set", "local", endpoint, accessKey, secretKey, "--quiet"},
+		os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+		return fmt.Errorf("mc alias setup failed: %w", err)
+	}
+
+	// Step 2: run the actual mc command with user args.
+	return runMCCommand(cmd.Context(), binaryLocation, []string{"mcli", "mc"}, mcEnv,
+		passthroughArgs, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+}
+
+// resolveMinioCredentials returns endpoint, access_key, secret_key from
+// admin.services.minio for the active context. No IsABCNodesCluster() gate.
+func resolveMinioCredentials(ctx context.Context) (endpoint, accessKey, secretKey, ctxName string, err error) {
+	cfg, cerr := config.Load()
+	if cerr != nil || cfg == nil {
+		return "", "", "", "", cerr
+	}
+	ctxName = cfg.ActiveContext
+	active := cfg.ActiveCtx()
+	svc := config.AdminFloorServiceNamed(&active.Admin.Services, "minio")
+
+	get := func(key string) (string, error) {
+		return utils.ResolveAdminFloorField(ctx, active, svc, "minio", utils.CredConfigLocal, key)
+	}
+
+	endpoint, err = get("endpoint")
+	if err != nil {
+		return "", "", "", ctxName, err
+	}
+	if endpoint == "" {
+		endpoint, err = get("http")
+		if err != nil {
+			return "", "", "", ctxName, err
+		}
+	}
+
+	accessKey, err = get("access_key")
+	if err != nil {
+		return "", "", "", ctxName, err
+	}
+	if accessKey == "" {
+		accessKey, err = get("user")
+		if err != nil {
+			return "", "", "", ctxName, err
+		}
+	}
+
+	secretKey, err = get("secret_key")
+	if err != nil {
+		return "", "", "", ctxName, err
+	}
+	if secretKey == "" {
+		secretKey, err = get("password")
+		if err != nil {
+			return "", "", "", ctxName, err
+		}
+	}
+
+	return endpoint, accessKey, secretKey, ctxName, nil
+}
+
+// runMCCommand runs mc/mcli with the given env, selecting the binary from
+// binaryLocation (if set) or the first candidate found in PATH.
+func runMCCommand(ctx context.Context, binaryLocation string, candidates []string, mcEnv []string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	bin := binaryLocation
+	if bin == "" {
+		for _, c := range candidates {
+			if p, lerr := exec.LookPath(c); lerr == nil {
+				bin = p
+				break
+			}
+		}
+	}
+	if bin == "" {
+		return fmt.Errorf("none of the CLI binaries were found in PATH: %v (or set --binary-location)", candidates)
+	}
+	c := exec.CommandContext(ctx, bin, args...)
+	c.Stdin = stdin
+	c.Stdout = stdout
+	c.Stderr = stderr
+	c.Env = mcEnv
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("run %s %v: %w", bin, args, err)
+	}
+	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
