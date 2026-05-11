@@ -179,6 +179,13 @@ func runPush(ctx context.Context, w io.Writer, args []string, dryRun bool, bucke
 		return nil
 	}
 
+	// ── Ensure bucket exists (idempotent create) ──────────────────────────────
+	if !dryRun {
+		if err := ensureBucket(ctx, w, s5cmdBin, endpoint, envMap, bucket); err != nil {
+			return err
+		}
+	}
+
 	// ── Upload ────────────────────────────────────────────────────────────────
 	uploaded := 0
 	for _, t := range targets {
@@ -353,6 +360,36 @@ func resolveS3Backend(ctx context.Context, cfg *ToolsConfig) (string, map[string
 			"Check admin.services.rustfs.endpoint / admin.services.minio.endpoint in your config.",
 		preferred, fallback,
 	)
+}
+
+// ensureBucket checks whether bucket exists on the S3 endpoint and creates it
+// if absent. Uses s5cmd ls to check and s5cmd mb to create. The same envMap
+// used for uploads is passed so credentials are consistent. Idempotent.
+func ensureBucket(ctx context.Context, w io.Writer, s5cmd, endpoint string, envMap map[string]string, bucket string) error {
+	fmt.Fprintf(w, `Ensuring bucket %q on %s... `, bucket, endpoint)
+	lsErr := utils.RunExternalCLIWithEnv(
+		ctx,
+		[]string{"--endpoint-url", endpoint, "ls", "s3://" + bucket},
+		s5cmd, []string{"s5cmd"},
+		envMap,
+		nil, io.Discard, io.Discard,
+	)
+	if lsErr == nil {
+		fmt.Fprintln(w, "exists")
+		return nil
+	}
+	// Bucket absent — create it.
+	if err := utils.RunExternalCLIWithEnv(
+		ctx,
+		[]string{"--endpoint-url", endpoint, "mb", "s3://" + bucket},
+		s5cmd, []string{"s5cmd"},
+		envMap,
+		nil, w, w,
+	); err != nil {
+		return fmt.Errorf("failed to ensure bucket %q on %s: %w", bucket, endpoint, err)
+	}
+	fmt.Fprintln(w, "done")
+	return nil
 }
 
 // isEndpointReachable does a quick HTTP HEAD / GET with a short timeout.
