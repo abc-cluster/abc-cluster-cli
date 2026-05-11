@@ -36,7 +36,10 @@ func NewCmd() *cobra.Command {
 		Long: `Unified CLI passthrough: run any service binary with credentials from the
 active abc config context injected as environment variables.
 
-Usage: abc admin services cli <tool> [--binary-location <path>] [--] [tool-args...]
+Usage: abc admin services cli <tool> [--binary-location <path>] -- [tool-args...]
+
+The "--" separator is required before passthrough args. Without it the command
+exits non-zero with a usage hint.
 
 Available tools and the binaries they invoke:
 
@@ -44,10 +47,10 @@ Available tools and the binaries they invoke:
   terraform     terraform     NOMAD_ADDR, NOMAD_TOKEN, TF_VAR_*
   nomad         nomad         NOMAD_ADDR, NOMAD_TOKEN, NOMAD_NAMESPACE
   nomad-pack    nomad-pack    NOMAD_ADDR, NOMAD_TOKEN, NOMAD_NAMESPACE
-  minio         mcli / mc     AWS_*, MINIO_ROOT_*
+  minio         mcli / mc     mc alias "local" (ephemeral; ~/.mc not modified)
   vault         vault/bao     VAULT_ADDR, VAULT_TOKEN
   loki          logcli        LOKI_ADDR
-  rustfs        rustfs        AWS_*, MINIO_ROOT_*
+  rustfs        rustfs        AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_ENDPOINT_URL
   rclone        rclone        (passthrough — no cred injection)
   boundary      boundary      (passthrough)
   consul        consul        (passthrough)
@@ -60,12 +63,19 @@ Available tools and the binaries they invoke:
   hashi-up      hashi-up      (passthrough)
   postgres      psql          (passthrough)
 
+Credential injection (config keys read per service):
+
+  nomad    NOMAD_ADDR (from admin.services.nomad.nomad_addr), NOMAD_TOKEN (from admin.services.nomad.nomad_token)
+  minio    mc alias "local" set from admin.services.minio.{endpoint,access_key,secret_key} (ephemeral; ~/.mc not modified)
+  grafana  GRAFANA_URL (from admin.services.grafana.url)
+  vault    VAULT_ADDR (from admin.services.vault.addr), VAULT_TOKEN (from admin.services.vault.token)
+
 Examples:
   abc admin services cli pulumi    -- up --yes
   abc admin services cli terraform -- plan
   abc admin services cli nomad     -- job status -short
   abc admin services cli minio     -- ls local
-  abc admin services cli vault     status
+  abc admin services cli vault     -- status
 
 Override Nomad credentials for a single run:
   abc admin services cli --nomad-addr http://... --nomad-token <tok> pulumi -- up --yes`,
