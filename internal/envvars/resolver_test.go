@@ -317,6 +317,139 @@ func TestSudoOptOutsFromEnv_ReadsAllFlags(t *testing.T) {
 	}
 }
 
+// ── Storage-extended subprocess injection ───────────────────────────────
+
+func TestInjectVendor_MCWritesHostAlias(t *testing.T) {
+	cmd := stubCmd()
+	cmd.Env = []string{}
+	InjectVendor(cmd, ToolMC, Resolved{
+		MCHostAlias: "ceri-grove",
+		MCHostURL:   "https://user:pass@s3.ceri.za",
+		MCInsecure:  true,
+	}, SudoOptOuts{})
+	if !envEquals(cmd.Env, "MC_HOST_ceri-grove", "https://user:pass@s3.ceri.za") {
+		t.Errorf("MC_HOST_ceri-grove missing or wrong: %v", cmd.Env)
+	}
+	if !envEquals(cmd.Env, "MC_INSECURE", "1") {
+		t.Errorf("MC_INSECURE not set to 1: %v", cmd.Env)
+	}
+}
+
+func TestInjectVendor_MCDefaultAliasIsLocal(t *testing.T) {
+	cmd := stubCmd()
+	cmd.Env = []string{}
+	InjectVendor(cmd, ToolMC, Resolved{MCHostURL: "http://u:p@host"}, SudoOptOuts{})
+	if !envContains(cmd.Env, "MC_HOST_local") {
+		t.Errorf("empty MCHostAlias should default to 'local': %v", cmd.Env)
+	}
+}
+
+func TestInjectVendor_PulumiWritesMinIOTriad(t *testing.T) {
+	cmd := stubCmd()
+	cmd.Env = []string{}
+	InjectVendor(cmd, ToolPulumi, Resolved{
+		MinIOServer:   "minio.ceri.za:9000",
+		MinIOUser:     "admin",
+		MinIOPassword: "s3cret",
+		NomadAddr:     "http://nomad.internal:4646",
+	}, SudoOptOuts{})
+	for _, k := range []string{"MINIO_SERVER", "MINIO_USER", "MINIO_PASSWORD", "NOMAD_ADDR"} {
+		if !envContains(cmd.Env, k) {
+			t.Errorf("ToolPulumi should set %s: %v", k, cmd.Env)
+		}
+	}
+	// Pulumi MinIO provider does NOT use AWS_*; absence is the contract.
+	if envContains(cmd.Env, "AWS_ACCESS_KEY_ID") {
+		t.Errorf("ToolPulumi should not set AWS_* (Pulumi MinIO provider uses MINIO_*): %v", cmd.Env)
+	}
+}
+
+func TestInjectVendor_RcloneWritesConfigPath(t *testing.T) {
+	cmd := stubCmd()
+	cmd.Env = []string{}
+	InjectVendor(cmd, ToolRclone, Resolved{
+		RcloneConfig:   "/tmp/abc-rclone-xxx.conf",
+		AWSAccessKeyID: "k",
+	}, SudoOptOuts{})
+	if !envEquals(cmd.Env, "RCLONE_CONFIG", "/tmp/abc-rclone-xxx.conf") {
+		t.Errorf("RCLONE_CONFIG missing: %v", cmd.Env)
+	}
+}
+
+func TestInjectVendor_AWSExtendedFamily(t *testing.T) {
+	cmd := stubCmd()
+	cmd.Env = []string{}
+	InjectVendor(cmd, ToolRclone, Resolved{
+		AWSAccessKeyID:                "k",
+		AWSSecretAccessKey:            "s",
+		AWSEndpointURL:                "http://minio:9000",
+		AWSRegion:                     "us-east-1",
+		AWSDefaultRegion:              "us-east-1",
+		AWSSessionToken:               "sts-tok",
+		AWSCABundle:                   "/etc/ssl/abc.pem",
+		S3ForcePathStyle:              true,
+		AWSRequestChecksumCalculation: "when_required",
+	}, SudoOptOuts{})
+
+	wantKeys := []string{
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL",
+		"AWS_REGION", "AWS_DEFAULT_REGION", "AWS_SESSION_TOKEN",
+		"AWS_CA_BUNDLE", "AWS_S3_FORCE_PATH_STYLE", "S3_FORCE_PATH_STYLE",
+		"AWS_REQUEST_CHECKSUM_CALCULATION",
+	}
+	for _, k := range wantKeys {
+		if !envContains(cmd.Env, k) {
+			t.Errorf("ToolRclone missing %s: %v", k, cmd.Env)
+		}
+	}
+	// Bool-style entries use "true" not "1" for AWS SDK compatibility.
+	if !envEquals(cmd.Env, "AWS_S3_FORCE_PATH_STYLE", "true") {
+		t.Errorf("AWS_S3_FORCE_PATH_STYLE should be 'true': %v", cmd.Env)
+	}
+}
+
+func TestInjectVendor_MCParentEnvFiltered(t *testing.T) {
+	cmd := stubCmd()
+	// cmd.Env is nil → InjectVendor populates from os.Environ minus the
+	// vendor names. With a parent-set MC_HOST_other, it should be filtered.
+	t.Setenv("MC_HOST_other", "leak-me")
+	InjectVendor(cmd, ToolMC, Resolved{
+		MCHostAlias: "local",
+		MCHostURL:   "http://u:p@host",
+	}, SudoOptOuts{})
+	if envContains(cmd.Env, "MC_HOST_other") {
+		t.Errorf("parent MC_HOST_other should be filtered for ToolMC: %v", cmd.Env)
+	}
+	if !envContains(cmd.Env, "MC_HOST_local") {
+		t.Errorf("derived MC_HOST_local missing: %v", cmd.Env)
+	}
+}
+
+func TestSudoOptOutsFromEnv_StorageExtendedFlags(t *testing.T) {
+	env := MapEnv(map[string]string{
+		"ABC_CLI_NO_DERIVE_AWS_SESSION_TOKEN":  "1",
+		"ABC_CLI_NO_DERIVE_S3_FORCE_PATH_STYLE": "true",
+		"ABC_CLI_NO_DERIVE_MC_HOST":            "yes",
+		"ABC_CLI_NO_DERIVE_MINIO_ROOT_PASSWORD": "on",
+	})
+	opts := SudoOptOutsFromEnv(env)
+	if !opts.AWSSessionToken {
+		t.Error("AWSSessionToken opt-out not detected")
+	}
+	if !opts.S3ForcePathStyle {
+		t.Error("S3ForcePathStyle opt-out not detected")
+	}
+	if !opts.MCHost {
+		t.Error("MCHost opt-out not detected")
+	}
+	if !opts.MinIORootPassword {
+		t.Error("MinIORootPassword opt-out not detected")
+	}
+	if opts.AWSCABundle {
+		t.Error("AWSCABundle opt-out spuriously set")
+	}
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────
 
 func envContains(env []string, key string) bool {
