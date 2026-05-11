@@ -48,7 +48,10 @@ func runVaultCLI(cmd *cobra.Command, args []string) error {
 		if rerr != nil {
 			return rerr
 		}
-		base = utils.UpsertEnvOnlyMissing(base, env)
+		// --config local: shell wins; --config nomad: explicit selector
+		// wins with one-time warning per shadowed key. (Vault does not
+		// permit --config vault — that's a chicken/egg loop.)
+		base = utils.UpsertEnvHonouringSelector(base, env, configSelection, cmd.ErrOrStderr())
 	}
 	return utils.RunExternalCLIWithEnvAndBase(cmd.Context(), passthroughArgs, binaryLocation, []string{"vault", "bao", "openbao"}, base, nil, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

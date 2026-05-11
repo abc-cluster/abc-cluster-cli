@@ -38,7 +38,10 @@ func runMinioCLI(cmd *cobra.Command, args []string) error {
 		if rerr != nil {
 			return rerr
 		}
-		base = utils.UpsertEnvOnlyMissing(base, env)
+		// --config local: shell wins (UpsertEnvOnlyMissing semantics).
+		// --config nomad/vault: explicit selector wins; shell env vars
+		// that disagree are ignored with a one-time warning per key.
+		base = utils.UpsertEnvHonouringSelector(base, env, configSelection, cmd.ErrOrStderr())
 	}
 	return utils.RunExternalCLIWithEnvAndBase(cmd.Context(), passthroughArgs, binaryLocation, []string{"mcli", "mc"}, base, nil, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

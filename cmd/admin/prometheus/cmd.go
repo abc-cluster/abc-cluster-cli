@@ -139,7 +139,11 @@ func runCLI(cmd *cobra.Command, args []string) error {
 			return rerr
 		}
 		if promHTTP != "" {
-			base = utils.UpsertEnvOnlyMissing(base, map[string]string{"PROMETHEUS_URL": promHTTP})
+			// --config local: shell wins; --config nomad/vault: explicit
+			// selector wins with one-time warning per shadowed key.
+			base = utils.UpsertEnvHonouringSelector(base,
+				map[string]string{"PROMETHEUS_URL": promHTTP},
+				configSelection, cmd.ErrOrStderr())
 		}
 	}
 	return utils.RunExternalCLIWithEnvAndBase(

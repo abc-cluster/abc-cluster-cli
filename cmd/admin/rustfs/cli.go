@@ -38,7 +38,9 @@ func runRustFSCLI(cmd *cobra.Command, args []string) error {
 		if rerr != nil {
 			return rerr
 		}
-		base = utils.UpsertEnvOnlyMissing(base, env)
+		// --config local: shell wins; --config nomad/vault: explicit
+		// selector wins with one-time warning per shadowed key.
+		base = utils.UpsertEnvHonouringSelector(base, env, configSelection, cmd.ErrOrStderr())
 	}
 	return utils.RunExternalCLIWithEnvAndBase(cmd.Context(), passthroughArgs, binaryLocation, []string{"rustfs"}, base, nil, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

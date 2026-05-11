@@ -250,6 +250,23 @@ func runValidate(stdout, stderr io.Writer) error {
 		}
 	}
 
+	// Shadow check: surface entries with non-empty Shadowing annotations
+	// that are set in the shell, so the user knows their value may be
+	// ignored in some code paths.
+	for _, e := range envvars.Registry {
+		if len(e.Shadowing) == 0 {
+			continue
+		}
+		if _, ok := os.LookupEnv(e.Name); !ok {
+			continue
+		}
+		fmt.Fprintf(stderr,
+			"INFO: %s is set in shell and may be shadowed in some code paths:\n", e.Name)
+		for _, s := range e.Shadowing {
+			fmt.Fprintf(stderr, "      - %s\n", s)
+		}
+	}
+
 	if problems > 0 {
 		return fmt.Errorf("%d forbidden env var(s) in environment", problems)
 	}
