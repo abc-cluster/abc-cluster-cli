@@ -465,8 +465,14 @@ func resolveMinioCredentials(ctx context.Context) (endpoint, accessKey, secretKe
 	if cerr != nil || cfg == nil {
 		return "", "", "", "", cerr
 	}
-	ctxName = cfg.ActiveContext
 	active := cfg.ActiveCtx()
+	endpoint, accessKey, secretKey, err = resolveMinioCredentialsFromCtx(ctx, active)
+	return endpoint, accessKey, secretKey, cfg.ActiveContext, err
+}
+
+// resolveMinioCredentialsFromCtx extracts minio credentials from a config.Context
+// directly. Split from resolveMinioCredentials for testability.
+func resolveMinioCredentialsFromCtx(ctx context.Context, active config.Context) (endpoint, accessKey, secretKey string, err error) {
 	svc := config.AdminFloorServiceNamed(&active.Admin.Services, "minio")
 
 	get := func(key string) (string, error) {
@@ -475,38 +481,38 @@ func resolveMinioCredentials(ctx context.Context) (endpoint, accessKey, secretKe
 
 	endpoint, err = get("endpoint")
 	if err != nil {
-		return "", "", "", ctxName, err
+		return "", "", "", err
 	}
 	if endpoint == "" {
 		endpoint, err = get("http")
 		if err != nil {
-			return "", "", "", ctxName, err
+			return "", "", "", err
 		}
 	}
 
 	accessKey, err = get("access_key")
 	if err != nil {
-		return "", "", "", ctxName, err
+		return "", "", "", err
 	}
 	if accessKey == "" {
 		accessKey, err = get("user")
 		if err != nil {
-			return "", "", "", ctxName, err
+			return "", "", "", err
 		}
 	}
 
 	secretKey, err = get("secret_key")
 	if err != nil {
-		return "", "", "", ctxName, err
+		return "", "", "", err
 	}
 	if secretKey == "" {
 		secretKey, err = get("password")
 		if err != nil {
-			return "", "", "", ctxName, err
+			return "", "", "", err
 		}
 	}
 
-	return endpoint, accessKey, secretKey, ctxName, nil
+	return endpoint, accessKey, secretKey, nil
 }
 
 // runMCCommand runs mc/mcli with the given env, selecting the binary from
