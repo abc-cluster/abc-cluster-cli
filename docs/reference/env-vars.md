@@ -205,14 +205,82 @@ patterns in the environment:
 ## Subprocess injection
 
 When the CLI shells out to `nomad`, `vault`, `rclone`,
-`s5cmd`, or `nextflow`, it **constructs** the relevant vendor
-env vars from the active context and injects them into the child process.
-You do not need to set `NOMAD_ADDR`, `AWS_ACCESS_KEY_ID` etc.
-in your shell — the abstraction handles it. In `abc admin services <tool> cli`
+`s5cmd`, `nextflow`, `mc`, or `pulumi`, it
+**constructs** the relevant vendor env vars from the active context and
+injects them into the child process. You do not need to set
+`NOMAD_ADDR`, `AWS_ACCESS_KEY_ID` etc. in your shell —
+the abstraction handles it. In `abc admin services <tool> cli`
 passthrough commands, parent-shell vendor env vars are preserved so
 operators can target alternate endpoints.
 
 🔒 = redacted in `abc admin env list` output.
+
+
+## Shadowing — alternate resolution paths
+
+Some env vars have additional resolution paths beyond the standard
+precedence ladder. A value you set in your shell may be **shadowed**
+(replaced by a config-derived value) in specific contexts. Use
+`abc admin env show <NAME>` to see which path is active for
+any variable.
+
+### `ABC_CRYPT_PASSWORD`
+
+- abc secrets / abc data: contexts.<n>.crypt.password wins over the env var; stderr warning emitted on disagreement
+
+### `ABC_CRYPT_SALT`
+
+- abc secrets / abc data: contexts.<n>.crypt.salt wins over the env var; stderr warning emitted on disagreement
+
+### `VAULT_ADDR`
+
+- abc admin services vault cli: sourced from admin.services.vault.cred_source.local.http (or .nomad.* via --config nomad); shell env ignored when --config nomad
+
+### `VAULT_TOKEN`
+
+- abc admin services vault cli: sourced from admin.services.vault.cred_source.local.access_key (or .nomad.* via --config nomad); shell env ignored when --config nomad
+
+### `AWS_ACCESS_KEY_ID`
+
+- abc admin services minio cli --config nomad: sourced from admin.services.minio.cred_source.nomad.access_key (or .user); shell env ignored
+- abc admin services minio cli --config vault: sourced from admin.services.minio.cred_source.vault.access_key; shell env ignored
+- abc admin services rustfs cli --config nomad/vault: same pattern via admin.services.rustfs.cred_source.*
+
+### `AWS_SECRET_ACCESS_KEY`
+
+- abc admin services minio cli --config nomad: sourced from admin.services.minio.cred_source.nomad.secret_key (or .password); shell env ignored
+- abc admin services minio cli --config vault: sourced from admin.services.minio.cred_source.vault.secret_key; shell env ignored
+
+### `AWS_ENDPOINT_URL`
+
+- abc admin services minio cli --config nomad/vault: sourced from admin.services.minio.cred_source.<sel>.endpoint; shell env ignored
+
+### `MC_HOST_local`
+
+- abc admin services minio cli --config nomad/vault: constructed from admin.services.minio.cred_source.<sel>.*; shell env ignored
+
+### `MINIO_SERVER`
+
+- abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.endpoint; shell env wins (--config local) or is replaced (--config nomad/vault)
+
+### `MINIO_USER`
+
+- abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.user; shell env wins (--config local) or is replaced (--config nomad/vault)
+
+### `MINIO_PASSWORD`
+
+- abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.password; shell env wins (--config local) or is replaced (--config nomad/vault)
+
+### `MINIO_ROOT_USER`
+
+- abc admin services minio cli: also reads admin.abc_nodes.minio_root_user as fallback when cred_source has no user field
+
+### `MINIO_ROOT_PASSWORD`
+
+- abc admin services minio cli: also reads admin.abc_nodes.minio_root_password as fallback when cred_source has no password field
+
+
+
 
 _This page is generated from
 [`internal/envvars/registry.go`](https://github.com/abc-cluster/abc-cluster-cli/blob/main/internal/envvars/registry.go)

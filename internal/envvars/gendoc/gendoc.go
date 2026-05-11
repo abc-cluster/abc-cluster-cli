@@ -98,14 +98,33 @@ patterns in the environment:
 ## Subprocess injection
 
 When the CLI shells out to ` + "`nomad`" + `, ` + "`vault`" + `, ` + "`rclone`" + `,
-` + "`s5cmd`" + `, or ` + "`nextflow`" + `, it **constructs** the relevant vendor
-env vars from the active context and injects them into the child process.
-You do not need to set ` + "`NOMAD_ADDR`" + `, ` + "`AWS_ACCESS_KEY_ID`" + ` etc.
-in your shell — the abstraction handles it. In ` + "`abc admin services <tool> cli`" + `
+` + "`s5cmd`" + `, ` + "`nextflow`" + `, ` + "`mc`" + `, or ` + "`pulumi`" + `, it
+**constructs** the relevant vendor env vars from the active context and
+injects them into the child process. You do not need to set
+` + "`NOMAD_ADDR`" + `, ` + "`AWS_ACCESS_KEY_ID`" + ` etc. in your shell —
+the abstraction handles it. In ` + "`abc admin services <tool> cli`" + `
 passthrough commands, parent-shell vendor env vars are preserved so
 operators can target alternate endpoints.
 
 🔒 = redacted in ` + "`abc admin env list`" + ` output.
+
+{{if .ShadowedEntries}}
+## Shadowing — alternate resolution paths
+
+Some env vars have additional resolution paths beyond the standard
+precedence ladder. A value you set in your shell may be **shadowed**
+(replaced by a config-derived value) in specific contexts. Use
+` + "`abc admin env show <NAME>`" + ` to see which path is active for
+any variable.
+
+{{range .ShadowedEntries -}}
+### ` + "`{{.Name}}`" + `
+
+{{range .Shadowing -}}
+- {{.}}
+{{end}}
+{{end}}
+{{end}}
 
 _This page is generated from
 [` + "`internal/envvars/registry.go`" + `](https://github.com/abc-cluster/abc-cluster-cli/blob/main/internal/envvars/registry.go)
@@ -120,6 +139,7 @@ type entryView struct {
 	VendorFallback string
 	Default        string
 	Secret         bool
+	Shadowing      []string
 }
 
 type group struct {
@@ -129,7 +149,8 @@ type group struct {
 }
 
 type docData struct {
-	Groups []group
+	Groups          []group
+	ShadowedEntries []entryView // flat list of entries with non-empty Shadowing
 }
 
 func main() {
@@ -143,7 +164,10 @@ func main() {
 	}
 
 	groups := buildGroups()
-	data := docData{Groups: groups}
+	data := docData{
+		Groups:          groups,
+		ShadowedEntries: shadowedFromGroups(groups),
+	}
 
 	f, err := os.Create(*out)
 	if err != nil {
@@ -193,6 +217,7 @@ func buildGroups() []group {
 				VendorFallback: e.VendorFallback,
 				Default:        e.Default,
 				Secret:         e.Secret,
+				Shadowing:      append([]string(nil), e.Shadowing...),
 			})
 		}
 		out = append(out, group{Title: s.title, Description: s.desc, Entries: views})
@@ -206,6 +231,20 @@ func totalEntries(gs []group) int {
 		n += len(g.Entries)
 	}
 	return n
+}
+
+// shadowedFromGroups returns a flat, registry-order list of entries
+// that carry non-empty Shadowing annotations.
+func shadowedFromGroups(gs []group) []entryView {
+	var out []entryView
+	for _, g := range gs {
+		for _, e := range g.Entries {
+			if len(e.Shadowing) > 0 {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
 }
 
 // escapeMD escapes pipe characters in cell text to avoid breaking Markdown tables.

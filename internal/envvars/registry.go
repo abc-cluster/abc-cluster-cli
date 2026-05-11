@@ -116,6 +116,16 @@ type Entry struct {
 
 	// Secret marks token-like values so `abc env list` redacts them.
 	Secret bool
+
+	// Shadowing lists alternative resolution paths beyond the standard
+	// precedence ladder that may take precedence over this env var in
+	// specific contexts. Surfaced by `abc admin env show` so users can
+	// see why a value they set might not be honoured.
+	//
+	// Each entry is a one-line human-readable description, typically
+	// citing a config-file path or a passthrough-flag combination. See
+	// brainstorms/cli-env-resolution/2026-05-11-cred-source-shadowing-audit.md.
+	Shadowing []string
 }
 
 // Registry is the single source of truth. Order is presentation order in
@@ -351,12 +361,18 @@ var Registry = []Entry{
 		Bucket:  BucketABCComponent,
 		Purpose: "rclone-crypt password (also keys abc secrets)",
 		Secret:  true,
+		Shadowing: []string{
+			"abc secrets / abc data: contexts.<n>.crypt.password wins over the env var; stderr warning emitted on disagreement",
+		},
 	},
 	{
 		Name:    "ABC_CRYPT_SALT",
 		Bucket:  BucketABCComponent,
 		Purpose: "rclone-crypt salt",
 		Secret:  true,
+		Shadowing: []string{
+			"abc secrets / abc data: contexts.<n>.crypt.salt wins over the env var; stderr warning emitted on disagreement",
+		},
 	},
 	{
 		Name:    "ABC_NODE_PASSWORD",
@@ -456,29 +472,47 @@ var Registry = []Entry{
 		Name:    "VAULT_ADDR",
 		Bucket:  BucketVendorFallback,
 		Purpose: "fallback: consulted only in abc sudo vault passthrough",
+		Shadowing: []string{
+			"abc admin services vault cli: sourced from admin.services.vault.cred_source.local.http (or .nomad.* via --config nomad); shell env ignored when --config nomad",
+		},
 	},
 	{
 		Name:    "VAULT_TOKEN",
 		Bucket:  BucketVendorFallback,
 		Secret:  true,
 		Purpose: "fallback: consulted only in abc sudo vault passthrough",
+		Shadowing: []string{
+			"abc admin services vault cli: sourced from admin.services.vault.cred_source.local.access_key (or .nomad.* via --config nomad); shell env ignored when --config nomad",
+		},
 	},
 	// ── SUBPROCESS OUT — AWS SDK family ─────────────────────────────────
 	{
 		Name:    "AWS_ACCESS_KEY_ID",
 		Bucket:  BucketSubprocessOut,
 		Purpose: "constructed for rclone/s5cmd/nextflow/mc subprocesses from active context",
+		Shadowing: []string{
+			"abc admin services minio cli --config nomad: sourced from admin.services.minio.cred_source.nomad.access_key (or .user); shell env ignored",
+			"abc admin services minio cli --config vault: sourced from admin.services.minio.cred_source.vault.access_key; shell env ignored",
+			"abc admin services rustfs cli --config nomad/vault: same pattern via admin.services.rustfs.cred_source.*",
+		},
 	},
 	{
 		Name:    "AWS_SECRET_ACCESS_KEY",
 		Bucket:  BucketSubprocessOut,
 		Secret:  true,
 		Purpose: "constructed for rclone/s5cmd/nextflow/mc subprocesses from active context",
+		Shadowing: []string{
+			"abc admin services minio cli --config nomad: sourced from admin.services.minio.cred_source.nomad.secret_key (or .password); shell env ignored",
+			"abc admin services minio cli --config vault: sourced from admin.services.minio.cred_source.vault.secret_key; shell env ignored",
+		},
 	},
 	{
 		Name:    "AWS_ENDPOINT_URL",
 		Bucket:  BucketSubprocessOut,
 		Purpose: "constructed for rclone/s5cmd/nextflow/mc subprocesses from active context",
+		Shadowing: []string{
+			"abc admin services minio cli --config nomad/vault: sourced from admin.services.minio.cred_source.<sel>.endpoint; shell env ignored",
+		},
 	},
 	{
 		Name:    "AWS_REGION",
@@ -523,6 +557,9 @@ var Registry = []Entry{
 		Bucket:  BucketSubprocessOut,
 		Secret:  true,
 		Purpose: "MinIO Client connection alias for the active context; URL with embedded credentials",
+		Shadowing: []string{
+			"abc admin services minio cli --config nomad/vault: constructed from admin.services.minio.cred_source.<sel>.*; shell env ignored",
+		},
 	},
 	{
 		Name:    "MC_INSECURE",
@@ -535,17 +572,26 @@ var Registry = []Entry{
 		Name:    "MINIO_SERVER",
 		Bucket:  BucketSubprocessOut,
 		Purpose: "host:port for Pulumi MinIO provider (scheme stripped)",
+		Shadowing: []string{
+			"abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.endpoint; shell env wins (--config local) or is replaced (--config nomad/vault)",
+		},
 	},
 	{
 		Name:    "MINIO_USER",
 		Bucket:  BucketSubprocessOut,
 		Purpose: "user for Pulumi MinIO provider",
+		Shadowing: []string{
+			"abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.user; shell env wins (--config local) or is replaced (--config nomad/vault)",
+		},
 	},
 	{
 		Name:    "MINIO_PASSWORD",
 		Bucket:  BucketSubprocessOut,
 		Secret:  true,
 		Purpose: "password for Pulumi MinIO provider",
+		Shadowing: []string{
+			"abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.password; shell env wins (--config local) or is replaced (--config nomad/vault)",
+		},
 	},
 
 	// ── SUBPROCESS OUT — MinIO server admin (operator passthrough) ──────
@@ -553,12 +599,18 @@ var Registry = []Entry{
 		Name:    "MINIO_ROOT_USER",
 		Bucket:  BucketSubprocessOut,
 		Purpose: "MinIO server root user (constructed for `abc admin services minio cli` passthrough)",
+		Shadowing: []string{
+			"abc admin services minio cli: also reads admin.abc_nodes.minio_root_user as fallback when cred_source has no user field",
+		},
 	},
 	{
 		Name:    "MINIO_ROOT_PASSWORD",
 		Bucket:  BucketSubprocessOut,
 		Secret:  true,
 		Purpose: "MinIO server root password (constructed for `abc admin services minio cli` passthrough)",
+		Shadowing: []string{
+			"abc admin services minio cli: also reads admin.abc_nodes.minio_root_password as fallback when cred_source has no password field",
+		},
 	},
 
 	// ── SUBPROCESS OUT — rclone ─────────────────────────────────────────

@@ -172,6 +172,12 @@ func runShow(out io.Writer, name string) error {
 		fmt.Fprintf(out, "Default:  %s\n", entry.Default)
 	}
 	fmt.Fprintf(out, "Value:    %s\n", display)
+	if len(entry.Shadowing) > 0 {
+		fmt.Fprintln(out, "Shadowing:")
+		for _, s := range entry.Shadowing {
+			fmt.Fprintf(out, "  - %s\n", s)
+		}
+	}
 	return nil
 }
 
