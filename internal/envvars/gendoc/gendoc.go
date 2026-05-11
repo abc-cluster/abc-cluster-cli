@@ -139,7 +139,7 @@ type entryView struct {
 	VendorFallback string
 	Default        string
 	Secret         bool
-	Shadowing      []string
+	Shadowing      []string // human-readable, derived from envvars.Shadow.AutoDescription()
 }
 
 type group struct {
@@ -209,6 +209,10 @@ func buildGroups() []group {
 		}
 		views := make([]entryView, 0, len(entries))
 		for _, e := range entries {
+			shadow := make([]string, 0, len(e.Shadowing))
+			for _, s := range e.Shadowing {
+				shadow = append(shadow, s.AutoDescription())
+			}
 			views = append(views, entryView{
 				Name:           e.Name,
 				Purpose:        escapeMD(e.Purpose),
@@ -217,7 +221,7 @@ func buildGroups() []group {
 				VendorFallback: e.VendorFallback,
 				Default:        e.Default,
 				Secret:         e.Secret,
-				Shadowing:      append([]string(nil), e.Shadowing...),
+				Shadowing:      shadow,
 			})
 		}
 		out = append(out, group{Title: s.title, Description: s.desc, Entries: views})

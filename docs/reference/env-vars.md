@@ -226,58 +226,81 @@ any variable.
 
 ### `ABC_CRYPT_PASSWORD`
 
-- abc secrets / abc data: contexts.<n>.crypt.password wins over the env var; stderr warning emitted on disagreement
+- contexts.<n>.crypt.password wins over env var; stderr warning on disagreement
 
 ### `ABC_CRYPT_SALT`
 
-- abc secrets / abc data: contexts.<n>.crypt.salt wins over the env var; stderr warning emitted on disagreement
+- contexts.<n>.crypt.salt wins over env var; stderr warning on disagreement
 
 ### `VAULT_ADDR`
 
-- abc admin services vault cli: sourced from admin.services.vault.cred_source.local.http (or .nomad.* via --config nomad); shell env ignored when --config nomad
+- --config local: contexts.<n>.admin.services.vault.cred_source.local.http (or top-level .http) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.vault.cred_source.nomad.http (shell env ignored, warning emitted)
 
 ### `VAULT_TOKEN`
 
-- abc admin services vault cli: sourced from admin.services.vault.cred_source.local.access_key (or .nomad.* via --config nomad); shell env ignored when --config nomad
+- --config local: contexts.<n>.admin.services.vault.cred_source.local.access_key (or top-level .access_key) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.vault.cred_source.nomad.access_key (shell env ignored, warning emitted)
 
 ### `AWS_ACCESS_KEY_ID`
 
-- abc admin services minio cli --config nomad: sourced from admin.services.minio.cred_source.nomad.access_key (or .user); shell env ignored
-- abc admin services minio cli --config vault: sourced from admin.services.minio.cred_source.vault.access_key; shell env ignored
-- abc admin services rustfs cli --config nomad/vault: same pattern via admin.services.rustfs.cred_source.*
+- --config local: contexts.<n>.admin.services.minio.cred_source.local.access_key (or top-level .access_key) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.access_key (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.access_key (shell env ignored, warning emitted)
+- --config local: contexts.<n>.admin.services.rustfs.cred_source.local.access_key (or top-level .access_key) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.rustfs.cred_source.nomad.access_key (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.rustfs.cred_source.vault.access_key (shell env ignored, warning emitted)
 
 ### `AWS_SECRET_ACCESS_KEY`
 
-- abc admin services minio cli --config nomad: sourced from admin.services.minio.cred_source.nomad.secret_key (or .password); shell env ignored
-- abc admin services minio cli --config vault: sourced from admin.services.minio.cred_source.vault.secret_key; shell env ignored
+- --config local: contexts.<n>.admin.services.minio.cred_source.local.secret_key (or top-level .secret_key) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.secret_key (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.secret_key (shell env ignored, warning emitted)
+- --config local: contexts.<n>.admin.services.rustfs.cred_source.local.secret_key (or top-level .secret_key) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.rustfs.cred_source.nomad.secret_key (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.rustfs.cred_source.vault.secret_key (shell env ignored, warning emitted)
 
 ### `AWS_ENDPOINT_URL`
 
-- abc admin services minio cli --config nomad/vault: sourced from admin.services.minio.cred_source.<sel>.endpoint; shell env ignored
+- --config local: contexts.<n>.admin.services.minio.cred_source.local.endpoint (or top-level .endpoint) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.endpoint (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.endpoint (shell env ignored, warning emitted)
 
 ### `MC_HOST_local`
 
-- abc admin services minio cli --config nomad/vault: constructed from admin.services.minio.cred_source.<sel>.*; shell env ignored
+- constructed from admin.services.minio.cred_source.local.{endpoint,user,password}
+- constructed from admin.services.minio.cred_source.nomad.{endpoint,user,password}; shell env ignored
+- constructed from admin.services.minio.cred_source.vault.{endpoint,user,password}; shell env ignored
 
 ### `MINIO_SERVER`
 
-- abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.endpoint; shell env wins (--config local) or is replaced (--config nomad/vault)
+- --config local: contexts.<n>.admin.services.minio.cred_source.local.endpoint (or top-level .endpoint) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.endpoint (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.endpoint (shell env ignored, warning emitted)
 
 ### `MINIO_USER`
 
-- abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.user; shell env wins (--config local) or is replaced (--config nomad/vault)
+- --config local: contexts.<n>.admin.services.minio.cred_source.local.user (or top-level .user) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.user (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.user (shell env ignored, warning emitted)
 
 ### `MINIO_PASSWORD`
 
-- abc admin services pulumi cli: sourced from admin.services.minio.cred_source.local.password; shell env wins (--config local) or is replaced (--config nomad/vault)
+- --config local: contexts.<n>.admin.services.minio.cred_source.local.password (or top-level .password) (shell env wins by default)
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.password (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.password (shell env ignored, warning emitted)
 
 ### `MINIO_ROOT_USER`
 
-- abc admin services minio cli: also reads admin.abc_nodes.minio_root_user as fallback when cred_source has no user field
+- admin.services.minio.cred_source.local.user OR admin.abc_nodes.minio_root_user as fallback
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.user (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.user (shell env ignored, warning emitted)
 
 ### `MINIO_ROOT_PASSWORD`
 
-- abc admin services minio cli: also reads admin.abc_nodes.minio_root_password as fallback when cred_source has no password field
+- admin.services.minio.cred_source.local.password OR admin.abc_nodes.minio_root_password as fallback
+- --config nomad: contexts.<n>.admin.services.minio.cred_source.nomad.password (shell env ignored, warning emitted)
+- --config vault: contexts.<n>.admin.services.minio.cred_source.vault.password (shell env ignored, warning emitted)
 
 
 
