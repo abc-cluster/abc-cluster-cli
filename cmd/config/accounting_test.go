@@ -10,7 +10,7 @@ import (
 	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
 )
 
-// withConfigDir points ABC_CONFIG_FILE at a temp config so the round-trip
+// withConfigDir points ABC_CLI_CONFIG_FILE at a temp config so the round-trip
 // tests don't touch the user's real ~/.abc/config.yaml. Returns a context
 // name pre-seeded into the file.
 func withConfigDir(t *testing.T) (string, string) {
@@ -26,7 +26,7 @@ contexts:
 	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
-	t.Setenv("ABC_CONFIG_FILE", path)
+	t.Setenv("ABC_CLI_CONFIG_FILE", path)
 	return path, "testctx"
 }
 

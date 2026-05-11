@@ -16,7 +16,7 @@ func newCLICmd() *cobra.Command {
 		Use:   "cli [rclone-args...]",
 		Short: "Run the local rclone CLI with optional workspace config",
 		Long: `Run the rclone binary as a passthrough alias. Use "abc admin services rclone cli setup"
-to install the managed binary into ~/.abc/binaries (or ABC_BINARIES_DIR). Use
+to install the managed binary into ~/.abc/binaries (or ABC_CLI_BINARIES_DIR). Use
 --binary-location to select a specific rclone binary (same convention as nomad/tailscale).
 
 Optional leading arguments (stripped before invoking rclone):

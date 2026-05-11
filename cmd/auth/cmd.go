@@ -31,7 +31,7 @@ func NewCmd() *cobra.Command {
 		Short: "Authenticate and manage session credentials",
 		Long: `Manage authentication for the abc-cluster CLI.
 
-Credentials are stored in ~/.abc/config.yaml (or ABC_CONFIG_FILE).
+Credentials are stored in ~/.abc/config.yaml (or ABC_CLI_CONFIG_FILE).
 Each login creates a named context holding the endpoint, token, and optional
 workspace and region settings.
 
@@ -63,7 +63,7 @@ func newLoginCmd() *cobra.Command {
 Prompts for API endpoint and access token, then saves them to a new context.
 Context name defaults to derived from endpoint and region, e.g. 'org-a-za-cpt'.
 
-Credentials are stored at ~/.abc/config.yaml (or ABC_CONFIG_FILE).
+Credentials are stored at ~/.abc/config.yaml (or ABC_CLI_CONFIG_FILE).
 See 'abc config encryption' for SOPS support.`,
 		Args: cobra.NoArgs,
 		RunE: runLogin,

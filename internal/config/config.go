@@ -1,11 +1,11 @@
 // Package config manages the abc-cluster CLI configuration file.
 //
 // The config file is stored at ~/.abc/config.yaml by default.
-// The location can be overridden with the ABC_CONFIG_FILE environment variable.
-// After load, ABC_ACTIVE_CONTEXT (if set) overrides active_context in memory only
+// The location can be overridden with the ABC_CLI_CONFIG_FILE environment variable.
+// After load, ABC_CLI_CONTEXT (if set) overrides active_context in memory only
 // when contexts.<name> exists (the file on disk is unchanged). If the name is not
 // defined, the env var is ignored so minimal configs in unit tests still load.
-// Example: ABC_ACTIVE_CONTEXT=aither go test -tags integration -v ./cmd/job/...
+// Example: ABC_CLI_CONTEXT=aither go test -tags integration -v ./cmd/job/...
 //
 // Schema versioning:
 // The config file includes a version field for forward/backward compatibility.
@@ -79,8 +79,7 @@ const DefaultContextName = "default"
 const DefaultPublicAPIEndpoint = "https://api.abc-cluster.io"
 
 // DefaultConfigPath returns the path to the config file, honouring the
-// ABC_CLI_CONFIG_FILE environment variable (legacy aliases: ABC_CONFIG_FILE,
-// ABC_CONFIG — accepted with a one-time deprecation warning).
+// ABC_CLI_CONFIG_FILE environment variable.
 func DefaultConfigPath() string {
 	if v := envvars.Get("ABC_CLI_CONFIG_FILE"); v != "" {
 		return v

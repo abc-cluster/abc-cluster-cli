@@ -298,7 +298,7 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 // Per OQ-CAP-4: NO fallback to Nomad on abc-controller-svc failure — the trust
 // boundary stays preserved even during abc-controller-svc outages. Operators who
 // need the CLI to keep working through an abc-controller-svc outage can rerun sync
-// with `--source=nomad` (debug) or set `ABC_NO_PROBE=1` and rely on
+// with `--source=nomad` (debug) or set `ABC_NODE_NO_PROBE=1` and rely on
 // the cached capabilities block + tier-default fallback.
 func runCapabilitiesSyncController(cmd *cobra.Command, cfg *config.Config, ctxName string, ctx config.Context) error {
 	bg := context.Background()
@@ -313,7 +313,7 @@ func runCapabilitiesSyncController(cmd *cobra.Command, cfg *config.Config, ctxNa
 		return fmt.Errorf(
 			"abc-controller-svc probe failed: %w\n  ADR-0019 forbids silent fallback to Nomad when controller_url is configured.\n"+
 				"  Use 'abc cluster capabilities sync --source=nomad' to bypass this guard for debugging,\n"+
-				"  or set ABC_NO_PROBE=1 and rely on the cached capabilities block.",
+				"  or set ABC_NODE_NO_PROBE=1 and rely on the cached capabilities block.",
 			err,
 		)
 	}

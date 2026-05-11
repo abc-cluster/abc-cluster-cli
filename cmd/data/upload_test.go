@@ -61,7 +61,7 @@ func (f *factoryRecorder) factory(endpoint, accessToken string, opts data.Upload
 
 func setTestConfigEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("ABC_CONFIG_FILE", filepath.Join(t.TempDir(), "config.yaml"))
+	t.Setenv("ABC_CLI_CONFIG_FILE", filepath.Join(t.TempDir(), "config.yaml"))
 }
 
 func executeCmd(t *testing.T, cmd *cobra.Command, args ...string) (string, error) {
@@ -189,7 +189,7 @@ func TestDataUpload_UsesContextNomadTokenBeforeAccessToken(t *testing.T) {
 	t.Setenv("ABC_TOKEN", "")
 	t.Setenv("NOMAD_TOKEN", "")
 	setTestConfigEnv(t)
-	cfgPath := os.Getenv("ABC_CONFIG_FILE")
+	cfgPath := os.Getenv("ABC_CLI_CONFIG_FILE")
 	yaml := `version: "1"
 active_context: dev
 contexts:
@@ -252,7 +252,7 @@ func TestDataUpload_EndpointDerivedFromContextAPIEndpoint(t *testing.T) {
 	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
 	t.Setenv("ABC_UPLOAD_TOKEN", "")
 	setTestConfigEnv(t)
-	cfgPath := os.Getenv("ABC_CONFIG_FILE")
+	cfgPath := os.Getenv("ABC_CLI_CONFIG_FILE")
 	yaml := `version: "1"
 active_context: x
 contexts:
@@ -285,10 +285,10 @@ contexts:
 func TestDataUpload_EndpointAndTokenFromContext(t *testing.T) {
 	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
 	t.Setenv("ABC_UPLOAD_TOKEN", "")
-	// Do not use buildCmd here: it calls setTestConfigEnv again and would move ABC_CONFIG_FILE
+	// Do not use buildCmd here: it calls setTestConfigEnv again and would move ABC_CLI_CONFIG_FILE
 	// to a fresh empty config after we write our test YAML.
 	setTestConfigEnv(t)
-	cfgPath := os.Getenv("ABC_CONFIG_FILE")
+	cfgPath := os.Getenv("ABC_CLI_CONFIG_FILE")
 	yaml := `version: "1"
 active_context: dev
 contexts:

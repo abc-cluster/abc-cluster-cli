@@ -27,7 +27,7 @@ func TestDataEncrypt_FileDefaultOutput(t *testing.T) {
 	// Isolate config so stored crypt credentials don't bleed between tests.
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeMinimalDataCLIConfig(t, cfgPath)
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "sample.txt")

@@ -12,7 +12,7 @@ package job_test
 //   - Multiple constraints / affinities
 //   - Meta edge cases (value with embedded =)
 //   - Multiple ports
-//   - Config-based Nomad address (via ABC_CONFIG_FILE)
+//   - Config-based Nomad address (via ABC_CLI_CONFIG_FILE)
 //   - Additional error cases
 //
 // Every test here runs without a Nomad endpoint — all assertions are against
@@ -902,7 +902,7 @@ func TestJobRun_InvalidPriority(t *testing.T) {
 	}
 }
 
-// ── Monitoring floor (abc-nodes enhanced) via ABC_CONFIG_FILE ───────────────
+// ── Monitoring floor (abc-nodes enhanced) via ABC_CLI_CONFIG_FILE ───────────────
 
 func TestJobRun_EnhancedAbcNodesConfig_InjectsMonitoringEnvAndMeta(t *testing.T) {
 	raw := `version: "1.0"

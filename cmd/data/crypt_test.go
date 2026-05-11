@@ -98,7 +98,7 @@ func errDecryptFailed() error {
 }
 
 func TestUploadTempDir_DefaultsToHomeDotAbc(t *testing.T) {
-	t.Setenv("ABC_DATA_UPLOAD_TMPDIR", "") // ensure env var is not set
+	t.Setenv("ABC_CLI_TMPDIR", "") // ensure env var is not set
 	dir, err := uploadTempDir()
 	if err != nil {
 		t.Fatalf("uploadTempDir: %v", err)
@@ -115,7 +115,7 @@ func TestUploadTempDir_DefaultsToHomeDotAbc(t *testing.T) {
 
 func TestUploadTempDir_RespectsEnvVar(t *testing.T) {
 	custom := filepath.Join(t.TempDir(), "custom-tmpdir")
-	t.Setenv("ABC_DATA_UPLOAD_TMPDIR", custom)
+	t.Setenv("ABC_CLI_TMPDIR", custom)
 	dir, err := uploadTempDir()
 	if err != nil {
 		t.Fatalf("uploadTempDir: %v", err)
@@ -130,7 +130,7 @@ func TestUploadTempDir_RespectsEnvVar(t *testing.T) {
 
 func TestEncryptTempFile_LandsInUploadTempDir(t *testing.T) {
 	custom := filepath.Join(t.TempDir(), "enc-tmpdir")
-	t.Setenv("ABC_DATA_UPLOAD_TMPDIR", custom)
+	t.Setenv("ABC_CLI_TMPDIR", custom)
 
 	src := filepath.Join(t.TempDir(), "plain.txt")
 	if err := os.WriteFile(src, []byte("hello world"), 0600); err != nil {

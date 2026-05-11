@@ -13,11 +13,11 @@ func newCLICmd() *cobra.Command {
 		Use:   "cli [abc-node-probe-args...]",
 		Short: "Run the local abc-node-probe CLI",
 		Long: `Run the abc-node-probe binary as a passthrough alias. Use "abc admin services probe cli setup"
-to install the managed binary into ~/.abc/binaries (or ABC_BINARIES_DIR). Use
+to install the managed binary into ~/.abc/binaries (or ABC_CLI_BINARIES_DIR). Use
 --binary-location to select a specific binary (same convention as nomad/tailscale).
 
 Environment overrides when --binary-location is unset:
-  ABC_NODE_PROBE_CLI_BINARY, ABC_NODE_PROBE_BINARY, NODE_PROBE_BINARY
+  ABC_NODE_PROBE_BIN, ABC_NODE_PROBE_BINARY, NODE_PROBE_BINARY
 
 Use optional leading "--binary-location <path>" then "--" to pass all following arguments verbatim to abc-node-probe.`,
 		Args:               cobra.ArbitraryArgs,
@@ -37,7 +37,7 @@ func runProbeCLI(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if binaryLocation == "" {
-		binaryLocation = utils.EnvOrDefault("ABC_NODE_PROBE_CLI_BINARY", "ABC_NODE_PROBE_BINARY", "NODE_PROBE_BINARY")
+		binaryLocation = utils.EnvOrDefault("ABC_NODE_PROBE_BIN", "ABC_NODE_PROBE_BINARY", "NODE_PROBE_BINARY")
 		if binaryLocation == "" {
 			if managedPath, mErr := utils.ManagedBinaryPath("abc-node-probe"); mErr == nil {
 				if info, sErr := os.Stat(managedPath); sErr == nil && !info.IsDir() {

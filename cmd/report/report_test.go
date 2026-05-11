@@ -69,7 +69,7 @@ func TestByWithoutJSON_DefersWithMessage(t *testing.T) {
 // records every request and then run RenderText / RenderJSON over an
 // in-memory fixture DB. Spec §D acceptance.
 func TestNoNetworkOnRender(t *testing.T) {
-	t.Setenv("ABC_NO_PROBE", "1")
+	t.Setenv("ABC_NODE_NO_PROBE", "1")
 
 	var hits int64
 	originalRT := http.DefaultTransport

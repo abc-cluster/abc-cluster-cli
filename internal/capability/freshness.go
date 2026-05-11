@@ -34,11 +34,11 @@ func hardExpiry() time.Duration {
 	return defaultHardExpiry
 }
 
-// probeDisabled returns true when the user has set ABC_NO_PROBE=1.
+// probeDisabled returns true when the user has set ABC_NODE_NO_PROBE=1.
 // Verbs that respect this still operate against the cached / tier-default
 // capability map; just no probe is attempted, foreground or background.
 func probeDisabled() bool {
-	return os.Getenv("ABC_NO_PROBE") == "1"
+	return os.Getenv("ABC_NODE_NO_PROBE") == "1"
 }
 
 // Fresh returns the freshness state for a stored Capabilities block.

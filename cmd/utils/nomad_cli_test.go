@@ -38,7 +38,7 @@ func TestRunNomadCLI_InjectsNomadEnvFromArgs(t *testing.T) {
 
 func TestRunNomadCLI_LoadsNomadEnvFromActiveContext(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 	raw := `version: "1"
 active_context: dev
 contexts:
@@ -80,7 +80,7 @@ contexts:
 
 func TestRunNomadCLI_InjectsNomadNamespaceFromAbcNodes(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 	t.Setenv("NOMAD_NAMESPACE", "")
 	raw := `version: "1"
 active_context: lab
@@ -124,7 +124,7 @@ contexts:
 
 func TestRunNomadCLI_InjectsNomadNamespaceFromAdminWhoami(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 	t.Setenv("NOMAD_NAMESPACE", "")
 	raw := `version: "1"
 active_context: lab

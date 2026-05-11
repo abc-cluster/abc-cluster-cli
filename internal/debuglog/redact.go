@@ -158,7 +158,7 @@ func EnvSnapshot() map[string]string {
 
 	sensitive := []string{
 		"ABC_NODE_PASSWORD",
-		"ABC_ACCESS_TOKEN",
+		"ABC_API_TOKEN",
 		"ABC_TAILSCALE_AUTH_KEY",
 	}
 	for _, k := range sensitive {
@@ -170,9 +170,9 @@ func EnvSnapshot() map[string]string {
 	}
 
 	tracked := []string{
-		"ABC_DEBUG",
+		"ABC_CLI_DEBUG",
 		"ABC_CLUSTER",
-		"ABC_CLI_SUDO_MODE",
+		"ABC_CLI_SUDO",
 		"ABC_CLI_CLOUD_MODE",
 		"ABC_CLI_EXP_MODE",
 		"SSH_AUTH_SOCK",

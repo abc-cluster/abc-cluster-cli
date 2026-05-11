@@ -28,9 +28,9 @@ func TestSubmissionSourceClassifier_Resolve(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.envSet {
-				t.Setenv("ABC_AUTOMATION", "1")
+				t.Setenv("ABC_CLI_AUTOMATION", "1")
 			} else {
-				t.Setenv("ABC_AUTOMATION", "")
+				t.Setenv("ABC_CLI_AUTOMATION", "")
 			}
 			got := tc.c.Resolve()
 			if got != tc.want {

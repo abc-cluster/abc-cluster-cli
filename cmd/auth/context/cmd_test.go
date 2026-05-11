@@ -23,7 +23,7 @@ func executeContextCmd(cmd *cobra.Command, args ...string) (string, error) {
 
 func TestContextAddAndUse(t *testing.T) {
 	tmpConfig := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", tmpConfig)
+	t.Setenv("ABC_CLI_CONFIG_FILE", tmpConfig)
 
 	cmd := NewCmd()
 	out, err := executeContextCmd(cmd,
@@ -66,7 +66,7 @@ func TestContextAddAndUse(t *testing.T) {
 
 func TestContextAddDerivesUploadEndpointWhenOmitted(t *testing.T) {
 	tmpConfig := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", tmpConfig)
+	t.Setenv("ABC_CLI_CONFIG_FILE", tmpConfig)
 
 	cmd := NewCmd()
 	_, err := executeContextCmd(cmd, "add", "dev", "--endpoint", "https://api.example.com/v1", "--access-token", "tok")
@@ -84,7 +84,7 @@ func TestContextAddDerivesUploadEndpointWhenOmitted(t *testing.T) {
 
 func TestContextShowYAML_PrintsShareableDocument(t *testing.T) {
 	tmpConfig := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", tmpConfig)
+	t.Setenv("ABC_CLI_CONFIG_FILE", tmpConfig)
 
 	cmd := NewCmd()
 	_, err := executeContextCmd(cmd,
@@ -149,7 +149,7 @@ func TestContextShowYAML_PrintsShareableDocument(t *testing.T) {
 
 func TestContextShow_PrintsUnmaskedTokens(t *testing.T) {
 	tmpConfig := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", tmpConfig)
+	t.Setenv("ABC_CLI_CONFIG_FILE", tmpConfig)
 
 	cmd := NewCmd()
 	_, err := executeContextCmd(cmd,
@@ -177,7 +177,7 @@ func TestContextShow_PrintsUnmaskedTokens(t *testing.T) {
 
 func TestContextShowYAML_IncludesDefaults(t *testing.T) {
 	tmpConfig := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", tmpConfig)
+	t.Setenv("ABC_CLI_CONFIG_FILE", tmpConfig)
 
 	cmd := NewCmd()
 	_, err := executeContextCmd(cmd, "add", "dev", "--endpoint", "https://api.example.com", "--access-token", "tok")

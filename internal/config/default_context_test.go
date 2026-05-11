@@ -52,7 +52,7 @@ func TestEnsureDefaultContext_doesNotPickActiveWhenOtherContextsExist(t *testing
 
 func TestCreate_seedsDefaultContext(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("ABC_CONFIG_FILE", filepath.Join(dir, "config.yaml"))
+	t.Setenv("ABC_CLI_CONFIG_FILE", filepath.Join(dir, "config.yaml"))
 	path, err := Create()
 	if err != nil {
 		t.Fatal(err)

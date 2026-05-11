@@ -79,11 +79,11 @@ func uploadCryptConfig(password, salt string) (*cryptConfig, error) {
 }
 
 // uploadTempDir returns the directory to use for encrypted upload temp files.
-// It respects the ABC_DATA_UPLOAD_TMPDIR environment variable; if unset it
+// It respects the ABC_CLI_TMPDIR environment variable; if unset it
 // defaults to $HOME/.abc/tmpdir.  The directory is created with 0700 permissions
 // if it does not already exist.
 func uploadTempDir() (string, error) {
-	if dir := os.Getenv("ABC_DATA_UPLOAD_TMPDIR"); dir != "" {
+	if dir := os.Getenv("ABC_CLI_TMPDIR"); dir != "" {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return "", fmt.Errorf("create upload temp dir %q: %w", dir, err)
 		}

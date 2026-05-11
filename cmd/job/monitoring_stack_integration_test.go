@@ -6,8 +6,8 @@ package job_test
 // is visible in Loki and that Prometheus answers queries after a batch job runs.
 //
 // This does not run in CI by default. It is gated on:
-//   - ABC_INTEGRATION_OBS_STACK=1
-//   - a readable abc CLI config (default ~/.abc/config.yaml or ABC_CONFIG_FILE)
+//   - ABC_CLI_INTEGRATION_OBS_STACK=1
+//   - a readable abc CLI config (default ~/.abc/config.yaml or ABC_CLI_CONFIG_FILE)
 //   - active_context with cluster_type abc-nodes, admin.services.nomad.*, enhanced
 //     capabilities, and synced Loki / Prometheus admin.services URLs
 //   - Nomad reachable at the configured nomad_addr (same as `abc job run --submit`)
@@ -19,13 +19,13 @@ package job_test
 //
 // Example:
 //
-//	export ABC_INTEGRATION_OBS_STACK=1
-//	export ABC_CONFIG_FILE=$HOME/.abc/config.yaml
+//	export ABC_CLI_INTEGRATION_OBS_STACK=1
+//	export ABC_CLI_CONFIG_FILE=$HOME/.abc/config.yaml
 //	go test -tags integration -v -timeout=15m -run TestIntegration_ObsStack ./cmd/job/...
 //
 // Optional tuning:
-//   ABC_INTEGRATION_LOKI_WAIT_SEC — seconds to poll Loki for the stdout sentinel (default 360)
-//   ABC_INTEGRATION_LOKI_REQUIRE=0 — skip the Loki check; Prometheus check still runs
+//   ABC_CLI_INTEGRATION_LOKI_WAIT_SEC — seconds to poll Loki for the stdout sentinel (default 360)
+//   ABC_CLI_INTEGRATION_LOKI_REQUIRE=0 — skip the Loki check; Prometheus check still runs
 //
 // Then open Grafana → Explore → Loki with LogQL:
 //   {alloc_id="<uuid>"} |= "ABCOBSSMOKE"
@@ -59,7 +59,7 @@ var obsStackHTTPClient = &http.Client{Timeout: 25 * time.Second}
 func nomadJobFailureDiagnostics(t *testing.T, addr, jobID string) string {
 	t.Helper()
 	tok := strings.TrimSpace(os.Getenv("NOMAD_TOKEN"))
-	ns := strings.TrimSpace(os.Getenv("ABC_TEST_NS"))
+	ns := strings.TrimSpace(os.Getenv("ABC_CLI_TEST_NS"))
 	if ns == "" {
 		ns = "default"
 	}
@@ -122,13 +122,13 @@ func nomadJobFailureDiagnostics(t *testing.T, addr, jobID string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// requireABCCLIContextForObsStack loads ~/.abc (or ABC_CONFIG_FILE) and checks
+// requireABCCLIContextForObsStack loads ~/.abc (or ABC_CLI_CONFIG_FILE) and checks
 // the active context is suitable for this test.
 func requireABCCLIContextForObsStack(t *testing.T) (cfg *config.Config, ctx config.Context) {
 	t.Helper()
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("abc config load failed: %v (set ABC_CONFIG_FILE or create ~/.abc/config.yaml)", err)
+		t.Fatalf("abc config load failed: %v (set ABC_CLI_CONFIG_FILE or create ~/.abc/config.yaml)", err)
 	}
 	if strings.TrimSpace(cfg.ActiveContext) == "" {
 		t.Fatal("config has no active_context; run: abc context use <name>")
@@ -178,8 +178,8 @@ func obsStackHTTPEndpoints(t *testing.T, ctx config.Context) (lokiHTTP, promHTTP
 
 func requireObsStackIntegration(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv("ABC_INTEGRATION_OBS_STACK")) != "1" {
-		t.Skip(`set ABC_INTEGRATION_OBS_STACK=1 to run observability stack checks (see monitoring_stack_integration_test.go)`)
+	if strings.TrimSpace(os.Getenv("ABC_CLI_INTEGRATION_OBS_STACK")) != "1" {
+		t.Skip(`set ABC_CLI_INTEGRATION_OBS_STACK=1 to run observability stack checks (see monitoring_stack_integration_test.go)`)
 	}
 }
 
@@ -197,7 +197,7 @@ func lokiHTTPEndpoint(lokiBase, apiPath string) string {
 
 func obsStackLokiPollDeadline() time.Time {
 	sec := 360
-	if s := strings.TrimSpace(os.Getenv("ABC_INTEGRATION_LOKI_WAIT_SEC")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("ABC_CLI_INTEGRATION_LOKI_WAIT_SEC")); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			sec = n
 		}
@@ -356,7 +356,7 @@ func TestIntegration_ObsStackJobStdoutReachableInLokiAndPrometheusAlive(t *testi
 	_, abcCtx := requireABCCLIContextForObsStack(t)
 	syncNomadEnvFromABCContext(t, abcCtx)
 	// Align poll/delete helpers with the namespace used by the job (abc config).
-	t.Setenv("ABC_TEST_NS", abcCtx.AbcNodesNomadNamespaceOrDefault())
+	t.Setenv("ABC_CLI_TEST_NS", abcCtx.AbcNodesNomadNamespaceOrDefault())
 
 	addr := requireNomad(t)
 	lokiBase, promBase := obsStackHTTPEndpoints(t, abcCtx)
@@ -385,7 +385,7 @@ exit 0
 	if status != "complete" {
 		diag := nomadJobFailureDiagnostics(t, addr, jobID)
 		t.Fatalf("expected job complete, got %q (nomad_addr=%s namespace=%s). Allocation/task detail:\n%s",
-			status, strings.TrimSpace(os.Getenv("NOMAD_ADDR")), strings.TrimSpace(os.Getenv("ABC_TEST_NS")), diag)
+			status, strings.TrimSpace(os.Getenv("NOMAD_ADDR")), strings.TrimSpace(os.Getenv("ABC_CLI_TEST_NS")), diag)
 	}
 
 	// Prometheus: Nomad client metrics scraped by Alloy should exist.
@@ -406,8 +406,8 @@ exit 0
 	}
 	t.Logf("prometheus nomad_client_uptime: ok (sample len=%d)", len(promBody))
 
-	if strings.TrimSpace(os.Getenv("ABC_INTEGRATION_LOKI_REQUIRE")) == "0" {
-		t.Logf("skipping Loki sentinel check (ABC_INTEGRATION_LOKI_REQUIRE=0)")
+	if strings.TrimSpace(os.Getenv("ABC_CLI_INTEGRATION_LOKI_REQUIRE")) == "0" {
+		t.Logf("skipping Loki sentinel check (ABC_CLI_INTEGRATION_LOKI_REQUIRE=0)")
 		return
 	}
 
@@ -470,10 +470,10 @@ exit 0
 			t.Logf("loki debug: %s", hint)
 		}
 		if !sawLokiOK && lastTransport != nil {
-			t.Fatalf("Loki HTTP endpoint %q not reachable from this host (last error: %v). Point admin.services.loki.http at a URL you can reach (for example the same host Traefik uses), or set ABC_INTEGRATION_LOKI_REQUIRE=0 to skip the Loki assertion while still checking Prometheus.",
+			t.Fatalf("Loki HTTP endpoint %q not reachable from this host (last error: %v). Point admin.services.loki.http at a URL you can reach (for example the same host Traefik uses), or set ABC_CLI_INTEGRATION_LOKI_REQUIRE=0 to skip the Loki assertion while still checking Prometheus.",
 				strings.TrimSpace(lokiBase), lastTransport)
 		}
-		t.Fatalf("sentinel %q not found in Loki within timeout (alloc_id=%q) — ensure Alloy raw_exec runs on each Nomad client, nomad_alloc_log_path matches that host's Nomad alloc dir, and ABC_NODES_LOKI_HTTP matches the datasource used in Grafana. Optional: ABC_INTEGRATION_LOKI_WAIT_SEC, ABC_INTEGRATION_LOKI_REQUIRE=0 to skip this assertion.",
+		t.Fatalf("sentinel %q not found in Loki within timeout (alloc_id=%q) — ensure Alloy raw_exec runs on each Nomad client, nomad_alloc_log_path matches that host's Nomad alloc dir, and ABC_NODES_LOKI_HTTP matches the datasource used in Grafana. Optional: ABC_CLI_INTEGRATION_LOKI_WAIT_SEC, ABC_CLI_INTEGRATION_LOKI_REQUIRE=0 to skip this assertion.",
 			sentinel, allocID)
 	}
 	t.Logf("loki: found sentinel in query_range response")

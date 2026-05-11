@@ -18,8 +18,6 @@ const (
 	SourceFlag
 	// SourceABCEnv: canonical ABC env var was set (via os.LookupEnv).
 	SourceABCEnv
-	// SourceABCEnvAlias: a deprecated alias was set; warning emitted.
-	SourceABCEnvAlias
 	// SourceVendorEnv: vendor fallback was set (NOMAD_*, VAULT_*, ...).
 	SourceVendorEnv
 	// SourceContext: value came from the active context config.
@@ -38,8 +36,6 @@ func (s Source) String() string {
 		return "flag"
 	case SourceABCEnv:
 		return "abc-env"
-	case SourceABCEnvAlias:
-		return "abc-env-alias"
 	case SourceVendorEnv:
 		return "vendor-env"
 	case SourceContext:
@@ -98,7 +94,8 @@ type Resolver struct {
 	Env     EnvLookup
 	Context ContextLookup
 
-	// WarnSink receives one-time warnings (deprecation, vendor fallback).
+	// WarnSink receives one-time warnings (vendor fallback only — pre-1.0
+	// canonical-only registry has no alias deprecation warnings).
 	// Defaults to os.Stderr when nil.
 	WarnSink io.Writer
 
@@ -148,10 +145,9 @@ func (r *Resolver) warnOnce(key, msg string) {
 // Precedence (highest first):
 //  1. flag                  — cmd.Flags().Changed(FlagName) && FlagLookup(FlagName)
 //  2. canonical ABC env     — Env(Entry.Name)         (via os.LookupEnv)
-//  3. deprecated alias env  — Env(alias) for each Entry.Aliases (warns once)
-//  4. vendor fallback env   — Env(Entry.VendorFallback)        (warns once if no ABC context)
-//  5. active context        — Context(Entry.ContextKey)
-//  6. default               — Entry.Default
+//  3. vendor fallback env   — Env(Entry.VendorFallback)        (warns once if no ABC context)
+//  4. active context        — Context(Entry.ContextKey)
+//  5. default               — Entry.Default
 //
 // Returns ("", SourceUnset, error) when name is not in the registry.
 func (r *Resolver) Resolve(name string) (string, Source, error) {
@@ -172,16 +168,7 @@ func (r *Resolver) Resolve(name string) (string, Source, error) {
 		if v, ok := r.Env(entry.Name); ok {
 			return v, SourceABCEnv, nil
 		}
-		// 3. Deprecated aliases (warn once per alias used)
-		for _, alias := range entry.Aliases {
-			if v, ok := r.Env(alias); ok {
-				r.warnOnce("alias:"+alias,
-					fmt.Sprintf("warning: env var %s is deprecated; use %s instead",
-						alias, entry.Name))
-				return v, SourceABCEnvAlias, nil
-			}
-		}
-		// 4. Vendor fallback (warn once when no ABC context)
+		// 3. Vendor fallback (warn once when no ABC context)
 		if entry.VendorFallback != "" {
 			if v, ok := r.Env(entry.VendorFallback); ok {
 				if !r.HasABCContext {
@@ -194,14 +181,14 @@ func (r *Resolver) Resolve(name string) (string, Source, error) {
 		}
 	}
 
-	// 5. Active context config
+	// 4. Active context config
 	if r.Context != nil && entry.ContextKey != "" {
 		if v, ok := r.Context(entry.ContextKey); ok {
 			return v, SourceContext, nil
 		}
 	}
 
-	// 6. Default
+	// 5. Default
 	if entry.Default != "" {
 		return entry.Default, SourceDefault, nil
 	}

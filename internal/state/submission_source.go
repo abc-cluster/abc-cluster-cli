@@ -15,7 +15,7 @@ import (
 //
 // Resolution precedence:
 //   1. rerun=true                                → "rerun"
-//   2. ABC_AUTOMATION=1 in env                    → "automation"
+//   2. ABC_CLI_AUTOMATION=1 in env                    → "automation"
 //   3. templateID != ""                           → "template:<id>"
 //   4. otherwise                                  → "handwritten"
 //

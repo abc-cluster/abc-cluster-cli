@@ -18,10 +18,9 @@ import (
 // when the eget binary is available.
 //
 // Environment:
-//   ABC_USE_EGET     unset or "auto" — use eget when on PATH (or ABC_EGET_BIN)
-//                    "0"/"false"/"no"/"off" — never use eget
-//   ABC_EGET_BIN     path to eget executable (defaults to PATH lookup);
-//                    legacy alias: ABC_EGET_BINARY
+//   ABC_CLI_USE_EGET  unset or "auto" — use eget when on PATH (or ABC_EGET_BIN)
+//                     "0"/"false"/"no"/"off" — never use eget
+//   ABC_EGET_BIN      path to eget executable (defaults to PATH lookup)
 //
 // GitHub auth for eget matches eget's expectations: EGET_GITHUB_TOKEN or
 // GITHUB_TOKEN (abc already reads these in getGitHubToken).
@@ -40,7 +39,7 @@ func egetExecutable() string {
 // UseEgetForGitHubDownloads reports whether abc should prefer invoking eget for
 // GitHub release installs when possible.
 func UseEgetForGitHubDownloads() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("ABC_USE_EGET"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ABC_CLI_USE_EGET"))) {
 	case "0", "false", "no", "off":
 		return false
 	default:

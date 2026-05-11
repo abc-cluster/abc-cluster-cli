@@ -64,7 +64,7 @@ from your terminal.`,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		// ── Debug logging ─────────────────────────────────────────────────────
 		// Resolve verbosity level: --debug[=N] flag takes precedence over
-		// ABC_CLI_DEBUG env var (legacy alias: ABC_DEBUG).
+		// ABC_CLI_DEBUG env var.
 		level, _ := cmd.Root().PersistentFlags().GetInt("debug")
 		if level == 0 {
 			if v := envvars.Get("ABC_CLI_DEBUG"); v != "" {
@@ -208,15 +208,15 @@ func init() {
 
 	// Elevation flags.
 	rootCmd.PersistentFlags().Bool("sudo", false,
-		"Elevate to cluster-admin scope (requires admin token; or set ABC_CLI_SUDO_MODE)")
+		"Elevate to cluster-admin scope (requires admin token; or set ABC_CLI_SUDO)")
 	rootCmd.PersistentFlags().Bool("cloud", false,
 		"Elevate to infrastructure scope — fleet-wide + cloud provider APIs (or set ABC_CLI_CLOUD_MODE)")
 	rootCmd.PersistentFlags().Bool("exp", false,
 		"Enable experimental CLI features (or set ABC_CLI_EXP_MODE)")
 	rootCmd.PersistentFlags().String("cluster", clusterDefault,
 		"Target a specific named cluster in the fleet (requires --cloud; or set ABC_CLUSTER)")
-	rootCmd.PersistentFlags().String("user", utils.EnvOrDefault("ABC_AS_USER"),
-		"Act on behalf of this user email — admin only (or set ABC_AS_USER)")
+	rootCmd.PersistentFlags().String("user", utils.EnvOrDefault("ABC_API_AS_USER"),
+		"Act on behalf of this user email — admin only (or set ABC_API_AS_USER)")
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false,
 		"Suppress informational output (banners, progress)")
 
@@ -224,23 +224,23 @@ func init() {
 	// --debug          → level 1 (AI-debuggable events; recommended default)
 	// --debug=2        → level 2 (+ remote commands run, raw SSH output)
 	// --debug=3        → level 3 (max: SSH round-trips, full config content)
-	// ABC_DEBUG=N      → same as --debug=N via environment variable
+	// ABC_CLI_DEBUG=N      → same as --debug=N via environment variable
 	rootCmd.PersistentFlags().Int("debug", 0,
 		"Write structured JSON debug log to file (0=off, 1=default, 2=verbose, 3=max).\n"+
-			"    Use --debug without a value for level 1. Also ABC_DEBUG=N.\n"+
+			"    Use --debug without a value for level 1. Also ABC_CLI_DEBUG=N.\n"+
 			"    Log path is printed to stderr at start and end of run.")
 	rootCmd.PersistentFlags().Lookup("debug").NoOptDefVal = "1"
 
 	// Flags for the data command (ABC REST API).
 	rootCmd.PersistentFlags().StringVar(&serverURL, "url",
 		serverURL,
-		"abc-cluster API endpoint URL (or set ABC_API_ENDPOINT)")
+		"abc-cluster API endpoint URL (or set ABC_API_ADDR)")
 	rootCmd.PersistentFlags().StringVar(&accessToken, "access-token",
 		accessToken,
-		"abc-cluster access token (or set ABC_ACCESS_TOKEN)")
+		"abc-cluster access token (or set ABC_API_TOKEN)")
 	rootCmd.PersistentFlags().StringVar(&workspace, "workspace",
 		workspace,
-		"workspace ID (or set ABC_WORKSPACE_ID)")
+		"workspace ID (or set ABC_WORKSPACE)")
 
 	rootCmd.AddCommand(pipeline.NewCmd())
 	rootCmd.AddCommand(module.NewCmd())
@@ -312,7 +312,7 @@ func deprecatedRootContextAlias() *cobra.Command {
 }
 
 // quietMode returns true when -q / --quiet is set or ABC_CLI_QUIET=1 in env
-// (legacy alias: ABC_QUIET). Suppresses the deprecation banner for scripted use.
+// Suppresses the deprecation banner for scripted use.
 func quietMode() bool {
 	if envvars.IsTruthy("ABC_CLI_QUIET") {
 		return true

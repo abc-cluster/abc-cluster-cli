@@ -48,7 +48,7 @@ Use -- to pass argv verbatim to pulumi (recommended):
 Optional leading --binary-location <path> before --:
   abc admin services pulumi cli --binary-location /usr/local/bin/pulumi -- up --yes
 
-Set ABC_DEBUG=1 to log which MinIO credential source is being injected.`,
+Set ABC_CLI_DEBUG=1 to log which MinIO credential source is being injected.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		Hidden:             true,

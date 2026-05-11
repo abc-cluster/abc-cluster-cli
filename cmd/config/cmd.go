@@ -27,7 +27,7 @@ func NewCmd() *cobra.Command {
 		Short: "Manage local configuration",
 		Long: `Manage the abc-cluster CLI configuration file.
 
-Configuration is stored at ~/.abc/config.yaml (or ABC_CONFIG_FILE).
+Configuration is stored at ~/.abc/config.yaml (or ABC_CLI_CONFIG_FILE).
 This is where cli-managed fields like default region, output format, and
 saved authentication contexts are stored. First-time "abc config init" writes
 a "default" context entry you can fill with "abc auth login" or "abc context add".

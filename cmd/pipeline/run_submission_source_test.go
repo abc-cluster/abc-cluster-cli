@@ -32,7 +32,7 @@ func TestResolveSubmissionSource(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ABC_AUTOMATION", tc.automation)
+			t.Setenv("ABC_CLI_AUTOMATION", tc.automation)
 			cmd := &cobra.Command{}
 			cmd.Flags().String("template", "", "")
 			cmd.Flags().Bool("rerun", false, "")

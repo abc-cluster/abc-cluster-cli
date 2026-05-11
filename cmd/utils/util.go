@@ -28,8 +28,8 @@ func EnvOrDefault(keys ...string) string {
 }
 
 // SudoFromCmd returns true when the caller has requested elevated admin scope,
-// either via the --sudo flag or the ABC_CLI_SUDO environment variable
-// (legacy alias: ABC_CLI_SUDO_MODE). The env var takes priority over the flag.
+// either via the --sudo flag or the ABC_CLI_SUDO environment variable.
+// The env var takes priority over the flag.
 func SudoFromCmd(cmd *cobra.Command) bool {
 	if envvars.IsSet("ABC_CLI_SUDO") {
 		return true
@@ -42,7 +42,7 @@ func SudoFromCmd(cmd *cobra.Command) bool {
 // elevation, either via the --cloud flag or the ABC_CLI_CLOUD_MODE environment
 // variable. The env var takes priority over the flag.
 func CloudFromCmd(cmd *cobra.Command) bool {
-	if os.Getenv("ABC_CLI_CLOUD_MODE") != "" {
+	if envvars.IsSet("ABC_CLI_CLOUD_MODE") {
 		return true
 	}
 	cloud, _ := cmd.Root().PersistentFlags().GetBool("cloud")
@@ -76,8 +76,7 @@ func ExpFromCmd(cmd *cobra.Command) bool {
 }
 
 // UserFromCmd returns the --user flag value (email address for impersonation).
-// Falls back to the ABC_API_AS_USER environment variable (legacy alias:
-// ABC_AS_USER).
+// Falls back to the ABC_API_AS_USER environment variable.
 func UserFromCmd(cmd *cobra.Command) string {
 	if v := envvars.Get("ABC_API_AS_USER"); v != "" {
 		return v
@@ -89,7 +88,7 @@ func UserFromCmd(cmd *cobra.Command) string {
 // ClusterFromCmd returns the --cluster flag value, falling back to the
 // ABC_CLUSTER environment variable.
 func ClusterFromCmd(cmd *cobra.Command) string {
-	if v := os.Getenv("ABC_CLUSTER"); v != "" {
+	if v := envvars.Get("ABC_CLUSTER"); v != "" {
 		return v
 	}
 	cluster, _ := cmd.Root().PersistentFlags().GetString("cluster")

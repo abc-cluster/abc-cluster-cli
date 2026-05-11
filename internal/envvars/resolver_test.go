@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// flagMap is a tiny FlagLookup helper for tests.
 func flagMap(m map[string]string) FlagLookup {
 	return func(name string) (string, bool) {
 		v, ok := m[name]
@@ -22,8 +21,6 @@ func ctxMap(m map[string]string) ContextLookup {
 	}
 }
 
-// newTestResolver builds a Resolver with all three lookups backed by
-// in-memory maps and a captured warning sink.
 func newTestResolver(flags, env, ctx map[string]string, hasABCContext bool) (*Resolver, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
 	return &Resolver{
@@ -35,12 +32,12 @@ func newTestResolver(flags, env, ctx map[string]string, hasABCContext bool) (*Re
 	}, buf
 }
 
-// ── Precedence: flag > ABC env > alias env > vendor env > context > default ──
+// ── Precedence: flag > ABC env > vendor env > context > default ─────────
 
 func TestResolve_FlagBeatsEverything(t *testing.T) {
 	r, _ := newTestResolver(
 		map[string]string{"address": "from-flag"},
-		map[string]string{"ABC_API_ADDR": "from-env", "NOMAD_ADDR": "from-vendor"},
+		map[string]string{"ABC_API_ADDR": "from-env"},
 		map[string]string{"url": "from-context"},
 		true,
 	)
@@ -56,11 +53,11 @@ func TestResolve_FlagBeatsEverything(t *testing.T) {
 func TestResolve_ABCEnvBeatsVendorEnv(t *testing.T) {
 	r, _ := newTestResolver(
 		nil,
-		map[string]string{"ABC_API_ADDR": "from-abc", "NOMAD_ADDR": "from-nomad"},
-		map[string]string{"url": "from-context"},
+		map[string]string{"ABC_REGION": "from-abc", "NOMAD_REGION": "from-nomad"},
+		map[string]string{"region": "from-context"},
 		true,
 	)
-	v, src, err := r.Resolve("ABC_API_ADDR")
+	v, src, err := r.Resolve("ABC_REGION")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,44 +83,6 @@ func TestResolve_ExplicitEmptyABCEnvWins(t *testing.T) {
 	}
 }
 
-func TestResolve_AliasResolvesAndWarns(t *testing.T) {
-	r, warn := newTestResolver(
-		nil,
-		map[string]string{"ABC_API_ENDPOINT": "from-alias"},
-		nil,
-		true,
-	)
-	v, src, err := r.Resolve("ABC_API_ADDR")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if v != "from-alias" || src != SourceABCEnvAlias {
-		t.Errorf("got (%q, %v); want (from-alias, abc-env-alias)", v, src)
-	}
-	if !strings.Contains(warn.String(), "ABC_API_ENDPOINT is deprecated") {
-		t.Errorf("expected deprecation warning, got: %q", warn.String())
-	}
-	if !strings.Contains(warn.String(), "use ABC_API_ADDR") {
-		t.Errorf("expected migration hint, got: %q", warn.String())
-	}
-}
-
-func TestResolve_AliasWarningEmittedOncePerAlias(t *testing.T) {
-	r, warn := newTestResolver(
-		nil,
-		map[string]string{"ABC_API_ENDPOINT": "x"},
-		nil,
-		true,
-	)
-	_, _, _ = r.Resolve("ABC_API_ADDR")
-	_, _, _ = r.Resolve("ABC_API_ADDR")
-	_, _, _ = r.Resolve("ABC_API_ADDR")
-	count := strings.Count(warn.String(), "is deprecated")
-	if count != 1 {
-		t.Errorf("expected 1 deprecation warning across 3 resolutions, got %d", count)
-	}
-}
-
 func TestResolve_VendorFallbackUsed(t *testing.T) {
 	r, _ := newTestResolver(
 		nil,
@@ -145,7 +104,7 @@ func TestResolve_VendorFallbackWarnsWhenNoABCContext(t *testing.T) {
 		nil,
 		map[string]string{"NOMAD_REGION": "za-cpt"},
 		nil,
-		false, // no ABC context
+		false,
 	)
 	_, _, _ = r.Resolve("ABC_REGION")
 	if !strings.Contains(warn.String(), "using NOMAD_REGION") {
@@ -158,7 +117,7 @@ func TestResolve_VendorFallbackSilentWhenABCContextExists(t *testing.T) {
 		nil,
 		map[string]string{"NOMAD_REGION": "za-cpt"},
 		nil,
-		true, // ABC context configured: don't nag
+		true,
 	)
 	_, _, _ = r.Resolve("ABC_REGION")
 	if warn.Len() != 0 {
@@ -194,7 +153,6 @@ func TestResolve_DefaultWhenNothingElse(t *testing.T) {
 }
 
 func TestResolve_UnsetReturnsSourceUnset(t *testing.T) {
-	// ABC_API_ADDR has no Default; with nothing set, expect unset.
 	r, _ := newTestResolver(nil, nil, nil, true)
 	v, src, err := r.Resolve("ABC_API_ADDR")
 	if err != nil {
@@ -215,63 +173,69 @@ func TestResolve_UnknownNameErrors(t *testing.T) {
 
 // ── Registry sanity ─────────────────────────────────────────────────────
 
-func TestRegistry_LookupCanonicalAndAlias(t *testing.T) {
-	// Canonical
-	e, ok := Lookup("ABC_API_ADDR")
-	if !ok || e.Name != "ABC_API_ADDR" {
-		t.Errorf("Lookup(ABC_API_ADDR) = (%v, %v); want canonical entry", e, ok)
-	}
-	// Alias
-	e2, ok := Lookup("ABC_API_ENDPOINT")
-	if !ok || e2.Name != "ABC_API_ADDR" {
-		t.Errorf("Lookup(ABC_API_ENDPOINT) should resolve to ABC_API_ADDR; got (%v, %v)", e2, ok)
+func TestRegistry_NoDuplicateCanonical(t *testing.T) {
+	seen := map[string]struct{}{}
+	for _, e := range Registry {
+		if _, dup := seen[e.Name]; dup {
+			t.Errorf("duplicate canonical entry: %q", e.Name)
+		}
+		seen[e.Name] = struct{}{}
 	}
 }
 
 func TestRegistry_NoForbiddenPatterns(t *testing.T) {
-	// Reject-list per spec §B.4. Note: alias entries from older names
-	// (ABC_DISABLE_*, ABC_*_OFF) are not in our Aliases — we never had any.
-	// Tier-coupled names must never appear.
 	for _, e := range Registry {
-		names := append([]string{e.Name}, e.Aliases...)
-		for _, n := range names {
-			if strings.HasPrefix(n, "ABC_DISABLE_") {
-				t.Errorf("forbidden: %q (use ABC_<SCOPE>_NO_*)", n)
-			}
-			if strings.HasSuffix(n, "_OFF") && strings.HasPrefix(n, "ABC_") {
-				t.Errorf("forbidden: %q (use ABC_<SCOPE>_NO_*)", n)
-			}
-			if strings.HasPrefix(n, "ABC_GROVE_") ||
-				strings.HasPrefix(n, "ABC_SEEDLING_") ||
-				strings.HasPrefix(n, "ABC_CLOUD_") {
-				t.Errorf("forbidden: %q (tier-coupled — commandment 6)", n)
-			}
+		n := e.Name
+		if strings.HasPrefix(n, "ABC_DISABLE_") {
+			t.Errorf("forbidden: %q (use ABC_<SCOPE>_NO_*)", n)
+		}
+		if strings.HasSuffix(n, "_OFF") && strings.HasPrefix(n, "ABC_") {
+			t.Errorf("forbidden: %q (use ABC_<SCOPE>_NO_*)", n)
+		}
+		if strings.HasPrefix(n, "ABC_GROVE_") ||
+			strings.HasPrefix(n, "ABC_SEEDLING_") ||
+			strings.HasPrefix(n, "ABC_CLOUD_") {
+			t.Errorf("forbidden: %q (tier-coupled — commandment 6)", n)
 		}
 	}
 }
 
-func TestRegistry_AliasMustNotCollideWithAnyCanonical(t *testing.T) {
-	canonicalSet := map[string]bool{}
-	for _, e := range Registry {
-		canonicalSet[e.Name] = true
+func TestRegistry_LookupCanonical(t *testing.T) {
+	e, ok := Lookup("ABC_API_ADDR")
+	if !ok || e.Name != "ABC_API_ADDR" {
+		t.Errorf("Lookup(ABC_API_ADDR) = (%v, %v); want canonical entry", e, ok)
 	}
-	for _, e := range Registry {
-		for _, a := range e.Aliases {
-			if canonicalSet[a] {
-				t.Errorf("alias %q on entry %q collides with another canonical name", a, e.Name)
-			}
-		}
+	// Spot-check: a name that was never in the registry returns false.
+	_, ok = Lookup("ABC_NOT_A_REAL_NAME")
+	if ok {
+		t.Error("Lookup should return false for unknown names")
 	}
 }
 
-func TestRegistry_AliasUniqueAcrossEntries(t *testing.T) {
-	seen := map[string]string{} // alias -> canonical
+func TestRegistry_AllNamesProperlyScoped(t *testing.T) {
+	resourceSelectors := map[string]bool{
+		"ABC_WORKSPACE":     true,
+		"ABC_REGION":        true,
+		"ABC_NAMESPACE":     true,
+		"ABC_ORG":           true,
+		"ABC_CLUSTER":       true,
+		"ABC_PROJECT":       true,
+		"ABC_INVESTIGATION": true,
+	}
 	for _, e := range Registry {
-		for _, a := range e.Aliases {
-			if prev, dup := seen[a]; dup {
-				t.Errorf("alias %q claimed by both %q and %q", a, prev, e.Name)
-			}
-			seen[a] = e.Name
+		n := e.Name
+		if !strings.HasPrefix(n, "ABC_") {
+			// Vendor entries (NOMAD_*, VAULT_*, AWS_*) are allowed.
+			continue
+		}
+		// Resource selectors are allowed in plain ABC_<RESOURCE> form.
+		if resourceSelectors[n] {
+			continue
+		}
+		// Everything else MUST have a scope segment.
+		parts := strings.SplitN(n, "_", 3)
+		if len(parts) < 3 {
+			t.Errorf("name %q lacks scope prefix (want ABC_<SCOPE>_<PROPERTY>)", n)
 		}
 	}
 }
@@ -279,9 +243,8 @@ func TestRegistry_AliasUniqueAcrossEntries(t *testing.T) {
 // ── Subprocess injection ────────────────────────────────────────────────
 
 func TestInjectVendor_NomadSetsAllFour(t *testing.T) {
-	// Need exec.Cmd; build a stub.
 	cmd := stubCmd()
-	cmd.Env = []string{"PATH=/usr/bin"} // pre-populated, non-empty
+	cmd.Env = []string{"PATH=/usr/bin"}
 	InjectVendor(cmd, ToolNomad, Resolved{
 		NomadAddr:      "http://nomad:4646",
 		NomadToken:     "tok",
@@ -314,13 +277,11 @@ func TestInjectVendor_EmptyValuesSkipped(t *testing.T) {
 
 func TestInjectVendor_OptOutPreservesParentValue(t *testing.T) {
 	cmd := stubCmd()
-	// Simulate parent shell having NOMAD_ADDR set; opt out the derivation.
 	cmd.Env = []string{"PATH=/usr/bin", "NOMAD_ADDR=parent-value"}
 	InjectVendor(cmd, ToolNomad, Resolved{
 		NomadAddr: "abc-derived-value",
 	}, SudoOptOuts{NomadAddr: true})
 
-	// With opt-out, the parent value is kept and the derived one is NOT added.
 	count := 0
 	for _, kv := range cmd.Env {
 		if strings.HasPrefix(kv, "NOMAD_ADDR=") {
@@ -376,8 +337,6 @@ func envEquals(env []string, key, want string) bool {
 	return false
 }
 
-// stubCmd builds a minimal *exec.Cmd for tests. Tests inspect cmd.Env
-// after InjectVendor; nothing is actually executed.
 func stubCmd() *exec.Cmd {
 	return &exec.Cmd{}
 }

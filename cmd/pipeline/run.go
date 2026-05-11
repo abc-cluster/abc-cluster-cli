@@ -423,7 +423,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 // resolveSubmissionSource picks the right submission_source value for this
 // invocation. Pipelines do not yet support --template / `pipeline rerun`,
-// so the only signal today is ABC_AUTOMATION=1 vs. handwritten. The helper
+// so the only signal today is ABC_CLI_AUTOMATION=1 vs. handwritten. The helper
 // keeps the call site identical to job/module and ready for the rerun /
 // template work that's pending.
 func resolveSubmissionSource(cmd *cobra.Command) string {

@@ -33,7 +33,7 @@ contexts:
 	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)

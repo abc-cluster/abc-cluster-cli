@@ -94,7 +94,7 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 // requireSudo returns an error if sudo mode is not active.
 func requireSudo(cmd *cobra.Command) error {
 	if !utils.SudoFromCmd(cmd) {
-		return fmt.Errorf("node operations require --sudo (or ABC_CLI_SUDO_MODE=1)")
+		return fmt.Errorf("node operations require --sudo (or ABC_CLI_SUDO=1)")
 	}
 	return nil
 }

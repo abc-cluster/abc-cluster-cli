@@ -20,6 +20,8 @@
 //   - ABC_<RESOURCE>   plain form reserved for cluster-resource selectors
 //                      only: ABC_WORKSPACE, ABC_REGION, ABC_NAMESPACE,
 //                      ABC_ORG
+//
+// No legacy aliases are accepted. Pre-1.0 the CLI is canonical-only.
 package envvars
 
 // Bucket classifies an Entry for documentation, validation, and the
@@ -85,16 +87,9 @@ type Entry struct {
 	// Bucket classifies the entry.
 	Bucket Bucket
 
-	// Aliases are deprecated names still accepted on read. The resolver
-	// emits a one-time deprecation warning when an alias is the resolved
-	// source. Each alias's deprecation window is tracked by DeprecatedIn
-	// and SunsetIn on the *alias* entry (alias entries also exist in the
-	// registry, marked by IsAlias=true).
-	Aliases []string
-
 	// VendorFallback (BucketABCAPI / BucketABCResource only): the vendor
-	// env var to read when the canonical name and all aliases are unset.
-	// Empty for entries with no fallback.
+	// env var to read when the canonical name is unset. Empty for entries
+	// with no fallback.
 	VendorFallback string
 
 	// ContextKey is a dot-path within the active context that the resolver
@@ -119,25 +114,6 @@ type Entry struct {
 	// `abc env list` and the generated reference doc.
 	Purpose string
 
-	// SinceVersion is the CLI version in which this canonical name was
-	// introduced (informational; populated when migration begins).
-	SinceVersion string
-
-	// DeprecatedIn / SunsetIn (alias entries only): the CLI versions
-	// marking the deprecation window. Aliases work until SunsetIn.
-	DeprecatedIn string
-	SunsetIn     string
-
-	// IsAlias is true for entries that exist only to back-stop a rename.
-	// The alias's Name is the OLD env var; the resolver reads the alias
-	// and warns; aliases never appear in generated docs except in the
-	// deprecation section.
-	IsAlias bool
-
-	// CanonicalName (alias entries only): the new canonical name the user
-	// should migrate to.
-	CanonicalName string
-
 	// Secret marks token-like values so `abc env list` redacts them.
 	Secret bool
 }
@@ -145,116 +121,115 @@ type Entry struct {
 // Registry is the single source of truth. Order is presentation order in
 // `abc env list` output (within each bucket; bucket order is the iota order
 // above).
-//
-// To add a new env var: add an Entry here. To rename: keep the old name as
-// an IsAlias=true Entry pointing at the new CanonicalName, and add the new
-// name as a fresh canonical Entry.
 var Registry = []Entry{
 	// ── ABC API (canonical, transport) ──────────────────────────────────
 
 	{
-		Name:           "ABC_API_ADDR",
-		Bucket:         BucketABCAPI,
-		Aliases:        []string{"ABC_API_ENDPOINT", "ABC_ADDR"},
-		VendorFallback: "", // intentionally not NOMAD_ADDR: the CLI talks to
-		// the controller, not Nomad directly. NOMAD_ADDR is constructed for
-		// subprocesses via InjectVendor.
-		ContextKey:   "url",
-		FlagName:     "address",
-		Purpose:      "abc-cluster API endpoint (controller / API gateway)",
-		SinceVersion: "0.next",
+		Name:       "ABC_API_ADDR",
+		Bucket:     BucketABCAPI,
+		ContextKey: "url",
+		FlagName:   "address",
+		Purpose:    "abc-cluster API endpoint (controller / API gateway)",
 	},
 	{
-		Name:          "ABC_API_TOKEN",
-		Bucket:        BucketABCAPI,
-		Aliases:       []string{"ABC_ACCESS_TOKEN", "ABC_TOKEN"},
-		ContextKey:    "access_token",
-		FlagName:      "access-token",
-		Purpose:       "bearer token for abc-cluster API",
-		SinceVersion:  "0.next",
-		Secret:        true,
+		Name:       "ABC_API_TOKEN",
+		Bucket:     BucketABCAPI,
+		ContextKey: "access_token",
+		FlagName:   "access-token",
+		Purpose:    "bearer token for abc-cluster API",
+		Secret:     true,
 	},
 	{
-		Name:         "ABC_API_AS_USER",
-		Bucket:       BucketABCAPI,
-		Aliases:      []string{"ABC_AS_USER"},
-		Purpose:      "operator-only: impersonate another user (sent as identity-override header)",
-		SinceVersion: "0.next",
+		Name:    "ABC_API_AS_USER",
+		Bucket:  BucketABCAPI,
+		Purpose: "operator-only: impersonate another user (sent as identity-override header)",
 	},
 
 	// ── ABC CLI (canonical, local config + behaviour) ───────────────────
 
 	{
-		Name:         "ABC_CLI_CONTEXT",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_ACTIVE_CONTEXT"},
-		Purpose:      "one-shot override of active_context for this invocation",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_CONTEXT",
+		Bucket:  BucketABCCLI,
+		Purpose: "one-shot override of active_context for this invocation",
 	},
 	{
-		Name:         "ABC_CLI_CONFIG_FILE",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_CONFIG_FILE", "ABC_CONFIG"},
-		Default:      "", // resolved to ~/.abc/config.yaml by config.DefaultConfigPath
-		Purpose:      "override ~/.abc/config.yaml location",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_CONFIG_FILE",
+		Bucket:  BucketABCCLI,
+		Purpose: "override ~/.abc/config.yaml location",
 	},
 	{
-		Name:         "ABC_CLI_CACHE_DIR",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_CACHE_DIR"},
-		Purpose:      "override ~/.abc/cache/ location",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_CACHE_DIR",
+		Bucket:  BucketABCCLI,
+		Purpose: "override ~/.abc/cache/ location",
 	},
 	{
-		Name:         "ABC_CLI_OUTPUT_FORMAT",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_OUTPUT"},
-		ContextKey:   "output_format",
-		FlagName:     "output",
-		Default:      "table",
-		Purpose:      "default output format: table | json | yaml",
-		SinceVersion: "0.next",
+		Name:       "ABC_CLI_OUTPUT_FORMAT",
+		Bucket:     BucketABCCLI,
+		ContextKey: "output_format",
+		FlagName:   "output",
+		Default:    "table",
+		Purpose:    "default output format: table | json | yaml",
 	},
 	{
-		Name:         "ABC_CLI_SUDO",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_CLI_SUDO_MODE"},
-		Purpose:      "operator passthrough mode: =1 unlocks abc sudo <vendor> commands",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_SUDO",
+		Bucket:  BucketABCCLI,
+		Purpose: "operator passthrough mode: =1 unlocks abc sudo <vendor> commands",
 	},
 	{
-		Name:         "ABC_CLI_NO_TELEMETRY",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_NO_TELEMETRY"},
-		Purpose:      "=1 disables CLI-side telemetry (controller telemetry is separate)",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_CLOUD_MODE",
+		Bucket:  BucketABCCLI,
+		Purpose: "=1 unlocks abc-cloud control-plane commands (operator only)",
 	},
 	{
-		Name:         "ABC_CLI_QUIET",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_QUIET"},
-		Purpose:      "=1 suppresses non-essential stderr output",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_EXP_MODE",
+		Bucket:  BucketABCCLI,
+		Purpose: "=1 enables experimental CLI commands",
 	},
 	{
-		Name:         "ABC_CLI_AUTOMATION",
-		Bucket:       BucketABCCLI,
-		Aliases:      []string{"ABC_AUTOMATION"},
-		Purpose:      "=1 signals non-interactive automation context (suppresses prompts)",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_NO_TELEMETRY",
+		Bucket:  BucketABCCLI,
+		Purpose: "=1 disables CLI-side telemetry (controller telemetry is separate)",
+	},
+	{
+		Name:    "ABC_CLI_QUIET",
+		Bucket:  BucketABCCLI,
+		Purpose: "=1 suppresses non-essential stderr output",
+	},
+	{
+		Name:    "ABC_CLI_AUTOMATION",
+		Bucket:  BucketABCCLI,
+		Purpose: "=1 signals non-interactive automation context (suppresses prompts)",
+	},
+	{
+		Name:    "ABC_CLI_USE_EGET",
+		Bucket:  BucketABCCLI,
+		Default: "auto",
+		Purpose: "eget preference: auto | 0/false/no/off (never use eget)",
+	},
+	{
+		Name:    "ABC_CLI_TMPDIR",
+		Bucket:  BucketABCCLI,
+		Purpose: "override temp dir for CLI staging (uploads, generated scripts, ...)",
+	},
+	{
+		Name:    "ABC_CLI_ASSETS_DIR",
+		Bucket:  BucketABCCLI,
+		Purpose: "override location of CLI-bundled assets (templates, schemas, ...)",
+	},
+	{
+		Name:    "ABC_CLI_BINARIES_DIR",
+		Bucket:  BucketABCCLI,
+		Purpose: "override managed-binaries dir (default: ~/.abc/bin)",
 	},
 
 	// ── ABC RESOURCE selectors (plain ABC_<RESOURCE>) ───────────────────
 
 	{
-		Name:           "ABC_WORKSPACE",
-		Bucket:         BucketABCResource,
-		Aliases:        []string{"ABC_WORKSPACE_ID"},
-		ContextKey:     "workspace_id",
-		FlagName:       "workspace",
-		Purpose:        "workspace ID for this invocation",
-		SinceVersion:   "0.next",
+		Name:       "ABC_WORKSPACE",
+		Bucket:     BucketABCResource,
+		ContextKey: "workspace_id",
+		FlagName:   "workspace",
+		Purpose:    "workspace ID for this invocation",
 	},
 	{
 		Name:           "ABC_REGION",
@@ -263,7 +238,6 @@ var Registry = []Entry{
 		ContextKey:     "region",
 		FlagName:       "region",
 		Purpose:        "sovereignty region (ZA / KE / MZ / ...)",
-		SinceVersion:   "0.next",
 	},
 	{
 		Name:           "ABC_NAMESPACE",
@@ -272,114 +246,182 @@ var Registry = []Entry{
 		ContextKey:     "namespace",
 		FlagName:       "namespace",
 		Purpose:        "logical namespace within workspace",
-		SinceVersion:   "0.next",
 	},
 	{
-		Name:         "ABC_ORG",
-		Bucket:       BucketABCResource,
-		ContextKey:   "org_id",
-		FlagName:     "org",
-		Purpose:      "organization ID when multi-org",
-		SinceVersion: "0.next",
+		Name:       "ABC_ORG",
+		Bucket:     BucketABCResource,
+		ContextKey: "org_id",
+		FlagName:   "org",
+		Purpose:    "organization ID when multi-org",
+	},
+	{
+		Name:     "ABC_CLUSTER",
+		Bucket:   BucketABCResource,
+		FlagName: "cluster",
+		Purpose:  "cluster identifier within active context",
+	},
+	{
+		Name:     "ABC_PROJECT",
+		Bucket:   BucketABCResource,
+		FlagName: "project",
+		Purpose:  "project identifier within workspace",
+	},
+	{
+		Name:     "ABC_INVESTIGATION",
+		Bucket:   BucketABCResource,
+		FlagName: "investigation",
+		Purpose:  "investigation identifier within project",
 	},
 
 	// ── ABC COMPONENT (tool binaries) ───────────────────────────────────
 
 	{
-		Name:         "ABC_NOMAD_BIN",
-		Bucket:       BucketToolBinary,
-		Purpose:      "override path to the nomad binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_NOMAD_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the nomad binary",
 	},
 	{
-		Name:         "ABC_VAULT_BIN",
-		Bucket:       BucketToolBinary,
-		Purpose:      "override path to the vault binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_VAULT_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the vault binary",
 	},
 	{
-		Name:         "ABC_RCLONE_BIN",
-		Bucket:       BucketToolBinary,
-		Purpose:      "override path to the rclone binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_RCLONE_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the rclone binary",
 	},
 	{
-		Name:         "ABC_S5CMD_BIN",
-		Bucket:       BucketToolBinary,
-		Purpose:      "override path to the s5cmd binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_S5CMD_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the s5cmd binary",
 	},
 	{
-		Name:         "ABC_NEXTFLOW_BIN",
-		Bucket:       BucketToolBinary,
-		Purpose:      "override path to the nextflow binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_NEXTFLOW_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the nextflow binary",
 	},
 	{
-		Name:         "ABC_NODE_PROBE_BIN",
-		Bucket:       BucketToolBinary,
-		Aliases:      []string{"ABC_NODE_PROBE_CLI_BINARY"},
-		Purpose:      "override path to the abc-node-probe binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_NODE_PROBE_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the abc-node-probe binary",
 	},
 	{
-		Name:         "ABC_SHELLCHECK_BIN",
-		Bucket:       BucketToolBinary,
-		Purpose:      "override path to the shellcheck binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_SHELLCHECK_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the shellcheck binary",
 	},
 	{
-		Name:         "ABC_EGET_BIN",
-		Bucket:       BucketToolBinary,
-		Aliases:      []string{"ABC_EGET_BINARY"},
-		Purpose:      "override path to the eget binary",
-		SinceVersion: "0.next",
+		Name:    "ABC_EGET_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the eget binary",
+	},
+
+	// ── ABC COMPONENT (capability / upload / crypt / node) ──────────────
+
+	{
+		Name:    "ABC_CAPABILITY_TTL",
+		Bucket:  BucketABCComponent,
+		Purpose: "capability cache TTL (e.g. 24h)",
+	},
+	{
+		Name:    "ABC_CAPABILITY_HARD_EXPIRY",
+		Bucket:  BucketABCComponent,
+		Purpose: "capability hard-expiry window beyond TTL (e.g. 72h)",
+	},
+	{
+		Name:       "ABC_UPLOAD_ENDPOINT",
+		Bucket:     BucketABCComponent,
+		ContextKey: "upload_endpoint",
+		Purpose:    "tusd upload endpoint override",
+	},
+	{
+		Name:       "ABC_UPLOAD_TOKEN",
+		Bucket:     BucketABCComponent,
+		ContextKey: "upload_token",
+		Purpose:    "tusd upload token override",
+		Secret:     true,
+	},
+	{
+		Name:    "ABC_CRYPT_PASSWORD",
+		Bucket:  BucketABCComponent,
+		Purpose: "rclone-crypt password (also keys abc secrets)",
+		Secret:  true,
+	},
+	{
+		Name:    "ABC_CRYPT_SALT",
+		Bucket:  BucketABCComponent,
+		Purpose: "rclone-crypt salt",
+		Secret:  true,
+	},
+	{
+		Name:    "ABC_NODE_PASSWORD",
+		Bucket:  BucketABCComponent,
+		Purpose: "abc-node bootstrap password",
+		Secret:  true,
+	},
+	{
+		Name:    "ABC_NODE_NO_PROBE",
+		Bucket:  BucketABCComponent,
+		Purpose: "=1 skips the periodic node-probe sysbatch job",
 	},
 
 	// ── ABC CLI DEBUG / TEST (reserved namespace) ───────────────────────
 
 	{
-		Name:         "ABC_CLI_DEBUG",
-		Bucket:       BucketDebugTest,
-		Aliases:      []string{"ABC_DEBUG"},
-		Purpose:      "=1 enables CLI debug logging (internal-only)",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_DEBUG",
+		Bucket:  BucketDebugTest,
+		Purpose: "=1 (or =N) enables CLI debug logging at level N",
 	},
 	{
-		Name:         "ABC_CLI_DEBUG_KEEP_SCRIPT",
-		Bucket:       BucketDebugTest,
-		Aliases:      []string{"ABC_DEBUG_KEEP_SCRIPT"},
-		Purpose:      "internal: keep generated scripts on disk after run",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_DEBUG_KEEP_SCRIPT",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: keep generated scripts on disk after run",
 	},
 	{
-		Name:         "ABC_CLI_LOG_LEVEL",
-		Bucket:       BucketDebugTest,
-		Aliases:      []string{"ABC_LOG_LEVEL"},
-		Default:      "info",
-		Purpose:      "CLI log level: trace | debug | info | warn | error",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_LOG_LEVEL",
+		Bucket:  BucketDebugTest,
+		Default: "info",
+		Purpose: "CLI log level: trace | debug | info | warn | error",
 	},
 	{
-		Name:         "ABC_CLI_TRACE",
-		Bucket:       BucketDebugTest,
-		Aliases:      []string{"ABC_TRACE"},
-		Purpose:      "=1 enables CLI execution tracing",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_TRACE",
+		Bucket:  BucketDebugTest,
+		Purpose: "=1 enables CLI execution tracing",
 	},
 	{
-		Name:         "ABC_CLI_TEST_NS",
-		Bucket:       BucketDebugTest,
-		Aliases:      []string{"ABC_TEST_NS"},
-		Purpose:      "internal: namespace override for integration tests",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_TEST_NS",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: namespace override for integration tests",
 	},
 	{
-		Name:         "ABC_CLI_TEST_TIMEOUT",
-		Bucket:       BucketDebugTest,
-		Aliases:      []string{"ABC_TEST_TIMEOUT"},
-		Purpose:      "internal: timeout override for integration tests",
-		SinceVersion: "0.next",
+		Name:    "ABC_CLI_TEST_TIMEOUT",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: timeout override for integration tests",
+	},
+	{
+		Name:    "ABC_CLI_INTEGRATION_LOKI_REQUIRE",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: integration test requires Loki present",
+	},
+	{
+		Name:    "ABC_CLI_INTEGRATION_LOKI_WAIT_SEC",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: integration test Loki wait timeout (seconds)",
+	},
+	{
+		Name:    "ABC_CLI_INTEGRATION_OBS_STACK",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: integration test observability stack flag",
+	},
+	{
+		Name:    "ABC_CLI_INTEGRATION_STRESS_NG",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: stress-ng integration test toggle",
+	},
+	{
+		Name:    "ABC_CLI_INTEGRATION_STRESS_TIMEOUT",
+		Bucket:  BucketDebugTest,
+		Purpose: "internal: stress-ng integration test timeout",
 	},
 
 	// ── VENDOR FALLBACK (compat-only; documented as last-resort) ────────
@@ -387,13 +429,13 @@ var Registry = []Entry{
 	{
 		Name:    "NOMAD_ADDR",
 		Bucket:  BucketVendorFallback,
-		Purpose: "fallback: only consulted when no ABC context is configured",
+		Purpose: "fallback: consulted only when no ABC context is configured",
 	},
 	{
 		Name:    "NOMAD_TOKEN",
 		Bucket:  BucketVendorFallback,
 		Secret:  true,
-		Purpose: "fallback: only consulted when no ABC context is configured",
+		Purpose: "fallback: consulted only when no ABC context is configured",
 	},
 	{
 		Name:    "NOMAD_REGION",
@@ -439,25 +481,18 @@ var Registry = []Entry{
 	},
 }
 
-// Lookup returns the canonical Entry for name (matching either the Name or
-// any Alias). Returns (Entry{}, false) if name is unknown.
+// Lookup returns the Entry for the given canonical name. Returns
+// (Entry{}, false) if name is not registered.
 func Lookup(name string) (Entry, bool) {
 	for _, e := range Registry {
 		if e.Name == name {
 			return e, true
 		}
-		for _, a := range e.Aliases {
-			if a == name {
-				return e, true
-			}
-		}
 	}
 	return Entry{}, false
 }
 
-// ByBucket returns all canonical entries in a given bucket, in registry order.
-// Alias-only entries are excluded (they aren't separate Entry values in this
-// design — aliases are fields on their canonical Entry).
+// ByBucket returns all entries in a given bucket, in registry order.
 func ByBucket(b Bucket) []Entry {
 	var out []Entry
 	for _, e := range Registry {

@@ -287,7 +287,7 @@ EXAMPLES
 
 // resolveJobSubmissionSource picks the submission_source value for an
 // `abc job run` invocation. Mirrors the pipeline / module helper. The
-// underlying classifier handles the env-var (ABC_AUTOMATION) and
+// underlying classifier handles the env-var (ABC_CLI_AUTOMATION) and
 // flag-precedence rules; today neither --template nor --rerun exists on
 // `abc job run`, so this resolves to "automation" or "handwritten".
 func resolveJobSubmissionSource(cmd *cobra.Command) string {

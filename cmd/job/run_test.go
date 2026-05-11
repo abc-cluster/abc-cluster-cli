@@ -23,7 +23,7 @@ contexts:
     cluster_type: abc-cloud
 `
 
-// executeCmdWithABCYAML runs "abc job run <args...>" with ABC_CONFIG_FILE
+// executeCmdWithABCYAML runs "abc job run <args...>" with ABC_CLI_CONFIG_FILE
 // pointing at a temp file containing yaml (overrides any inherited env).
 func executeCmdWithABCYAML(t *testing.T, yaml string, args ...string) (string, error) {
 	t.Helper()
@@ -31,7 +31,7 @@ func executeCmdWithABCYAML(t *testing.T, yaml string, args ...string) (string, e
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write temp abc config: %v", err)
 	}
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 
 	buf := &bytes.Buffer{}
 	root := &cobra.Command{Use: "abc"}
@@ -47,11 +47,11 @@ func executeCmdWithABCYAML(t *testing.T, yaml string, args ...string) (string, e
 	return buf.String(), err
 }
 
-// executeCmdWithConfigPath runs job run with ABC_CONFIG_FILE set to an
+// executeCmdWithConfigPath runs job run with ABC_CLI_CONFIG_FILE set to an
 // existing (or intentionally missing) path.
 func executeCmdWithConfigPath(t *testing.T, cfgPath string, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 
 	buf := &bytes.Buffer{}
 	root := &cobra.Command{Use: "abc"}

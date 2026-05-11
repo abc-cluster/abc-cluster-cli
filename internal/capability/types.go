@@ -79,7 +79,7 @@ type Decision struct {
 	// `--signed` without Veld is fail-fast, not silent fall-through.
 	UnusableFlags []FlagBlocked
 	// Banner is the user-facing line printed at the top of stderr when
-	// non-empty. Suppressible via ABC_QUIET=1 in the verb's render path.
+	// non-empty. Suppressible via ABC_CLI_QUIET=1 in the verb's render path.
 	Banner string
 	// FailReason is set when no AllOf/AnyOf option matched. Empty when
 	// the decision is acceptable.

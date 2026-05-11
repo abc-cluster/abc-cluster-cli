@@ -22,7 +22,7 @@ contexts:
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ABC_ACTIVE_CONTEXT", "aither")
+	t.Setenv("ABC_CLI_CONTEXT", "aither")
 
 	cfg, err := LoadFrom(path)
 	if err != nil {
@@ -48,13 +48,13 @@ contexts:
 `), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ABC_ACTIVE_CONTEXT", "missing")
+	t.Setenv("ABC_CLI_CONTEXT", "missing")
 
 	cfg, err := LoadFrom(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.ActiveContext != "x" {
-		t.Fatalf("unknown ABC_ACTIVE_CONTEXT must not override file; got %q want x", cfg.ActiveContext)
+		t.Fatalf("unknown ABC_CLI_CONTEXT must not override file; got %q want x", cfg.ActiveContext)
 	}
 }

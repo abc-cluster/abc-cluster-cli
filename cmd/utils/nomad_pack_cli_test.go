@@ -11,7 +11,7 @@ import (
 
 func TestRunNomadPackCLI_InjectsNomadEnvFromActiveContext(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("ABC_CONFIG_FILE", cfgPath)
+	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 	raw := `version: "1"
 active_context: dev
 contexts:

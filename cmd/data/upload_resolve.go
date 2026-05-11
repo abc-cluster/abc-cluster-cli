@@ -59,7 +59,7 @@ func resolveUploadEndpoint(cmd *cobra.Command, flagEndpoint, serverURL string) (
 // 3) active context upload_token
 // 4) ABC_TOKEN / NOMAD_TOKEN
 // 5) active context admin.services.nomad.nomad_token
-// 6) root --access-token / ABC_ACCESS_TOKEN (passed as accessToken)
+// 6) root --access-token / ABC_API_TOKEN (passed as accessToken)
 func resolveUploadToken(cmd *cobra.Command, flagToken, accessToken string) string {
 	if cmd.Flags().Changed("upload-token") {
 		if v := strings.TrimSpace(flagToken); v != "" {

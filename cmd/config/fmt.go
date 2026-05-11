@@ -18,7 +18,7 @@ func newFmtCmd() *cobra.Command {
 		Long: `Load the configuration file, validate it, and write it back using the canonical YAML layout
 (lexicographically sorted keys at each mapping level, stable top-level key order).
 
-The file is the same as other abc config commands: ABC_CONFIG_FILE if set, otherwise ~/.abc/config.yaml.
+The file is the same as other abc config commands: ABC_CLI_CONFIG_FILE if set, otherwise ~/.abc/config.yaml.
 
 Use --check to only validate and verify the file already matches canonical output; the command exits with
 a non-zero status if validation fails or the file would change.`,
@@ -79,7 +79,7 @@ a non-zero status if validation fails or the file would change.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&pathFlag, "path", "", "config file path (default: ABC_CONFIG_FILE or ~/.abc/config.yaml)")
+	cmd.Flags().StringVar(&pathFlag, "path", "", "config file path (default: ABC_CLI_CONFIG_FILE or ~/.abc/config.yaml)")
 	cmd.Flags().BoolVar(&check, "check", false, "validate only; fail if the file is invalid or not already canonical")
 	return cmd
 }
