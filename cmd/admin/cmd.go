@@ -9,6 +9,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/boundary"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/consul"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/eget"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/env"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/grafana"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/hashiup"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/loki"
@@ -101,6 +102,9 @@ func NewCmd() *cobra.Command {
 
 	// tools sub-group — operator-side binary cache + cluster S3 push.
 	cmd.AddCommand(tools.NewCmd())
+
+	// env sub-group — env-var resolution introspection (operator diagnostics).
+	cmd.AddCommand(env.NewCmd())
 
 	// app sub-group — application-level entity management.
 	cmd.AddCommand(newAppCmd())

@@ -100,6 +100,12 @@ type Context struct {
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
+	Namespace      string `yaml:"namespace,omitempty"`
+	// OutputFormat is the per-context default for `abc <verb>` output:
+	// "table" | "json" | "yaml". Overridable per-invocation by --output
+	// or ABC_CLI_OUTPUT_FORMAT. Empty falls back to defaults.output and
+	// then to "table".
+	OutputFormat string `yaml:"output_format,omitempty"`
 	// ControllerURL is the abc-controller-svc endpoint for the cluster's
 	// capability probe. When set, `abc cluster capabilities sync` probes
 	// abc-controller-svc's /v1/capabilities; when empty, sync falls back to Nomad
