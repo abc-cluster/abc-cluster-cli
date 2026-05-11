@@ -1,9 +1,7 @@
 # `abc report`
 
 Researcher-productivity summary read entirely from `~/.abc/local.db`. No
-network calls — `abc report` is a seed-tier-native verb. Cross-institution
-aggregation, opt-in sharing, and dashboards are abc-cloud territory and gate
-behind the `abc-controller-svc` capability (see `--all-contexts` below).
+network calls — `abc report` is a seed-tier-native verb.
 
 ## Usage
 
@@ -24,7 +22,7 @@ abc report --technical          # metric IDs replace human Titles
 | `--by=<axis>` | _unset_ | Aggregation axis: `investigation` / `project` / `pipeline` / `user`. **JSON-only in v1**; text mode rejects with a "deferred to v2" message. |
 | `--json` | `false` | Emit the structured JSON contract documented below |
 | `--technical` | `false` | Replace human Titles with metric IDs in the text headline (useful for reproducible doc snippets) |
-| `--all-contexts` | `false` | Cross-context aggregation. **Phase 2**: rejects with `--all-contexts requires abc-controller-svc; not available in this context.` |
+| `--all-contexts` | `false` | Cross-context aggregation. **Phase 2**: rejects with `--all-contexts requires abc-controller-svc; not available in this context.` (gated until the controller service is deployed) |
 
 ## Two-layer metric naming
 
@@ -205,10 +203,10 @@ asserts zero `RoundTrip` calls during render.
 
 ## Capability layer
 
-| Need | Backend | Phase |
+| Need | Backend | Available |
 |---|---|---|
 | AllOf `local-state` | local SQLite | seed (always) |
-| `--all-contexts` → `abc-controller-svc` (`federation-aggregate`) | controller service | abc-cloud |
+| `--all-contexts` → `abc-controller-svc` (`federation-aggregate`) | controller service | gated; rejects until controller service is reachable |
 
 `--all-contexts` rejects with the standard capability.Require failure message
 when the controller service isn't deployed in the active context's capabilities
@@ -217,6 +215,6 @@ map.
 ## See also
 
 - [`abc accounting`](./abc-accounting) — write-side namespace budget caps and
-  admission-gate thresholds (grove+ / cloud).
+  admission-gate thresholds (grove tier and above).
 - [`abc localdb status`](./local-state) — schema version, applied migrations,
   feature flags.

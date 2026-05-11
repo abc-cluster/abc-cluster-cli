@@ -72,4 +72,4 @@ Common config keys:
 | `contexts.<name>.access_token` | Access token |
 | `contexts.<name>.workspace_id` | Workspace ID |
 | `contexts.<name>.controller_url` | abc-controller-svc endpoint for the capability probe (optional; when set, `abc cluster capabilities sync` probes here instead of Nomad) |
-| `contexts.<name>.cluster_type` | `abc-nodes` \| `abc-grove` — used by tier-default capability seeding |
+| `contexts.<name>.cluster_type` | `abc-seedling` \| `abc-grove` (canonical short form). Long-form `abc-cluster-seedling` / `abc-cluster-grove` and `-tended` variants are accepted aliases; legacy `abc-nodes` / `abc-cluster` / `abc-seed` resolve to the new canonical on read. Used by tier-default capability seeding. |
