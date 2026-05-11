@@ -307,7 +307,16 @@ func runPush(ctx context.Context, w io.Writer, args []string, dryRun bool, bucke
 // ── S3 backend resolution ─────────────────────────────────────────────────────
 
 // resolveS3Backend picks the reachable S3 service from the active context.
-// Preference order: admin.tools.context_service → try the other service as fallback.
+//
+// Credential resolution order per spec criterion D:
+//  1. AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the caller's environment
+//     (env-var-first; overrides everything below — CI/CD compatibility).
+//  2. admin.tools.context_service names a service (default: "rustfs" if unset).
+//     Read admin.services.<name>.{endpoint,access_key,secret_key} via
+//     AdminFloorServiceNamed — no IsABCNodesCluster() gate.
+//  3. admin.abc_nodes.s3_access_key / s3_secret_key fallback.
+//  4. Exit non-zero with actionable message if all sources are empty.
+//
 // Returns (endpoint, envMap, error).
 func resolveS3Backend(ctx context.Context, cfg *ToolsConfig) (string, map[string]string, error) {
 	activeCfg, err := config.Load()
@@ -320,18 +329,7 @@ func resolveS3Backend(ctx context.Context, cfg *ToolsConfig) (string, map[string
 	preferred := activeCtx.ToolPushContextService() // defaults to "rustfs"
 
 	try := func(svc string) (string, map[string]string, bool) {
-		var endpoint string
-		var envMap map[string]string
-		switch svc {
-		case "rustfs":
-			endpoint = activeCtx.RustfsS3APIEndpoint()
-			envMap = activeCtx.AbcNodesRustfsStorageCLIEnv()
-		case "minio":
-			endpoint = activeCtx.MinioS3APIEndpoint()
-			envMap = activeCtx.AbcNodesMinioStorageCLIEnv()
-		default:
-			return "", nil, false
-		}
+		endpoint := resolveFloorEndpoint(activeCtx, svc)
 		endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
 		if endpoint == "" {
 			return "", nil, false
@@ -339,6 +337,7 @@ func resolveS3Backend(ctx context.Context, cfg *ToolsConfig) (string, map[string
 		if !isEndpointReachable(ctx, endpoint) {
 			return "", nil, false
 		}
+		envMap := resolveS3Credentials(activeCtx, svc, endpoint)
 		return endpoint, envMap, true
 	}
 
@@ -346,7 +345,7 @@ func resolveS3Backend(ctx context.Context, cfg *ToolsConfig) (string, map[string
 		return ep, env, nil
 	}
 
-	// Fallback.
+	// Fallback to the other service.
 	fallback := "minio"
 	if preferred == "minio" {
 		fallback = "rustfs"
@@ -360,6 +359,83 @@ func resolveS3Backend(ctx context.Context, cfg *ToolsConfig) (string, map[string
 			"Check admin.services.rustfs.endpoint / admin.services.minio.endpoint in your config.",
 		preferred, fallback,
 	)
+}
+
+// resolveFloorEndpoint returns admin.services.<svc>.endpoint for the context.
+func resolveFloorEndpoint(c config.Context, svc string) string {
+	if v, ok := config.GetAdminFloorField(&c.Admin.Services, svc, "endpoint"); ok {
+		return v
+	}
+	// Legacy fallback for minio: admin.abc_nodes.s3_endpoint (via MinioS3APIEndpoint).
+	if svc == "minio" {
+		return c.MinioS3APIEndpoint()
+	}
+	return ""
+}
+
+// resolveS3Credentials builds the AWS_* env map for s5cmd using the credential
+// resolution order from spec criterion D:
+//  1. AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from caller environment.
+//  2. admin.services.<svc>.access_key / secret_key via AdminFloorServiceNamed.
+//  3. admin.abc_nodes.s3_access_key / s3_secret_key fallback.
+func resolveS3Credentials(c config.Context, svc, endpoint string) map[string]string {
+	// Step 1: caller environment wins unconditionally.
+	accessKey := strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID"))
+	secretKey := strings.TrimSpace(os.Getenv("AWS_SECRET_ACCESS_KEY"))
+
+	// Step 2: admin.services.<svc> credentials (no IsABCNodesCluster() gate).
+	if accessKey == "" {
+		if v, ok := config.GetAdminFloorField(&c.Admin.Services, svc, "access_key"); ok {
+			accessKey = v
+		}
+	}
+	if secretKey == "" {
+		if v, ok := config.GetAdminFloorField(&c.Admin.Services, svc, "secret_key"); ok {
+			secretKey = v
+		}
+	}
+	// user/password aliases for minio.
+	if svc == "minio" {
+		if accessKey == "" {
+			if v, ok := config.GetAdminFloorField(&c.Admin.Services, svc, "user"); ok {
+				accessKey = v
+			}
+		}
+		if secretKey == "" {
+			if v, ok := config.GetAdminFloorField(&c.Admin.Services, svc, "password"); ok {
+				secretKey = v
+			}
+		}
+	}
+
+	// Step 3: admin.abc_nodes fallback.
+	if n := c.ABCNodes(); n != nil {
+		if accessKey == "" {
+			accessKey = strings.TrimSpace(n.S3AccessKey)
+		}
+		if secretKey == "" {
+			secretKey = strings.TrimSpace(n.S3SecretKey)
+		}
+		if accessKey == "" {
+			accessKey = strings.TrimSpace(n.MinioRootUser)
+		}
+		if secretKey == "" {
+			secretKey = strings.TrimSpace(n.MinioRootPassword)
+		}
+	}
+
+	out := make(map[string]string)
+	if accessKey != "" {
+		out["AWS_ACCESS_KEY_ID"] = accessKey
+	}
+	if secretKey != "" {
+		out["AWS_SECRET_ACCESS_KEY"] = secretKey
+	}
+	if endpoint != "" {
+		out["AWS_ENDPOINT_URL"] = endpoint
+		out["AWS_ENDPOINT_URL_S3"] = endpoint
+	}
+	return out
 }
 
 // ensureBucket checks whether bucket exists on the S3 endpoint and creates it
