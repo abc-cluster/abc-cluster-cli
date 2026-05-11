@@ -123,6 +123,7 @@ Paths to subprocess binaries the CLI shells out to. Operator territory.
 | `ABC_NOMAD_BIN` | override path to the nomad binary | — | — | — | — |
 | `ABC_VAULT_BIN` | override path to the vault binary | — | — | — | — |
 | `ABC_RCLONE_BIN` | override path to the rclone binary | — | — | — | — |
+| `ABC_MC_BIN` | override path to the mc (MinIO Client) binary | — | — | — | — |
 | `ABC_S5CMD_BIN` | override path to the s5cmd binary | — | — | — | — |
 | `ABC_NEXTFLOW_BIN` | override path to the nextflow binary | — | — | — | — |
 | `ABC_NODE_PROBE_BIN` | override path to the abc-node-probe binary | — | — | — | — |
@@ -169,10 +170,24 @@ The CLI constructs these for child processes from the active context. You do not
 
 | Name | Purpose | Flag | Context key | Vendor fallback | Default |
 |---|---|---|---|---|---|
-| `AWS_ACCESS_KEY_ID` | constructed for rclone/s5cmd subprocesses from active context | — | — | — | — |
-| `AWS_SECRET_ACCESS_KEY` 🔒 | constructed for rclone/s5cmd subprocesses from active context | — | — | — | — |
-| `AWS_ENDPOINT_URL` | constructed for rclone/s5cmd subprocesses from active context | — | — | — | — |
-| `AWS_REGION` | constructed for rclone/s5cmd subprocesses from active context | — | — | — | — |
+| `AWS_ACCESS_KEY_ID` | constructed for rclone/s5cmd/nextflow/mc subprocesses from active context | — | — | — | — |
+| `AWS_SECRET_ACCESS_KEY` 🔒 | constructed for rclone/s5cmd/nextflow/mc subprocesses from active context | — | — | — | — |
+| `AWS_ENDPOINT_URL` | constructed for rclone/s5cmd/nextflow/mc subprocesses from active context | — | — | — | — |
+| `AWS_REGION` | constructed for rclone/s5cmd/nextflow/mc subprocesses from active context | — | — | — | — |
+| `AWS_DEFAULT_REGION` | older vendor variant of AWS_REGION; some tools (older aws-cli, boto) only read this | — | — | — | — |
+| `AWS_SESSION_TOKEN` 🔒 | session token for grove+ short-lived credentials (STS-style) | — | — | — | — |
+| `AWS_CA_BUNDLE` | custom CA cert path for self-signed S3 endpoints (lab deployments) | — | — | — | — |
+| `AWS_S3_FORCE_PATH_STYLE` | force path-style addressing; required for MinIO and RustFS | — | — | — | — |
+| `S3_FORCE_PATH_STYLE` | older vendor variant of AWS_S3_FORCE_PATH_STYLE | — | — | — | — |
+| `AWS_REQUEST_CHECKSUM_CALCULATION` | set to when_required for MinIO compatibility with newer AWS SDKs | — | — | — | — |
+| `MC_HOST_local` 🔒 | MinIO Client connection alias for the active context; URL with embedded credentials | — | — | — | — |
+| `MC_INSECURE` | MinIO Client: skip TLS verification (self-signed endpoints) | — | — | — | — |
+| `MINIO_SERVER` | host:port for Pulumi MinIO provider (scheme stripped) | — | — | — | — |
+| `MINIO_USER` | user for Pulumi MinIO provider | — | — | — | — |
+| `MINIO_PASSWORD` 🔒 | password for Pulumi MinIO provider | — | — | — | — |
+| `MINIO_ROOT_USER` | MinIO server root user (constructed for `abc admin services minio cli` passthrough) | — | — | — | — |
+| `MINIO_ROOT_PASSWORD` 🔒 | MinIO server root password (constructed for `abc admin services minio cli` passthrough) | — | — | — | — |
+| `RCLONE_CONFIG` | path to rclone config file (the CLI generates one per invocation) | — | — | — | — |
 
 
 

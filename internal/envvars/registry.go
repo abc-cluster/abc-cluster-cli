@@ -291,6 +291,11 @@ var Registry = []Entry{
 		Purpose: "override path to the rclone binary",
 	},
 	{
+		Name:    "ABC_MC_BIN",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the mc (MinIO Client) binary",
+	},
+	{
 		Name:    "ABC_S5CMD_BIN",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the s5cmd binary",
@@ -458,26 +463,109 @@ var Registry = []Entry{
 		Secret:  true,
 		Purpose: "fallback: consulted only in abc sudo vault passthrough",
 	},
+	// ── SUBPROCESS OUT — AWS SDK family ─────────────────────────────────
 	{
 		Name:    "AWS_ACCESS_KEY_ID",
 		Bucket:  BucketSubprocessOut,
-		Purpose: "constructed for rclone/s5cmd subprocesses from active context",
+		Purpose: "constructed for rclone/s5cmd/nextflow/mc subprocesses from active context",
 	},
 	{
 		Name:    "AWS_SECRET_ACCESS_KEY",
 		Bucket:  BucketSubprocessOut,
 		Secret:  true,
-		Purpose: "constructed for rclone/s5cmd subprocesses from active context",
+		Purpose: "constructed for rclone/s5cmd/nextflow/mc subprocesses from active context",
 	},
 	{
 		Name:    "AWS_ENDPOINT_URL",
 		Bucket:  BucketSubprocessOut,
-		Purpose: "constructed for rclone/s5cmd subprocesses from active context",
+		Purpose: "constructed for rclone/s5cmd/nextflow/mc subprocesses from active context",
 	},
 	{
 		Name:    "AWS_REGION",
 		Bucket:  BucketSubprocessOut,
-		Purpose: "constructed for rclone/s5cmd subprocesses from active context",
+		Purpose: "constructed for rclone/s5cmd/nextflow/mc subprocesses from active context",
+	},
+	{
+		Name:    "AWS_DEFAULT_REGION",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "older vendor variant of AWS_REGION; some tools (older aws-cli, boto) only read this",
+	},
+	{
+		Name:    "AWS_SESSION_TOKEN",
+		Bucket:  BucketSubprocessOut,
+		Secret:  true,
+		Purpose: "session token for grove+ short-lived credentials (STS-style)",
+	},
+	{
+		Name:    "AWS_CA_BUNDLE",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "custom CA cert path for self-signed S3 endpoints (lab deployments)",
+	},
+	{
+		Name:    "AWS_S3_FORCE_PATH_STYLE",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "force path-style addressing; required for MinIO and RustFS",
+	},
+	{
+		Name:    "S3_FORCE_PATH_STYLE",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "older vendor variant of AWS_S3_FORCE_PATH_STYLE",
+	},
+	{
+		Name:    "AWS_REQUEST_CHECKSUM_CALCULATION",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "set to when_required for MinIO compatibility with newer AWS SDKs",
+	},
+
+	// ── SUBPROCESS OUT — MinIO Client (mc) ──────────────────────────────
+	{
+		Name:    "MC_HOST_local",
+		Bucket:  BucketSubprocessOut,
+		Secret:  true,
+		Purpose: "MinIO Client connection alias for the active context; URL with embedded credentials",
+	},
+	{
+		Name:    "MC_INSECURE",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "MinIO Client: skip TLS verification (self-signed endpoints)",
+	},
+
+	// ── SUBPROCESS OUT — Pulumi MinIO provider ──────────────────────────
+	{
+		Name:    "MINIO_SERVER",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "host:port for Pulumi MinIO provider (scheme stripped)",
+	},
+	{
+		Name:    "MINIO_USER",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "user for Pulumi MinIO provider",
+	},
+	{
+		Name:    "MINIO_PASSWORD",
+		Bucket:  BucketSubprocessOut,
+		Secret:  true,
+		Purpose: "password for Pulumi MinIO provider",
+	},
+
+	// ── SUBPROCESS OUT — MinIO server admin (operator passthrough) ──────
+	{
+		Name:    "MINIO_ROOT_USER",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "MinIO server root user (constructed for `abc admin services minio cli` passthrough)",
+	},
+	{
+		Name:    "MINIO_ROOT_PASSWORD",
+		Bucket:  BucketSubprocessOut,
+		Secret:  true,
+		Purpose: "MinIO server root password (constructed for `abc admin services minio cli` passthrough)",
+	},
+
+	// ── SUBPROCESS OUT — rclone ─────────────────────────────────────────
+	{
+		Name:    "RCLONE_CONFIG",
+		Bucket:  BucketSubprocessOut,
+		Purpose: "path to rclone config file (the CLI generates one per invocation)",
 	},
 }
 
