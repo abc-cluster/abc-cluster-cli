@@ -94,14 +94,14 @@ func ensureNomadEnv() {
 
 // integrationNomadAuthFlags returns argv fragments for executeCmd after --nomad-addr so the
 // in-process cobra command uses the same token as requireNomad's raw HTTP calls.
-// Persistent flag defaults use EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"); when both env vars
+// Persistent flag defaults use EnvOrDefault("NOMAD_TOKEN"); when both env vars
 // are set to different tokens, the weaker ABC_TOKEN would win and Nomad can return 403 on
 // jobs/parse while GET /v1/status/leader still succeeds with NOMAD_TOKEN.
 func integrationNomadAuthFlags() []string {
 	if tok := strings.TrimSpace(os.Getenv("NOMAD_TOKEN")); tok != "" {
 		return []string{"--nomad-token", tok}
 	}
-	if tok := strings.TrimSpace(os.Getenv("ABC_TOKEN")); tok != "" {
+	if tok := strings.TrimSpace(os.Getenv("ABC_API_TOKEN")); tok != "" {
 		return []string{"--nomad-token", tok}
 	}
 	return nil
@@ -637,7 +637,7 @@ func TestIntegration_BadTokenShowsAuthError(t *testing.T) {
 	p := writeTempScript(t, "bad_token.sh", script)
 	// Override env so executeCmd uses the bad token via --nomad-token flag.
 	t.Setenv("NOMAD_TOKEN", "")
-	t.Setenv("ABC_TOKEN", "")
+	t.Setenv("ABC_API_TOKEN", "")
 	_, err = executeCmd(t, p, "--submit",
 		"--nomad-addr", addr,
 		"--nomad-token", "bad-token",

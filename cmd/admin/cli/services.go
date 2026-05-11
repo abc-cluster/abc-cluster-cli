@@ -132,10 +132,10 @@ func nomadCredsFromParent(cmd *cobra.Command) (addr, token string) {
 
 	// Env var fallback.
 	if addr == "" {
-		addr = utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR")
+		addr = utils.EnvOrDefault("NOMAD_ADDR")
 	}
 	if token == "" {
-		token = utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN")
+		token = utils.EnvOrDefault("NOMAD_TOKEN")
 	}
 	return addr, token
 }

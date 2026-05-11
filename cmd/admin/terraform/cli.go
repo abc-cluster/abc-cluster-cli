@@ -94,19 +94,19 @@ func terraformConnectionFromCmd(cmd *cobra.Command) (addr, token, region string)
 		if f := parentCmd.PersistentFlags().Lookup("nomad-addr"); f != nil && f.Changed {
 			addr = f.Value.String()
 		} else if addr == "" {
-			addr = utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR")
+			addr = utils.EnvOrDefault("NOMAD_ADDR")
 		}
 
 		if f := parentCmd.PersistentFlags().Lookup("nomad-token"); f != nil && f.Changed {
 			token = f.Value.String()
 		} else if token == "" {
-			token = utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN")
+			token = utils.EnvOrDefault("NOMAD_TOKEN")
 		}
 
 		if f := parentCmd.PersistentFlags().Lookup("nomad-region"); f != nil && f.Changed {
 			region = f.Value.String()
 		} else if region == "" {
-			region = utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION")
+			region = utils.EnvOrDefault("NOMAD_REGION")
 		}
 	}
 	return addr, token, region

@@ -18,6 +18,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/cliutil/advhelp"
 	appconfig "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/spf13/cobra"
 )
 
@@ -621,7 +622,7 @@ func runInstall(ctx context.Context, cmd *cobra.Command, ex Executor, w io.Write
 	// Resolve sudo password for preflight and install (flag > env var > captured).
 	sudoPassword, _ := cmd.Flags().GetString("password")
 	if sudoPassword == "" {
-		sudoPassword = os.Getenv("ABC_NODE_PASSWORD")
+		sudoPassword = envvars.Get("ABC_NODE_PASSWORD")
 	}
 	if sudoPassword == "" {
 		if s, ok := ex.(*sshExec); ok && s.sudoPassword != "" {
@@ -1189,7 +1190,7 @@ func nomadTokenForNodeAdd(cmd *cobra.Command) string {
 	if tok := strings.TrimSpace(os.Getenv("NOMAD_TOKEN")); tok != "" {
 		return tok
 	}
-	if tok := strings.TrimSpace(os.Getenv("ABC_TOKEN")); tok != "" {
+	if tok := strings.TrimSpace(envvars.Get("ABC_API_TOKEN")); tok != "" {
 		return tok
 	}
 	cfg, err := appconfig.Load()

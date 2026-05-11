@@ -131,13 +131,13 @@ func pulumiConnectionFromCmd(cmd *cobra.Command) (addr, token string) {
 		if f := parentCmd.PersistentFlags().Lookup("nomad-addr"); f != nil && f.Changed {
 			addr = f.Value.String()
 		} else if addr == "" {
-			addr = utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR")
+			addr = utils.EnvOrDefault("NOMAD_ADDR")
 		}
 
 		if f := parentCmd.PersistentFlags().Lookup("nomad-token"); f != nil && f.Changed {
 			token = f.Value.String()
 		} else if token == "" {
-			token = utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN")
+			token = utils.EnvOrDefault("NOMAD_TOKEN")
 		}
 	}
 	return addr, token

@@ -82,10 +82,10 @@ Override Nomad credentials for a single run:
 	}
 
 	// Persistent Nomad credential flags — subcommands resolve these via cmd.Parent().
-	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Nomad API address (overrides config; or set ABC_ADDR/NOMAD_ADDR)")
-	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Nomad ACL token (overrides config; or set ABC_TOKEN/NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Nomad API address (overrides config; or set NOMAD_ADDR)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Nomad ACL token (overrides config; or set NOMAD_TOKEN)")
 
 	RegisterServices(cmd)
 

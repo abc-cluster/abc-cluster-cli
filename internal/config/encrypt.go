@@ -34,6 +34,8 @@ import (
 
 	"golang.org/x/crypto/scrypt"
 	"gopkg.in/yaml.v3"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 // EncryptedFields defines which config fields should be encrypted.
@@ -59,8 +61,8 @@ var defaultSalt = []byte{0xA8, 0x0D, 0xF4, 0x3A, 0x8F, 0xBD, 0x03, 0x08, 0xA7, 0
 
 // GetEncryptionConfig reads encryption settings from environment.
 func GetEncryptionConfig() *EncryptionConfig {
-	password := os.Getenv("ABC_CRYPT_PASSWORD")
-	salt := os.Getenv("ABC_CRYPT_SALT")
+	password := envvars.Get("ABC_CRYPT_PASSWORD")
+	salt := envvars.Get("ABC_CRYPT_SALT")
 
 	return &EncryptionConfig{
 		Password: password,
@@ -335,7 +337,7 @@ func DecryptConfigFields(configYAML string, password, salt string) (string, erro
 // EncryptionStatus returns whether encryption is enabled and why.
 func EncryptionStatus() (enabled bool, reason string) {
 	// Check password-based encryption
-	if password := os.Getenv("ABC_CRYPT_PASSWORD"); password != "" {
+	if password := envvars.Get("ABC_CRYPT_PASSWORD"); password != "" {
 		return true, "ABC_CRYPT_PASSWORD is set (local password-based encryption)"
 	}
 

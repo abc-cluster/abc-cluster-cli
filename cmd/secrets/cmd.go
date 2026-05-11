@@ -15,9 +15,9 @@ package secrets
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/spf13/cobra"
 )
 
@@ -334,8 +334,8 @@ func runLocalSet(cmd *cobra.Command, key, value string) error {
 		return fmt.Errorf("set requires --unsafe-local flag (or use --backend nomad/vault)")
 	}
 
-	password := os.Getenv("ABC_CRYPT_PASSWORD")
-	salt := os.Getenv("ABC_CRYPT_SALT")
+	password := envvars.Get("ABC_CRYPT_PASSWORD")
+	salt := envvars.Get("ABC_CRYPT_SALT")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -371,8 +371,8 @@ func runLocalGet(cmd *cobra.Command, key string) error {
 		return fmt.Errorf("get requires --unsafe-local flag (or use --backend nomad/vault)")
 	}
 
-	password := os.Getenv("ABC_CRYPT_PASSWORD")
-	salt := os.Getenv("ABC_CRYPT_SALT")
+	password := envvars.Get("ABC_CRYPT_PASSWORD")
+	salt := envvars.Get("ABC_CRYPT_SALT")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -415,8 +415,8 @@ func runLocalList(cmd *cobra.Command) error {
 	}
 
 	if unsafeLocal {
-		password := os.Getenv("ABC_CRYPT_PASSWORD")
-		salt := os.Getenv("ABC_CRYPT_SALT")
+		password := envvars.Get("ABC_CRYPT_PASSWORD")
+		salt := envvars.Get("ABC_CRYPT_SALT")
 		password, salt, err = resolveSecretCredentials(cmd, cfg, password, salt)
 		if err != nil {
 			return err

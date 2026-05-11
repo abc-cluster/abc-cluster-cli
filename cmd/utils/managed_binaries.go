@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 const (
@@ -31,7 +33,7 @@ type BinarySetupResult struct {
 }
 
 func ManagedBinaryDir() (string, error) {
-	if v := strings.TrimSpace(os.Getenv("ABC_CLI_BINARIES_DIR")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("ABC_CLI_BINARIES_DIR")); v != "" {
 		if err := os.MkdirAll(v, 0o755); err != nil {
 			return "", fmt.Errorf("create managed binary dir %q: %w", v, err)
 		}
@@ -64,7 +66,7 @@ func ManagedBinaryPath(name string) (string, error) {
 // pushed to S3. It is separate from ManagedBinaryDir() (~/.abc/binaries/),
 // which holds only plain-named host-platform executables safe to add to $PATH.
 func AssetDir() (string, error) {
-	if v := strings.TrimSpace(os.Getenv("ABC_CLI_ASSETS_DIR")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("ABC_CLI_ASSETS_DIR")); v != "" {
 		if err := os.MkdirAll(v, 0o755); err != nil {
 			return "", fmt.Errorf("create asset dir %q: %w", v, err)
 		}

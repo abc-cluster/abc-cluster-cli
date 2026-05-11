@@ -1,11 +1,11 @@
 package capability
 
 import (
-	"os"
 	"strconv"
 	"time"
 
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 // Default TTL knobs per OQ-CAP-1 resolution. Overridable via env.
@@ -16,7 +16,7 @@ const (
 
 // foregroundTTL returns the foreground TTL, honouring ABC_CAPABILITY_TTL.
 func foregroundTTL() time.Duration {
-	if v := os.Getenv("ABC_CAPABILITY_TTL"); v != "" {
+	if v := envvars.Get("ABC_CAPABILITY_TTL"); v != "" {
 		if mins, err := strconv.Atoi(v); err == nil && mins >= 0 {
 			return time.Duration(mins) * time.Minute
 		}
@@ -26,7 +26,7 @@ func foregroundTTL() time.Duration {
 
 // hardExpiry returns the hard expiry, honouring ABC_CAPABILITY_HARD_EXPIRY.
 func hardExpiry() time.Duration {
-	if v := os.Getenv("ABC_CAPABILITY_HARD_EXPIRY"); v != "" {
+	if v := envvars.Get("ABC_CAPABILITY_HARD_EXPIRY"); v != "" {
 		if hrs, err := strconv.Atoi(v); err == nil && hrs >= 0 {
 			return time.Duration(hrs) * time.Hour
 		}
@@ -38,7 +38,7 @@ func hardExpiry() time.Duration {
 // Verbs that respect this still operate against the cached / tier-default
 // capability map; just no probe is attempted, foreground or background.
 func probeDisabled() bool {
-	return os.Getenv("ABC_NODE_NO_PROBE") == "1"
+	return envvars.Get("ABC_NODE_NO_PROBE") == "1"
 }
 
 // Fresh returns the freshness state for a stored Capabilities block.

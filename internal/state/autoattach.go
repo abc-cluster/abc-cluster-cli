@@ -5,7 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"os"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 // AutoAttachRequest captures the inputs the auto-attach resolver uses.
@@ -62,7 +63,7 @@ func AutoAttachAndInsertRun(ctx context.Context, db *sql.DB, banner io.Writer, r
 	if !req.NoInvestigation {
 		ref := req.InvestigationFlag
 		if ref == "" {
-			ref = os.Getenv("ABC_INVESTIGATION")
+			ref = envvars.Get("ABC_INVESTIGATION")
 		}
 		if ref == "" {
 			ref, _ = GetActivePointer(ctx, db, req.ContextName, PointerInvestigation)
@@ -84,7 +85,7 @@ func AutoAttachAndInsertRun(ctx context.Context, db *sql.DB, banner io.Writer, r
 	if !req.NoProject && !projectID.Valid {
 		ref := req.ProjectFlag
 		if ref == "" {
-			ref = os.Getenv("ABC_PROJECT")
+			ref = envvars.Get("ABC_PROJECT")
 		}
 		if ref == "" {
 			ref, _ = GetActivePointer(ctx, db, req.ContextName, PointerProject)

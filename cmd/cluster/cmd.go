@@ -32,12 +32,12 @@ Nomad endpoint (including pre-cloud seedling and grove deployments).
   abc cluster capabilities sync         # no --cloud needed`,
 	}
 
-	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Cloud gateway address (or set ABC_ADDR/NOMAD_ADDR)")
-	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Auth token (or set ABC_TOKEN/NOMAD_TOKEN)")
-	cmd.PersistentFlags().String("region", utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION"),
-		"Default region (or set ABC_REGION/NOMAD_REGION)")
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Cloud gateway address (or set NOMAD_ADDR)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Auth token (or set NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("region", utils.EnvOrDefault("NOMAD_REGION"),
+		"Default region (or set NOMAD_REGION)")
 
 	cmd.AddCommand(
 		newListCmd(),

@@ -55,10 +55,10 @@ Override credentials for a single invocation via persistent flags:
 
 	// Persistent Nomad connection flags — mirror the nomad command group so
 	// users can override credentials on the command line when needed.
-	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Nomad API address injected as NOMAD_ADDR (or set ABC_ADDR/NOMAD_ADDR)")
-	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Nomad ACL token injected as NOMAD_TOKEN (or set ABC_TOKEN/NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Nomad API address injected as NOMAD_ADDR (or set NOMAD_ADDR)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Nomad ACL token injected as NOMAD_TOKEN (or set NOMAD_TOKEN)")
 
 	cmd.AddCommand(newCLICmd())
 

@@ -159,7 +159,7 @@ func TestDataUpload_UsesAccessTokenByDefault(t *testing.T) {
 func TestDataUpload_UsesNomadEnvTokenBeforeAccessToken(t *testing.T) {
 	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
 	t.Setenv("ABC_UPLOAD_TOKEN", "")
-	t.Setenv("ABC_TOKEN", "")
+	t.Setenv("ABC_API_TOKEN", "")
 	t.Setenv("NOMAD_TOKEN", "nomad-env-token")
 
 	tmpFile := filepath.Join(t.TempDir(), "sample.txt")
@@ -186,7 +186,7 @@ func TestDataUpload_UsesNomadEnvTokenBeforeAccessToken(t *testing.T) {
 func TestDataUpload_UsesContextNomadTokenBeforeAccessToken(t *testing.T) {
 	t.Setenv("ABC_UPLOAD_ENDPOINT", "")
 	t.Setenv("ABC_UPLOAD_TOKEN", "")
-	t.Setenv("ABC_TOKEN", "")
+	t.Setenv("ABC_API_TOKEN", "")
 	t.Setenv("NOMAD_TOKEN", "")
 	setTestConfigEnv(t)
 	cfgPath := os.Getenv("ABC_CLI_CONFIG_FILE")

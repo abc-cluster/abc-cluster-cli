@@ -15,12 +15,12 @@ func NewCmd() *cobra.Command {
 		Short: "Manage Nomad batch jobs",
 		Long:  `Commands for submitting and managing batch jobs on the ABC-cluster platform.`,
 	}
-	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Nomad API address (or set ABC_ADDR/NOMAD_ADDR; defaults to http://127.0.0.1:4646)")
-	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Nomad ACL token (or set ABC_TOKEN/NOMAD_TOKEN)")
-	cmd.PersistentFlags().String("region", utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION"),
-		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Nomad API address (or set NOMAD_ADDR; defaults to http://127.0.0.1:4646)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Nomad ACL token (or set NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("region", utils.EnvOrDefault("NOMAD_REGION"),
+		"Nomad region (or set NOMAD_REGION)")
 
 	cmd.AddCommand(
 		newRunCmd(),

@@ -50,12 +50,12 @@ Legacy: abc cost … is an alias for abc accounting ….`,
 
 	cmd.PersistentFlags().String("budget", "",
 		"optional budget / allocation id (for future filters; reserved when gateway supports it)")
-	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Cloud gateway address (or set ABC_ADDR/NOMAD_ADDR)")
-	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Auth token (or set ABC_TOKEN/NOMAD_TOKEN)")
-	cmd.PersistentFlags().String("region", utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION"),
-		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Cloud gateway address (or set NOMAD_ADDR)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Auth token (or set NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("region", utils.EnvOrDefault("NOMAD_REGION"),
+		"Nomad region (or set NOMAD_REGION)")
 
 	cmd.AddCommand(budget.NewCmd())
 	return cmd

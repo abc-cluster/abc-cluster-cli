@@ -17,25 +17,24 @@ func resolveRunCmd(t *testing.T) *cobra.Command {
 	return runCmd
 }
 
-func TestNomadAddrEnvPriority(t *testing.T) {
-	t.Setenv("ABC_ADDR", "http://abc.example")
+// Nomad-passthrough flags read vendor env vars directly. The ABC-namespace
+// names (ABC_API_ADDR / ABC_API_TOKEN) address the abc-cluster API, not the
+// backing Nomad cluster — they are distinct concepts and do NOT substitute
+// for NOMAD_ADDR / NOMAD_TOKEN.
+func TestNomadAddrFromNOMAD_ADDR(t *testing.T) {
 	t.Setenv("NOMAD_ADDR", "http://nomad.example")
-
 	runCmd := resolveRunCmd(t)
-	addr := nomadAddrFromCmd(runCmd)
-	if addr != "http://abc.example" {
-		t.Fatalf("expected ABC_ADDR to be prioritized, got %q", addr)
+	if got := nomadAddrFromCmd(runCmd); got != "http://nomad.example" {
+		t.Fatalf("expected NOMAD_ADDR to win, got %q", got)
 	}
 }
 
-func TestNomadTokenEnvPriority(t *testing.T) {
-	t.Setenv("ABC_TOKEN", "abc-token")
+func TestNomadTokenFromNOMAD_TOKEN(t *testing.T) {
 	t.Setenv("NOMAD_TOKEN", "nomad-token")
-
 	runCmd := resolveRunCmd(t)
 	nc := nomadClientFromCmd(runCmd)
-	if nc.Token() != "abc-token" {
-		t.Fatalf("expected ABC_TOKEN to be prioritized, got %q", nc.Token())
+	if nc.Token() != "nomad-token" {
+		t.Fatalf("expected NOMAD_TOKEN, got %q", nc.Token())
 	}
 }
 

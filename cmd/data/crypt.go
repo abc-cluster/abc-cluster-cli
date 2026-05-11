@@ -11,6 +11,8 @@ import (
 
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/scrypt"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 const (
@@ -83,7 +85,7 @@ func uploadCryptConfig(password, salt string) (*cryptConfig, error) {
 // defaults to $HOME/.abc/tmpdir.  The directory is created with 0700 permissions
 // if it does not already exist.
 func uploadTempDir() (string, error) {
-	if dir := os.Getenv("ABC_CLI_TMPDIR"); dir != "" {
+	if dir := envvars.Get("ABC_CLI_TMPDIR"); dir != "" {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return "", fmt.Errorf("create upload temp dir %q: %w", dir, err)
 		}

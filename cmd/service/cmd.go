@@ -35,12 +35,12 @@ Valid service names: nomad, jurist, minio, api, tus, cloud-gateway, xtdb, supaba
   abc admin services version api`,
 	}
 
-	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Cloud gateway or API address (or set ABC_ADDR/NOMAD_ADDR)")
-	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Auth token (or set ABC_TOKEN/NOMAD_TOKEN)")
-	cmd.PersistentFlags().String("region", utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION"),
-		"Nomad region (or set ABC_REGION/NOMAD_REGION)")
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Cloud gateway or API address (or set NOMAD_ADDR)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Auth token (or set NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("region", utils.EnvOrDefault("NOMAD_REGION"),
+		"Nomad region (or set NOMAD_REGION)")
 
 	cmd.AddCommand(newPingCmd(), newVersionCmd())
 	cmd.AddCommand(newCLICmd())
@@ -196,10 +196,10 @@ Override Nomad credentials for a single run:
 	}
 
 	// Persistent Nomad credential flags for service subcommands that need them.
-	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Nomad API address (overrides config; or set ABC_ADDR/NOMAD_ADDR)")
-	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Nomad ACL token (overrides config; or set ABC_TOKEN/NOMAD_TOKEN)")
+	cmd.PersistentFlags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Nomad API address (overrides config; or set NOMAD_ADDR)")
+	cmd.PersistentFlags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Nomad ACL token (overrides config; or set NOMAD_TOKEN)")
 
 	cmd.AddCommand(newCLISetupCmd())
 	cmd.AddCommand(newCLIStatusCmd())

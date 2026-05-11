@@ -90,10 +90,10 @@ EXAMPLES
 	cmd.Flags().Bool("dry-run", false, "Print generated HCL without submitting")
 
 	// Nomad connection (also readable from root persistent flags)
-	cmd.Flags().String("nomad-addr", utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR"),
-		"Nomad API address (or set ABC_ADDR/NOMAD_ADDR)")
-	cmd.Flags().String("nomad-token", utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN"),
-		"Nomad ACL token (or set ABC_TOKEN/NOMAD_TOKEN)")
+	cmd.Flags().String("nomad-addr", utils.EnvOrDefault("NOMAD_ADDR"),
+		"Nomad API address (or set NOMAD_ADDR)")
+	cmd.Flags().String("nomad-token", utils.EnvOrDefault("NOMAD_TOKEN"),
+		"Nomad ACL token (or set NOMAD_TOKEN)")
 
 	return cmd
 }

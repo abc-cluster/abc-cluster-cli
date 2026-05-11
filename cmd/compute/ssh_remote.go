@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/spf13/cobra"
 )
 
@@ -58,7 +58,7 @@ func sshExecutorFromRemoteFlags(ctx context.Context, cmd *cobra.Command, remote 
 
 	password, _ := cmd.Flags().GetString("password")
 	if password == "" {
-		password = os.Getenv("ABC_NODE_PASSWORD")
+		password = envvars.Get("ABC_NODE_PASSWORD")
 	}
 	sshCfg.Password = password
 

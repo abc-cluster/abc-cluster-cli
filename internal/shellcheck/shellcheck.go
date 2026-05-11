@@ -25,6 +25,8 @@ import (
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
 // ErrShellcheckUnavailable is returned by [Lint] when no `shellcheck` binary
@@ -82,7 +84,7 @@ func HasShellcheck() bool {
 }
 
 func resolveShellcheck() (string, error) {
-	if env := os.Getenv("ABC_SHELLCHECK_BIN"); env != "" {
+	if env := envvars.Get("ABC_SHELLCHECK_BIN"); env != "" {
 		if _, err := os.Stat(env); err == nil {
 			return env, nil
 		}

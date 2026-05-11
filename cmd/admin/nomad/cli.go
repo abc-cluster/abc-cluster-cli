@@ -70,19 +70,19 @@ func nomadConnectionFromCmd(cmd *cobra.Command) (addr, token, region string) {
 	if cmd.Flags().Changed("nomad-addr") {
 		addr, _ = cmd.Flags().GetString("nomad-addr")
 	} else if addr == "" {
-		addr = utils.EnvOrDefault("ABC_ADDR", "NOMAD_ADDR")
+		addr = utils.EnvOrDefault("NOMAD_ADDR")
 	}
 
 	if cmd.Flags().Changed("nomad-token") {
 		token, _ = cmd.Flags().GetString("nomad-token")
 	} else if token == "" {
-		token = utils.EnvOrDefault("ABC_TOKEN", "NOMAD_TOKEN")
+		token = utils.EnvOrDefault("NOMAD_TOKEN")
 	}
 
 	if cmd.Flags().Changed("region") {
 		region, _ = cmd.Flags().GetString("region")
 	} else if region == "" {
-		region = utils.EnvOrDefault("ABC_REGION", "NOMAD_REGION")
+		region = utils.EnvOrDefault("NOMAD_REGION")
 	}
 	return addr, token, region
 }

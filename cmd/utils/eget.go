@@ -39,7 +39,7 @@ func egetExecutable() string {
 // UseEgetForGitHubDownloads reports whether abc should prefer invoking eget for
 // GitHub release installs when possible.
 func UseEgetForGitHubDownloads() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("ABC_CLI_USE_EGET"))) {
+	switch strings.ToLower(strings.TrimSpace(envvars.Get("ABC_CLI_USE_EGET"))) {
 	case "0", "false", "no", "off":
 		return false
 	default:

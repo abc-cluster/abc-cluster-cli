@@ -2,10 +2,10 @@ package data
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +25,7 @@ func resolveUploadEndpoint(cmd *cobra.Command, flagEndpoint, serverURL string) (
 		return v, nil
 	}
 
-	if v := strings.TrimSpace(os.Getenv("ABC_UPLOAD_ENDPOINT")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("ABC_UPLOAD_ENDPOINT")); v != "" {
 		return v, nil
 	}
 
@@ -69,14 +69,14 @@ func resolveUploadToken(cmd *cobra.Command, flagToken, accessToken string) strin
 		return v
 	}
 
-	if v := strings.TrimSpace(os.Getenv("ABC_UPLOAD_TOKEN")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("ABC_UPLOAD_TOKEN")); v != "" {
 		return v
 	}
 
-	if v := strings.TrimSpace(os.Getenv("ABC_TOKEN")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("ABC_API_TOKEN")); v != "" {
 		return v
 	}
-	if v := strings.TrimSpace(os.Getenv("NOMAD_TOKEN")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("NOMAD_TOKEN")); v != "" {
 		return v
 	}
 
