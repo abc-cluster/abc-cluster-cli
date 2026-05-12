@@ -18,7 +18,7 @@ func resolveRunCmd(t *testing.T) *cobra.Command {
 }
 
 // Nomad-passthrough flags read vendor env vars directly. The ABC-namespace
-// names (ABC_API_ADDR / ABC_API_TOKEN) address the abc-cluster API, not the
+// names (ABC_API_ADDRESS / ABC_API_TOKEN) address the abc-cluster API, not the
 // backing Nomad cluster — they are distinct concepts and do NOT substitute
 // for NOMAD_ADDR / NOMAD_TOKEN.
 func TestNomadAddrFromNOMAD_ADDR(t *testing.T) {

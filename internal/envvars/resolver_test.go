@@ -37,11 +37,11 @@ func newTestResolver(flags, env, ctx map[string]string, hasABCContext bool) (*Re
 func TestResolve_FlagBeatsEverything(t *testing.T) {
 	r, _ := newTestResolver(
 		map[string]string{"address": "from-flag"},
-		map[string]string{"ABC_API_ADDR": "from-env"},
+		map[string]string{"ABC_API_ADDRESS": "from-env"},
 		map[string]string{"url": "from-context"},
 		true,
 	)
-	v, src, err := r.Resolve("ABC_API_ADDR")
+	v, src, err := r.Resolve("ABC_API_ADDRESS")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,14 +67,14 @@ func TestResolve_ABCEnvBeatsVendorEnv(t *testing.T) {
 }
 
 func TestResolve_ExplicitEmptyABCEnvWins(t *testing.T) {
-	// Critical: explicit ABC_API_ADDR= must beat context, not fall through.
+	// Critical: explicit ABC_API_ADDRESS= must beat context, not fall through.
 	r, _ := newTestResolver(
 		nil,
-		map[string]string{"ABC_API_ADDR": ""},
+		map[string]string{"ABC_API_ADDRESS": ""},
 		map[string]string{"url": "from-context"},
 		true,
 	)
-	v, src, err := r.Resolve("ABC_API_ADDR")
+	v, src, err := r.Resolve("ABC_API_ADDRESS")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestResolve_ContextWhenNoEnv(t *testing.T) {
 		map[string]string{"url": "from-context"},
 		true,
 	)
-	v, src, err := r.Resolve("ABC_API_ADDR")
+	v, src, err := r.Resolve("ABC_API_ADDRESS")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestResolve_DefaultWhenNothingElse(t *testing.T) {
 
 func TestResolve_UnsetReturnsSourceUnset(t *testing.T) {
 	r, _ := newTestResolver(nil, nil, nil, true)
-	v, src, err := r.Resolve("ABC_API_ADDR")
+	v, src, err := r.Resolve("ABC_API_ADDRESS")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -201,9 +201,9 @@ func TestRegistry_NoForbiddenPatterns(t *testing.T) {
 }
 
 func TestRegistry_LookupCanonical(t *testing.T) {
-	e, ok := Lookup("ABC_API_ADDR")
-	if !ok || e.Name != "ABC_API_ADDR" {
-		t.Errorf("Lookup(ABC_API_ADDR) = (%v, %v); want canonical entry", e, ok)
+	e, ok := Lookup("ABC_API_ADDRESS")
+	if !ok || e.Name != "ABC_API_ADDRESS" {
+		t.Errorf("Lookup(ABC_API_ADDRESS) = (%v, %v); want canonical entry", e, ok)
 	}
 	// Spot-check: a name that was never in the registry returns false.
 	_, ok = Lookup("ABC_NOT_A_REAL_NAME")

@@ -56,7 +56,7 @@ Transport and auth for the abc-cluster control plane.
 
 | Name | Purpose | Flag | Context key | Vendor fallback | Default |
 |---|---|---|---|---|---|
-| `ABC_API_ADDR` | abc-cluster API endpoint (controller / API gateway) | `--address` | `url` | — | — |
+| `ABC_API_ADDRESS` | abc-cluster API endpoint (controller / API gateway) | `--address` | `url` | — | — |
 | `ABC_API_TOKEN` 🔒 | bearer token for abc-cluster API | `--access-token` | `access_token` | — | — |
 | `ABC_API_AS_USER` | operator-only: impersonate another user (sent as identity-override header) | — | — | — | — |
 

@@ -65,7 +65,7 @@ type EnvLookup func(name string) (value string, ok bool)
 // OSEnv is the default EnvLookup, delegating to os.LookupEnv.
 //
 // CRITICAL: must use LookupEnv (not Getenv) so that an explicit empty
-// value (e.g. `ABC_API_ADDR=` on the command line) is distinguishable from
+// value (e.g. `ABC_API_ADDRESS=` on the command line) is distinguishable from
 // an unset variable. An explicit empty must override context config.
 func OSEnv(name string) (string, bool) {
 	return os.LookupEnv(name)

@@ -17,7 +17,7 @@ func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "compliance",
 		Short: "Compliance status and reports from the ABC API",
-		Long: `Fetches GET /v1/compliance from the API base configured with --url (or ABC_API_ADDR).
+		Long: `Fetches GET /v1/compliance from the API base configured with --url (or ABC_API_ADDRESS).
 
 Uses --access-token / ABC_API_TOKEN and optional --workspace / ABC_WORKSPACE
 (workspaceId query parameter when set).`,

@@ -8,7 +8,7 @@ Available on every `abc` command.
 
 | Flag | Env var | Default | Description |
 |---|---|---|---|
-| `--address` | `ABC_API_ADDR` | `https://api.abc-cluster.io` | abc-cluster API endpoint |
+| `--address` | `ABC_API_ADDRESS` | `https://api.abc-cluster.io` | abc-cluster API endpoint |
 | `--access-token` | `ABC_API_TOKEN` | *(unset)* | abc-cluster access token |
 | `--workspace` | `ABC_WORKSPACE` | *(user default)* | Workspace ID |
 | `--region` | `ABC_REGION` | *(unset)* | Sovereignty region (ZA / KE / MZ / …) |
@@ -43,7 +43,7 @@ flag  >  ABC env  >  vendor env  >  active context config  >  default
 
 - **flag** — explicit `--<name>` on the command line
 - **ABC env** — the canonical `ABC_*` name in your shell (uses `os.LookupEnv`,
-  so an explicit empty `ABC_API_ADDR=` overrides the context config)
+  so an explicit empty `ABC_API_ADDRESS=` overrides the context config)
 - **vendor env** — last-resort fallback for a handful of ABC vars with a
   vendor namesake (e.g. `ABC_REGION` falls back to `NOMAD_REGION`). Emits a
   one-time warning when no ABC context is configured.

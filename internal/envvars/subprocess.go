@@ -34,7 +34,7 @@ const (
 // Unlike Resolver.Resolve which deals in ABC_* names, this struct deals
 // in vendor-namespace values because that's what the subprocess
 // understands. The caller is responsible for the mapping (typically: read
-// ABC_API_ADDR via Resolver, derive NomadAddr from the controller's
+// ABC_API_ADDRESS via Resolver, derive NomadAddr from the controller's
 // /endpoints response or cached context field).
 type Resolved struct {
 	NomadAddr      string

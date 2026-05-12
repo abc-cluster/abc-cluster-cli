@@ -85,7 +85,7 @@ These flags are available on every `abc` command.
 
 | Flag             | Env var               | Description                                      | Default                      |
 |------------------|-----------------------|--------------------------------------------------|------------------------------|
-| `--address`      | `ABC_API_ADDR`        | abc-cluster API endpoint                         | `https://api.abc-cluster.io` |
+| `--address`      | `ABC_API_ADDRESS`        | abc-cluster API endpoint                         | `https://api.abc-cluster.io` |
 | `--access-token` | `ABC_API_TOKEN`       | abc-cluster access token                         | *(unset)*                    |
 | `--workspace`    | `ABC_WORKSPACE`       | Workspace ID                                     | *(user's default workspace)* |
 | `--region`       | `ABC_REGION`          | Sovereignty region                               | *(unset)*                    |
@@ -1153,7 +1153,7 @@ block so the script can read the value at execution time.
 
 > The `--nomad-*` flags address the backing Nomad cluster directly
 > (a vendor-namespace concept). For the abc-cluster API itself, use
-> `--address` / `ABC_API_ADDR` and `--access-token` / `ABC_API_TOKEN`.
+> `--address` / `ABC_API_ADDRESS` and `--access-token` / `ABC_API_TOKEN`.
 > In seedling-tier contexts the two pairs typically resolve to the same
 > values via the active context; in grove+ the controller mediates the
 > mapping. See [tier semantics](./docs/reference/env-vars.md) for details.

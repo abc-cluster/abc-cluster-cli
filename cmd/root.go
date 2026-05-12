@@ -184,7 +184,7 @@ func init() {
 		activeCtx = cfg.ActiveCtx()
 	}
 
-	if v := envvars.Get("ABC_API_ADDR"); v != "" {
+	if v := envvars.Get("ABC_API_ADDRESS"); v != "" {
 		serverURL = v
 	} else if activeCtx.Endpoint != "" {
 		serverURL = activeCtx.Endpoint
@@ -234,7 +234,7 @@ func init() {
 	// Flags for the data command (ABC REST API).
 	rootCmd.PersistentFlags().StringVar(&serverURL, "url",
 		serverURL,
-		"abc-cluster API endpoint URL (or set ABC_API_ADDR)")
+		"abc-cluster API endpoint URL (or set ABC_API_ADDRESS)")
 	rootCmd.PersistentFlags().StringVar(&accessToken, "access-token",
 		accessToken,
 		"abc-cluster access token (or set ABC_API_TOKEN)")

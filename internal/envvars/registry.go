@@ -79,7 +79,7 @@ func (b Bucket) String() string {
 // generated from it; `abc env list/show/validate` reads from it; the
 // resolver's precedence walk consults exactly its fields.
 type Entry struct {
-	// Name is the canonical env var name (e.g. "ABC_API_ADDR"). Always
+	// Name is the canonical env var name (e.g. "ABC_API_ADDRESS"). Always
 	// uppercase, always scope-prefixed unless the entry is a
 	// BucketABCResource or a known vendor name.
 	Name string
@@ -214,7 +214,7 @@ var Registry = []Entry{
 	// ── ABC API (canonical, transport) ──────────────────────────────────
 
 	{
-		Name:       "ABC_API_ADDR",
+		Name:       "ABC_API_ADDRESS",
 		Bucket:     BucketABCAPI,
 		ContextKey: "url",
 		FlagName:   "address",

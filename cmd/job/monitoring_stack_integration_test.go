@@ -152,7 +152,7 @@ func requireABCCLIContextForObsStack(t *testing.T) (cfg *config.Config, ctx conf
 // gateway) which would otherwise hide the node ACL token from ~/.abc.
 func syncNomadEnvFromABCContext(t *testing.T, ctx config.Context) {
 	t.Helper()
-	t.Setenv("ABC_API_ADDR", "")
+	t.Setenv("ABC_API_ADDRESS", "")
 	t.Setenv("ABC_API_TOKEN", "")
 	t.Setenv("ABC_REGION", "")
 	t.Setenv("NOMAD_ADDR", strings.TrimSpace(ctx.NomadAddr()))

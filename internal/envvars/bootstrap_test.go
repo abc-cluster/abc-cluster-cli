@@ -10,8 +10,8 @@ func setEnv(t *testing.T, k, v string) {
 }
 
 func TestLookupEnv_CanonicalSet(t *testing.T) {
-	setEnv(t, "ABC_API_ADDR", "https://api.example")
-	v, src, ok := LookupEnv("ABC_API_ADDR")
+	setEnv(t, "ABC_API_ADDRESS", "https://api.example")
+	v, src, ok := LookupEnv("ABC_API_ADDRESS")
 	if !ok || v != "https://api.example" || src != SourceABCEnv {
 		t.Errorf("got (%q, %v, %v); want (https://api.example, abc-env, true)", v, src, ok)
 	}
