@@ -1,5 +1,24 @@
 package compute
 
+// add.go — `abc infra compute add` worker-node onboarding.
+//
+// DEFERRED CAPABILITY (2026-05-11):
+// This verb is NOT part of the shipped abc-seedling product surface
+// today. Seedling infrastructure provisioning is the responsibility
+// of the separate abc-deployments project (Pulumi-driven), not the
+// CLI. The verb is retained for a future cloud-node-onboarding
+// capability at the abc-cloud tier (see cmd.go package comment +
+// brainstorms/cloud-bridge/ in abc-universe).
+//
+// Operationally the verb may still execute today — the code path is
+// intact — but it is not documented as a supported seedling-tier
+// workflow, is not exercised by the seedling-paper validation
+// archetypes, and is not part of the seedling-paper Pillar 3
+// (topology migration without re-platforming) falsifiability surface.
+// Operators following the seedling-tier deployment guide will not
+// encounter this verb; the deployment guide routes them to
+// abc-deployments / `pulumi up` for cluster provisioning.
+
 import (
 	"context"
 	"encoding/json"

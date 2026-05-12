@@ -2,6 +2,35 @@
 //
 // All compute operations require --sudo. The X-ABC-Sudo header is forwarded
 // to jurist, which enforces the caller's actual permission tier.
+//
+// DEFERRED CAPABILITY NOTICE (2026-05-11):
+// The mutating verbs in this package — specifically `abc infra compute add`
+// (worker-node onboarding) and any future `abc infra compute promote`
+// (topology promotion) — are NOT part of the shipped product surface for
+// the abc-seedling tier today. Seedling infrastructure is provisioned by
+// the separate abc-deployments project (Pulumi-driven): `pulumi up`
+// against a stack configuration installs Nomad, MinIO, Tailscale, the
+// observability stack, and the seedling-tended hygiene configuration.
+// The CLI's seedling-tier role is observational only — abc cluster status,
+// abc cluster capabilities show, abc cluster doctor, abc auth context
+// list, abc data ls, abc pipeline list.
+//
+// The scaffolding here is retained for a future capability: at the
+// abc-cloud (cloud) tier, an operator who has provisioned their own VMs
+// in their own cloud account will invoke `abc infra compute add` against
+// an abc-cloud-managed control plane to register those VMs as Nomad
+// workers without operating their own deployment codebase. That feature
+// is forward-looking and is documented as such in the cloud-bridge
+// brainstorm; it is not part of the abc-seedling or abc-grove tier
+// surfaces today.
+//
+// Read-only verbs in this package (`list`, `show`, `probe`, `node debug`)
+// remain in scope and operational at all tiers — they are observability
+// surfaces, not provisioning surfaces.
+//
+// See: design/decided/abc-seedling-scope.md §1a (CLI scope vs deployment
+// scope); manuscripts/abc-seedling-manuscript-anchor.md §1 pillar 3;
+// brainstorms/cloud-bridge/ for the future cloud-node-onboarding design.
 package compute
 
 import (
