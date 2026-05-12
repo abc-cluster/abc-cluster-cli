@@ -50,6 +50,29 @@ The original form — still fully supported. Both forms inject identical credent
 | `grafana` | `grafana-cli` | — |
 | `postgres` | `psql` | — |
 
+## Credential source selector (`--config`)
+
+Most service passthrough commands accept a leading `--config <backend>`
+flag (defaults to `local`) that selects which cred_source map is consulted:
+
+| `--config` | Source of credentials |
+|---|---|
+| `local` *(default)* | inline `admin.services.<svc>.cred_source.local.*` (or top-level `<field>` fallback) |
+| `nomad` | resolved live from `nomad+var@<ns>/<path>#<key>` references at `admin.services.<svc>.cred_source.nomad.*` |
+| `vault` | resolved live from `vault+kv2@<mount>/data/<path>#<key>` references at `admin.services.<svc>.cred_source.vault.*` |
+
+**Precedence interaction with shell env vars:**
+
+- `--config local` (default): shell-set env vars (e.g. `MINIO_ROOT_USER` in
+  your environment) take precedence over the config-resolved value. This is
+  the usual override semantics.
+- `--config nomad` / `--config vault`: the explicit selector is
+  authoritative. Shell-set values that disagree are **ignored** and a
+  one-time warning is emitted citing the selector.
+
+To preview which value would win for any tool/selector combination without
+running the tool, see [env-var introspection](#env-var-introspection) below.
+
 ## Nomad
 
 ```bash
@@ -60,7 +83,7 @@ abc admin services cli nomad -- job run -detach \
 abc admin services cli nomad -- alloc logs <alloc-id>
 ```
 
-Set the active context first: `export ABC_ACTIVE_CONTEXT=abc-bootstrap`
+Set the active context first: `export ABC_CLI_CONTEXT=abc-bootstrap`
 
 ## Pulumi
 
@@ -137,3 +160,83 @@ abc admin services cli status
 abc cluster capabilities sync   # pull cluster capabilities to local config
 abc cluster capabilities show   # display current capabilities
 ```
+
+## Env-var introspection
+
+`abc admin env` exposes the CLI's env-var resolution surface so operators can
+debug "why is the wrong cluster being hit?" / "is my shell var being shadowed?"
+without running the actual command.
+
+```bash
+abc admin env list                 # every canonical env var, grouped by bucket
+abc admin env list --bucket abc-api
+abc admin env show <NAME>          # full precedence walk for one variable
+abc admin env validate             # detect forbidden patterns, vendor leaks,
+                                   # and shadowed values
+```
+
+### `abc admin env list`
+
+Groups every registry entry by bucket (`abc-api`, `abc-cli`, `abc-resource`,
+`abc-component`, `tool-binary`, `debug-test`, `vendor-fallback`,
+`subprocess-out`). Each row shows whether the variable is currently set and
+which source won; secrets are redacted to `***`.
+
+### `abc admin env show <NAME>`
+
+Walks the full precedence ladder (flag → ABC env → vendor env → context →
+default) and reports the winning source. For variables with shadowing
+relationships, prints a per-selector breakdown comparing what each
+`--config local | nomad | vault` choice would resolve to. Reference strings
+(`nomad+var@…`, `vault+kv2@…`) are shown unredacted — they describe **where**
+the secret lives, not the secret itself; only literal secret values get
+redacted.
+
+Example:
+
+```text
+$ MINIO_USER=alice abc admin env show MINIO_USER
+Name:     MINIO_USER
+Bucket:   subprocess-out
+Purpose:  user for Pulumi MinIO provider
+Source:   abc-env  (value: alice)
+Shadowing:
+  --config local → contexts.<n>.admin.services.minio.cred_source.local.user
+                   (or top-level .user) = (not set)  shell 'alice' wins
+  --config nomad → contexts.<n>.admin.services.minio.cred_source.nomad.user
+                   = (not configured)
+  --config vault → contexts.<n>.admin.services.minio.cred_source.vault.user
+                   = (not configured)
+```
+
+When the config has a disagreeing value, the diff is reported inline:
+
+```text
+$ MINIO_USER=alice abc admin env validate
+WARN: MINIO_USER='alice' in shell; contexts.<n>.admin.services.minio.cred_source.local.user='bob'
+      --config local → 'alice' wins (shell)
+      --config nomad → resolved from Nomad Variable; shell ignored, warning emitted
+      --config vault → (not configured)
+```
+
+### `abc admin env validate`
+
+Exits non-zero when forbidden patterns are present in the environment:
+
+- `ABC_DISABLE_*` (use `ABC_<SCOPE>_NO_<FEATURE>`)
+- `ABC_*_OFF` (same)
+- `ABC_GROVE_*` / `ABC_SEEDLING_*` / `ABC_CLOUD_*` (env vars are tier-neutral)
+
+Emits non-fatal warnings for:
+
+- Unknown `ABC_*` names (likely typos or legacy)
+- Vendor-fallback use (`NOMAD_ADDR` etc.) while an ABC context is configured
+- Shadowed env vars where shell and config disagree
+
+## See also
+
+- [Environment variables reference](./env-vars.md) — full registry of every
+  env var the CLI knows about, generated from
+  `internal/envvars/registry.go`. The canonical source of truth.
+- [Global flags](./global-flags.md) — flag → env-var → config mapping for the
+  researcher-facing surface.

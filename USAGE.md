@@ -83,19 +83,31 @@ This document describes every command available in the `abc` CLI.
 
 These flags are available on every `abc` command.
 
-| Flag             | Env var              | Description                                      | Default                      |
-|------------------|----------------------|--------------------------------------------------|------------------------------|
-| `--url`          | `ABC_API_ENDPOINT`   | abc-cluster API endpoint URL                     | `https://api.abc-cluster.io` |
-| `--access-token` | `ABC_ACCESS_TOKEN`   | abc-cluster access token                         | *(unset)*                    |
-| `--workspace`    | `ABC_WORKSPACE_ID`   | Workspace ID                                     | *(user's default workspace)* |
-| `--cluster`      | `ABC_CLUSTER`        | Target a specific named cluster in the fleet     | *(unset)*                    |
-| `--quiet` / `-q` |                      | Suppress informational output to stderr          | `false`                      |
+| Flag             | Env var               | Description                                      | Default                      |
+|------------------|-----------------------|--------------------------------------------------|------------------------------|
+| `--address`      | `ABC_API_ADDR`        | abc-cluster API endpoint                         | `https://api.abc-cluster.io` |
+| `--access-token` | `ABC_API_TOKEN`       | abc-cluster access token                         | *(unset)*                    |
+| `--workspace`    | `ABC_WORKSPACE`       | Workspace ID                                     | *(user's default workspace)* |
+| `--region`       | `ABC_REGION`          | Sovereignty region                               | *(unset)*                    |
+| `--namespace`    | `ABC_NAMESPACE`       | Logical namespace within workspace               | *(unset)*                    |
+| `--cluster`      | `ABC_CLUSTER`         | Target a specific named cluster in the fleet     | *(unset)*                    |
+| `--output`       | `ABC_CLI_OUTPUT_FORMAT` | Output format: `table` / `json` / `yaml`       | `table`                      |
+| `--quiet` / `-q` | `ABC_CLI_QUIET`       | Suppress informational output to stderr          | `false`                      |
+| `--debug[=N]`    | `ABC_CLI_DEBUG`       | Write structured JSON debug log (see [Debug logging](#debug-logging)) | `0` (off) |
+| `--sudo`         | `ABC_CLI_SUDO`        | Elevate to cluster-admin scope (required for admin/node write ops) | `false` |
+| `--cloud`        | `ABC_CLI_CLOUD_MODE`  | Elevate to infrastructure scope (required for cluster/accounting write ops) | `false` |
+| `--exp`          | `ABC_CLI_EXP_MODE`    | Enable experimental CLI features                 | `false`                      |
+| `--user <email>` | `ABC_API_AS_USER`     | Act on behalf of this user email — admin only    | *(unset)*                    |
+| *(env only)*     | `ABC_CLI_CONTEXT`     | One-shot override of active context              | *(unset)*                    |
+| *(env only)*     | `ABC_CLI_CONFIG_FILE` | Override config-file location                    | `~/.abc/config.yaml`         |
 | *(env only)*     | `ABC_CLI_DISABLE_UPDATE_CHECK` | Disable automatic GitHub release update notifications (`1`, `true`, `yes`, `on`) | *(unset)* |
-| `--debug[=N]`    | `ABC_DEBUG`          | Write structured JSON debug log (see [Debug logging](#debug-logging)) | `0` (off) |
-| `--sudo`         | `ABC_CLI_SUDO_MODE`  | Elevate to cluster-admin scope (required for admin/node write ops) | `false` |
-| `--cloud`        | `ABC_CLI_CLOUD_MODE` | Elevate to infrastructure scope (required for cluster/accounting write ops) | `false` |
-| `--exp`          | `ABC_CLI_EXP_MODE`   | Enable experimental CLI features                 | `false`                      |
-| `--user <email>` | `ABC_AS_USER`        | Act on behalf of this user email — admin only    | *(unset)*                    |
+| *(env only)*     | `ABC_CLI_AUTOMATION`  | `=1` signals non-interactive automation context (suppresses prompts) | *(unset)*       |
+
+The CLI knows about ~76 env vars across `ABC_API_*`, `ABC_CLI_*`,
+`ABC_<RESOURCE>`, component overrides, debug/test, vendor fallback, and
+subprocess-injection buckets. The complete generated reference lives in
+[`docs/reference/env-vars.md`](docs/reference/env-vars.md); use
+`abc admin env list` to inspect the live state in your current shell.
 
 ---
 
@@ -144,7 +156,7 @@ abc --debug node add --remote 10.0.0.5
 abc --debug=2 node add --remote 10.0.0.5
 
 # Via environment variable
-ABC_DEBUG=1 abc node add --remote 10.0.0.5
+ABC_CLI_DEBUG=1 abc node add --remote 10.0.0.5
 ```
 
 On failure, the CLI prints:
@@ -157,7 +169,7 @@ On failure, the CLI prints:
 ## `auth`
 
 Manage authentication and session credentials. Credentials are stored in `~/.abc/config.yaml`
-(or `ABC_CONFIG_FILE` environment variable).
+(or `ABC_CLI_CONFIG_FILE` environment variable).
 
 ### `auth login`
 
@@ -224,7 +236,7 @@ Print the active context's access token to stdout (pipe-safe).
 $ abc auth token
 eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
-$ export ABC_ACCESS_TOKEN=$(abc auth token)
+$ export ABC_API_TOKEN=$(abc auth token)
 ```
 
 ### `auth refresh`
@@ -241,7 +253,7 @@ $ abc auth refresh
 ## `config`
 
 Manage local CLI configuration. All settings are stored in `~/.abc/config.yaml`
-(or `ABC_CONFIG_FILE`). The config file includes a `version` field for forward/backward compatibility.
+(or `ABC_CLI_CONFIG_FILE`). The config file includes a `version` field for forward/backward compatibility.
 
 **Config file structure (`~/.abc/config.yaml`):**
 ```yaml
@@ -1133,11 +1145,18 @@ block so the script can read the value at execution time.
 
 ### Nomad connection flags
 
-| Flag            | Env var                       | Description             | Default                 |
-|-----------------|-------------------------------|-------------------------|-------------------------|
-| `--nomad-addr`  | `ABC_ADDR` / `NOMAD_ADDR`     | Nomad API base URL (paths like `/v1/jobs` are appended). Bare `http://host` gets port **4646**. | `http://127.0.0.1:4646` |
-| `--nomad-token` | `ABC_TOKEN` / `NOMAD_TOKEN`   | Nomad ACL token         | *(unset)*               |
-| `--region`      | `ABC_REGION` / `NOMAD_REGION` | Nomad **RPC** region (e.g. `global`). Not the same as `contexts.<name>.region` (ABC label). Config: `admin.services.nomad.nomad_region`. | *(unset)*               |
+| Flag            | Env var        | Description             | Default                 |
+|-----------------|----------------|-------------------------|-------------------------|
+| `--nomad-addr`  | `NOMAD_ADDR`   | Nomad API base URL (paths like `/v1/jobs` are appended). Bare `http://host` gets port **4646**. The CLI also derives this from the active context when unset.        | `http://127.0.0.1:4646` |
+| `--nomad-token` | `NOMAD_TOKEN`  | Nomad ACL token. The CLI derives this from the active context when unset.                                                                                              | *(unset)*               |
+| `--region`      | `NOMAD_REGION` | Nomad **RPC** region (e.g. `global`). Not the same as `ABC_REGION` (sovereignty selector). Config: `admin.services.nomad.nomad_region`.                                | *(unset)*               |
+
+> The `--nomad-*` flags address the backing Nomad cluster directly
+> (a vendor-namespace concept). For the abc-cluster API itself, use
+> `--address` / `ABC_API_ADDR` and `--access-token` / `ABC_API_TOKEN`.
+> In seedling-tier contexts the two pairs typically resolve to the same
+> values via the active context; in grove+ the controller mediates the
+> mapping. See [tier semantics](./docs/reference/env-vars.md) for details.
 
 ### Directive precedence
 
@@ -2025,7 +2044,7 @@ abc cluster capabilities sync
 
 | Flag | Description |
 |------|-------------|
-| `--nomad-addr` | Nomad API address (bypasses `$NOMAD_ADDR` / `$ABC_ADDR` env vars) |
+| `--nomad-addr` | Nomad API address (bypasses `$NOMAD_ADDR` env var and active context) |
 | `--nomad-token` | Nomad ACL token |
 | `--region` | Nomad RPC region |
 

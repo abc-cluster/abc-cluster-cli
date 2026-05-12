@@ -66,7 +66,7 @@ See [auth context / config](./auth-context.md) for the full reference.
 All token values can be passed via env var instead of stored config:
 
 ```bash
-ABC_ACCESS_TOKEN=<token> abc auth whoami
+ABC_API_TOKEN=<token> abc auth whoami
 ```
 
 This is useful in CI/CD pipelines where you don't want to commit credentials.

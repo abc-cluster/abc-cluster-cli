@@ -37,7 +37,7 @@ Switch the active context:
 ```bash
 abc auth context use <name>
 # or via env var (one-shot override):
-ABC_ACTIVE_CONTEXT=dev abc job list
+ABC_CLI_CONTEXT=dev abc job list
 ```
 
 ## auth context remove
