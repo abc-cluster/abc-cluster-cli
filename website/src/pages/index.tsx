@@ -165,7 +165,14 @@ const SERVICES: ServiceDef[] = [
     desc: 'SSH session broker', searchTerms: 'ssh session broker access node', status: 'up', glyph: <></> },
 ];
 
-const ACRONYM_WORDS = ['frican', 'wesome', 'utomated', 'ffordable', 'daptable'];
+// A-word rotator suffixes. Drop a new entry here to add another rotating
+// word. Keep the leading "A" implicit — only the suffix goes in the array
+// (e.g. "ccessible" renders as "Accessible"). The animation auto-sizes
+// widths and cycles every 2.2s.
+//
+// Keep in sync with `<span class="ac-track">` in the apex landing at
+// abc-deployments/abc-cloud-prod/landing/index.html.
+const ACRONYM_WORDS = ['frican', 'wesome', 'utomated', 'ffordable', 'daptable', 'vailable'];
 
 // ── URL helpers ────────────────────────────────────────────────────────────
 function detectInitialState(): {network: NetworkSurface; format: URLFormat} {
