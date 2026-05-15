@@ -1,5 +1,11 @@
 /* ─── Google Fonts ─────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+/* Short-name token aliases (--ink, --bg, --accent, ...) for landing CSS
+ * that was ported in from the standalone seedling site. The canonical
+ * --abc-* palette is defined below. */
+@import '@abc-cluster/brand/tokens.css';
 
 /* ─── Infima token overrides ───────────────────────────────────────────────── */
 /* Light mode */

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
@@ -79,6 +80,26 @@ const config: Config = {
         },
       } satisfies Preset.Options,
     ],
+  ],
+
+  // Webpack alias so `@abc-cluster/brand` resolves to src/brand at build
+  // time, matching the tsconfig path mapping used at type-check time.
+  // Inline plugin keeps the alias adjacent to the rest of site config.
+  plugins: [
+    function brandAliasPlugin() {
+      return {
+        name: 'brand-alias',
+        configureWebpack() {
+          return {
+            resolve: {
+              alias: {
+                '@abc-cluster/brand': path.resolve(__dirname, 'src/brand'),
+              },
+            },
+          };
+        },
+      };
+    },
   ],
 
   themeConfig: {
