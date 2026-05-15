@@ -27,6 +27,13 @@ const basePreset = (base.presets as any[])[0][1];
 const config: Config = {
   ...base,
   baseUrl: '/docs/',
+  // The base config's headTags hardcode absolute `/img/favicon*` paths
+  // (correct only at baseUrl `/`). Under `/docs/` they 404 and, coming
+  // after the baseUrl-aware `favicon` link, the browser prefers the
+  // broken media-query ones → no tab icon. Drop them; the plain
+  // `favicon: 'img/favicon.svg'` already emits a correct
+  // `/docs/img/favicon.svg` link.
+  headTags: [],
   // Internal-link resolution shifts with routeBasePath; for the interim
   // tier build a broken internal link must not block shipping docs.
   onBrokenLinks: 'warn',
