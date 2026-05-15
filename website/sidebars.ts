@@ -1,17 +1,13 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
+import {resolveHidden, isHidden} from './tier-gates';
 
-const sidebars: SidebarsConfig = {
+// Authored, full sidebar. Tier/deployment gating filters this down via
+// tier-gates.ts (env-driven). With ABC_TIER unset nothing is hidden and
+// the output is identical to the hand-authored tree below.
+const fullSidebar: SidebarsConfig = {
   mainSidebar: [
-    {
-      type: 'doc',
-      id: 'index',
-      label: 'Overview',
-    },
-    {
-      type: 'doc',
-      id: 'quickstart',
-      label: 'Quick start',
-    },
+    {type: 'doc', id: 'index', label: 'Overview'},
+    {type: 'doc', id: 'quickstart', label: 'Quick start'},
     {
       type: 'category',
       label: 'Tutorials',
@@ -47,5 +43,32 @@ const sidebars: SidebarsConfig = {
     },
   ],
 };
+
+const hidden = resolveHidden();
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function gate(items: any[]): any[] {
+  const out: any[] = [];
+  for (const it of items) {
+    if (it && it.type === 'doc') {
+      if (isHidden(it.id, hidden)) continue;
+    } else if (it && it.type === 'category') {
+      const kids = gate(it.items || []);
+      const linkHidden =
+        it.link?.type === 'doc' && isHidden(it.link.id, hidden);
+      // Drop a category if its link page is gated out or it has no
+      // visible children left.
+      if (linkHidden || kids.length === 0) continue;
+      out.push({...it, items: kids});
+      continue;
+    }
+    out.push(it);
+  }
+  return out;
+}
+
+const sidebars: SidebarsConfig = hidden.length
+  ? {mainSidebar: gate((fullSidebar.mainSidebar as any[]) ?? [])}
+  : fullSidebar;
 
 export default sidebars;

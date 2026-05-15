@@ -21,8 +21,14 @@
 
 import type {Config} from '@docusaurus/types';
 import base from './docusaurus.config';
+import {resolveHidden, hiddenToExcludeGlobs} from './tier-gates';
 
 const basePreset = (base.presets as any[])[0][1];
+
+// Same env-driven gate the sidebar uses, applied to the docs build so
+// hidden pages aren't generated at all (no orphan HTML; sidebar + build
+// stay in sync; onBrokenLinks won't trip on gated-out pages).
+const gateExclude = hiddenToExcludeGlobs(resolveHidden());
 
 const config: Config = {
   ...base,
@@ -48,6 +54,10 @@ const config: Config = {
           ...basePreset.docs,
           // Docs ARE the site root → under baseUrl that is /docs/.
           routeBasePath: '/',
+          exclude: [
+            ...((basePreset.docs?.exclude as string[]) ?? []),
+            ...gateExclude,
+          ],
         },
       },
     ],
