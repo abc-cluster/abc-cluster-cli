@@ -105,9 +105,12 @@ const config: Config = {
   themeConfig: {
     image: 'img/social-card.png',
     colorMode: {
-      defaultMode: 'dark',
+      defaultMode: 'light',
       disableSwitch: false,
-      respectPrefersColorScheme: true,
+      // Deterministic light default across all abc-cluster sites; users can
+      // still toggle to dark (persisted). OS preference intentionally not
+      // honoured so first paint is consistent everywhere.
+      respectPrefersColorScheme: false,
     },
     navbar: {
       title: 'abc',
