@@ -120,7 +120,7 @@ const config: Config = {
         srcDark: 'img/logo-dark.svg',
         // Trio rings need ~28px to read; 22px crushed the A/B/C glyphs.
         style: { width: '28px', height: '28px' },
-        href: 'http://aither.mb.sun.ac.za/',
+        href: 'https://seedling.abc-cluster.cloud/',
         target: '_self',
       },
       items: [
@@ -131,7 +131,7 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          href: 'http://aither.mb.sun.ac.za/',
+          href: 'https://seedling.abc-cluster.cloud/',
           label: 'Cluster',
           position: 'right',
         },
@@ -162,9 +162,9 @@ const config: Config = {
         {
           title: 'Platform',
           items: [
-            {label: 'Cluster gateway', href: 'http://aither.mb.sun.ac.za/'},
-            {label: 'Nomad jobs',      href: 'http://nomad.aither/ui/'},
-            {label: 'MinIO storage',   href: 'http://minio-console.aither/'},
+            {label: 'Cluster gateway', href: 'https://seedling.abc-cluster.cloud/'},
+            {label: 'Nomad jobs',      href: 'https://nomad.seedling.abc-cluster.cloud/'},
+            {label: 'MinIO storage',   href: 'https://minio.seedling.abc-cluster.cloud/'},
             {label: 'GitHub releases', href: 'https://github.com/abc-cluster/abc-cluster-cli/releases'},
           ],
         },

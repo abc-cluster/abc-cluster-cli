@@ -24,7 +24,7 @@ A focused walkthrough of the **ABC CLI** built around the three things researche
 
 **Time budget:** roughly **40 minutes** end to end.
 
-**Cluster:** All exercises target the **aither** cluster (`http://aither.mb.sun.ac.za`). Your workspace lead provides a pre-configured `~/.abc/config.yaml` — you do not need to create credentials from scratch.
+**Cluster:** All exercises target your configured abc-cluster (for the seedling beta, `https://nomad.seedling.abc-cluster.cloud`). Your workspace lead provides a pre-configured `~/.abc/config.yaml` — you do not need to create credentials from scratch.
 
 **Deeper reference:** `abc <command> --help` is always accurate. The [reference docs](../reference/) have every flag and preamble directive.
 
