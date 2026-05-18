@@ -103,9 +103,7 @@ The CLI uses a hybrid router that automatically selects the best available Wave 
 Configure the abc-wave URL in your context:
 
 ```bash
-abc config set admin.services.wave.http http://100.126.253.95:9090
-# or via Traefik hostname:
-abc config set admin.services.wave.http http://wave.aither
+abc config set admin.services.wave.http https://wave.seedling.abc-cluster.cloud
 ```
 
 When set, every `--wave` pipeline run will probe this URL first. If abc-wave is unreachable the fallback is transparent — the pipeline still runs, just augmented by Seqera Wave instead.
@@ -122,7 +120,7 @@ abc pipeline run nf-core/rnaseq --wave --revision 3.14.0
 abc pipeline run nf-core/rnaseq --wave-endpoint seqera
 
 # Pin to abc-wave unconditionally
-abc pipeline run nf-core/rnaseq --wave-endpoint http://100.126.253.95:9090
+abc pipeline run nf-core/rnaseq --wave-endpoint https://wave.seedling.abc-cluster.cloud
 ```
 
 ### Container runtime compatibility
@@ -162,7 +160,7 @@ singularity {
 
 wave {
   enabled  = true
-  endpoint = "http://100.126.253.95:9090"
+  endpoint = "https://wave.seedling.abc-cluster.cloud"
 }
 ```
 

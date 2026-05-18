@@ -302,7 +302,7 @@ abc job run script.sh --mamba-cleanup
    - **Combined layer** `wave-layer-linux-<arch>.tar.gz` — all tools marked `wave_inject = true` in `tools.toml`
    - **Per-tool layers** `wave-layer-linux-<arch>-<tool>.tar.gz` — one archive per tool
 2. At submit time, `abc job run` resolves which layer(s) to use, downloads them to compute their sha256 digests, then calls `POST /v1alpha2/container` on the Wave Lite service with the S3 layer URL(s). Wave fetches each layer server-side (no local size limit).
-3. The resolved `targetImage` (e.g. `wave.aither/wt/<token>/library/ubuntu:24.04`) replaces the original `image` in the generated HCL.
+3. The resolved `targetImage` (e.g. `wave.seedling.abc-cluster.cloud/wt/<token>/library/ubuntu:24.04`) replaces the original `image` in the generated HCL.
 
 ### Layer selection
 

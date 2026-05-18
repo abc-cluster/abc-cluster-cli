@@ -183,10 +183,10 @@ Target architectures and the push endpoint live in the active context:
 abc config set contexts.<name>.admin.tools.architectures '["linux/amd64","linux/arm64"]'
 
 # Set the push endpoint (written automatically by abc admin tools push)
-abc config set contexts.<name>.admin.tools.endpoint http://rustfs.aither
+abc config set contexts.<name>.admin.tools.endpoint https://s3.seedling.abc-cluster.cloud
 
 # Set the Wave Lite URL (required for --wave-inject-tools in abc job run)
-abc config set contexts.<name>.admin.services.wave.http http://100.126.253.95:9090
+abc config set contexts.<name>.admin.services.wave.http https://wave.seedling.abc-cluster.cloud
 ```
 
 ## See also

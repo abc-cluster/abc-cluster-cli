@@ -146,7 +146,7 @@ abc module run nf-core/plink/extract --samplesheet ./samples.csv
 
 # Use a JAR mirror (skip GitHub) — usually auto-resolved from `abc admin tools push`
 abc module run nf-core/fastp \
-  --pipeline-gen-jar-url http://rustfs.aither/abc-reserved/binary_tools/nf-pipeline-gen-any
+  --pipeline-gen-jar-url https://s3.seedling.abc-cluster.cloud/abc-reserved/binary_tools/nf-pipeline-gen-any
 
 # Print the HCL without submitting
 abc module run nf-core/fastqc --dry-run
