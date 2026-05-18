@@ -149,10 +149,14 @@ hr {
 }
 
 /* ─── Navbar ───────────────────────────────────────────────────────────────── */
+/* Navbar mirrors the shared abc-site-kit chrome.css .topbar: 1px rule
+   border, 1180px inner, 14px vertical padding, sticky + blur. Docusaurus
+   owns the DOM so this is CSS-only parity, not the literal partial. */
 .navbar {
   border-bottom: 1px solid var(--abc-rule);
   padding: 0 2rem;
   min-height: unset;
+  backdrop-filter: blur(8px);
 }
 
 .navbar__inner {
@@ -166,27 +170,44 @@ hr {
   gap: 10px;
 }
 
+/* Wordmark lockup = chrome.css .brand-name: JetBrains Mono, "abc" in
+   ink, "-cluster" dim (::after on the title), " · seedling" tier accent
+   (::after on the brand link, sits right after the title). */
+.navbar__brand::after {
+  content: ' · seedling';
+  color: var(--abc-accent);
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  white-space: pre;
+}
+
 /* Logo mark — trio ABC rings render at 28×28; 22px crushed the glyphs.
    SVGs are transparent (green on light theme, gold on dark theme) so no
    badge background. The inline `style:` on the docusaurus logo config sets
    width/height; this rule is a fallback for browsers that strip them. */
 .navbar__logo img {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
 }
 
-/* "abc" in ink, "-cluster" appended in dim/teal via ::after */
+/* "abc" in ink, "-cluster" appended in dim/teal via ::after. Mono +
+   14px to match chrome.css .brand-name. */
 .navbar__title {
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--abc-ink);
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .navbar__title::after {
   content: '-cluster';
   color: var(--abc-text-dim);
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
   font-weight: 600;
+  font-size: 14px;
   letter-spacing: -0.01em;
 }
 
@@ -328,25 +349,46 @@ pre code {
 }
 
 /* ─── Footer ───────────────────────────────────────────────────────────────── */
+/* Mirrors the shared abc-site-kit chrome.css footer: --abc-bg ground,
+   1180px inner, column heads = .foot-col h4, links = .foot-list a,
+   copyright = .foot-meta (mono / text-mute / rule-soft top border). */
 .footer {
+  background: var(--abc-bg);
   border-top: 1px solid var(--abc-rule);
-  padding: 2rem 0;
+  padding: 48px 0 36px;
+}
+
+.footer .container {
+  max-width: 1180px;
 }
 
 .footer__title {
-  font-size: 11px;
-  letter-spacing: 0.16em;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  color: var(--abc-ink);
 }
 
 .footer__link-item {
-  font-size: 13px;
+  font-size: 13.5px;
+  color: var(--abc-text-dim);
+  border-bottom: 1px dotted var(--abc-rule);
+}
+
+.footer__link-item:hover {
+  color: var(--abc-accent);
+  border-bottom-color: var(--abc-accent);
 }
 
 .footer__copyright {
-  font-size: 12px;
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   color: var(--abc-text-mute);
   margin-top: 1.5rem;
+  padding-top: 18px;
+  border-top: 1px solid var(--abc-rule-soft);
 }
 
 /* ─── Search ───────────────────────────────────────────────────────────────── */

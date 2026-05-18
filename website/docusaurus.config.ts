@@ -114,8 +114,9 @@ const config: Config = {
         alt: 'abc-cluster ABC mark',
         src: 'img/logo.svg',
         srcDark: 'img/logo-dark.svg',
-        // Trio rings need ~28px to read; 22px crushed the A/B/C glyphs.
-        style: { width: '28px', height: '28px' },
+        // 32px to match the shared chrome.css brand-mark lockup (the
+        // tightened viewBox reads fine at this size).
+        style: { width: '32px', height: '32px' },
         href: 'https://seedling.abc-cluster.cloud/',
         target: '_self',
       },
