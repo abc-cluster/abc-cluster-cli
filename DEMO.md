@@ -11,7 +11,7 @@ A focused walkthrough of the **ABC CLI** built around the three things researche
 
 **Time budget:** roughly **40 minutes** end to end.
 
-**Cluster:** All exercises target the **aither** cluster (`http://aither.mb.sun.ac.za`). Your workspace lead provides a pre-configured `~/.abc/config.yaml` — you do not need to create credentials from scratch.
+**Cluster:** All exercises target your configured abc-cluster (for the seedling beta, `https://nomad.seedling.abc-cluster.cloud`). Your workspace lead provides a pre-configured `~/.abc/config.yaml` — you do not need to create credentials from scratch.
 
 **Deeper reference:** `abc <command> --help` is always accurate. The [reference docs](./docs/reference/) have every flag and preamble directive.
 
@@ -49,10 +49,10 @@ Replace the placeholder with the YAML your workspace lead gave you:
 cp ~/Downloads/<your-name>.yaml ~/.abc/config.yaml
 ```
 
-Activate the **aither** context and confirm it is the active one:
+Activate the **seedling** context and confirm it is the active one:
 
 ```bash
-abc context use aither
+abc context use seedling
 abc context show
 ```
 
@@ -302,7 +302,7 @@ The `researcher` and `project` metadata you passed with `--meta` in Part 2 appea
 | Symptom | Fix |
 |---------|-----|
 | `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
-| `403 Forbidden` | `abc context show` — confirm the **aither** context is active and your token is set |
+| `403 Forbidden` | `abc context show` — confirm the **seedling** context is active and your token is set |
 | Job goes to wrong namespace | `abc context show` — check the `nomad_namespace` field |
 | `abc data ls` returns no endpoint | Run `abc cluster capabilities sync` to pull storage credentials |
 | `unknown command` | `abc --help` for the command list; `abc <verb> --help` for flags |

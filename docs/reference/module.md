@@ -27,7 +27,7 @@ abc module run <module-name> [flags]
 | `--profile NAME` | Nextflow profile (default: `test`). Auto-includes `test` when `--test` is set. |
 | `--test` | Run the module's bundled `tests/main.nf.test` fixtures, staged from `nf-core/test-datasets`. |
 | `--datacenter LIST` | Nomad datacenter(s). Default `dc1`; pass `'*'` for any-datacenter placement. |
-| `--driver NAME` | Nomad task driver (default: `docker`; `containerd-driver` on aither-style nodes). |
+| `--driver NAME` | Nomad task driver (default: `docker`; `containerd-driver` on containerd-enabled nodes). |
 | `--host-volume NAME` | Shared work-dir host volume (default: `scratch`). |
 | `--wait` / `--logs` | Block on completion / stream logs (auto-on in interactive shells). |
 | `--dry-run` | Print Nomad HCL without submitting. |

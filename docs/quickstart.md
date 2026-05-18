@@ -18,10 +18,10 @@ Then replace the placeholder with the YAML your workspace lead gave you:
 cp ~/Downloads/<your-name>.yaml ~/.abc/config.yaml
 ```
 
-## 2. Activate the aither context
+## 2. Activate the seedling context
 
 ```bash
-abc auth context use aither
+abc auth context use seedling
 
 # Confirm the active context and your identity:
 abc auth context show
@@ -66,7 +66,7 @@ the full metric mapping and JSON schema.
 | Symptom | Try |
 |---|---|
 | `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
-| `403 Forbidden` on submit | `abc auth context show` — confirm the **aither** context is active and your token is set |
+| `403 Forbidden` on submit | `abc auth context show` — confirm the **seedling** context is active and your token is set |
 | Job goes to wrong namespace | `abc auth context show` — the `nomad_namespace` field in your config controls the default |
 | `unknown command` | `abc --help`, then `abc <verb> --help` |
 

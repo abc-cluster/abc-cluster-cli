@@ -62,10 +62,10 @@ Replace the placeholder with the YAML your workspace lead gave you:
 cp ~/Downloads/<your-name>.yaml ~/.abc/config.yaml
 ```
 
-Activate the **aither** context and confirm it is the active one:
+Activate the **seedling** context and confirm it is the active one:
 
 ```bash
-abc auth context use aither
+abc auth context use seedling
 abc auth context show
 ```
 
@@ -315,7 +315,7 @@ The `researcher` and `project` metadata you passed with `--meta` in Part 2 appea
 | Symptom | Fix |
 |---------|-----|
 | `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
-| `403 Forbidden` | `abc auth context show` — confirm the **aither** context is active and your token is set |
+| `403 Forbidden` | `abc auth context show` — confirm the **seedling** context is active and your token is set |
 | Job goes to wrong namespace | `abc auth context show` — check the `nomad_namespace` field |
 | `abc data ls` returns no endpoint | Run `abc cluster capabilities sync` to pull storage credentials |
 | `unknown command` | `abc --help` for the command list; `abc <verb> --help` for flags |
