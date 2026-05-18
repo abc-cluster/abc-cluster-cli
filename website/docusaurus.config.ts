@@ -1,6 +1,7 @@
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import {PROJECTS} from 'abc-site-kit/projects';
 
 const config: Config = {
   title: 'abc CLI',
@@ -67,8 +68,11 @@ const config: Config = {
     [
       'classic',
       {
+        // CLI docs instance (default plugin id). Served at /cli (under
+        // baseUrl that is /docs/cli on the tier site).
         docs: {
           path: '../docs',
+          routeBasePath: 'cli',
           exclude: ['design/**'],
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/abc-cluster/abc-cluster-cli/tree/main/',
@@ -78,6 +82,20 @@ const config: Config = {
           customCss: './src/css/custom.css',
         },
       } satisfies Preset.Options,
+    ],
+  ],
+
+  plugins: [
+    // Concepts docs instance — placeholder for platform-wide shared
+    // docs (docs-common). Served at /concepts.
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'concepts',
+        path: './concepts-docs',
+        routeBasePath: 'concepts',
+        sidebarPath: false,
+      },
     ],
   ],
 
@@ -104,10 +122,10 @@ const config: Config = {
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'mainSidebar',
-          position: 'left',
+          type: 'dropdown',
           label: 'Docs',
+          position: 'left',
+          items: PROJECTS.map((p) => ({label: p.label, href: p.path})),
         },
         {
           href: 'https://seedling.abc-cluster.cloud/',
@@ -132,10 +150,11 @@ const config: Config = {
         {
           title: 'Docs',
           items: [
-            {label: 'Overview',      to: '/docs/'},
-            {label: 'Quick start',   to: '/docs/quickstart'},
-            {label: 'Command reference', to: '/docs/reference'},
-            {label: 'Tutorials',     to: '/docs/tutorials'},
+            {label: 'All projects',      to: '/'},
+            {label: 'CLI — overview',    to: '/cli/'},
+            {label: 'CLI — quick start', to: '/cli/quickstart'},
+            {label: 'CLI — reference',   to: '/cli/reference'},
+            {label: 'Concepts',          to: '/concepts/'},
           ],
         },
         {

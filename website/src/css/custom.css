@@ -25,24 +25,9 @@
   --ifm-color-primary-lighter: #37816f;
   --ifm-color-primary-lightest:#3f9180;
 
-  /* Accent gold */
-  --abc-accent:      #907028;
-  --abc-accent-dim:  #c8a84c;
-
-  /* Surface — page is pure white in light mode. Card tints live on the
-     landing's own --bg-1 / --bg-2 in landing.css (and on Docusaurus'
-     --ifm-background-surface-color below for any Docusaurus-rendered
-     surface like the navbar's hover state). */
-  --abc-bg:          #ffffff;
-  --abc-bg-1:        #eef6f2;
-  --abc-bg-2:        #e3eee8;
-  --abc-text:        #1a4a3a;
-  --abc-text-dim:    #2d7060;
-  --abc-text-mute:   #6aaa96;
-  --abc-ink:         #0a2820;
-  --abc-ink-dim:     #907028;
-  --abc-rule:        #a8d8cc;
-  --abc-rule-soft:   #c8e8e0;
+  /* The full --abc-* palette (light + dark) is defined by
+   * abc-site-kit/brand/tokens.css, @imported at the top of this file.
+   * Below we map Docusaurus' --ifm-* tokens onto those --abc-* vars. */
 
   --ifm-background-color:         var(--abc-bg);
   --ifm-background-surface-color: var(--abc-bg-1);
@@ -89,21 +74,11 @@
 }
 
 /* Dark mode */
+/* The dark --abc-* palette is supplied by abc-site-kit/brand/tokens.css
+ * (its own [data-theme='dark'] block). Here we only override the
+ * --ifm-color-primary ladder (not in tokens.css) and re-map the --ifm-*
+ * tokens for dark, all keyed off the kit's dark --abc-* values. */
 [data-theme='dark'] {
-  --abc-accent:     #c8a84c;
-  --abc-accent-dim: #a87c2c;
-
-  --abc-bg:         #070f0c;
-  --abc-bg-1:       #0b1a15;
-  --abc-bg-2:       #0f2219;
-  --abc-text:       #c5e5dc;
-  --abc-text-dim:   #7db8a8;
-  --abc-text-mute:  #4a7d6f;
-  --abc-ink:        #e8f9f4;
-  --abc-ink-dim:    #c8a84c;
-  --abc-rule:       #163d32;
-  --abc-rule-soft:  #0e2a22;
-
   --ifm-color-primary:         #4ab89a;
   --ifm-color-primary-dark:    #38a887;
   --ifm-color-primary-darker:  #30a07f;

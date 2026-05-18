@@ -1,11 +1,13 @@
 // Tier docs-site build profile.
 //
-// The base docusaurus.config.ts serves the gateway landing at `/` and docs
-// at `/docs` with baseUrl `/` (used for the aither deploy). A *tier* site
-// (e.g. seedling.abc-cluster.cloud/docs) wants docs-only, no gateway
-// landing, with everything under `/docs/`. This profile overrides exactly
-// those three things and reuses the rest of the base config (brand webpack
-// alias, headTags, themeConfig, mermaid, etc.) unchanged.
+// The base docusaurus.config.ts defines the multi-project docs structure:
+// the hub (src/pages/index.tsx) at `/`, the CLI docs at `/cli`, and the
+// concepts placeholder at `/concepts`, all with baseUrl `/`. A *tier* site
+// (e.g. seedling.abc-cluster.cloud/docs) serves the same structure under
+// `/docs/` and layers the env-driven tier gate onto the CLI docs so hidden
+// pages aren't generated. This profile overrides only baseUrl, headTags,
+// onBrokenLinks, and the CLI docs `exclude`; everything else (hub, concepts
+// plugin instance, navbar switcher, themeConfig, mermaid) is reused.
 //
 // Build:
 //   npx docusaurus build --config docusaurus.tier.config.ts --out-dir build-tier
@@ -48,12 +50,16 @@ const config: Config = {
       'classic',
       {
         ...basePreset,
-        // No gateway landing page on a tier docs site.
-        pages: false,
+        // The hub (src/pages/index.tsx) IS the tier site root now;
+        // keep the pages plugin enabled (default opts) so /docs/ serves
+        // the project picker. The classic preset rejects `true` for
+        // `pages` — `{}` is the canonical "enabled with defaults".
+        pages: {},
         docs: {
           ...basePreset.docs,
-          // Docs ARE the site root → under baseUrl that is /docs/.
-          routeBasePath: '/',
+          // CLI docs stay at /cli (from the base config). Only the
+          // env-driven tier gate is layered on here so hidden pages
+          // aren't generated (no orphan HTML; sidebar + build in sync).
           exclude: [
             ...((basePreset.docs?.exclude as string[]) ?? []),
             ...gateExclude,
