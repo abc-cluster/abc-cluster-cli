@@ -34,13 +34,15 @@ export type Tier = 'all' | 'seedling' | 'grove' | 'cloud';
  */
 export const TIER_HIDE: Record<Tier, string[]> = {
   all: [],
+    // Curated 2026-05-18. Seedling's CLI scope is "using a cluster",
+    // not operating/provisioning it (single-lab researcher). The
+    // operator/infra surface below is hidden from the seedling docs;
+    // adjust here or override per deploy via ABC_DOCS_HIDE / ABC_DOCS_SHOW.
   seedling: [
-    // --- example trim (commented; this is the knob) -----------------
-    // 'reference/infra',        // cluster provisioning = Pulumi, not CLI
-    // 'reference/cluster',      // fleet ops — operator tier
-    // 'reference/admin*',       // admin services + admin tools
-    // 'reference/abc-accounting',
-    // ----------------------------------------------------------------
+    'reference/infra',          // cluster/compute provisioning = Pulumi, not the CLI
+    'reference/cluster',        // fleet ops — operator tier
+    'reference/admin*',         // admin services + admin tools — operator
+    'reference/abc-accounting', // namespace budget mgmt — operator/PI (abc-report stays)
   ],
   grove: [],
   cloud: [],
