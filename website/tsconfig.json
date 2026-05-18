@@ -6,11 +6,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "ignoreDeprecations": "6.0",
-    "strict": true,
-    "paths": {
-      "@abc-cluster/brand": ["src/brand"],
-      "@abc-cluster/brand/*": ["src/brand/*"]
-    }
+    "strict": true
   },
   "exclude": [".docusaurus", "build"]
 }

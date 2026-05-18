@@ -21,7 +21,7 @@
 
 import type {Config} from '@docusaurus/types';
 import base from './docusaurus.config';
-import {resolveHidden, hiddenToExcludeGlobs} from './tier-gates';
+import {resolveHidden, hiddenToExcludeGlobs} from 'abc-site-kit/tier-gates';
 
 const basePreset = (base.presets as any[])[0][1];
 

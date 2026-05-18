@@ -1,5 +1,5 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
-import {resolveHidden, isHidden} from './tier-gates';
+import {resolveHidden, isHidden} from 'abc-site-kit/tier-gates';
 
 // Authored, full sidebar. Tier/deployment gating filters this down via
 // tier-gates.ts (env-driven). With ABC_TIER unset nothing is hidden and

@@ -5,7 +5,7 @@
 /* Short-name token aliases (--ink, --bg, --accent, ...) for landing CSS
  * that was ported in from the standalone seedling site. The canonical
  * --abc-* palette is defined below. */
-@import '@abc-cluster/brand/tokens.css';
+@import 'abc-site-kit/brand/tokens.css';
 
 /* ─── Infima token overrides ───────────────────────────────────────────────── */
 /* Light mode */
