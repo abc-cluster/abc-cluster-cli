@@ -1,7 +1,6 @@
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
-import {PROJECTS} from 'abc-site-kit/projects';
 
 const config: Config = {
   title: 'abc CLI',
@@ -122,10 +121,8 @@ const config: Config = {
       },
       items: [
         {
-          type: 'dropdown',
-          label: 'Docs',
+          type: 'custom-projectSwitcher',
           position: 'left',
-          items: PROJECTS.map((p) => ({label: p.label, href: p.path})),
         },
         {
           href: 'https://seedling.abc-cluster.cloud/',
