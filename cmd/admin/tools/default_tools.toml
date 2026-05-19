@@ -102,6 +102,25 @@ version = "latest"
 repo    = "ColinIanKing/stress-ng"
 version = "latest"
 
+# nextflow: Nextflow launcher binary.
+# Distributed to the cluster so Nomad head-node jobs can run pipelines without
+# baking Nextflow into a container image. Also used by nf-nomad-s5cmd test
+# workflows running directly on Multipass worker VMs.
+#
+# Nextflow is arch-agnostic (Java launcher shell wrapper + nextflow-all.jar),
+# but the launcher binary itself has arch-specific variants. Use linux/amd64
+# and linux/arm64 for mixed Multipass fleets.
+#
+# Push to cluster:
+#   abc admin tools fetch nextflow
+#   abc admin tools push nextflow
+#
+# Nomad artifact URL (after push):
+#   abc admin tools artifact-url nextflow
+[tools.nextflow]
+repo    = "nextflow-io/nextflow"
+version = "latest"
+
 
 # ── Locally built artifacts ────────────────────────────────────────────────────
 #
