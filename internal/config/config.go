@@ -40,9 +40,11 @@
 //	    admin:
 //	      services:
 //	        nomad:
-//	          nomad_addr:  "http://100.70.185.46:4646"  # http must use an explicit :PORT on write; bare http://host is rewritten to :4646 on load/set
-//	          nomad_token: "s.123..."
-//	          nomad_region: "global"   # optional; Nomad RPC region (not the same as contexts.region)
+//	          addr:      "http://100.70.185.46:4646"  # http must use explicit :PORT; bare http://host is rewritten to :4646 on load/set
+//	          token:     "s.123..."
+//	          region:    "global"     # optional; Nomad RPC region (not the same as contexts.region)
+//	          namespace: "su-mbhg-bioinformatics"  # optional; default namespace injected into all job operations
+//	          # Legacy: nomad_addr / nomad_token / nomad_region accepted on read, migrated to short names on save.
 //	      abc_nodes:              # optional; static operator creds when cluster_type is abc-nodes
 //	        nomad_namespace: "default"
 //	        s3_access_key: "..."
@@ -298,7 +300,7 @@ func (c *Config) Validate() error {
 	for _, name := range sortedContextNames(c.Contexts) {
 		ctx := c.Contexts[name]
 		if err := ValidateNomadAddrForContext(ctx.NomadAddr()); err != nil {
-			return fmt.Errorf("contexts.%s.admin.services.nomad.nomad_addr: %w", name, err)
+			return fmt.Errorf("contexts.%s.admin.services.nomad.addr: %w", name, err)
 		}
 		if err := ValidateAdminServicesFloorCredSource(ctx.Admin.Services); err != nil {
 			return fmt.Errorf("contexts.%s: %w", name, err)
@@ -386,8 +388,10 @@ func (c *Config) ClearContext(name string) {
 // Supported paths: active_context, defaults.output, defaults.region,
 // contexts.<name>.endpoint, contexts.<name>.access_token, etc.
 //
-// Nomad: contexts.<name>.admin.services.nomad.nomad_addr / nomad_token / nomad_region
-// (nomad_addr for http:// must include an explicit :PORT when set via config.Set).
+// Nomad: contexts.<name>.admin.services.nomad.addr / token / region / namespace
+// (addr for http:// must include an explicit :PORT when set via config.Set).
+// The prefixed forms nomad_addr / nomad_token / nomad_region are accepted as
+// read-only aliases for backward compatibility; Set and Unset use the short names.
 // Auth: contexts.<name>.auth.whoami | auth.root | shorthand auth: root (bootstrap token).
 // Admin: contexts.<name>.admin.whoami (optional persona label; Nomad namespace can be derived for abc-nodes).
 // abc-nodes floor: contexts.<name>.admin.abc_nodes.<field> (see AdminABCNodes).
@@ -456,12 +460,14 @@ func (c *Config) Get(key string) (string, bool) {
 					return "", false
 				}
 				switch parts[5] {
-				case "nomad_addr":
+				case "addr", "nomad_addr": // nomad_addr accepted as read alias
 					return ctx.Admin.Services.Nomad.Addr, true
-				case "nomad_token":
+				case "token", "nomad_token": // nomad_token accepted as read alias
 					return ctx.Admin.Services.Nomad.Token, true
-				case "nomad_region":
+				case "region", "nomad_region": // nomad_region accepted as read alias
 					return ctx.Admin.Services.Nomad.Region, true
+				case "namespace":
+					return ctx.Admin.Services.Nomad.Namespace, true
 				}
 				return "", false
 			}
@@ -587,21 +593,23 @@ func (c *Config) Set(key, value string) error {
 					ctx.Admin.Services.Nomad = &NomadService{}
 				}
 				switch parts[5] {
-				case "nomad_addr":
+				case "addr":
 					v := CanonicalNomadAPIAddrForYAML(strings.TrimSpace(value))
 					if err := ValidateNomadAddrForContext(v); err != nil {
 						return err
 					}
 					ctx.Admin.Services.Nomad.Addr = v
-				case "nomad_token":
+				case "token":
 					ctx.Admin.Services.Nomad.Token = value
 					if strings.TrimSpace(value) == "" {
 						ctx.SetAuthWhoami("")
 					}
-				case "nomad_region":
+				case "region":
 					ctx.Admin.Services.Nomad.Region = value
+				case "namespace":
+					ctx.Admin.Services.Nomad.Namespace = value
 				default:
-					return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+					return fmt.Errorf("unknown admin.services.nomad field %q (supported: addr, token, region, namespace)", parts[5])
 				}
 				c.Contexts[canon] = ctx
 				return nil
@@ -798,17 +806,20 @@ func (c *Config) Unset(key string) error {
 					return nil
 				}
 				switch parts[5] {
-				case "nomad_addr":
+				case "addr":
 					ctx.Admin.Services.Nomad.Addr = ""
-				case "nomad_token":
+				case "token":
 					ctx.Admin.Services.Nomad.Token = ""
 					ctx.ClearAuth()
-				case "nomad_region":
+				case "region":
 					ctx.Admin.Services.Nomad.Region = ""
+				case "namespace":
+					ctx.Admin.Services.Nomad.Namespace = ""
 				default:
-					return fmt.Errorf("unknown admin.services.nomad field %q", parts[5])
+					return fmt.Errorf("unknown admin.services.nomad field %q (supported: addr, token, region, namespace)", parts[5])
 				}
-				if ctx.Admin.Services.Nomad.Addr == "" && ctx.Admin.Services.Nomad.Token == "" && ctx.Admin.Services.Nomad.Region == "" {
+				n := ctx.Admin.Services.Nomad
+				if n.Addr == "" && n.Token == "" && n.Region == "" && n.Namespace == "" {
 					ctx.Admin.Services.Nomad = nil
 				}
 				c.Contexts[canon] = ctx
@@ -991,15 +1002,19 @@ func (c *Config) AllKeys() [][2]string {
 		if als := AliasesResolvingToCanon(c, name); len(als) > 0 {
 			out = append(out, [2]string{"contexts." + name + ".aliases", strings.Join(als, ",")})
 		}
-		if ctx.Admin.Services.Nomad != nil {
-			if ctx.Admin.Services.Nomad.Addr != "" {
-				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_addr", ctx.Admin.Services.Nomad.Addr})
+		if n := ctx.Admin.Services.Nomad; n != nil {
+			pfx := "contexts." + name + ".admin.services.nomad."
+			if n.Addr != "" {
+				out = append(out, [2]string{pfx + "addr", n.Addr})
 			}
-			if ctx.Admin.Services.Nomad.Token != "" {
-				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_token", maskToken(ctx.Admin.Services.Nomad.Token)})
+			if n.Token != "" {
+				out = append(out, [2]string{pfx + "token", maskToken(n.Token)})
 			}
-			if ctx.Admin.Services.Nomad.Region != "" {
-				out = append(out, [2]string{"contexts." + name + ".admin.services.nomad.nomad_region", ctx.Admin.Services.Nomad.Region})
+			if n.Region != "" {
+				out = append(out, [2]string{pfx + "region", n.Region})
+			}
+			if n.Namespace != "" {
+				out = append(out, [2]string{pfx + "namespace", n.Namespace})
 			}
 		}
 		out = AppendAdminFloorAllKeys("contexts."+name, ctx.Admin.Services, out)

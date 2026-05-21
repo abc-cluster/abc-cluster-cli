@@ -140,23 +140,27 @@ func (c Context) AbcNodesNomadNamespaceForCLI() string {
 // NomadNamespace returns the Nomad namespace that all job operations should
 // target for this context. Resolution order (first non-empty wins):
 //
-//  1. admin.abc_nodes.nomad_namespace — explicit operator override (abc-nodes tier)
-//  2. Derived from admin.whoami / auth.whoami (abc-nodes tier only)
-//  3. context namespace field — stamped into config.yaml at claim time (abc-cluster tier:
-//     seedling, grove). This is the primary mechanism for pool users — the namespace
-//     (e.g. "su-mbhg-bioinformatics") is written by provision-pool.sh and requires no
-//     runtime derivation; the pool token enforces the boundary server-side.
+//  1. admin.services.nomad.namespace — canonical location; stamped into
+//     config.yaml at claim time (e.g. "su-mbhg-bioinformatics"). This is the
+//     primary mechanism for all tiers. The Nomad token enforces the boundary
+//     server-side; the CLI trusts whatever is written here.
+//  2. admin.abc_nodes.nomad_namespace — legacy abc-nodes operator override.
+//  3. Derived from admin.whoami / auth.whoami suffix (abc-nodes tier only).
+//  4. contexts.<name>.namespace — deprecated flat field; kept for configs
+//     written before this field moved to admin.services.nomad.
 //
-// Returns empty string if no namespace is resolvable; callers should treat that
-// as "let Nomad use its default" rather than an error.
+// Returns empty string if no namespace is resolvable; callers treat that as
+// "let Nomad use its server default" rather than an error.
 func (c Context) NomadNamespace() string {
-	// Step 1 + 2: abc-nodes derivation path (explicit config or whoami-derived).
+	// Step 1: canonical location under admin.services.nomad.
+	if ns := c.NomadServiceNamespace(); ns != "" {
+		return ns
+	}
+	// Steps 2 + 3: abc-nodes derivation path (explicit config or whoami-derived).
 	if ns := c.resolvedAbcNodesNomadNamespace(); ns != "" {
 		return ns
 	}
-	// Step 3: flat namespace field — set in the generated config.yaml for
-	// abc-cluster tier (cluster_type: abc-cluster).  Safe to read for any
-	// cluster type; non-abc-cluster configs simply won't have it set.
+	// Step 4: deprecated flat field — written by older generated configs.
 	return strings.TrimSpace(c.Namespace)
 }
 

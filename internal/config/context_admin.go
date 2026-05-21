@@ -3,10 +3,22 @@ package config
 import "strings"
 
 // NomadService holds Nomad API / CLI connection details for one context.
+// YAML path: contexts.<name>.admin.services.nomad
+//
+// The short field names (addr, token, region, namespace) are canonical.
+// The prefixed forms (nomad_addr, nomad_token, nomad_region) are accepted on
+// read for backward compatibility and migrated to short names on save by
+// normalizeContextNomad; new configs should use the short names.
 type NomadService struct {
-	Addr   string `yaml:"nomad_addr,omitempty"`
-	Token  string `yaml:"nomad_token,omitempty"`
-	Region string `yaml:"nomad_region,omitempty"` // Nomad multi-region ID (e.g. global), not contexts.region
+	Addr      string `yaml:"addr,omitempty"`
+	Token     string `yaml:"token,omitempty"`
+	Region    string `yaml:"region,omitempty"`    // Nomad multi-region ID (e.g. global), not contexts.region
+	Namespace string `yaml:"namespace,omitempty"` // default Nomad namespace for all operations on this context
+
+	// Deprecated: prefixed forms accepted on read, migrated to short names on save.
+	DeprecatedAddr   string `yaml:"nomad_addr,omitempty"`
+	DeprecatedToken  string `yaml:"nomad_token,omitempty"`
+	DeprecatedRegion string `yaml:"nomad_region,omitempty"`
 }
 
 // AdminFloorService holds URLs synced from running Nomad jobs (abc-nodes floor)
@@ -204,7 +216,7 @@ type Services struct {
 	Nomad *NomadService `yaml:"nomad,omitempty"`
 }
 
-// NomadAddr returns contexts.<name>.admin.services.nomad.nomad_addr.
+// NomadAddr returns contexts.<name>.admin.services.nomad.addr.
 func (c Context) NomadAddr() string {
 	if c.Admin.Services.Nomad == nil {
 		return ""
@@ -212,7 +224,7 @@ func (c Context) NomadAddr() string {
 	return strings.TrimSpace(c.Admin.Services.Nomad.Addr)
 }
 
-// NomadToken returns contexts.<name>.admin.services.nomad.nomad_token.
+// NomadToken returns contexts.<name>.admin.services.nomad.token.
 func (c Context) NomadToken() string {
 	if c.Admin.Services.Nomad == nil {
 		return ""
@@ -220,13 +232,23 @@ func (c Context) NomadToken() string {
 	return strings.TrimSpace(c.Admin.Services.Nomad.Token)
 }
 
-// NomadRegion returns contexts.<name>.admin.services.nomad.nomad_region (Nomad RPC region).
+// NomadRegion returns contexts.<name>.admin.services.nomad.region (Nomad RPC region).
 // It is intentionally not the same as Context.Region (ABC / datacenter label such as za-cpt).
 func (c Context) NomadRegion() string {
 	if c.Admin.Services.Nomad == nil {
 		return ""
 	}
 	return strings.TrimSpace(c.Admin.Services.Nomad.Region)
+}
+
+// NomadServiceNamespace returns contexts.<name>.admin.services.nomad.namespace — the
+// default Nomad namespace stamped into this context at provision time (e.g. "su-mbhg-bioinformatics").
+// Used by NomadNamespace() as the first resolution step for any cluster type.
+func (c Context) NomadServiceNamespace() string {
+	if c.Admin.Services.Nomad == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Nomad.Namespace)
 }
 
 // TerraformDeployDir returns contexts.<name>.admin.services.terraform.deploy_dir.
@@ -296,13 +318,22 @@ func (c Context) PulumiConfigPassphrase() string {
 	return strings.TrimSpace(c.Admin.Services.Pulumi.ConfigPassphrase)
 }
 
-// normalizeContextNomad folds deprecated YAML (top-level nomad_*, services.nomad)
-// into admin.services.nomad and clears legacy fields so the next save writes only admin.
+// normalizeContextNomad folds all deprecated / prefixed YAML forms into the
+// canonical short-name fields of admin.services.nomad, then clears legacy fields
+// so the next save writes only the new shape.
+//
+// Migration chain (highest to lowest priority for each field):
+//   addr:   admin.services.nomad.addr  > nomad_addr (prefixed)  > services.nomad.addr  > top-level nomad_addr
+//   token:  admin.services.nomad.token > nomad_token (prefixed) > services.nomad.token > top-level nomad_token
+//   region: admin.services.nomad.region > nomad_region (prefixed) > services.nomad.region
 func normalizeContextNomad(ctx *Context) {
-	var addr, token string
-	if ctx.Admin.Services.Nomad != nil {
-		addr = strings.TrimSpace(ctx.Admin.Services.Nomad.Addr)
-		token = strings.TrimSpace(ctx.Admin.Services.Nomad.Token)
+	var addr, token, region string
+
+	if n := ctx.Admin.Services.Nomad; n != nil {
+		// Prefer short canonical names; fall back to prefixed deprecated names.
+		addr = strings.TrimSpace(first(n.Addr, n.DeprecatedAddr))
+		token = strings.TrimSpace(first(n.Token, n.DeprecatedToken))
+		region = strings.TrimSpace(first(n.Region, n.DeprecatedRegion))
 	}
 	if ctx.ServicesLegacy.Nomad != nil {
 		if addr == "" {
@@ -319,29 +350,45 @@ func normalizeContextNomad(ctx *Context) {
 		token = strings.TrimSpace(ctx.LegacyNomadToken)
 	}
 
+	// Preserve namespace — it has no deprecated form so carry it through.
+	var ns string
+	if ctx.Admin.Services.Nomad != nil {
+		ns = strings.TrimSpace(ctx.Admin.Services.Nomad.Namespace)
+	}
+
+	// Clear all legacy / deprecated fields.
 	ctx.ServicesLegacy = Services{}
 	ctx.LegacyNomadAddr = ""
 	ctx.LegacyNomadToken = ""
 
-	if addr == "" && token == "" {
+	if addr == "" && token == "" && region == "" && ns == "" {
 		ctx.Admin.Services.Nomad = nil
 		return
 	}
 	if ctx.Admin.Services.Nomad == nil {
 		ctx.Admin.Services.Nomad = &NomadService{}
 	}
-	if strings.TrimSpace(ctx.Admin.Services.Nomad.Addr) == "" {
-		ctx.Admin.Services.Nomad.Addr = addr
+	if addr != "" {
+		addr = CanonicalNomadAPIAddrForYAML(addr)
 	}
-	if strings.TrimSpace(ctx.Admin.Services.Nomad.Token) == "" {
-		ctx.Admin.Services.Nomad.Token = token
+	ctx.Admin.Services.Nomad = &NomadService{
+		Addr:      addr,
+		Token:     token,
+		Region:    region,
+		Namespace: ns,
 	}
-	if ctx.Admin.Services.Nomad != nil {
-		if a := strings.TrimSpace(ctx.Admin.Services.Nomad.Addr); a != "" {
-			ctx.Admin.Services.Nomad.Addr = CanonicalNomadAPIAddrForYAML(a)
-		}
-	}
-	if strings.TrimSpace(ctx.Admin.Services.Nomad.Addr) == "" && strings.TrimSpace(ctx.Admin.Services.Nomad.Token) == "" {
+	if ctx.Admin.Services.Nomad.Addr == "" && ctx.Admin.Services.Nomad.Token == "" &&
+		ctx.Admin.Services.Nomad.Region == "" && ctx.Admin.Services.Nomad.Namespace == "" {
 		ctx.Admin.Services.Nomad = nil
 	}
+}
+
+// first returns the first non-empty string from the arguments.
+func first(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

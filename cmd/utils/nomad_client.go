@@ -24,13 +24,14 @@ import (
 
 // NomadClient is a thin wrapper around Nomad's HTTP API.
 type NomadClient struct {
-	addr   string
-	token  string
-	region string
-	sudo   bool
-	cloud  bool
-	asUser string
-	http   *http.Client
+	addr             string
+	token            string
+	region           string
+	defaultNamespace string // injected from admin.services.nomad.namespace at construction
+	sudo             bool
+	cloud            bool
+	asUser           string
+	http             *http.Client
 }
 
 // Token returns the ACL token configured on this client.
@@ -85,6 +86,38 @@ func NomadDefaultsFromConfig() (addr, token, region string) {
 	}
 	active := cfg.ActiveCtx()
 	return active.NomadAddr(), active.NomadToken(), active.NomadRegion()
+}
+
+// NomadClientFromConfig builds a NomadClient fully configured from the active
+// abc context — addr, token, region, and the default namespace from
+// admin.services.nomad.namespace. All job operations on this client will use
+// the context namespace unless an explicit namespace is passed per-call.
+func NomadClientFromConfig() *NomadClient {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return NewNomadClient("", "", "")
+	}
+	ctx := cfg.ActiveCtx()
+	return NewNomadClient(ctx.NomadAddr(), ctx.NomadToken(), ctx.NomadRegion()).
+		WithNamespace(ctx.NomadNamespace())
+}
+
+// WithNamespace sets the default Nomad namespace injected into every scoped
+// API call when no explicit namespace is passed. Returns the receiver for chaining.
+func (c *NomadClient) WithNamespace(ns string) *NomadClient {
+	c.defaultNamespace = strings.TrimSpace(ns)
+	return c
+}
+
+// DefaultNamespace returns the namespace this client was configured with.
+func (c *NomadClient) DefaultNamespace() string { return c.defaultNamespace }
+
+// nsOrDefault returns ns if non-empty, otherwise the client's default namespace.
+func (c *NomadClient) nsOrDefault(ns string) string {
+	if strings.TrimSpace(ns) != "" {
+		return ns
+	}
+	return c.defaultNamespace
 }
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -520,8 +553,8 @@ func (c *NomadClient) ListJobs(ctx context.Context, prefix, namespace string) ([
 	if prefix != "" {
 		q.Set("prefix", prefix)
 	}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var out []NomadJobStub
 	return out, c.get(ctx, "/v1/jobs", q, &out)
@@ -529,8 +562,8 @@ func (c *NomadClient) ListJobs(ctx context.Context, prefix, namespace string) ([
 
 func (c *NomadClient) GetJob(ctx context.Context, jobID, namespace string) (*NomadJob, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var out NomadJob
 	return &out, c.get(ctx, "/v1/job/"+url.PathEscape(jobID), q, &out)
@@ -538,8 +571,8 @@ func (c *NomadClient) GetJob(ctx context.Context, jobID, namespace string) (*Nom
 
 func (c *NomadClient) GetJobAllocs(ctx context.Context, jobID, namespace string, all bool) ([]NomadAllocStub, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	if all {
 		q.Set("all", "true")
@@ -551,8 +584,8 @@ func (c *NomadClient) GetJobAllocs(ctx context.Context, jobID, namespace string,
 // GetAllocation returns allocation details including AllocatedResources for port discovery.
 func (c *NomadClient) GetAllocation(ctx context.Context, allocID, namespace string) (*NomadAllocation, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var out NomadAllocation
 	return &out, c.get(ctx, "/v1/allocation/"+url.PathEscape(allocID), q, &out)
@@ -560,8 +593,8 @@ func (c *NomadClient) GetAllocation(ctx context.Context, allocID, namespace stri
 
 func (c *NomadClient) GetJobEvals(ctx context.Context, jobID, namespace string) ([]NomadEvaluation, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var out []NomadEvaluation
 	return out, c.get(ctx, "/v1/job/"+url.PathEscape(jobID)+"/evaluations", q, &out)
@@ -600,8 +633,8 @@ func (c *NomadClient) PlanJob(ctx context.Context, jobID string, jobJSON json.Ra
 
 func (c *NomadClient) StopJob(ctx context.Context, jobID, namespace string, purge bool) (*NomadDeregisterResponse, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	if purge {
 		q.Set("purge", "true")
@@ -689,11 +722,11 @@ func (c *NomadClient) StreamLogs(ctx context.Context, allocID, task, logType, or
 // ── Services API methods ──────────────────────────────────────────────────────
 
 // ListServices returns all service name entries across namespaces.
-// Pass namespace="" to query all namespaces.
+// Pass namespace="" to use the client default (or query all when no default is set).
 func (c *NomadClient) ListServices(ctx context.Context, namespace string) ([]NomadServiceNameEntry, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var raw []nomadServiceNamespacedStub
 	if err := c.get(ctx, "/v1/services", q, &raw); err != nil {
@@ -709,8 +742,8 @@ func (c *NomadClient) ListServices(ctx context.Context, namespace string) ([]Nom
 // GetServiceInstances returns all running instances of a named service.
 func (c *NomadClient) GetServiceInstances(ctx context.Context, name, namespace string) ([]NomadServiceInstance, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var out []NomadServiceInstance
 	return out, c.get(ctx, "/v1/service/"+url.PathEscape(name), q, &out)
@@ -724,8 +757,8 @@ func (c *NomadClient) ListVariables(ctx context.Context, prefix, namespace strin
 	if prefix != "" {
 		q.Set("prefix", prefix)
 	}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var out []NomadVariableStub
 	return out, c.get(ctx, "/v1/vars", q, &out)
@@ -734,8 +767,8 @@ func (c *NomadClient) ListVariables(ctx context.Context, prefix, namespace strin
 // GetVariable fetches a variable by path.
 func (c *NomadClient) GetVariable(ctx context.Context, path, namespace string) (*NomadVariable, error) {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	var out NomadVariable
 	return &out, c.get(ctx, "/v1/var/"+url.PathEscape(path), q, &out)
@@ -914,14 +947,15 @@ func (c *NomadClient) ApplyACLPolicy(ctx context.Context, name string, body inte
 
 // PutVariable creates or updates a variable at the given path.
 func (c *NomadClient) PutVariable(ctx context.Context, path, namespace string, items map[string]string) error {
+	ns := c.nsOrDefault(namespace)
 	body := map[string]interface{}{
-		"Namespace": namespace,
+		"Namespace": ns,
 		"Path":      path,
 		"Items":     items,
 	}
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns != "" {
+		q.Set("namespace", ns)
 	}
 	return c.put(ctx, "/v1/var/"+url.PathEscape(path), q, body, nil)
 }
@@ -929,8 +963,8 @@ func (c *NomadClient) PutVariable(ctx context.Context, path, namespace string, i
 // DeleteVariable removes a variable by path.
 func (c *NomadClient) DeleteVariable(ctx context.Context, path, namespace string) error {
 	q := url.Values{}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
 	}
 	return c.delete(ctx, "/v1/var/"+url.PathEscape(path), q, nil)
 }
