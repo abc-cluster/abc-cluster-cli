@@ -26,6 +26,7 @@
 //	    workspace_id:    ""
 //	    region:          ""
 //	    cluster_type:    "abc-nodes"  # optional: abc-nodes | abc-cluster | abc-cloud
+//	    namespace:       ""           # Nomad namespace; for abc-cluster tier stamped at claim time (e.g. "su-mbhg-bioinformatics")
 //	    aliases:         ["lab"]      # optional: alternate names for abc context use (alias: "x" is also accepted)
 //	    crypt:           # optional; local rclone crypt + abc secrets key material
 //	      password: "..."
@@ -100,6 +101,13 @@ type Context struct {
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
+	// Namespace is the Nomad namespace for this context. For abc-cluster tier
+	// (seedling / grove) this is stamped into config.yaml at claim time by
+	// provision-pool.sh (e.g. "su-mbhg-bioinformatics") and is the primary
+	// mechanism for routing all job operations to the correct namespace.
+	// ctx.NomadNamespace() reads this field as its final fallback, after the
+	// abc-nodes derivation path. For abc-nodes contexts, prefer
+	// admin.abc_nodes.nomad_namespace over this field.
 	Namespace      string `yaml:"namespace,omitempty"`
 	// OutputFormat is the per-context default for `abc <verb>` output:
 	// "table" | "json" | "yaml". Overridable per-invocation by --output
@@ -526,6 +534,8 @@ func (c *Config) Get(key string) (string, bool) {
 			return ctx.WorkspaceID, true
 		case "region":
 			return ctx.Region, true
+		case "namespace":
+			return ctx.Namespace, true
 		case "cluster_type":
 			return ctx.ClusterType, true
 		case "aliases":
@@ -712,6 +722,8 @@ func (c *Config) Set(key, value string) error {
 			ctx.WorkspaceID = value
 		case "region":
 			ctx.Region = value
+		case "namespace":
+			ctx.Namespace = value
 		case "cluster_type":
 			norm, ok := NormalizeClusterType(value)
 			if !ok {
@@ -912,6 +924,8 @@ func (c *Config) Unset(key string) error {
 			ctx.WorkspaceID = ""
 		case "region":
 			ctx.Region = ""
+		case "namespace":
+			ctx.Namespace = ""
 		case "cluster_type":
 			ctx.ClusterType = ""
 		case "aliases":
@@ -956,6 +970,9 @@ func (c *Config) AllKeys() [][2]string {
 		}
 		if ctx.Region != "" {
 			out = append(out, [2]string{"contexts." + name + ".region", ctx.Region})
+		}
+		if ctx.Namespace != "" {
+			out = append(out, [2]string{"contexts." + name + ".namespace", ctx.Namespace})
 		}
 		if ctx.ClusterType != "" {
 			out = append(out, [2]string{"contexts." + name + ".cluster_type", ctx.ClusterType})

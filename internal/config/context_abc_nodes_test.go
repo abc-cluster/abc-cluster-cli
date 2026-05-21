@@ -279,3 +279,49 @@ func TestNomadNamespace_EmptyWhenNothingSet(t *testing.T) {
 		t.Fatalf("empty context: want %q, got %q", "", got)
 	}
 }
+
+func TestNamespaceConfigRoundTrip(t *testing.T) {
+	// namespace should be gettable, settable, listable, and unsettable via
+	// the standard config key-path API — the mechanism for abc-cluster tier.
+	c := &Config{
+		Version:       CurrentVersion,
+		ActiveContext: "seedling",
+		Contexts: map[string]Context{
+			"seedling": {
+				Endpoint:    "https://nomad.seedling.abc-cluster.cloud",
+				AccessToken: "s.test",
+				ClusterType: ClusterTypeABCCluster,
+			},
+		},
+	}
+	// Set
+	if err := c.Set("contexts.seedling.namespace", "su-mbhg-bioinformatics"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got := c.Contexts["seedling"].Namespace; got != "su-mbhg-bioinformatics" {
+		t.Fatalf("after Set: want %q, got %q", "su-mbhg-bioinformatics", got)
+	}
+	// Get
+	v, ok := c.Get("contexts.seedling.namespace")
+	if !ok || v != "su-mbhg-bioinformatics" {
+		t.Fatalf("Get: ok=%v val=%q", ok, v)
+	}
+	// List includes namespace
+	pairs := c.AllKeys()
+	found := false
+	for _, kv := range pairs {
+		if kv[0] == "contexts.seedling.namespace" && kv[1] == "su-mbhg-bioinformatics" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("List did not include contexts.seedling.namespace; got %v", pairs)
+	}
+	// Unset
+	if err := c.Unset("contexts.seedling.namespace"); err != nil {
+		t.Fatalf("Unset: %v", err)
+	}
+	if got := c.Contexts["seedling"].Namespace; got != "" {
+		t.Fatalf("after Unset: want empty, got %q", got)
+	}
+}
