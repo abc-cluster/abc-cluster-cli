@@ -137,6 +137,29 @@ func (c Context) AbcNodesNomadNamespaceForCLI() string {
 	return c.resolvedAbcNodesNomadNamespace()
 }
 
+// NomadNamespace returns the Nomad namespace that all job operations should
+// target for this context. Resolution order (first non-empty wins):
+//
+//  1. admin.abc_nodes.nomad_namespace — explicit operator override (abc-nodes tier)
+//  2. Derived from admin.whoami / auth.whoami (abc-nodes tier only)
+//  3. context namespace field — stamped into config.yaml at claim time (abc-cluster tier:
+//     seedling, grove). This is the primary mechanism for pool users — the namespace
+//     (e.g. "su-mbhg-bioinformatics") is written by provision-pool.sh and requires no
+//     runtime derivation; the pool token enforces the boundary server-side.
+//
+// Returns empty string if no namespace is resolvable; callers should treat that
+// as "let Nomad use its default" rather than an error.
+func (c Context) NomadNamespace() string {
+	// Step 1 + 2: abc-nodes derivation path (explicit config or whoami-derived).
+	if ns := c.resolvedAbcNodesNomadNamespace(); ns != "" {
+		return ns
+	}
+	// Step 3: flat namespace field — set in the generated config.yaml for
+	// abc-cluster tier (cluster_type: abc-cluster).  Safe to read for any
+	// cluster type; non-abc-cluster configs simply won't have it set.
+	return strings.TrimSpace(c.Namespace)
+}
+
 // AbcNodesNomadNamespaceOrDefault returns the resolved Nomad namespace for abc-nodes
 // (explicit admin.abc_nodes.nomad_namespace, else derived from admin/auth whoami), else "default".
 func (c Context) AbcNodesNomadNamespaceOrDefault() string {

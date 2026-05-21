@@ -105,9 +105,10 @@ func nomadAddrFromCmd(cmd *cobra.Command) string {
 func sleepCh(n int) <-chan struct{} { return utils.SleepCh(n) }
 
 // namespaceFromCmd returns the Nomad namespace to use for a command:
-// 1. --namespace flag (explicit)
-// 2. Active abc context admin.abc_nodes.nomad_namespace (config fallback)
-// 3. Empty string (Nomad server default)
+//  1. --namespace flag (explicit, highest priority)
+//  2. ctx.NomadNamespace() — covers both abc-nodes (derived from whoami/config)
+//     and abc-cluster (flat namespace field stamped into config.yaml at claim time)
+//  3. Empty string — let Nomad use its server default
 func namespaceFromCmd(cmd *cobra.Command) string {
 	ns, _ := cmd.Flags().GetString("namespace")
 	if strings.TrimSpace(ns) != "" {
@@ -117,13 +118,5 @@ func namespaceFromCmd(cmd *cobra.Command) string {
 	if err != nil || cfg == nil {
 		return ""
 	}
-	ctx := cfg.ActiveCtx()
-	// Prefer explicit admin.abc_nodes.nomad_namespace (works regardless of cluster_type).
-	if ctx.Admin.ABCNodes != nil {
-		if v := strings.TrimSpace(ctx.Admin.ABCNodes.NomadNamespace); v != "" {
-			return v
-		}
-	}
-	// Fall back to the derived namespace for abc-nodes cluster types.
-	return strings.TrimSpace(ctx.AbcNodesNomadNamespaceForCLI())
+	return cfg.ActiveCtx().NomadNamespace()
 }

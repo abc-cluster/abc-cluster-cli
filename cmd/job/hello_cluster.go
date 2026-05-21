@@ -132,25 +132,13 @@ func adaptHelloClusterForAvailableDriver(spec *jobSpec) {
 }
 
 // helloWorldDefaultNamespace returns the Nomad namespace the built-in
-// hello-cluster workload should target. Picks (in order):
-//  1. active abc context's admin.abc_nodes.nomad_namespace
-//  2. "default" — fallback for clusters without a pinned namespace.
+// hello-cluster workload should target. Delegates to ctx.NomadNamespace()
+// which covers both abc-nodes (whoami-derived) and abc-cluster (flat namespace
+// field stamped into config.yaml at claim time). Falls back to "default".
 func helloWorldDefaultNamespace() string {
 	cfg, err := config.Load()
 	if err == nil && cfg != nil {
-		ctx := cfg.ActiveCtx()
-		if ctx.Admin.ABCNodes != nil {
-			if v := strings.TrimSpace(ctx.Admin.ABCNodes.NomadNamespace); v != "" {
-				return v
-			}
-		}
-		if ns := strings.TrimSpace(ctx.AbcNodesNomadNamespaceForCLI()); ns != "" {
-			return ns
-		}
-		// abc-cluster tier (seedling / grove): namespace is the flat context
-		// field set directly in config.yaml — not derived from admin.whoami.
-		// Pool users have cluster_type: abc-cluster and namespace: su-<group>.
-		if ns := strings.TrimSpace(ctx.Namespace); ns != "" {
+		if ns := cfg.ActiveCtx().NomadNamespace(); ns != "" {
 			return ns
 		}
 	}

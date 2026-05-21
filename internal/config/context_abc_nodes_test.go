@@ -235,3 +235,47 @@ func TestAbcNodesNomadNamespaceExplicitOverridesWhoami(t *testing.T) {
 		t.Fatalf("OrDefault: got %q", got)
 	}
 }
+
+func TestNomadNamespace_AbcClusterTier(t *testing.T) {
+	// abc-cluster tier: namespace comes from the flat Namespace field
+	// stamped into config.yaml at claim time.
+	ctx := Context{
+		ClusterType: "abc-cluster",
+		Namespace:   "su-mbhg-bioinformatics",
+	}
+	if got := ctx.NomadNamespace(); got != "su-mbhg-bioinformatics" {
+		t.Fatalf("abc-cluster tier: want %q, got %q", "su-mbhg-bioinformatics", got)
+	}
+}
+
+func TestNomadNamespace_AbcNodesTierWhoami(t *testing.T) {
+	// abc-nodes tier: derived from admin.whoami suffix pattern.
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Admin:       Admin{Whoami: "su-mbhg-bioinformatics_researcher"},
+	}
+	if got := ctx.NomadNamespace(); got != "su-mbhg-bioinformatics" {
+		t.Fatalf("abc-nodes whoami: want %q, got %q", "su-mbhg-bioinformatics", got)
+	}
+}
+
+func TestNomadNamespace_AbcNodesExplicitWins(t *testing.T) {
+	// Explicit admin.abc_nodes.nomad_namespace wins over flat Namespace field.
+	ctx := Context{
+		ClusterType: ClusterTypeABCNodes,
+		Namespace:   "should-be-ignored",
+		Admin: Admin{
+			ABCNodes: &AdminABCNodes{NomadNamespace: "su-explicit"},
+		},
+	}
+	if got := ctx.NomadNamespace(); got != "su-explicit" {
+		t.Fatalf("explicit abc-nodes: want %q, got %q", "su-explicit", got)
+	}
+}
+
+func TestNomadNamespace_EmptyWhenNothingSet(t *testing.T) {
+	ctx := Context{}
+	if got := ctx.NomadNamespace(); got != "" {
+		t.Fatalf("empty context: want %q, got %q", "", got)
+	}
+}

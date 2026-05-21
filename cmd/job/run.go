@@ -673,7 +673,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 	if err := applySpecDefaults(spec, defaultName, useSBATCH); err != nil {
 		return err
 	}
-	applyAbcNodesNomadNamespaceFromConfig(spec)
+	applyNamespaceFromConfig(spec)
 
 	// hello-cluster: if capabilities are synced and show no containerd nodes,
 	// silently fall back to exec so the workload runs on bare seedling/HPC
@@ -1079,11 +1079,13 @@ const (
 	watchDelay = 10 * time.Second
 )
 
-// applyAbcNodesNomadNamespaceFromConfig sets spec.Namespace from the active abc
-// context when the operator has not set --namespace or NOMAD_NAMESPACE, so
-// generated HCL includes a namespace stanza and jobs land in the correct Nomad
-// namespace for multi-tenant Grafana / Prometheus views.
-func applyAbcNodesNomadNamespaceFromConfig(spec *jobSpec) {
+// applyNamespaceFromConfig stamps spec.Namespace from the active abc context
+// when the user has not set --namespace or NOMAD_NAMESPACE explicitly.
+// Uses ctx.NomadNamespace() which covers both cluster types:
+//   - abc-nodes: derived from admin.abc_nodes.nomad_namespace / admin.whoami
+//   - abc-cluster (seedling/grove): flat namespace field stamped into config.yaml
+//     at claim time by provision-pool.sh — no runtime derivation needed.
+func applyNamespaceFromConfig(spec *jobSpec) {
 	if spec == nil || strings.TrimSpace(spec.Namespace) != "" {
 		return
 	}
@@ -1096,7 +1098,7 @@ func applyAbcNodesNomadNamespaceFromConfig(spec *jobSpec) {
 	if err != nil || cfg == nil {
 		return
 	}
-	if ns := strings.TrimSpace(cfg.ActiveCtx().AbcNodesNomadNamespaceForCLI()); ns != "" {
+	if ns := cfg.ActiveCtx().NomadNamespace(); ns != "" {
 		spec.Namespace = ns
 	}
 }
