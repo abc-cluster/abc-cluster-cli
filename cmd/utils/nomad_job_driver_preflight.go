@@ -64,6 +64,14 @@ func (c *NomadClient) PreflightJobTaskDrivers(ctx context.Context, jobJSON json.
 
 	stubs, err := c.ListNodes(ctx)
 	if err != nil {
+		// Pool tokens (abc-cluster tier) have namespace-scoped write access but no
+		// node:read permission.  Treat 403 as a signal to skip the preflight rather
+		// than failing hard — the scheduler will catch mismatched drivers at submit
+		// time and the error message from Nomad is actionable.
+		if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "Permission denied") {
+			fmt.Fprintf(status, "  [abc] driver preflight: no node:read permission — skipping driver check\n")
+			return nil
+		}
 		return fmt.Errorf("list nomad nodes for driver preflight: %w", err)
 	}
 	eligible := filterEligibleClientNodes(stubs)
