@@ -69,7 +69,8 @@ func nomadClientFromCmd(cmd *cobra.Command) *nomadClient {
 	}
 	return newNomadClient(addr, token, region).
 		WithSudo(utils.SudoFromCmd(cmd)).
-		WithCloud(utils.CloudFromCmd(cmd))
+		WithCloud(utils.CloudFromCmd(cmd)).
+		WithNamespace(namespaceFromCmd(cmd))
 }
 
 // nomadTokenFromCmd returns the Nomad token for the run-watcher.

@@ -509,7 +509,11 @@ func (c *NomadClient) get(ctx context.Context, path string, query url.Values, ou
 }
 
 func (c *NomadClient) post(ctx context.Context, path string, body, out interface{}) error {
-	resp, err := c.do(ctx, http.MethodPost, path, nil, body)
+	return c.postWithQuery(ctx, path, nil, body, out)
+}
+
+func (c *NomadClient) postWithQuery(ctx context.Context, path string, query url.Values, body, out interface{}) error {
+	resp, err := c.do(ctx, http.MethodPost, path, query, body)
 	if err != nil {
 		return err
 	}
@@ -607,6 +611,11 @@ func (c *NomadClient) ParseHCL(ctx context.Context, hcl string) (json.RawMessage
 // ParseHCLWithVars is like ParseHCL but accepts an optional HCL variable-definition
 // string (e.g. `source = "s3://..."` ) that overrides variable defaults in the job.
 // Pass an empty string to use the job's own defaults.
+//
+// Nomad's /v1/jobs/parse endpoint checks ACL against the namespace supplied in
+// the query string, NOT the namespace embedded in the HCL body. We therefore
+// forward c.defaultNamespace as ?namespace= so pool tokens (which only have
+// write access to their own namespace) are not rejected with 403.
 func (c *NomadClient) ParseHCLWithVars(ctx context.Context, hcl, variables string) (json.RawMessage, error) {
 	body := map[string]interface{}{
 		"JobHCL":       hcl,
@@ -615,8 +624,12 @@ func (c *NomadClient) ParseHCLWithVars(ctx context.Context, hcl, variables strin
 	if variables != "" {
 		body["Variables"] = variables
 	}
+	q := url.Values{}
+	if c.defaultNamespace != "" {
+		q.Set("namespace", c.defaultNamespace)
+	}
 	var out json.RawMessage
-	return out, c.post(ctx, "/v1/jobs/parse", body, &out)
+	return out, c.postWithQuery(ctx, "/v1/jobs/parse", q, body, &out)
 }
 
 func (c *NomadClient) RegisterJob(ctx context.Context, jobJSON json.RawMessage) (*NomadRegisterResponse, error) {
