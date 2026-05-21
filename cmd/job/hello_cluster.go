@@ -147,6 +147,12 @@ func helloWorldDefaultNamespace() string {
 		if ns := strings.TrimSpace(ctx.AbcNodesNomadNamespaceForCLI()); ns != "" {
 			return ns
 		}
+		// abc-cluster tier (seedling / grove): namespace is the flat context
+		// field set directly in config.yaml — not derived from admin.whoami.
+		// Pool users have cluster_type: abc-cluster and namespace: su-<group>.
+		if ns := strings.TrimSpace(ctx.Namespace); ns != "" {
+			return ns
+		}
 	}
 	return "default"
 }
