@@ -332,7 +332,7 @@ func finalizeHelloCluster(spec *jobSpec) (string, error) {
 
 	submissionID := newSubmissionID()
 	spec.Meta["abc_submission_id"] = submissionID
-	spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
+	spec.Meta["abc_submitted_at"] = time.Now().UTC().Format(time.RFC3339)
 
 	// Seed the RNG from the submission ID so the scenario is reproducible.
 	seed := int64(0)

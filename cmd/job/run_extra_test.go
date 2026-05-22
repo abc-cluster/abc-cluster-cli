@@ -269,13 +269,12 @@ func TestJobRun_FromFileDirective(t *testing.T) {
 	}
 }
 
-// Meta-key alignment: the canonical key is abc_from_file; the legacy
-// abc_from is ALSO emitted as a deprecated alias for one release window
-// so any in-flight downstream consumer (Grafana, jurist, ad-hoc nomad
-// job inspect scripts) keeps working until they migrate.
-func TestJobRun_FromFileMetaKeyTransition(t *testing.T) {
-	script := "#!/bin/bash\n#ABC --name=meta-transition\n#ABC --runtime=pixi-exec\n#ABC --from-file=/x/pixi.toml\necho ok\n"
-	p := writeTempScript(t, "meta_transition.sh", script)
+// Meta-key alignment: abc_from_file is the only key emitted. The legacy
+// abc_from key was dropped in the same change that flipped to a clean-break
+// deprecation; absence of abc_from on a job spec is now an invariant.
+func TestJobRun_FromFileMetaKeyCanonical(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=meta-canonical\n#ABC --runtime=pixi-exec\n#ABC --from-file=/x/pixi.toml\necho ok\n"
+	p := writeTempScript(t, "meta_canonical.sh", script)
 	out, err := executeCmd(t, p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -283,12 +282,10 @@ func TestJobRun_FromFileMetaKeyTransition(t *testing.T) {
 	if !strings.Contains(out, `abc_from_file`) {
 		t.Errorf("expected canonical abc_from_file key in meta, got:\n%s", out)
 	}
-	if !strings.Contains(out, `abc_from `) && !strings.Contains(out, `abc_from=`) && !strings.Contains(out, `abc_from "`) {
-		// HCL prints meta as `  abc_from   = "<value>"`. Be tolerant of
-		// alignment whitespace by checking common prefix shapes.
-		if !regexp.MustCompile(`abc_from\s*=`).MatchString(out) {
-			t.Errorf("expected deprecated abc_from alias still emitted during transition window, got:\n%s", out)
-		}
+	// Legacy abc_from must NOT be present. Match `abc_from =` (with optional
+	// alignment whitespace before =) but NOT `abc_from_file =`.
+	if regexp.MustCompile(`abc_from\s*=`).MatchString(out) {
+		t.Errorf("legacy abc_from key must not be emitted, got:\n%s", out)
 	}
 }
 

@@ -450,8 +450,8 @@ sleep 1
 	if !strings.Contains(out, `abc_reschedule_mode`) {
 		t.Fatalf("expected reschedule mode metadata, got:\n%s", out)
 	}
-	if !strings.Contains(out, `abc_submission_time`) {
-		t.Fatalf("expected abc_submission_time metadata, got:\n%s", out)
+	if !strings.Contains(out, `abc_submitted_at`) {
+		t.Fatalf("expected abc_submitted_at metadata, got:\n%s", out)
 	}
 	if !strings.Contains(out, `abc_reschedule_attempts`) {
 		t.Fatalf("expected reschedule attempts metadata, got:\n%s", out)
@@ -1088,22 +1088,31 @@ contexts:
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{
-		`abc_user_whoami     = "anel"`,
-		`abc_user_id         = "01KS7XXZBRNKRJJ0TR7PW9FWV9"`,
-		`abc_workspace       = "su-mbhg-hostgen"`,
-		`abc_tenant          = "su-mbhg-hostgen"`,
+	// Assertions are whitespace-tolerant because the HCL pretty-printer
+	// aligns key columns to the longest meta key in the block — that
+	// column width shifts whenever the meta-key set changes (e.g. the
+	// 2026-05-22 drop of abc_submission_time shortened the longest key
+	// from 19 to 17 chars and broke literal-spacing assertions).
+	wantPairs := []struct{ key, value string }{
+		{"abc_user_whoami", "anel"},
+		{"abc_user_id", "01KS7XXZBRNKRJJ0TR7PW9FWV9"},
+		{"abc_workspace", "su-mbhg-hostgen"},
+		{"abc_tenant", "su-mbhg-hostgen"},
 	}
-	for _, w := range want {
-		if !strings.Contains(out, w) {
-			t.Errorf("expected meta key %q in HCL, got:\n%s", w, out)
+	for _, p := range wantPairs {
+		re := regexp.MustCompile(regexp.QuoteMeta(p.key) + `\s*= "` + regexp.QuoteMeta(p.value) + `"`)
+		if !re.MatchString(out) {
+			t.Errorf("expected meta %s = %q in HCL, got:\n%s", p.key, p.value, out)
 		}
 	}
-	// abc_submitted_at must be present and match the submission_time value
-	// (they're emitted in lockstep so downstream readers can rely on
-	// either key being the canonical timestamp).
+	// abc_submitted_at is the canonical submission-timestamp key (same
+	// key shape pipeline runs use). The legacy abc_submission_time was
+	// dropped in the 2026-05-22 meta-key alignment.
 	if !strings.Contains(out, "abc_submitted_at") {
 		t.Errorf("expected abc_submitted_at meta key, got:\n%s", out)
+	}
+	if regexp.MustCompile(`abc_submission_time\s*=`).MatchString(out) {
+		t.Errorf("legacy abc_submission_time key must not be emitted, got:\n%s", out)
 	}
 	if !strings.Contains(out, "abc_cli_version") {
 		t.Errorf("expected abc_cli_version meta key, got:\n%s", out)

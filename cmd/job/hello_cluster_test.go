@@ -68,7 +68,7 @@ func TestHelloClusterMetaKeys(t *testing.T) {
 	}
 	required := []string{
 		"abc_submission_id",
-		"abc_submission_time",
+		"abc_submitted_at",
 		"random_scenario",
 		"random_cpu",
 		"random_vm",

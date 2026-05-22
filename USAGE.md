@@ -1185,7 +1185,7 @@ Worked example: identical preamble to the micromamba example above, with `--runt
 #### Common gotchas across all three
 
 - **`--shell`** still applies. If your runtime-wrapper script uses bashisms (arrays, `[[ ]]`, process substitution), keep the default `/bin/bash` shell on host drivers. On OCI drivers (containerd-driver, docker, podman, singularity) the wrapper-script default is `/bin/sh` for image portability; if your script needs bash and the image ships it, add `#ABC --shell=bash`. See the *Shell override* section below.
-- **Nomad meta** stamped on the job: `abc_runtime` (canonical runtime name), `abc_from_file` (the path passed to `--from-file`). These join the standard `abc_user_whoami`, `abc_user_id`, `abc_workspace`, `abc_tenant`, `abc_cli_version`, `abc_submitted_at` keys that every job carries — pivot from one to the other in jurist / Grafana queries. (For one release window, the legacy `abc_from` key is also emitted as a deprecated alias so any pre-existing dashboards / queries keep working until they migrate.)
+- **Nomad meta** stamped on the job: `abc_runtime` (canonical runtime name), `abc_from_file` (the path passed to `--from-file`). These join the standard `abc_user_whoami`, `abc_user_id`, `abc_workspace`, `abc_tenant`, `abc_cli_version`, `abc_submitted_at` keys that every job carries — same key shape pipeline runs use, so jurist / Grafana / `nomad job inspect` queries pivot across both surfaces with one field name.
 - **Submitted file is canonical**: the CLI reads `--from-file` at submit time and embeds the contents as a Nomad template. The cluster never reads the original path again, so a working `abc job run` doesn't depend on the original file staying in place after submission.
 
 ### Shell override

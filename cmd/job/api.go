@@ -96,7 +96,7 @@ func BuildScriptHCL(scriptPath string, opts ScriptHCLOptions) (*ScriptHCLResult,
 	}
 	submissionID := newSubmissionID()
 	spec.Meta["abc_submission_id"] = submissionID
-	spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
+	spec.Meta["abc_submitted_at"] = time.Now().UTC().Format(time.RFC3339)
 	if spec.Name != "" {
 		base := spec.Name
 		if !strings.HasPrefix(base, "script-job-") {

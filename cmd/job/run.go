@@ -761,10 +761,11 @@ func runJob(cmd *cobra.Command, args []string) error {
 		}
 		submissionID := newSubmissionID()
 		spec.Meta["abc_submission_id"] = submissionID
-		spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
-		// User-identity meta via the shared helper. Empty fields are
-		// omitted so partial identity (whoami yet to be resolved, ID
-		// yet to be minted) degrades cleanly.
+		// User-identity meta via the shared helper supplies the canonical
+		// abc_submitted_at timestamp (same key pipeline runs use, so jurist
+		// / Grafana / nomad-job-inspect can pivot across both surfaces).
+		// The legacy abc_submission_time key is intentionally NOT emitted
+		// — clean break.
 		var ctxPtr *config.Context
 		if c, err := config.Load(); err == nil {
 			ctx := c.ActiveCtx()
