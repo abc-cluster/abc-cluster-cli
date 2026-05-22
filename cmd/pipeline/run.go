@@ -528,6 +528,12 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 		slog.Int64("duration_ms", time.Since(t).Milliseconds()),
 	)
 
+	if err := nc.PreflightJobDriverPolicy(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
+		log.LogAttrs(ctx, debuglog.L1, "pipeline.run.failed",
+			debuglog.AttrsError("pipeline.driver_policy", err)...,
+		)
+		return err
+	}
 	if err := nc.PreflightJobTaskDrivers(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
 		log.LogAttrs(ctx, debuglog.L1, "pipeline.run.failed",
 			debuglog.AttrsError("pipeline.driver_preflight", err)...,

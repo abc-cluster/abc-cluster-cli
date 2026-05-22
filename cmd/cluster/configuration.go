@@ -391,6 +391,9 @@ func probeOneNode(cmd *cobra.Command, nc *utils.NomadClient, node *utils.NomadNo
 	if err != nil {
 		return nil, fmt.Errorf("nomad HCL parse for %q: %w", compute.NodeProbeJobID, err)
 	}
+	if err := nc.PreflightJobDriverPolicy(cmd.Context(), jobJSON, cmd.ErrOrStderr()); err != nil {
+		return nil, err
+	}
 	if err := nc.PreflightJobTaskDrivers(cmd.Context(), jobJSON, cmd.ErrOrStderr()); err != nil {
 		return nil, err
 	}

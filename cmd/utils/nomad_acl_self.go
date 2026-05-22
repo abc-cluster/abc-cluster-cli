@@ -5,12 +5,21 @@ import (
 	"strings"
 )
 
-// NomadACLToken is the subset of GET /v1/acl/token/self used for CLI display.
+// NomadACLToken is the subset of GET /v1/acl/token/self used for CLI display
+// AND for platform-policy preflight checks (driver allowlist etc.). Roles are
+// needed because membership in r-multi-group-admin bypasses driver restrictions.
 type NomadACLToken struct {
-	AccessorID string   `json:"AccessorID"`
-	Name       string   `json:"Name"`
-	Type       string   `json:"Type"`
-	Policies   []string `json:"Policies"`
+	AccessorID string         `json:"AccessorID"`
+	Name       string         `json:"Name"`
+	Type       string         `json:"Type"`
+	Policies   []string       `json:"Policies"`
+	Roles      []NomadACLRole `json:"Roles"`
+}
+
+// NomadACLRole is the subset of Nomad's role-link shape we read off the token.
+type NomadACLRole struct {
+	ID   string `json:"ID"`
+	Name string `json:"Name"`
 }
 
 // GetACLTokenSelf calls Nomad GET /v1/acl/token/self with the client's token.

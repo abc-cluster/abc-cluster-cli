@@ -227,6 +227,9 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 		return fmt.Errorf("nomad HCL parse: %w", err)
 	}
 
+	if err := nc.PreflightJobDriverPolicy(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
+		return err
+	}
 	if err := nc.PreflightJobTaskDrivers(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
