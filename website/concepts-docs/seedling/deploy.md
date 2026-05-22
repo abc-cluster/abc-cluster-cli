@@ -1,26 +1,24 @@
 ---
-title: Deploy landing + claim service
+title: Phase 4 — Deploy the landing page
 ---
 
-# Deploy landing + claim service
+# Phase 4 — Deploy the landing page
 
 Two things need to be running before users can claim access:
 
 1. The **claim service** (`claim_server.py`) running as a Nomad job.
-2. The **landing page** (static files) served by a file server.
+2. The **landing page** (static files) served from the cluster node.
 
-A reverse proxy (Caddy) is optional. On a private LAN you can serve files
-directly; on an internet-facing deployment Caddy adds TLS automatically.
+Both come from the `abc-seedling-template` directory in `abc-deployments`.
 
-## 1. Deploy the claim service
+## Step 1 — Deploy the claim service
 
-### Edit the Nomad job spec
+### Prepare the Nomad job spec
 
-Open `nomad-jobs/abc-landing-api.nomad.hcl` and update two things:
+Open `nomad-jobs/abc-landing-api.nomad.hcl` and update:
 
-**Artifact source** — where `claim_server.py` will be fetched from at
-job dispatch time. The simplest option is to host it alongside the
-landing page:
+**Artifact source** — where `claim_server.py` will be fetched at job dispatch.
+Host it alongside the landing files, or serve it from any reachable URL:
 
 ```hcl
 artifact {
@@ -30,7 +28,7 @@ artifact {
 }
 ```
 
-**Allowed domain** (optional) — restrict claims to institutional email addresses:
+**Allowed domain** (optional) — restrict claims to an institutional email suffix:
 
 ```hcl
 env {
@@ -44,55 +42,52 @@ env {
 abc job run nomad-jobs/abc-landing-api.nomad.hcl
 ```
 
-Or with the admin Nomad token directly:
+Or directly with the Nomad CLI:
 
 ```bash
-nomad job run -address=https://nomad.your-cluster.example.com \
-  -token=<admin-token> \
+nomad job run \
+  -address=https://nomad.your-cluster.example.com \
+  -token=<management-token> \
   nomad-jobs/abc-landing-api.nomad.hcl
 ```
 
-Verify it's healthy:
+Verify the service is healthy:
 
 ```bash
-curl https://your-cluster.example.com/healthz
+curl http://your-node:8081/healthz
 # {"status":"ok"}
 ```
 
-:::note Database path
-The job spec expects the SQLite database at `/data/abc-landing.db`.
-Make sure this path exists on the Nomad client node that runs the job,
-and that `provision.py` wrote the database there (or copy it).
-If you need a different path, edit the `--db` arg in the job spec before
-submitting.
-:::
+The claim service listens on `localhost:8081`. It is not exposed directly
+to the internet — only via the reverse proxy `/api/*` route (if you have
+one) or directly via its port on a LAN.
 
-## 2. Deploy the landing page
+> **Database path:** The job spec expects the SQLite database at
+> `/data/abc-landing.db`. Make sure `provision.py` wrote (or you copied)
+> the database there before submitting the job.
 
-### Set configuration
+## Step 2 — Deploy the landing page
 
-Export the variables that `deploy-landing.sh` reads:
+### Set configuration variables
 
 ```bash
 # Required
-export ABC_CLUSTER_HOSTNAME="abc.your-institution.example.com"
+export ABC_CLUSTER_HOSTNAME="your-cluster.example.com"
 export ABC_VM_SSH_TARGET="your-ssh-alias"          # or user@host
 
 # Cluster identity
 export ABC_CLUSTER_NAME="Your Institution ABC Cluster"
-export ABC_ALLOWED_DOMAIN="your-institution.ac.za"  # "" = any email
 
-# Banner (optional — shown below the header)
+# Optional: restrict claims to institutional email addresses
+export ABC_ALLOWED_DOMAIN="your-institution.ac.za"  # "" = any email accepted
+
+# Optional: banner shown below the header on the landing page
 export ABC_BANNER_TEXT="Private cluster hosted at Your Institution"
-
-# Supabase (leave empty to use claim-server.py instead)
-export ABC_SUPABASE_URL=""
-export ABC_SUPABASE_ANON_KEY=""
 ```
 
-Alternatively, write values into `.secrets/` files next to the
-`abc-seedling-template` directory (one value per file, filename = variable
-name without the `ABC_` prefix, lowercase with hyphens):
+Alternatively, write values into `.secrets/` files next to the template
+directory (one value per file, filename = variable name without `ABC_`,
+lowercased with hyphens):
 
 ```
 .secrets/
@@ -105,19 +100,19 @@ name without the `ABC_` prefix, lowercase with hyphens):
 
 ### Dry-run first
 
-Always run with `--dry-run` to verify substitution before touching the VM:
+Always run `--dry-run` before touching the VM to verify substitution:
 
 ```bash
 bash scripts/deploy-landing.sh --dry-run
 ```
 
-Inspect the output in `/tmp/abc-landing-dry-run/`. Confirm:
-- Zero `REPLACE_` tokens remain in `index.html`.
-- Service URLs contain your cluster hostname.
-- The banner text (if any) is present in the HTML.
+Inspect `/tmp/abc-landing-dry-run/` and confirm:
 
 ```bash
-grep "REPLACE_" /tmp/abc-landing-dry-run/index.html  # should print nothing
+# Zero REPLACE_ tokens should remain
+grep "REPLACE_" /tmp/abc-landing-dry-run/index.html   # no output = good
+
+# Service URLs contain your hostname
 grep "your-cluster.example.com" /tmp/abc-landing-dry-run/index.html | head -3
 ```
 
@@ -127,47 +122,40 @@ grep "your-cluster.example.com" /tmp/abc-landing-dry-run/index.html | head -3
 bash scripts/deploy-landing.sh
 ```
 
-The script:
-1. Substitutes all five `REPLACE_*` tokens in `index.html`.
-2. Copies `index.html`, `landing.js`, `style.css`, `chrome.css`, `hero.css`,
-   `favicon.svg` to `/tmp/abc-landing-*` on the edge VM via `scp`.
-3. Moves them to `$WWW_DIR` (default: `/var/www/<hostname>/`) on the VM.
-4. Sets ownership to `caddy:caddy` (harmless if Caddy is not installed; change the owner if using a different server).
+The script substitutes all `REPLACE_*` tokens in `index.html`, copies all
+landing files to the VM via `scp`, and moves them into place. It refuses
+to deploy if any `REPLACE_*` token remains unsubstituted.
 
 ### Vendored CSS
 
 `chrome.css` and `hero.css` are vendored from `abc-site-kit`. If they are
-missing or stale, regenerate them:
+missing, regenerate them:
 
 ```bash
 bash scripts/vendor-brand.sh
 ```
 
-## 3. Verify end-to-end
+## Step 3 — Verify end-to-end
 
 With both the claim service and landing page live:
 
-1. Open `https://your-cluster.example.com/` in a browser.
-2. The landing page should render with your cluster name in the title.
-3. The banner (if configured) should appear below the header.
-4. Fill in the claim form with a valid code from your pool:
-   - Name + email + consent + claim code → submit.
-   - Credentials (Nomad token, MinIO keys) should appear.
-   - The `config.yaml` download button should produce a valid YAML file.
-5. Try the same code again — should return 409 `code_invalid_or_used`.
+1. Open the landing page URL in a browser — cluster name should appear in the title.
+2. If configured, the banner should appear below the header.
+3. Fill in the claim form with a valid code from the pool (name + email + code).
+4. Credentials should appear, and the `config.yaml` download button should produce
+   a valid YAML file.
+5. Submit the same code again — should fail with `code_invalid_or_used`.
 
-## 4. Deploy the docs
+## Step 4 — Deploy the documentation
 
-The `/docs/` path is served separately from the landing page. To build and
-deploy the CLI documentation:
+The `/docs/` path is served separately. To build and deploy the CLI docs:
 
 ```bash
 bash scripts/deploy-docs.sh
 ```
 
-This builds the Docusaurus tier site and copies it to
-`/var/www/<hostname>/docs/` on the edge VM.
+This builds the Docusaurus tier site and copies it to the node under `/docs/`.
 
-## Next step
+## Next step (optional)
 
-→ [Reverse proxy / TLS](caddy) (optional)
+→ [Reverse proxy / TLS](caddy) — add Caddy for internet-facing clusters

@@ -13,12 +13,10 @@ cluster is deployed:
 | Private LAN / HPC network / VPN-only | **No proxy needed** — serve HTTP directly from Nomad or a simple file server |
 | Institutional network with a shared load balancer / WAF | **Defer to your network team** — terminate TLS upstream, forward plain HTTP to the cluster |
 
-:::tip Best practice for internet-facing deployments
-If your cluster is reachable from the public internet, use Caddy (or any
-reverse proxy) to terminate TLS. Running credentials and claim codes over
-plain HTTP on a public network is not acceptable. On a private LAN where
-all traffic stays inside a trusted network boundary, HTTP is fine.
-:::
+> **Best practice:** If your cluster is reachable from the public internet,
+> use a reverse proxy to terminate TLS. Running credentials and claim codes
+> over plain HTTP on a public network is not acceptable. On a private LAN
+> where all traffic stays inside a trusted network boundary, HTTP is fine.
 
 ## Option A — No proxy (LAN / private network)
 
