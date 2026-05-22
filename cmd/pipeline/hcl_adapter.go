@@ -1,51 +1,37 @@
 package pipeline
 
 import (
-	"runtime/debug"
-	"strings"
-	"time"
-
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	hclpipeline "github.com/abc-cluster/abc-cluster-cli/internal/hclgen/pipeline"
 )
 
-// resolveIdentity gathers the user/workspace/pipeline correlation context
-// from the active context + spec. Each field is best-effort; absent fields
-// degrade cleanly (the generator omits empty meta keys).
+// resolveIdentity gathers the user/workspace/pipeline correlation context.
+// The user/workspace base is sourced from the shared utils.ResolveUserIdentity
+// helper so that `abc job run` and `abc pipeline run` agree on field semantics
+// and meta-key shape; pipeline-specific fields (PipelineURL, PipelineRevision,
+// RunName) are layered on top. Absent fields degrade cleanly — the generator
+// omits empty meta keys.
 func resolveIdentity(spec *PipelineSpec) hclpipeline.Identity {
-	id := hclpipeline.Identity{
+	var ctxPtr *cfg.Context
+	if c, err := cfg.Load(); err == nil {
+		ctx := c.ActiveCtx()
+		ctxPtr = &ctx
+	}
+	base := utils.ResolveUserIdentity(ctxPtr, spec.Namespace)
+	return hclpipeline.Identity{
+		UserWhoami:       base.UserWhoami,
+		UserUUID:         base.UserUUID,
+		Workspace:        base.Workspace,
+		WorkspaceType:    base.WorkspaceType,
+		Tenant:           base.Tenant,
+		SubmittedAt:      base.SubmittedAt,
+		CLIVersion:       base.CLIVersion,
 		PipelineURL:      spec.Repository,
 		PipelineRevision: spec.Revision,
 		RunName:          spec.Name,
-		SubmittedAt:      time.Now().UTC().Format(time.RFC3339),
-		CLIVersion:       cliVersion(),
 	}
-	if c, err := cfg.Load(); err == nil {
-		ctx := c.ActiveCtx()
-		id.UserWhoami = strings.TrimSpace(ctx.Admin.Whoami)
-		if id.UserWhoami == "" && ctx.Auth != nil {
-			id.UserWhoami = strings.TrimSpace(ctx.Auth.Whoami)
-		}
-		id.UserUUID = strings.TrimSpace(ctx.Admin.ID)
-		// Workspace = the Nomad namespace the head will land in (== bucket
-		// name in workspaces.yaml v2).
-		id.Workspace = strings.TrimSpace(spec.Namespace)
-		// Tenant defaults to Workspace; future schema work resolves the real
-		// parent-chain root from workspaces.yaml.
-	}
-	return id
-}
-
-// cliVersion reports the abc CLI's own version. Falls back to "dev" outside
-// a build with embedded version info.
-func cliVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
-			return v
-		}
-	}
-	return "dev"
 }
 
 func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string) string {

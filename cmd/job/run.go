@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -734,33 +733,18 @@ func runJob(cmd *cobra.Command, args []string) error {
 		submissionID := newSubmissionID()
 		spec.Meta["abc_submission_id"] = submissionID
 		spec.Meta["abc_submission_time"] = time.Now().UTC().Format(time.RFC3339)
-		// User-identity meta — best-effort, omits empty fields so a partial
-		// context (whoami yet to be resolved, ID yet to be minted) degrades
-		// gracefully rather than emitting empty-string keys.
+		// User-identity meta via the shared helper. Empty fields are
+		// omitted so partial identity (whoami yet to be resolved, ID
+		// yet to be minted) degrades cleanly.
+		var ctxPtr *config.Context
 		if c, err := config.Load(); err == nil {
 			ctx := c.ActiveCtx()
-			whoami := strings.TrimSpace(ctx.Admin.Whoami)
-			if whoami == "" && ctx.Auth != nil {
-				whoami = strings.TrimSpace(ctx.Auth.Whoami)
-			}
-			if whoami != "" {
-				spec.Meta["abc_user_whoami"] = whoami
-			}
-			if uid := strings.TrimSpace(ctx.Admin.ID); uid != "" {
-				spec.Meta["abc_user_id"] = uid
-			}
-			if ws := strings.TrimSpace(spec.Namespace); ws != "" {
-				spec.Meta["abc_workspace"] = ws
-				// Tenant defaults to workspace; future schema work resolves
-				// the real parent-chain root from workspaces.yaml. Kept here
-				// so the pipeline + job emission share the field.
-				spec.Meta["abc_tenant"] = ws
-			}
+			ctxPtr = &ctx
 		}
-		if v := cliVersion(); v != "" {
-			spec.Meta["abc_cli_version"] = v
+		ident := utils.ResolveUserIdentity(ctxPtr, spec.Namespace)
+		for k, v := range ident.MetaMap() {
+			spec.Meta[k] = v
 		}
-		spec.Meta["abc_submitted_at"] = spec.Meta["abc_submission_time"]
 		if spec.Name != "" {
 			base := spec.Name
 			// Recognise category prefixes already supplied by callers
@@ -1321,16 +1305,3 @@ func printNtfySubscriptionHint(w io.Writer) {
 	fmt.Fprintf(w, "    App:       ntfy.sh  (iOS / Android / Desktop)\n")
 }
 
-// cliVersion reports the abc CLI's own version for stamping into
-// job meta (abc_cli_version). Mirrors the helper in
-// cmd/pipeline/hcl_adapter.go so the two emission paths agree on
-// the value semantics. Falls back to "dev" outside a build with
-// embedded version info.
-func cliVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
-			return v
-		}
-	}
-	return "dev"
-}
