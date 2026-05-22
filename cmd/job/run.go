@@ -205,11 +205,14 @@ EXAMPLES
 	cmd.Flags().String("depend", "", "Dependency spec (complete:<job-id>)")
 	cmd.Flags().String("driver", "", "Task driver (exec, raw_exec, hpc-bridge, docker, containerd aliases to containerd-driver)")
 	cmd.Flags().String("shell", "",
-		"Script interpreter override: 'bash' or 'sh'. Default is /bin/sh for OCI drivers\n"+
-			"(docker, containerd-driver, podman, singularity) so jobs are portable across\n"+
-			"minimal images (alpine, distroless) and bash-equipped images. Set to 'bash'\n"+
-			"if your script relies on bash semantics (arrays, [[ ]], process substitution).\n"+
-			"Default for host-side drivers (exec, exec2, raw_exec, java, hpc-bridge) is /bin/bash.")
+		"Script interpreter override. Accepts:\n"+
+			"  bare name  (bash, sh, dash, zsh, fish, …)  → resolved to /bin/<name>\n"+
+			"  abs path   (/usr/local/bin/fish, /bin/dash) → used verbatim\n"+
+			"Defaults: /bin/sh for OCI drivers (docker, containerd-driver, podman,\n"+
+			"singularity) so jobs work on alpine / distroless / minimal images;\n"+
+			"/bin/bash for host-side drivers (exec, exec2, raw_exec, java, hpc-bridge).\n"+
+			"The shell must exist inside the target image — the kernel reports a clear\n"+
+			"ENOENT at exec time if the path is missing.")
 	cmd.Flags().String("output", "", "Tee stdout to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("error", "", "Tee stderr to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")

@@ -94,8 +94,11 @@ type Spec struct {
 	Depend             string
 	Driver             string
 	// Shell overrides the script interpreter. "" (default) picks per
-	// `pickTaskScriptShell`; "bash" or "sh" force /bin/bash or /bin/sh
-	// respectively. Wired from #ABC --shell=… preamble or --shell CLI flag.
+	// `pickTaskScriptShell`. Accepted forms:
+	//   - "" (default) → driver-default (/bin/sh for OCI drivers, /bin/bash for host drivers)
+	//   - "bash" / "sh" / any bare name → resolved to /bin/<name>
+	//   - absolute path "/usr/local/bin/fish" → used verbatim
+	// Wired from #ABC --shell=… preamble or --shell CLI flag.
 	Shell              string
 	DriverConfig       map[string]string
 	RescheduleMode     string
@@ -378,16 +381,31 @@ func taskScriptShell(driver string) string {
 }
 
 // pickTaskScriptShell returns the shell to invoke the user's script,
-// honouring an explicit Spec.Shell override (#ABC --shell=bash|sh) when
-// set, else falling back to the driver's default per `taskScriptShell`.
+// honouring an explicit Spec.Shell override when set, else falling back
+// to the driver default per `taskScriptShell`.
+//
+// Spec.Shell accepts:
+//   - "" → driver default.
+//   - absolute path ("/bin/dash", "/usr/local/bin/fish") → used verbatim.
+//   - bare name ("bash", "sh", "dash", "zsh", "fish", …) → resolved to
+//     /bin/<name>. This is the common case; lets users write
+//     `#ABC --shell=zsh` without spelling out a path that varies by
+//     image (/bin/zsh vs /usr/bin/zsh vs /usr/local/bin/zsh).
+//
+// The shell binary's existence inside the target image is the user's
+// responsibility — the kernel surfaces a clear ENOENT at exec time if
+// the path doesn't resolve. We don't try to be clever about path
+// probing because the script runs in a container whose filesystem we
+// can't introspect at HCL-gen time.
 func pickTaskScriptShell(spec Spec) string {
-	switch strings.ToLower(strings.TrimSpace(spec.Shell)) {
-	case "bash":
-		return "/bin/bash"
-	case "sh":
-		return "/bin/sh"
+	v := strings.TrimSpace(spec.Shell)
+	if v == "" {
+		return taskScriptShell(spec.Driver)
 	}
-	return taskScriptShell(spec.Driver)
+	if strings.HasPrefix(v, "/") {
+		return v
+	}
+	return "/bin/" + strings.ToLower(v)
 }
 
 // isOCIDriver reports whether the driver runs the task inside a

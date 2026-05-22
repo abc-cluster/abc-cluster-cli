@@ -1067,6 +1067,25 @@ func TestJobRun_UnknownABCDirective(t *testing.T) {
 	}
 }
 
+// --shell rejects values containing shell-metacharacters so an attacker
+// can't smuggle command injection through a templated script.
+func TestJobRun_ShellDirectiveRejectsMetacharacters(t *testing.T) {
+	cases := []string{
+		"#!/bin/bash\n#ABC --shell=bash;rm -rf /\necho hi\n",
+		"#!/bin/bash\n#ABC --shell=\"bash -c 'echo pwned'\"\necho hi\n",
+		"#!/bin/bash\n#ABC --shell=bash$(whoami)\necho hi\n",
+		"#!/bin/bash\n#ABC --shell=`whoami`\necho hi\n",
+		"#!/bin/bash\n#ABC --shell=bash|whoami\necho hi\n",
+	}
+	for i, script := range cases {
+		p := writeTempScript(t, fmt.Sprintf("shellmeta-%d.sh", i), script)
+		_, err := executeCmd(t, p)
+		if err == nil {
+			t.Errorf("case %d: expected error for shell metacharacter, got none", i)
+		}
+	}
+}
+
 func TestJobRun_InvalidNodes(t *testing.T) {
 	script := "#!/bin/bash\n#ABC --nodes=abc\necho hi\n"
 	p := writeTempScript(t, "bad.sh", script)

@@ -578,11 +578,24 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			spec.Driver = val
 		case "shell":
 			if !hasValue || val == "" {
-				return fmt.Errorf("#%s --shell requires a value (bash | sh)", marker)
+				return fmt.Errorf("#%s --shell requires a value (bash | sh | dash | zsh | /absolute/path)", marker)
 			}
-			v := strings.ToLower(strings.TrimSpace(val))
-			if v != "bash" && v != "sh" {
-				return fmt.Errorf("#%s --shell must be 'bash' or 'sh', got %q", marker, val)
+			v := strings.TrimSpace(val)
+			// Reject shell-metacharacter injection: the value lands directly
+			// in the HCL `command = "…"` attribute. Allow [A-Za-z0-9._/-] only.
+			for _, r := range v {
+				switch {
+				case r >= 'a' && r <= 'z',
+					r >= 'A' && r <= 'Z',
+					r >= '0' && r <= '9',
+					r == '.', r == '_', r == '/', r == '-':
+				default:
+					return fmt.Errorf("#%s --shell %q contains an invalid character %q (allowed: letters, digits, '.', '_', '/', '-')", marker, val, r)
+				}
+			}
+			// Lowercase bare names; preserve absolute paths verbatim.
+			if !strings.HasPrefix(v, "/") {
+				v = strings.ToLower(v)
 			}
 			spec.Shell = v
 		case "reschedule-mode":

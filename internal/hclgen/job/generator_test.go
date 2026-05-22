@@ -89,6 +89,47 @@ func TestGenerate_ShellOverrideForcesShOnHost(t *testing.T) {
 	}
 }
 
+// `--shell=<bare-name>` resolves to /bin/<name> for any shell, not just
+// bash/sh — lets users opt into dash, zsh, ksh, fish, etc.
+func TestGenerate_ShellOverrideBareName(t *testing.T) {
+	cases := map[string]string{
+		"dash":  "/bin/dash",
+		"zsh":   "/bin/zsh",
+		"ksh":   "/bin/ksh",
+		"fish":  "/bin/fish",
+		"BASH":  "/bin/bash", // lowercased
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			spec := Spec{Name: "shell-bare", Driver: "docker", Shell: in, Datacenters: []string{"dc1"}, Nodes: 1}
+			hcl := Generate(spec, "run.sh", "echo ok\n")
+			if !containsCommand(hcl, want) {
+				t.Fatalf("Shell=%q: expected command = %q, got:\n%s", in, want, hcl)
+			}
+		})
+	}
+}
+
+// `--shell=/absolute/path` is used verbatim — lets users target a shell
+// installed at a non-/bin location (Nix store, /usr/local, etc.).
+func TestGenerate_ShellOverrideAbsolutePath(t *testing.T) {
+	cases := []string{
+		"/bin/dash",
+		"/usr/local/bin/fish",
+		"/nix/store/xyz/bin/bash",
+		"/opt/conda/bin/zsh",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			spec := Spec{Name: "shell-abs", Driver: "docker", Shell: path, Datacenters: []string{"dc1"}, Nodes: 1}
+			hcl := Generate(spec, "run.sh", "echo ok\n")
+			if !containsCommand(hcl, path) {
+				t.Fatalf("Shell=%q: expected command = %q verbatim, got:\n%s", path, path, hcl)
+			}
+		})
+	}
+}
+
 // Hostname stanza must be emitted for every OCI driver so the in-container
 // hostname is stable across drivers (aligns docker's short-container-id with
 // containerd's cgroup-scope UUID etc.). Skipped for host-side drivers.
