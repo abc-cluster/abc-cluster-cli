@@ -667,9 +667,19 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --runtime requires a value (e.g. pixi-exec)", marker)
 			}
 			spec.Runtime = val
-		case "from":
+		case "from-file":
 			if !hasValue || val == "" {
-				return fmt.Errorf("#%s --from requires a value (path or URI to the runtime definition)", marker)
+				return fmt.Errorf("#%s --from-file requires a value (local path to the runtime definition)", marker)
+			}
+			spec.From = val
+		case "from":
+			// Deprecated alias for --from-file; kept working with no
+			// behavioural change. Stderr nudge is intentionally silent
+			// here — directive parsing has no error stream wired in;
+			// the CLI flag's MarkDeprecated covers the interactive
+			// command-line case. Documented deprecation in USAGE.md.
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --from requires a value (deprecated; use --from-file)", marker)
 			}
 			spec.From = val
 		case "constraint":

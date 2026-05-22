@@ -632,7 +632,7 @@ abc submit <target> [flags]
 | 6 | `<target>` matches a saved pipeline name in Nomad Variables | `pipeline run` |
 | — | no match | error — use `--type` |
 
-> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, `--from`, and **`--task-tmp`** (see [Software stack](#software-stack-runtime-and-from) and [Task workspace temp](#task-workspace-temp) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
+> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, `--from-file`, and **`--task-tmp`** (see [Software stack](#software-stack-runtime-and-from) and [Task workspace temp](#task-workspace-temp) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
 
 ### Flags
 
@@ -1012,7 +1012,7 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--error`                       | `--error=<filename>`                | Tee stderr to `$NOMAD_TASK_DIR/<filename>`                        |
 | `--conda`                       | `--conda=<spec>`                    | Conda spec (meta `abc_conda`; no automatic conda wrapper)         |
 | `--runtime`                     | `--runtime=<kind>`                  | Software stack provisioner (`pixi-exec`, alias `pixi`); orthogonal to `--driver` |
-| `--from`                        | `--from=<path-or-uri>`              | Native stack definition for `--runtime` (Pixi: path to `pixi.toml` on the execution host) |
+| `--from-file`                        | `--from-file=<path>`              | Native stack definition for `--runtime` (Pixi: path to `pixi.toml` on the execution host) |
 | `--task-tmp`                    | `--task-tmp`                        | Task-local temp: `TMPDIR`/`TMP`/`TEMP` → `${NOMAD_TASK_DIR}/tmp` (see [below](#task-workspace-temp)) |
 | `--hpc-compat-env`              | `--hpc_compat_env`                  | Inject legacy `SLURM_*` / `PBS_*` compatibility aliases           |
 | `--no-network`                  | `--no-network`                      | Disable network access (Nomad mode = `"none"`)                    |
@@ -1041,7 +1041,7 @@ These options configure **how dependencies are provided for your script**, separ
 | Preamble directive | CLI flag | Description |
 |--------------------|----------|-------------|
 | `--runtime=<kind>` | `--runtime=<kind>` | Stack provisioner. Supported: **`pixi-exec`** (alias **`pixi`**). |
-| `--from=<path>`    | `--from=<path>`    | Backend-native definition. For **`pixi-exec`**: absolute or cluster-visible path to **`pixi.toml`**. |
+| `--from-file=<path>`    | `--from-file=<path>`    | Backend-native definition. For **`pixi-exec`**: absolute or cluster-visible path to **`pixi.toml`**. |
 
 **Resolution:** After `--driver` is chosen (default `exec`), the CLI checks that the driver is allowed for the selected runtime, then may **rewrite the embedded script** so the task re-invokes itself under Pixi.
 
@@ -1063,8 +1063,8 @@ so the preamble and body execute inside the Pixi **default** environment for tha
 
 - **`--no-network`:** rejected with `pixi-exec` (Pixi needs the network to solve/download).
 - **`--conda` / `#ABC --conda`:** rejected together with `pixi-exec` (two stacks).
-- **`#ABC --pixi`:** still allowed as a separate meta hint; it does not turn on automatic wrapping (use `--runtime` + `--from` for that).
-- **Relative `--from`:** resolved on the execution host relative to the task working directory after any `#ABC --chdir`; prefer absolute cluster paths when unsure.
+- **`#ABC --pixi`:** still allowed as a separate meta hint; it does not turn on automatic wrapping (use `--runtime` + `--from-file` for that).
+- **Relative `--from-file`:** resolved on the execution host relative to the task working directory after any `#ABC --chdir`; prefer absolute cluster paths when unsure.
 
 ### Task workspace temp
 
@@ -1128,7 +1128,7 @@ block so the script can read the value at execution time.
 | Preamble directive | Description |
 |--------------------|-------------|
 | `#ABC --conda=<spec>` | Conda environment label (`spec` = package name or env file path). Recorded as `abc_conda` in Nomad meta. Does not wrap the script automatically. |
-| `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in Nomad meta. For automatic Pixi wrapping, use **`#ABC --runtime=pixi-exec`** and **`#ABC --from=…/pixi.toml`** (see [Software stack](#software-stack-runtime-and-from)). |
+| `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in Nomad meta. For automatic Pixi wrapping, use **`#ABC --runtime=pixi-exec`** and **`#ABC --from-file=…/pixi.toml`** (see [Software stack](#software-stack-runtime-and-from)). |
 | `#ABC --task-tmp` | Task-local temp defaults (`TMPDIR`/`TMP`/`TEMP` under `${NOMAD_TASK_DIR}/tmp`). See [Task workspace temp](#task-workspace-temp). |
 
 ### Meta flags (Class 3)

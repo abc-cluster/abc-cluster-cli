@@ -141,14 +141,14 @@ abc job run hello-me.sh --cores=2 --mem=512M
 
 ### 1.5 Attach a software environment
 
-`--runtime=micromamba-exec` installs a conda environment on the cluster node before running your script. Pass the environment spec with `--from`:
+`--runtime=micromamba-exec` installs a conda environment on the cluster node before running your script. Pass the environment spec with `--from-file`:
 
 ```bash
 cat > bio-job.sh << 'EOF'
 #!/bin/bash
 #ABC --name=bio-demo
 #ABC --runtime=micromamba-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --cores=4
 #ABC --mem=8G
 set -euo pipefail

@@ -234,7 +234,58 @@ func TestJobRun_RuntimeRequiresFrom(t *testing.T) {
 	p := writeTempScript(t, "pixi_no_from.sh", script)
 	_, err := executeCmd(t, p)
 	if err == nil {
-		t.Fatal("expected error: runtime pixi-exec requires --from")
+		t.Fatal("expected error: runtime pixi-exec requires --from-file")
+	}
+}
+
+// --from-file is the canonical flag name for "read input from a local
+// file"; --from is kept as a deprecated alias for one release window.
+// Both forms should produce equivalent output and both directives
+// (#ABC --from-file= and #ABC --from=) should set spec.From.
+func TestJobRun_FromFileCanonicalFlag(t *testing.T) {
+	// CLI flag --from-file
+	script := "#!/bin/bash\n#ABC --name=pixi-from-file\n#ABC --runtime=pixi-exec\necho hi\n"
+	p := writeTempScript(t, "pixi_from_file.sh", script)
+	out, err := executeCmd(t, p, "--from-file", "/canonical/pixi.toml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "/canonical/pixi.toml") {
+		t.Errorf("expected --from-file value in HCL, got:\n%s", out)
+	}
+}
+
+// #ABC --from-file=… directive form is accepted alongside the legacy
+// #ABC --from=… form.
+func TestJobRun_FromFileDirective(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-dir\n#ABC --runtime=pixi-exec\n#ABC --from-file=/dir/pixi.toml\necho hi\n"
+	p := writeTempScript(t, "pixi_dir.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "/dir/pixi.toml") {
+		t.Errorf("expected #ABC --from-file= value in HCL, got:\n%s", out)
+	}
+}
+
+// When both --from-file and --from are provided on the same command
+// line, --from-file wins (canonical name takes precedence).
+func TestJobRun_FromFilePrecedence(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=pixi-prec\n#ABC --runtime=pixi-exec\necho hi\n"
+	p := writeTempScript(t, "pixi_prec.sh", script)
+	out, err := executeCmd(t, p,
+		"--from-file", "/canonical/pixi.toml",
+		"--from", "/deprecated/pixi.toml",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "/canonical/pixi.toml") {
+		t.Errorf("expected --from-file to win, got:\n%s", out)
+	}
+	if strings.Contains(out, "/deprecated/pixi.toml") {
+		t.Errorf("did NOT expect deprecated --from value when --from-file is set, got:\n%s", out)
 	}
 }
 

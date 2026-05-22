@@ -77,7 +77,10 @@ CLASS 1 — SCHEDULER  (configure HCL stanza fields)
 
 SOFTWARE STACK  (orthogonal to --driver; see USAGE.md job run / Software stack)
   --runtime=<kind>             Stack provisioner: pixi-exec (alias: pixi), micromamba-exec (aliases: micromamba, mamba)
-  --from=<path-or-uri>       Backend-native definition; pixi-exec: pixi.toml or pixi.lock; micromamba-exec: environment.yml
+  --from-file=<path>         Backend-native definition file read at submit time:
+                               pixi-exec:       pixi.toml or pixi.lock
+                               micromamba-exec: environment.yml
+                             (deprecated alias: --from)
 
 TASK WORKSPACE
   --task-tmp                   Use ${NOMAD_TASK_DIR}/tmp for TMPDIR/TMP/TEMP (mkdir at start)
@@ -217,9 +220,12 @@ EXAMPLES
 	cmd.Flags().String("error", "", "Tee stderr to $NOMAD_TASK_DIR/<filename>")
 	cmd.Flags().String("conda", "", "Conda spec string or path to env YAML (abc meta key: abc_conda)")
 	cmd.Flags().String("runtime", "", "Software stack runtime: pixi-exec (alias pixi), micromamba-exec (aliases micromamba/mamba); see USAGE.md")
-	cmd.Flags().String("from", "", "Local path to environment file read at submit time and embedded as a Nomad template:\n"+
+	cmd.Flags().String("from-file", "", "Local path to environment file read at submit time and embedded as a Nomad template:\n"+
 		"    pixi-exec:      pixi.toml (manifest) or pixi.lock (locked reproducible install)\n"+
-		"    micromamba-exec: environment.yml (conda environment file)")
+		"    micromamba-exec: environment.yml (conda environment file)\n"+
+		"  Aligns with --from-file on abc auth context add (the canonical name across the CLI).")
+	cmd.Flags().String("from", "", "Deprecated alias for --from-file; will be removed.")
+	_ = cmd.Flags().MarkDeprecated("from", "use --from-file instead (same semantics; --from will be removed in a future release)")
 	cmd.Flags().Bool("pixi-cleanup", false, "Remove the pixi env from the task directory on job exit (pixi-exec)")
 	cmd.Flags().Bool("mamba-cleanup", false, "Remove the micromamba env from the task directory on job exit (micromamba-exec)")
 	cmd.Flags().Bool("task-tmp", false, "Use ${NOMAD_TASK_DIR}/tmp for TMPDIR/TMP/TEMP (see USAGE.md)")
@@ -484,7 +490,21 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	if v, _ := cmd.Flags().GetString("runtime"); v != "" {
 		spec.Runtime = v
 	}
-	if v, _ := cmd.Flags().GetString("from"); v != "" {
+	// --from-file is the canonical name; --from is a deprecated alias.
+	// Either CLI flag overrides whatever the preamble (#ABC --from-file=
+	// or the deprecated #ABC --from=) set on spec.From — the standard
+	// CLI > preamble precedence.
+	//
+	// When both flags are provided on the same command line, --from-file
+	// wins (the canonical name). We use cmd.Flags().Changed() to detect
+	// "user passed this flag" rather than the empty-string-means-unset
+	// shortcut, because either flag with an intentional empty value
+	// should still be honoured (rare but worth being explicit).
+	if cmd.Flags().Changed("from-file") {
+		v, _ := cmd.Flags().GetString("from-file")
+		spec.From = v
+	} else if cmd.Flags().Changed("from") {
+		v, _ := cmd.Flags().GetString("from")
 		spec.From = v
 	}
 	if v, _ := cmd.Flags().GetBool("task-tmp"); v {
@@ -1153,7 +1173,7 @@ func newSubmissionID() string {
 	return hex.EncodeToString(b)
 }
 
-// resolvePixiLocalMode checks if --from points to a readable local pixi.toml or
+// resolvePixiLocalMode checks if --from-file points to a readable local pixi.toml or
 // pixi.lock. If so it reads the file(s), sets the binary download URL, and
 // updates spec.From to the runtime path inside the Nomad task dir.
 //
@@ -1181,12 +1201,12 @@ func resolvePixiLocalMode(spec *jobSpec) error {
 			if os.IsNotExist(err) {
 				return nil // remote path — legacy mode
 			}
-			return fmt.Errorf("--from: cannot read lock file %q: %w", from, err)
+			return fmt.Errorf("--from-file: cannot read lock file %q: %w", from, err)
 		}
 		tomlPath := filepath.Join(filepath.Dir(from), "pixi.toml")
 		tomlContent, err := os.ReadFile(tomlPath)
 		if err != nil {
-			return fmt.Errorf("--from: pixi.lock requires a companion pixi.toml in the same directory; cannot read %q: %w", tomlPath, err)
+			return fmt.Errorf("--from-file: pixi.lock requires a companion pixi.toml in the same directory; cannot read %q: %w", tomlPath, err)
 		}
 		pixiURL, err := resolveToolBinaryURL("pixi")
 		if err != nil {
@@ -1207,7 +1227,7 @@ func resolvePixiLocalMode(spec *jobSpec) error {
 		if os.IsNotExist(err) {
 			return nil // remote path — legacy mode
 		}
-		return fmt.Errorf("--from: cannot read %q: %w", from, err)
+		return fmt.Errorf("--from-file: cannot read %q: %w", from, err)
 	}
 	pixiURL, err := resolveToolBinaryURL("pixi")
 	if err != nil {
@@ -1225,7 +1245,7 @@ func resolvePixiLocalMode(spec *jobSpec) error {
 	return nil
 }
 
-// resolveMicromambaLocalMode checks if --from points to a readable local
+// resolveMicromambaLocalMode checks if --from-file points to a readable local
 // environment.yml. If so it embeds the file as a Nomad template and sets the
 // micromamba binary download URL. Remote paths are left unchanged (legacy mode:
 // micromamba must be pre-installed on the execution host).
@@ -1242,7 +1262,7 @@ func resolveMicromambaLocalMode(spec *jobSpec) error {
 		if os.IsNotExist(err) {
 			return nil // remote path — legacy mode
 		}
-		return fmt.Errorf("--from: cannot read %q: %w", from, err)
+		return fmt.Errorf("--from-file: cannot read %q: %w", from, err)
 	}
 	mambaURL, err := resolveToolBinaryURL("micromamba")
 	if err != nil {

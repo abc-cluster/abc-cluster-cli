@@ -33,7 +33,7 @@ func NormalizeRuntimeID(s string) string {
 	return s
 }
 
-// ValidateRuntimeDriver checks --runtime/--from and runtime×driver compatibility
+// ValidateRuntimeDriver checks --runtime/--from-file and runtime×driver compatibility
 // after the task driver has been normalized.
 func ValidateRuntimeDriver(spec *jobSpec) error {
 	if spec == nil {
@@ -45,7 +45,7 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 	from := strings.TrimSpace(spec.From)
 	if rt == "" {
 		if from != "" {
-			return fmt.Errorf("--from requires --runtime (e.g. pixi-exec, micromamba-exec)")
+			return fmt.Errorf("--from-file requires --runtime (e.g. pixi-exec, micromamba-exec)")
 		}
 		return nil
 	}
@@ -53,14 +53,14 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 	switch rt {
 	case runtimePixiExec:
 		if from == "" {
-			return fmt.Errorf("runtime %q requires --from=<pixi.toml or pixi.lock>", rt)
+			return fmt.Errorf("runtime %q requires --from-file=<pixi.toml or pixi.lock>", rt)
 		}
 		if strings.ContainsAny(from, "\r\n\x00") {
-			return fmt.Errorf("runtime %q: --from must be a single-line path (no newline or NUL characters)", rt)
+			return fmt.Errorf("runtime %q: --from-file must be a single-line path (no newline or NUL characters)", rt)
 		}
 		fromLower := strings.ToLower(from)
 		if !strings.HasSuffix(fromLower, ".toml") && !strings.HasSuffix(fromLower, ".lock") {
-			return fmt.Errorf("runtime %q: --from must end with .toml (pixi.toml) or .lock (pixi.lock)", rt)
+			return fmt.Errorf("runtime %q: --from-file must end with .toml (pixi.toml) or .lock (pixi.lock)", rt)
 		}
 		if spec.NoNetwork {
 			return fmt.Errorf("runtime %q needs network access to solve and download packages; remove --no-network or omit --runtime", rt)
@@ -71,14 +71,14 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 
 	case runtimeMicromamba:
 		if from == "" {
-			return fmt.Errorf("runtime %q requires --from=<path-to-environment.yml>", rt)
+			return fmt.Errorf("runtime %q requires --from-file=<path-to-environment.yml>", rt)
 		}
 		if strings.ContainsAny(from, "\r\n\x00") {
-			return fmt.Errorf("runtime %q: --from must be a single-line path (no newline or NUL characters)", rt)
+			return fmt.Errorf("runtime %q: --from-file must be a single-line path (no newline or NUL characters)", rt)
 		}
 		fromLower := strings.ToLower(from)
 		if !strings.HasSuffix(fromLower, ".yml") && !strings.HasSuffix(fromLower, ".yaml") {
-			return fmt.Errorf("runtime %q: --from must end with .yml or .yaml (path to conda environment file)", rt)
+			return fmt.Errorf("runtime %q: --from-file must end with .yml or .yaml (path to conda environment file)", rt)
 		}
 		if spec.NoNetwork {
 			return fmt.Errorf("runtime %q needs network access to download packages; remove --no-network or omit --runtime", rt)
@@ -89,14 +89,14 @@ func ValidateRuntimeDriver(spec *jobSpec) error {
 
 	case runtimeWaveExec:
 		if from == "" {
-			return fmt.Errorf("runtime %q requires --from=<path-to-environment.yml>", rt)
+			return fmt.Errorf("runtime %q requires --from-file=<path-to-environment.yml>", rt)
 		}
 		if strings.ContainsAny(from, "\r\n\x00") {
-			return fmt.Errorf("runtime %q: --from must be a single-line path (no newline or NUL characters)", rt)
+			return fmt.Errorf("runtime %q: --from-file must be a single-line path (no newline or NUL characters)", rt)
 		}
 		fromLower := strings.ToLower(from)
 		if !strings.HasSuffix(fromLower, ".yml") && !strings.HasSuffix(fromLower, ".yaml") {
-			return fmt.Errorf("runtime %q: --from must end with .yml or .yaml (path to conda environment file)", rt)
+			return fmt.Errorf("runtime %q: --from-file must end with .yml or .yaml (path to conda environment file)", rt)
 		}
 		if spec.NoNetwork {
 			return fmt.Errorf("runtime %q needs network access to build and pull the Wave container; remove --no-network", rt)
