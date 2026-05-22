@@ -34,8 +34,7 @@ export default function Hub(): React.ReactElement {
               fontSize: '1.05rem',
               margin: 0,
             }}>
-            Pick a project. Platform-wide concepts shared across every
-            project live under <strong>Concepts</strong>.
+            Pick a project. Operator setup docs live under <strong>Cluster Setup</strong>; CLI reference under <strong>Cluster CLI</strong>.
           </p>
         </header>
 

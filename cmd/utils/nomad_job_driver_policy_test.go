@@ -52,22 +52,30 @@ func TestPlatformDriverPolicy_CheckDrivers(t *testing.T) {
 	}{
 		{"per-group admin allowed docker+exec",
 			anel, []string{"docker", "exec"}, nil},
+		{"per-group admin allowed containerd / containerd-driver",
+			anel, []string{"containerd", "containerd-driver"}, nil},
+		{"per-group admin allowed podman + singularity",
+			anel, []string{"podman", "singularity"}, nil},
+		{"per-group admin allowed hpc-bridge (no longer restricted)",
+			anel, []string{"hpc-bridge"}, nil},
 		{"per-group admin rejected raw_exec",
 			anel, []string{"raw_exec"}, []string{"raw_exec"}},
-		{"per-group admin rejected mix",
+		{"per-group admin rejected qemu",
+			anel, []string{"qemu"}, []string{"qemu"}},
+		{"per-group admin rejected java",
+			anel, []string{"java"}, []string{"java"}},
+		{"per-group admin rejected mix (sorted)",
 			anel, []string{"docker", "raw_exec", "java"}, []string{"java", "raw_exec"}},
 		{"per-group admin rejected dedup",
 			anel, []string{"raw_exec", "raw_exec"}, []string{"raw_exec"}},
-		{"per-group admin rejected hpc-bridge",
-			anel, []string{"hpc-bridge"}, []string{"hpc-bridge"}},
 		{"multi-group admin bypass (gvds)",
-			gvds, []string{"raw_exec", "containerd-driver"}, nil},
+			gvds, []string{"raw_exec", "qemu", "java"}, nil},
 		{"management bypass",
 			mgmt, []string{"raw_exec", "java", "qemu"}, nil},
 		{"empty list",
 			anel, nil, nil},
-		{"unknown driver also rejected for non-priv",
-			anel, []string{"some-future-driver"}, []string{"some-future-driver"}},
+		{"unknown driver allowed for non-priv (allow-by-default)",
+			anel, []string{"some-future-driver"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -79,11 +87,11 @@ func TestPlatformDriverPolicy_CheckDrivers(t *testing.T) {
 	}
 }
 
-func TestPlatformDriverPolicy_AllowedList(t *testing.T) {
+func TestPlatformDriverPolicy_RestrictedList(t *testing.T) {
 	p := DefaultPlatformDriverPolicy()
-	got := strings.Join(p.AllowedList(), ",")
-	if got != "docker,exec" {
-		t.Fatalf("AllowedList=%q, want %q", got, "docker,exec")
+	got := strings.Join(p.RestrictedList(), ",")
+	if got != "java,qemu,raw_exec" {
+		t.Fatalf("RestrictedList=%q, want %q", got, "java,qemu,raw_exec")
 	}
 }
 
