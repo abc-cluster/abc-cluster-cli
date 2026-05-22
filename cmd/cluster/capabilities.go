@@ -61,7 +61,7 @@ func nomadClientForCapabilities(cmd *cobra.Command) (*utils.NomadClient, error) 
 	if addr == "" {
 		return nil, fmt.Errorf(
 			"no Nomad address for context %q\n"+
-				"  Set it with: abc config set admin.services.nomad.nomad_addr http://<ip>:4646\n"+
+				"  Set it with: abc config set admin.services.nomad.addr http://<ip>:4646\n"+
 				"  Or pass:     --nomad-addr http://<ip>:4646",
 			cfg.ActiveContext,
 		)
@@ -265,9 +265,19 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 
 	// ── Step 5: Sync node driver capabilities ─────────────────────────────────
 	nodes, nodeErr := syncNodeCapabilities(bg, nc)
-	if nodeErr != nil {
+	switch {
+	case nodeErr != nil:
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: could not sync node capabilities: %v\n", nodeErr)
-	} else {
+	case nodes == nil:
+		// 403 / no node:read — preserve server-stamped data from config.yaml.
+		// caps.Nodes intentionally left as-is (carries the stamped value).
+		existing := caps.Nodes
+		if len(existing) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "Node capabilities not refreshed (no node:read permission) — using %d server-stamped node(s).\n", len(existing))
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "Node capabilities not refreshed (no node:read permission) — run 'abc cluster capabilities sync' as admin to populate.\n")
+		}
+	default:
 		caps.Nodes = nodes
 		fmt.Fprintf(cmd.OutOrStdout(), "Synced driver capabilities for %d node(s).\n", len(nodes))
 	}
@@ -585,9 +595,18 @@ func runCapabilitiesShow(cmd *cobra.Command, _ []string) error {
 
 // syncNodeCapabilities queries all ready, eligible Nomad client nodes and
 // returns a NodeCapability entry for each, listing healthy+detected drivers.
+//
+// Returns (nil, nil) when the token lacks node:read permission (403). Callers
+// should treat nil results as "keep existing stamped data" rather than "wipe".
 func syncNodeCapabilities(ctx context.Context, nc *utils.NomadClient) ([]config.NodeCapability, error) {
 	stubs, err := nc.ListNodes(ctx)
 	if err != nil {
+		if isPermissionDenied(err) {
+			// Pool tokens (abc-cluster / seedling tier) do not have node:read.
+			// Return nil, nil so the caller preserves any server-stamped node
+			// capability data that was embedded in config.yaml at claim time.
+			return nil, nil
+		}
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
 
