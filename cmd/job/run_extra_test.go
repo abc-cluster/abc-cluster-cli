@@ -269,6 +269,81 @@ func TestJobRun_FromFileDirective(t *testing.T) {
 	}
 }
 
+// --driver=exec emits a soft stderr nudge pointing at exec2, but only
+// when the node-capability list advertises exec2 — no point nudging
+// toward a driver the operator hasn't enabled on the cluster.
+func TestJobRun_ExecNudgesTowardExec2WhenAvailable(t *testing.T) {
+	cfg := `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cluster
+    capabilities:
+      nodes:
+        - id: n1
+          hostname: aither
+          drivers: [exec, exec2, docker]
+`
+	script := "#!/bin/bash\n#ABC --driver=exec\necho hi\n"
+	p := writeTempScript(t, "exec-nudge.sh", script)
+	out, err := executeCmdWithABCYAML(t, cfg, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Consider --driver=exec2") {
+		t.Errorf("expected nudge toward exec2, got:\n%s", out)
+	}
+}
+
+// When exec2 is NOT in the node capabilities, the nudge stays silent —
+// don't push users toward a driver the operator hasn't enabled.
+func TestJobRun_ExecNoNudgeWhenExec2Absent(t *testing.T) {
+	cfg := `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cluster
+    capabilities:
+      nodes:
+        - id: n1
+          hostname: aither
+          drivers: [exec, docker]
+`
+	script := "#!/bin/bash\n#ABC --driver=exec\necho hi\n"
+	p := writeTempScript(t, "exec-no-nudge.sh", script)
+	out, err := executeCmdWithABCYAML(t, cfg, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out, "Consider --driver=exec2") {
+		t.Errorf("nudge should be silent when exec2 isn't advertised, got:\n%s", out)
+	}
+}
+
+// Already on exec2 → no nudge (user is doing the right thing).
+func TestJobRun_NoNudgeWhenAlreadyExec2(t *testing.T) {
+	cfg := `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cluster
+    capabilities:
+      nodes:
+        - id: n1
+          hostname: aither
+          drivers: [exec, exec2]
+`
+	script := "#!/bin/bash\n#ABC --driver=exec2\necho hi\n"
+	p := writeTempScript(t, "exec2-no-nudge.sh", script)
+	out, err := executeCmdWithABCYAML(t, cfg, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out, "Consider --driver=exec2") {
+		t.Errorf("nudge should fire only for --driver=exec; got:\n%s", out)
+	}
+}
+
 // When both --from-file and --from are provided on the same command
 // line, --from-file wins (canonical name takes precedence).
 func TestJobRun_FromFilePrecedence(t *testing.T) {

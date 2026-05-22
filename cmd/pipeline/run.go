@@ -266,6 +266,12 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 	if ns != "" {
 		override.Namespace = ns
+	} else if c, err := abccfg.Load(); err == nil {
+		// Fall back to the active context's Nomad namespace so worker jobs land
+		// in the right namespace without requiring --namespace on every invocation.
+		if ctxNS := c.ActiveCtx().NomadNamespace(); ctxNS != "" && ctxNS != "default" {
+			override.Namespace = ctxNS
+		}
 	}
 
 	// Container runtime selection — mutually exclusive.

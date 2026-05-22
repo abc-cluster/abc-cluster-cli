@@ -6,6 +6,7 @@
 package pipeline
 
 import (
+	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
@@ -66,6 +67,7 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 	if region == "" {
 		region, _ = cmd.Root().PersistentFlags().GetString("region")
 	}
+	var cfgNamespace string
 	if addr == "" || token == "" || region == "" {
 		cfgAddr, cfgToken, cfgRegion := utils.NomadDefaultsFromConfig()
 		if addr == "" {
@@ -78,7 +80,15 @@ func nomadClientFromCmd(cmd *cobra.Command) *utils.NomadClient {
 			region = cfgRegion
 		}
 	}
+	// Always read the namespace from the context config so ParseHCL and
+	// other scoped calls use the right ?namespace= query param — without
+	// this, pool tokens (which only have access to their own namespace) get
+	// 403 on /v1/jobs/parse because the request defaults to "default".
+	if c, err := cfg.Load(); err == nil {
+		cfgNamespace = c.ActiveCtx().NomadNamespace()
+	}
 	return utils.NewNomadClient(addr, token, region).
+		WithNamespace(cfgNamespace).
 		WithSudo(utils.SudoFromCmd(cmd)).
 		WithCloud(utils.CloudFromCmd(cmd))
 }

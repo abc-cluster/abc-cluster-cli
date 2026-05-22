@@ -719,6 +719,15 @@ func runJob(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Soft nudge: --driver=exec runs without filesystem sandbox, dynamic
+	// non-root UID, or capability dropping. If exec2 is advertised by the
+	// node-capability list AND the user has explicitly asked for exec, drop
+	// a single-line stderr note pointing them at exec2 / auto-exec. Quiet
+	// when the user is already using exec2 / raw_exec / something else;
+	// also quiet when exec2 isn't available on the cluster (no point
+	// nudging toward a driver the operator hasn't enabled).
+	maybeNudgeExecToExec2(cmd, spec)
+
 	if err := resolvePixiLocalMode(spec); err != nil {
 		return err
 	}
@@ -1325,3 +1334,52 @@ func printNtfySubscriptionHint(w io.Writer) {
 	fmt.Fprintf(w, "    App:       ntfy.sh  (iOS / Android / Desktop)\n")
 }
 
+
+// maybeNudgeExecToExec2 emits a friendly stderr note when the user has
+// resolved to --driver=exec on a cluster that also advertises exec2.
+// exec2 is strictly safer: dynamic non-root UID per task, empty effective
+// capability set, landlock filesystem restriction. Most workloads that
+// run under exec today will run unchanged under exec2 (host filesystem,
+// host bash, same env block).
+//
+// Quiet when:
+//   - spec.Driver != "exec" (user picked something else; nothing to say)
+//   - exec2 is not in the node capabilities list (operator hasn't
+//     enabled it on the fleet; no point nudging toward a missing driver)
+//   - cluster_type != abc-cluster (other tier shapes have their own
+//     driver story; the nudge is specifically about the seedling /
+//     abc-cluster fleet)
+//
+// Stderr only — never blocks the submission. Single line so it doesn't
+// clutter terminal output.
+func maybeNudgeExecToExec2(cmd *cobra.Command, spec *jobSpec) {
+	if spec == nil || spec.Driver != "exec" {
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	ctx := cfg.ActiveCtx()
+	if ctx.Capabilities == nil || len(ctx.Capabilities.Nodes) == 0 {
+		return
+	}
+	hasExec2 := false
+	for _, n := range ctx.Capabilities.Nodes {
+		for _, d := range n.Drivers {
+			if strings.EqualFold(strings.TrimSpace(d), "exec2") {
+				hasExec2 = true
+				break
+			}
+		}
+		if hasExec2 {
+			break
+		}
+	}
+	if !hasExec2 {
+		return
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(),
+		"  [abc] note: --driver=exec runs without filesystem sandbox, dynamic non-root UID, or capability dropping.\n"+
+			"       Consider --driver=exec2 (capability-dropped, landlock fs restriction, dynamic non-root UID) or --driver=auto-exec.")
+}

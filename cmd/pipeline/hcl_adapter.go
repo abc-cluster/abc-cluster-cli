@@ -40,7 +40,31 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 	}
 	var staticEnv map[string]string
 	if c, err := cfg.Load(); err == nil {
-		staticEnv = cfg.AbcNodesMonitoringEnv(c.ActiveCtx())
+		actx := c.ActiveCtx()
+		staticEnv = cfg.AbcNodesMonitoringEnv(actx)
+		// Inject MinIO / S3 env vars from admin.services.minio.* so the
+		// Nextflow aws { } block can reach the cluster's MinIO instance.
+		// These go into the env {} block as plaintext fallbacks; if the
+		// operator has also created nomad/jobs/secrets Nomad Variables, the
+		// template-rendered values (env = true) take precedence at runtime.
+		if ep := actx.MinioS3APIEndpoint(); ep != "" {
+			if staticEnv == nil {
+				staticEnv = map[string]string{}
+			}
+			staticEnv["NF_MINIO_ENDPOINT"] = ep
+		}
+		if ak, ok := cfg.GetAdminFloorField(&actx.Admin.Services, "minio", "access_key"); ok && ak != "" {
+			if staticEnv == nil {
+				staticEnv = map[string]string{}
+			}
+			staticEnv["AWS_ACCESS_KEY_ID"] = ak
+		}
+		if sk, ok := cfg.GetAdminFloorField(&actx.Admin.Services, "minio", "secret_key"); ok && sk != "" {
+			if staticEnv == nil {
+				staticEnv = map[string]string{}
+			}
+			staticEnv["AWS_SECRET_ACCESS_KEY"] = sk
+		}
 	}
 	return generateHeadJobHCLWithStaticEnv(spec, nomadAddr, nomadToken, runUUID, staticEnv)
 }
