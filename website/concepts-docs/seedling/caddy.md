@@ -1,14 +1,81 @@
 ---
-title: Caddy configuration
+title: Reverse proxy / TLS (optional)
 ---
 
-# Caddy configuration
+# Reverse proxy and TLS
 
-Caddy handles TLS (via ACME/Let's Encrypt), static file serving, and
-reverse-proxying `/api/*` calls to the claim service. A template
-Caddyfile is in `cloud-init/Caddyfile`.
+A reverse proxy is **optional**. Whether you need one depends on where your
+cluster is deployed:
 
-## Template
+| Deployment context | Recommendation |
+|---|---|
+| Public internet (DNS hostname, open ports 80/443) | **Caddy** — automatic TLS via ACME |
+| Private LAN / HPC network / VPN-only | **No proxy needed** — serve HTTP directly from Nomad or a simple file server |
+| Institutional network with a shared load balancer / WAF | **Defer to your network team** — terminate TLS upstream, forward plain HTTP to the cluster |
+
+:::tip Best practice for internet-facing deployments
+If your cluster is reachable from the public internet, use Caddy (or any
+reverse proxy) to terminate TLS. Running credentials and claim codes over
+plain HTTP on a public network is not acceptable. On a private LAN where
+all traffic stays inside a trusted network boundary, HTTP is fine.
+:::
+
+## Option A — No proxy (LAN / private network)
+
+The claim service and landing files can be served directly without any proxy
+layer. This is the simplest setup for clusters inside a university HPC
+network, a research VPN, or an air-gapped environment.
+
+### Serve landing files with Python (quick start)
+
+```bash
+# On the node that holds /var/www/<hostname>/
+python3 -m http.server 8080 --directory /var/www/your-cluster.local/
+```
+
+Or serve them as a Nomad `exec` job alongside the claim service (both on
+port 8080 and 8081 respectively, behind a simple iptables redirect from
+port 80).
+
+### Claim service
+
+`claim_server.py` handles `/api/*` itself. For a plain HTTP setup, point
+your landing page's `ABC_CLUSTER_HOSTNAME` to `your-node:8080` and ensure
+the Caddy-style `/api/*` routing is not needed — the claim service and the
+static files can share the same origin, or you can run a minimal Nginx or
+Caddy config with no TLS block.
+
+### Plain Caddy (no TLS)
+
+Caddy can also serve HTTP-only (no ACME, no certificates) on a LAN by
+binding to a bare IP or an internal hostname with no registered domain:
+
+```caddy
+:80 {
+    root * /var/www/your-cluster.local
+
+    handle /api/* {
+        reverse_proxy localhost:8081
+    }
+
+    file_server
+    encode gzip
+}
+```
+
+Run with `caddy run --config Caddyfile`. No DNS or port 443 needed.
+
+---
+
+## Option B — Caddy with automatic TLS (internet-facing)
+
+Use this when the cluster has a public DNS hostname and ports 80 + 443 are
+reachable from the internet.
+
+### Template Caddyfile
+
+A template is in `cloud-init/Caddyfile`. Replace `REPLACE_CLUSTER_HOSTNAME`
+with your actual hostname:
 
 ```caddy
 your-cluster.example.com {
@@ -24,7 +91,6 @@ your-cluster.example.com {
     redir @oldcli /docs/cli/{re.oldcli.1}{re.oldcli.2} permanent
 
     file_server
-
     encode gzip
 
     header {
@@ -37,11 +103,9 @@ your-cluster.example.com {
 }
 ```
 
-Replace `your-cluster.example.com` with your actual hostname.
+### Caddyfile placement
 
-## Placement
-
-On the edge VM, the Caddyfile is typically at one of:
+On the edge VM:
 
 - `/etc/caddy/Caddyfile` — system-wide (Caddy installed as a service)
 - `~/Caddyfile` — run manually with `caddy run`
@@ -54,34 +118,32 @@ sudo systemctl reload caddy
 caddy reload --config /path/to/Caddyfile
 ```
 
-## DNS requirements
+### DNS requirements
 
 The hostname must resolve to the VM's public IP **before** Caddy first
-starts with that site block, so the ACME challenge can succeed. Caddy will
-obtain and renew TLS certificates automatically via Let's Encrypt HTTP-01
-challenge.
+starts with that site block, so the ACME HTTP-01 challenge can succeed.
+Caddy obtains and renews TLS certificates automatically via Let's Encrypt.
 
 ```bash
-# Verify DNS is resolving to the right IP before starting Caddy:
+# Verify DNS before starting Caddy:
 dig +short your-cluster.example.com
 curl -v http://your-cluster.example.com/healthz  # should redirect to HTTPS
 ```
 
-## Port requirements
+### Port requirements
 
-The edge VM must accept:
-- TCP 80 — ACME HTTP-01 challenge (Caddy redirects to HTTPS after)
-- TCP 443 — HTTPS
-- TCP 22 — SSH (for deployment)
+| Port | Purpose |
+|---|---|
+| TCP 80 | ACME HTTP-01 challenge; redirected to HTTPS by Caddy |
+| TCP 443 | HTTPS |
+| TCP 22 | SSH (deployment) |
 
-The claim service (`abc-landing-api`) listens on `localhost:8081` and is
-never exposed directly to the internet — only via the Caddy reverse proxy.
+The claim service on `localhost:8081` is never exposed directly — only via
+the Caddy reverse proxy.
 
-## Service consoles
+### Service consoles
 
-The cluster's service consoles (Nomad UI, MinIO console, Grafana) are
-separate virtual hosts. They can be added to the same Caddyfile or a
-separate one:
+Add the cluster's service UIs as separate virtual hosts in the same Caddyfile:
 
 ```caddy
 nomad.your-cluster.example.com {
@@ -101,13 +163,28 @@ upload.your-cluster.example.com {
 }
 ```
 
+---
+
+## Option C — Upstream TLS termination
+
+If your institution provides a shared load balancer, WAF, or TLS-terminating
+reverse proxy (common at universities with an existing web gateway):
+
+- Terminate TLS upstream.
+- Forward plain HTTP to the cluster node on port 80 (or a custom port).
+- On the cluster node, run Caddy or Python in plain HTTP mode (Option A).
+- The `X-Forwarded-Proto: https` header set by the upstream proxy will be
+  visible to the claim service if needed.
+
+---
+
 ## Troubleshooting
 
 **ACME certificate fails:** check that port 80 is reachable and DNS resolves
 correctly. `sudo journalctl -u caddy -f` shows the ACME exchange.
 
-**`/api/*` returns 502:** the claim service is not running. Check the Nomad
-job status: `abc admin services nomad cli -- job status abc-landing-api`.
+**`/api/*` returns 502:** the claim service is not running. Check:
+`abc admin services nomad cli -- job status abc-landing-api`
 
 **Landing page shows `REPLACE_` tokens:** `deploy-landing.sh` was not run,
 or the raw template files were copied directly. Always deploy through the

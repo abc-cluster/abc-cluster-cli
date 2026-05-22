@@ -7,7 +7,10 @@ title: Deploy landing + claim service
 Two things need to be running before users can claim access:
 
 1. The **claim service** (`claim_server.py`) running as a Nomad job.
-2. The **landing page** (static files) served by Caddy.
+2. The **landing page** (static files) served by a file server.
+
+A reverse proxy (Caddy) is optional. On a private LAN you can serve files
+directly; on an internet-facing deployment Caddy adds TLS automatically.
 
 ## 1. Deploy the claim service
 
@@ -129,7 +132,7 @@ The script:
 2. Copies `index.html`, `landing.js`, `style.css`, `chrome.css`, `hero.css`,
    `favicon.svg` to `/tmp/abc-landing-*` on the edge VM via `scp`.
 3. Moves them to `$WWW_DIR` (default: `/var/www/<hostname>/`) on the VM.
-4. Sets ownership to `caddy:caddy`.
+4. Sets ownership to `caddy:caddy` (harmless if Caddy is not installed; change the owner if using a different server).
 
 ### Vendored CSS
 
@@ -167,4 +170,4 @@ This builds the Docusaurus tier site and copies it to
 
 ## Next step
 
-→ [Caddy configuration](caddy)
+→ [Reverse proxy / TLS](caddy) (optional)

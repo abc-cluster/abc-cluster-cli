@@ -12,8 +12,9 @@ designed for:
 - A pilot / proof-of-concept before scaling to the grove tier.
 
 It runs on a single Linux VM (or a small bare-metal node). Nomad handles
-job scheduling; MinIO provides object storage; Caddy handles TLS and
-reverse-proxy. Access is managed via a claim-code system — users arrive
+job scheduling; MinIO provides object storage. A reverse proxy (Caddy or
+equivalent) is optional — useful for internet-facing deployments that need
+TLS, but not required on private LANs or HPC networks. Access is managed via a claim-code system — users arrive
 at the landing page, enter a code issued by the operator, and immediately
 receive CLI credentials with no account registration required.
 
@@ -21,7 +22,7 @@ receive CLI credentials with no account registration required.
 
 | Component | Role | Technology |
 |---|---|---|
-| Edge VM | TLS termination, file serving | Caddy 2 |
+| Edge VM | File serving, /api/* routing | Caddy 2 (optional) or Python http.server |
 | Job scheduler | Run user workloads | HashiCorp Nomad |
 | Object storage | Data buckets per group | MinIO |
 | Access control | Namespace + bucket ACLs | Nomad ACL + MinIO policy |
@@ -37,7 +38,7 @@ Work through the sections in order. Each step depends on the previous one.
    Nomad tokens + MinIO users and store them in `abc-landing.db`.
 2. **[Deploy landing + claim service](deploy)** — submit the Nomad job and
    run `deploy-landing.sh` to go live.
-3. **[Caddy configuration](caddy)** — set up TLS, /api/* routing, and headers.
+3. **[Reverse proxy / TLS](caddy)** — optional: set up Caddy, plain HTTP, or upstream TLS.
 4. **[Issue handover files](handover)** — use `abc auth context show yaml`
    to export per-user config snippets (for named admins or group leads).
 

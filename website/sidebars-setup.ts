@@ -10,7 +10,7 @@ const sidebars: SidebarsConfig = {
       items: [
         {type: 'doc', id: 'seedling/provision',    label: 'Provision the access pool'},
         {type: 'doc', id: 'seedling/deploy',       label: 'Deploy landing + claim service'},
-        {type: 'doc', id: 'seedling/caddy',        label: 'Caddy configuration'},
+        {type: 'doc', id: 'seedling/caddy',        label: 'Reverse proxy / TLS (optional)'},
         {type: 'doc', id: 'seedling/handover',     label: 'Issuing access handover files'},
       ],
     },
