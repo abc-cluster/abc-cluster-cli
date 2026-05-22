@@ -85,15 +85,15 @@ const config: Config = {
   ],
 
   plugins: [
-    // Concepts docs instance — placeholder for platform-wide shared
-    // docs (docs-common). Served at /concepts.
+    // Cluster Setup docs — operator guides for private abc-seedling deployments.
+    // Served at /concepts (path kept stable; label changed in projects registry).
     [
       '@docusaurus/plugin-content-docs',
       {
         id: 'concepts',
         path: './concepts-docs',
         routeBasePath: 'concepts',
-        sidebarPath: false,
+        sidebarPath: './sidebars-setup.ts',
       },
     ],
   ],
@@ -152,7 +152,7 @@ const config: Config = {
             {label: 'CLI — overview',    to: '/cli/'},
             {label: 'CLI — quick start', to: '/cli/quickstart'},
             {label: 'CLI — reference',   to: '/cli/reference'},
-            {label: 'Concepts',          to: '/concepts/'},
+            {label: 'Cluster Setup',     to: '/concepts/'},
           ],
         },
         {
