@@ -576,6 +576,15 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 				return fmt.Errorf("#%s --driver requires a value", marker)
 			}
 			spec.Driver = val
+		case "shell":
+			if !hasValue || val == "" {
+				return fmt.Errorf("#%s --shell requires a value (bash | sh)", marker)
+			}
+			v := strings.ToLower(strings.TrimSpace(val))
+			if v != "bash" && v != "sh" {
+				return fmt.Errorf("#%s --shell must be 'bash' or 'sh', got %q", marker, val)
+			}
+			spec.Shell = v
 		case "reschedule-mode":
 			if !hasValue || val == "" {
 				return fmt.Errorf("#%s --reschedule-mode requires a value", marker)

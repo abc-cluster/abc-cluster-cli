@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -28,6 +29,109 @@ func TestGenerate_StaticEnvOnlyCreatesEnvBlock(t *testing.T) {
 	}
 	if !strings.Contains(hcl, `env {`) {
 		t.Fatalf("expected env block when only StaticEnv is set:\n%s", hcl)
+	}
+}
+
+// containsCommand checks for `command(<spaces>)= "<value>"` — HCL's
+// pretty-printer aligns columns by padding the key with extra spaces
+// (e.g. `command  = "/bin/sh"` when `hostname` is also in the block).
+// strings.Contains on the literal one-space form would miss those.
+func containsCommand(hcl, want string) bool {
+	r := regexp.MustCompile(`command\s+= "` + regexp.QuoteMeta(want) + `"`)
+	return r.FindString(hcl) != ""
+}
+
+// All OCI drivers (docker, containerd-driver, podman, singularity) MUST default
+// to /bin/sh so jobs portable across drivers — alpine and other minimal images
+// don't carry bash. Host-side drivers (exec, exec2, raw_exec) keep /bin/bash.
+func TestGenerate_OCIDriversAllDefaultToSh(t *testing.T) {
+	for _, d := range []string{"docker", "containerd-driver", "podman", "singularity"} {
+		t.Run(d, func(t *testing.T) {
+			spec := Spec{Name: "oci-default-sh", Driver: d, Datacenters: []string{"dc1"}, Nodes: 1}
+			hcl := Generate(spec, "run.sh", "#!/bin/sh\necho ok\n")
+			if !containsCommand(hcl, "/bin/sh") {
+				t.Fatalf("driver %s: expected command = \"/bin/sh\" in HCL, got:\n%s", d, hcl)
+			}
+			if containsCommand(hcl, "/bin/bash") {
+				t.Fatalf("driver %s: did not expect command = \"/bin/bash\" in HCL, got:\n%s", d, hcl)
+			}
+		})
+	}
+}
+
+func TestGenerate_HostDriversDefaultToBash(t *testing.T) {
+	for _, d := range []string{"exec", "exec2", "raw_exec"} {
+		t.Run(d, func(t *testing.T) {
+			spec := Spec{Name: "host-default-bash", Driver: d, Datacenters: []string{"dc1"}, Nodes: 1}
+			hcl := Generate(spec, "run.sh", "#!/bin/bash\necho ok\n")
+			if !containsCommand(hcl, "/bin/bash") {
+				t.Fatalf("driver %s: expected command = \"/bin/bash\" in HCL, got:\n%s", d, hcl)
+			}
+		})
+	}
+}
+
+// `--shell=bash` is the escape hatch that forces /bin/bash on an OCI driver
+// where the image is known to ship bash (e.g. ubuntu, debian).
+func TestGenerate_ShellOverrideForcesBashOnOCI(t *testing.T) {
+	spec := Spec{Name: "bash-override", Driver: "docker", Shell: "bash", Datacenters: []string{"dc1"}, Nodes: 1}
+	hcl := Generate(spec, "run.sh", "echo ok\n")
+	if !containsCommand(hcl, "/bin/bash") {
+		t.Fatalf("expected --shell=bash override to force /bin/bash, got:\n%s", hcl)
+	}
+}
+
+func TestGenerate_ShellOverrideForcesShOnHost(t *testing.T) {
+	spec := Spec{Name: "sh-override", Driver: "exec", Shell: "sh", Datacenters: []string{"dc1"}, Nodes: 1}
+	hcl := Generate(spec, "run.sh", "echo ok\n")
+	if !containsCommand(hcl, "/bin/sh") {
+		t.Fatalf("expected --shell=sh override to force /bin/sh, got:\n%s", hcl)
+	}
+}
+
+// Hostname stanza must be emitted for every OCI driver so the in-container
+// hostname is stable across drivers (aligns docker's short-container-id with
+// containerd's cgroup-scope UUID etc.). Skipped for host-side drivers.
+func TestGenerate_OCIDriversEmitHostname(t *testing.T) {
+	for _, d := range []string{"docker", "containerd-driver", "podman", "singularity"} {
+		t.Run(d, func(t *testing.T) {
+			spec := Spec{Name: "oci-hostname", Driver: d, Datacenters: []string{"dc1"}, Nodes: 1}
+			hcl := Generate(spec, "run.sh", "echo ok\n")
+			if !strings.Contains(hcl, `hostname = "${NOMAD_SHORT_ALLOC_ID}"`) {
+				t.Fatalf("driver %s: expected hostname = ${NOMAD_SHORT_ALLOC_ID}, got:\n%s", d, hcl)
+			}
+		})
+	}
+}
+
+func TestGenerate_HostDriversNoHostnameStanza(t *testing.T) {
+	for _, d := range []string{"exec", "exec2", "raw_exec"} {
+		t.Run(d, func(t *testing.T) {
+			spec := Spec{Name: "host-no-hostname", Driver: d, Datacenters: []string{"dc1"}, Nodes: 1}
+			hcl := Generate(spec, "run.sh", "echo ok\n")
+			if strings.Contains(hcl, `hostname =`) {
+				t.Fatalf("driver %s: hostname stanza should not be emitted for host drivers, got:\n%s", d, hcl)
+			}
+		})
+	}
+}
+
+// If the user has set hostname via --driver.config.hostname=…, the explicit
+// value wins over the default.
+func TestGenerate_UserHostnameOverridesDefault(t *testing.T) {
+	spec := Spec{
+		Name:         "explicit-hostname",
+		Driver:       "containerd-driver",
+		DriverConfig: map[string]string{"hostname": "my-custom-host"},
+		Datacenters:  []string{"dc1"},
+		Nodes:        1,
+	}
+	hcl := Generate(spec, "run.sh", "echo ok\n")
+	if !strings.Contains(hcl, `hostname = "my-custom-host"`) {
+		t.Fatalf("expected user hostname to win, got:\n%s", hcl)
+	}
+	if strings.Contains(hcl, `hostname = "${NOMAD_SHORT_ALLOC_ID}"`) {
+		t.Fatalf("default hostname should be suppressed when user sets one, got:\n%s", hcl)
 	}
 }
 

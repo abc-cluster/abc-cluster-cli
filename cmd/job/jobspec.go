@@ -67,6 +67,10 @@ type jobSpec struct {
 	ChDir              string
 	Depend             string
 	Driver             string
+	// Shell overrides the script interpreter: "bash" → /bin/bash, "sh" →
+	// /bin/sh, "" → driver-default (sh for OCI drivers, bash for host
+	// drivers). Wired from `--shell` CLI flag / #ABC --shell= preamble.
+	Shell              string
 	DriverConfig       map[string]string
 	RescheduleMode     string
 	RescheduleAttempts int
@@ -264,6 +268,9 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 	}
 	if override.Driver != "" {
 		base.Driver = override.Driver
+	}
+	if override.Shell != "" {
+		base.Shell = override.Shell
 	}
 	if override.RescheduleMode != "" {
 		base.RescheduleMode = override.RescheduleMode

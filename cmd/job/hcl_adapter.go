@@ -126,6 +126,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		ChDir:               spec.ChDir,
 		Depend:              spec.Depend,
 		Driver:              spec.Driver,
+		Shell:               spec.Shell,
 		DriverConfig:        spec.DriverConfig,
 		RescheduleMode:      spec.RescheduleMode,
 		RescheduleAttempts:  spec.RescheduleAttempts,

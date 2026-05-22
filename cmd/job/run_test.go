@@ -314,8 +314,10 @@ exit 0
 	}
 	// command and args must NOT be rendered from driver.config — those are
 	// owned by the script-wrap path. The script-wrap-set command should win.
-	if !strings.Contains(out, `"/bin/bash"`) {
-		t.Fatalf("expected script-wrap command='/bin/bash', got:\n%s", out)
+	// Docker driver defaults to /bin/sh (2026-05-22 alignment with the OCI
+	// drivers — alpine and other minimal images don't ship bash).
+	if !strings.Contains(out, `"/bin/sh"`) {
+		t.Fatalf("expected script-wrap command='/bin/sh' (docker OCI default), got:\n%s", out)
 	}
 }
 

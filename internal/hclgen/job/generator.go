@@ -93,6 +93,10 @@ type Spec struct {
 	ChDir              string
 	Depend             string
 	Driver             string
+	// Shell overrides the script interpreter. "" (default) picks per
+	// `pickTaskScriptShell`; "bash" or "sh" force /bin/bash or /bin/sh
+	// respectively. Wired from #ABC --shell=… preamble or --shell CLI flag.
+	Shell              string
 	DriverConfig       map[string]string
 	RescheduleMode     string
 	RescheduleAttempts int
@@ -351,15 +355,51 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 }
 
 // taskScriptShell returns the interpreter used to run the templated local script.
-// Minimal OCI images (e.g. Alpine or scratch-derived) often ship /bin/sh but not bash; Nomad's
-// containerd-driver workloads commonly target those images, so use sh there.
+//
+// Behaviour-alignment rule (2026-05-22): every OCI/container driver
+// (docker, containerd-driver, podman, singularity) returns "/bin/sh"
+// by default because (a) minimal images like Alpine ship sh but not
+// bash, and (b) we want jobs to be portable across drivers — picking
+// the lowest-common-denominator shell makes "swap docker → containerd"
+// invisible to the user. Container-image authors who rely on bash
+// semantics opt in explicitly via the `--shell=bash` directive, which
+// is honoured by `pickTaskScriptShell` below.
+//
+// Non-OCI drivers (exec, exec2, raw_exec, java, hpc-bridge, slurm,
+// pbs) run on the Nomad host filesystem where bash is reliably
+// present, so they keep /bin/bash as the default.
 func taskScriptShell(driver string) string {
 	switch driver {
-	case "containerd-driver":
+	case "containerd-driver", "docker", "podman", "singularity":
 		return "/bin/sh"
 	default:
 		return "/bin/bash"
 	}
+}
+
+// pickTaskScriptShell returns the shell to invoke the user's script,
+// honouring an explicit Spec.Shell override (#ABC --shell=bash|sh) when
+// set, else falling back to the driver's default per `taskScriptShell`.
+func pickTaskScriptShell(spec Spec) string {
+	switch strings.ToLower(strings.TrimSpace(spec.Shell)) {
+	case "bash":
+		return "/bin/bash"
+	case "sh":
+		return "/bin/sh"
+	}
+	return taskScriptShell(spec.Driver)
+}
+
+// isOCIDriver reports whether the driver runs the task inside a
+// container image (as opposed to a host-side sandbox or remote bridge).
+// Used for OCI-specific config wiring (default hostname, image pull,
+// etc.).
+func isOCIDriver(driver string) bool {
+	switch driver {
+	case "docker", "containerd-driver", "podman", "singularity":
+		return true
+	}
+	return false
 }
 
 // ociTaskScriptArg returns the script path passed to timeout/sh/bash for OCI-backed
@@ -392,7 +432,7 @@ func ScriptArgForDriver(driver, scriptName string) string {
 func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptContent string) {
 	scriptArg := filepath.ToSlash(filepath.Join("local", scriptName))
 	scriptArg = ociTaskScriptArg(spec.Driver, scriptArg)
-	sh := taskScriptShell(spec.Driver)
+	sh := pickTaskScriptShell(spec)
 	if spec.Driver == "slurm" || spec.Driver == "pbs" {
 		inlineScript := escapeNomadInterpolation(scriptContent)
 		cfgBody.SetAttributeValue("command", cty.StringVal("/bin/bash"))
@@ -476,6 +516,21 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
 			cty.StringVal(scriptArg),
 		}))
+	}
+
+	// Default in-container hostname for OCI drivers, aligned across docker /
+	// containerd-driver / podman / singularity so the same job emits the
+	// same `hostname` to user code regardless of driver. Without this, each
+	// driver picks its own default — docker uses the short container ID
+	// (e.g. "87c47a24f284"), containerd leaves the Nomad cgroup-scope UUID
+	// (e.g. "0cf4b62f-...main.scope"), podman uses the container short ID,
+	// singularity leaves the host hostname. Aligning to ${NOMAD_SHORT_ALLOC_ID}
+	// gives a stable 8-char identifier that matches Nomad's own UI.
+	// Skipped if the user has explicitly set `--driver.config.hostname=…`.
+	if isOCIDriver(spec.Driver) {
+		if _, userSet := spec.DriverConfig["hostname"]; !userSet {
+			setAttributeRawString(cfgBody, "hostname", "${NOMAD_SHORT_ALLOC_ID}")
+		}
 	}
 
 	for _, k := range utils.SortedKeys(spec.DriverConfig) {
