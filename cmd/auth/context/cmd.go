@@ -244,19 +244,110 @@ func newAddCmd() *cobra.Command {
 	var organizationID string
 	var workspaceID string
 	var region string
+	var fromFile string
+	var asName string
+	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "add <name>",
+		Use:   "add <name> | --from-file <path.yaml>",
 		Short: "Add a new saved context",
 		Long: `Add a new named context and make it active.
 
-A context includes endpoint, upload endpoint, upload token, access token,
-optional organization ID, optional workspace ID, and optional region.
+Flag-based form (name + explicit values):
+  abc auth context add <name> --endpoint <url> --access-token <token> [...]
 
-If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate slashes).
+File-based form (import from a config YAML snippet):
+  abc auth context add --from-file <path.yaml> [--as <name>] [--force]
+
+The file form reads any YAML file in the standard abc config format (the output
+of 'abc auth context show yaml') and imports its contexts into the current
+~/.abc/config.yaml.  All sub-fields are preserved: admin.services,
+capabilities, cluster_type, etc.
+
+--as renames the active_context from the file to a different name on import.
+--force overwrites an existing context of the same name.
+
+Flag-based: if --upload-endpoint is omitted it defaults to <endpoint>/files/.
 `,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+
+			// ── File-based import ────────────────────────────────────────────
+			if fromFile != "" {
+				src, err := cfg.LoadFrom(fromFile)
+				if err != nil {
+					return fmt.Errorf("load %q: %w", fromFile, err)
+				}
+				if len(src.Contexts) == 0 {
+					return fmt.Errorf("%q contains no contexts", fromFile)
+				}
+
+				c, err := cfg.Load()
+				if err != nil {
+					return fmt.Errorf("load config: %w", err)
+				}
+
+				// Determine which context(s) to import.
+				// If --as is set, rename the active_context from the file.
+				srcActive := strings.TrimSpace(src.ActiveContext)
+				if srcActive == "" {
+					// Fall back to the first (and usually only) context in the file.
+					for n := range src.Contexts {
+						srcActive = n
+						break
+					}
+				}
+
+				added := 0
+				for srcName, srcCtx := range src.Contexts {
+					targetName := srcName
+					if asName != "" && srcName == srcActive {
+						targetName = asName
+					}
+					if _, exists := c.Contexts[targetName]; exists && !force {
+						return fmt.Errorf(
+							"context %q already exists; use --force to overwrite or --as to rename",
+							targetName,
+						)
+					}
+					if _, isAlias := c.ContextAliases[targetName]; isAlias && !force {
+						return fmt.Errorf(
+							"name %q is already a context alias; use --force to overwrite",
+							targetName,
+						)
+					}
+					if err := c.SetContext(targetName, srcCtx); err != nil {
+						return fmt.Errorf("set context %q: %w", targetName, err)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "Imported context %q\n", targetName)
+					added++
+				}
+
+				// Make the (renamed) active context from the file the active context.
+				active := srcActive
+				if asName != "" {
+					active = asName
+				}
+				if c.HasDefinedContext(active) {
+					c.ActiveContext = active
+				}
+
+				if err := c.Save(); err != nil {
+					return fmt.Errorf("save config: %w", err)
+				}
+				if added == 1 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Active context set to %q\n", c.ActiveContext)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Imported %d contexts; active context set to %q\n",
+						added, c.ActiveContext)
+				}
+				return nil
+			}
+
+			// ── Flag-based add ────────────────────────────────────────────────
+			if len(args) == 0 {
+				return fmt.Errorf("a context name is required (or use --from-file <path.yaml>)")
+			}
 			name := args[0]
 			if endpoint == "" {
 				return fmt.Errorf("--endpoint is required")
@@ -270,11 +361,11 @@ If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate 
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			if _, def := c.Contexts[name]; def {
-				return fmt.Errorf("context %q already exists", name)
+			if _, def := c.Contexts[name]; def && !force {
+				return fmt.Errorf("context %q already exists; use --force to overwrite", name)
 			}
-			if _, al := c.ContextAliases[name]; al {
-				return fmt.Errorf("name %q is already a context alias", name)
+			if _, al := c.ContextAliases[name]; al && !force {
+				return fmt.Errorf("name %q is already a context alias; use --force to overwrite", name)
 			}
 
 			uploadEp := strings.TrimSpace(uploadEndpoint)
@@ -314,6 +405,9 @@ If --upload-endpoint is omitted, it defaults to <endpoint>/files/ (no duplicate 
 	cmd.Flags().StringVar(&organizationID, "organization-id", "", "Organization ID")
 	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace ID")
 	cmd.Flags().StringVar(&region, "region", "", "Region")
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "Import context(s) from a config YAML file (output of 'abc auth context show yaml')")
+	cmd.Flags().StringVar(&asName, "as", "", "Rename the active context from the file to this name on import (used with --from-file)")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing context of the same name")
 
 	return cmd
 }
