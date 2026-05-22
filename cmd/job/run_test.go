@@ -1067,6 +1067,74 @@ func TestJobRun_UnknownABCDirective(t *testing.T) {
 	}
 }
 
+// Every job submission stamps the user-identity correlation meta keys —
+// matching what `abc pipeline run` already emits — so jurist / xtdb /
+// Grafana can pivot across job and pipeline runs by the same fields.
+// Canonical key list lives in internal/hclgen/pipeline/generator.go
+// (Identity.MetaMap); keep both surfaces in sync.
+func TestJobRun_StampsUserIdentityMeta(t *testing.T) {
+	cfg := `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cluster
+    admin:
+      whoami: anel
+      id: 01KS7XXZBRNKRJJ0TR7PW9FWV9
+`
+	script := "#!/bin/bash\n#ABC --namespace=su-mbhg-hostgen\necho hello\n"
+	p := writeTempScript(t, "ident.sh", script)
+	out, err := executeCmdWithABCYAML(t, cfg, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{
+		`abc_user_whoami     = "anel"`,
+		`abc_user_id         = "01KS7XXZBRNKRJJ0TR7PW9FWV9"`,
+		`abc_workspace       = "su-mbhg-hostgen"`,
+		`abc_tenant          = "su-mbhg-hostgen"`,
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w) {
+			t.Errorf("expected meta key %q in HCL, got:\n%s", w, out)
+		}
+	}
+	// abc_submitted_at must be present and match the submission_time value
+	// (they're emitted in lockstep so downstream readers can rely on
+	// either key being the canonical timestamp).
+	if !strings.Contains(out, "abc_submitted_at") {
+		t.Errorf("expected abc_submitted_at meta key, got:\n%s", out)
+	}
+	if !strings.Contains(out, "abc_cli_version") {
+		t.Errorf("expected abc_cli_version meta key, got:\n%s", out)
+	}
+}
+
+// Partial identity (only whoami, no ID yet) degrades cleanly: emits
+// whoami and skips the id key entirely rather than emitting empty strings.
+func TestJobRun_StampsUserIdentityMeta_PartialIdentity(t *testing.T) {
+	cfg := `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cluster
+    admin:
+      whoami: anel
+`
+	script := "#!/bin/bash\necho hello\n"
+	p := writeTempScript(t, "ident-partial.sh", script)
+	out, err := executeCmdWithABCYAML(t, cfg, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_user_whoami`) {
+		t.Errorf("expected abc_user_whoami, got:\n%s", out)
+	}
+	if strings.Contains(out, `abc_user_id`) {
+		t.Errorf("did NOT expect abc_user_id (ID is empty), got:\n%s", out)
+	}
+}
+
 // --shell rejects values containing shell-metacharacters so an attacker
 // can't smuggle command injection through a templated script.
 func TestJobRun_ShellDirectiveRejectsMetacharacters(t *testing.T) {
