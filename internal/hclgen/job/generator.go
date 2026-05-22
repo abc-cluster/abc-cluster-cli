@@ -7,10 +7,17 @@ import (
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	shellquote "github.com/kballard/go-shellquote"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+// shellQuote safely shell-quotes s as a single token suitable for use as a
+// shell -c argument or inside a compound shell command.
+func shellQuote(s string) string {
+	return shellquote.Join(s)
+}
 
 // setAttributeRawString emits a string attribute that preserves runtime
 // `${...}` interpolations literally. cty.StringVal escapes `${` to `$${`,
@@ -430,7 +437,7 @@ func isOCIDriver(driver string) bool {
 // area, so .../local/script.sh becomes /local/local/script.sh and fails.
 func ociTaskScriptArg(driver, scriptArg string) string {
 	switch driver {
-	case "containerd-driver", "docker":
+	case "containerd-driver", "docker", "podman", "singularity":
 		if strings.HasPrefix(scriptArg, "local/") {
 			return "${NOMAD_TASK_DIR}/" + strings.TrimPrefix(scriptArg, "local/")
 		}
@@ -507,6 +514,56 @@ func appendTaskConfig(cfgBody *hclwrite.Body, spec Spec, scriptName, scriptConte
 			}
 			cfgBody.SetAttributeValue("extra_args", cty.ListVal(vals))
 		}
+	} else if spec.Driver == "singularity" {
+		// Singularity/Apptainer's Nomad-driver config schema is intentionally
+		// different from docker/containerd/podman: `command` is the apptainer
+		// subcommand (run|exec), and `args` is what gets passed *inside* the
+		// container.
+		//
+		// IMPORTANT: apptainer does NOT bind-mount ${NOMAD_TASK_DIR} by
+		// default — the standard apptainer auto-binds (HOME, /tmp, /proc,
+		// /sys, /dev, CWD) don't cover the Nomad alloc task directory, so
+		// `<shell> ${NOMAD_TASK_DIR}/script.sh` fails inside the container
+		// with "can't open /local/<script>: No such file or directory".
+		//
+		// Fix: inline the script body into the command-line via `-c`. The
+		// shell receives the script verbatim. This avoids any host-path /
+		// bind-mount dependency, at the cost of an ARG_MAX ceiling
+		// (~128 KiB on Linux; abc job run scripts are typically a few KiB).
+		// If/when scripts approach that ceiling, switch to writing the
+		// script to /tmp inside the container (auto-bound by apptainer)
+		// or use the driver's `binds` config to mount the task dir.
+		//
+		// The resulting shape is:
+		//   command = "exec"
+		//   args    = [<shell>, "-c", "<scriptContent>"]           (no walltime)
+		//   args    = [<shell>, "-c", "timeout N <shell> -c '…'"]  (walltime)
+		cfgBody.SetAttributeValue("command", cty.StringVal("exec"))
+		// `scriptContent` already carries the user's script verbatim.
+		// We pass it as a single `-c` string. Nomad-interpolation inside
+		// the body is escaped via `escapeNomadInterpolation` so user
+		// `$VAR` doesn't get eaten by Nomad's renderer.
+		inline := escapeNomadInterpolation(scriptContent)
+		// args entries are passed as separate argv tokens to the container
+		// entrypoint. With command="exec" the apptainer command-line
+		// becomes:  apptainer exec <image> arg0 arg1 arg2 ...
+		// So walltime is implemented by prepending `timeout <n>` to argv
+		// rather than wrapping the shell-c string (which would need
+		// non-trivial quoting). `timeout` is in every standard Linux base
+		// image (coreutils on debian/ubuntu, busybox on alpine).
+		var argv []cty.Value
+		if spec.WalltimeSecs > 0 {
+			argv = append(argv,
+				cty.StringVal("timeout"),
+				cty.StringVal(fmt.Sprintf("%d", spec.WalltimeSecs)),
+			)
+		}
+		argv = append(argv,
+			cty.StringVal(sh),
+			cty.StringVal("-c"),
+			cty.StringVal(inline),
+		)
+		cfgBody.SetAttributeValue("args", cty.ListVal(argv))
 	} else if spec.OutputLog != "" || spec.ErrorLog != "" {
 		cmd := fmt.Sprintf("%s %s", sh, scriptArg)
 		if spec.WalltimeSecs > 0 {

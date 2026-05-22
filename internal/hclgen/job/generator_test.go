@@ -41,11 +41,14 @@ func containsCommand(hcl, want string) bool {
 	return r.FindString(hcl) != ""
 }
 
-// All OCI drivers (docker, containerd-driver, podman, singularity) MUST default
-// to /bin/sh so jobs portable across drivers — alpine and other minimal images
-// don't carry bash. Host-side drivers (exec, exec2, raw_exec) keep /bin/bash.
+// All OCI drivers (docker, containerd-driver, podman, singularity) MUST
+// default to /bin/sh so jobs are portable across drivers — alpine and
+// other minimal images don't carry bash. Host-side drivers (exec, exec2,
+// raw_exec) keep /bin/bash. Singularity is a special case: command is
+// the apptainer subcommand ("exec"), and /bin/sh appears inside args
+// instead — covered by TestGenerate_SingularityEmitsExecSubcommandWithShellWrap.
 func TestGenerate_OCIDriversAllDefaultToSh(t *testing.T) {
-	for _, d := range []string{"docker", "containerd-driver", "podman", "singularity"} {
+	for _, d := range []string{"docker", "containerd-driver", "podman"} {
 		t.Run(d, func(t *testing.T) {
 			spec := Spec{Name: "oci-default-sh", Driver: d, Datacenters: []string{"dc1"}, Nodes: 1}
 			hcl := Generate(spec, "run.sh", "#!/bin/sh\necho ok\n")
@@ -173,6 +176,85 @@ func TestGenerate_UserHostnameOverridesDefault(t *testing.T) {
 	}
 	if strings.Contains(hcl, `hostname = "${NOMAD_SHORT_ALLOC_ID}"`) {
 		t.Fatalf("default hostname should be suppressed when user sets one, got:\n%s", hcl)
+	}
+}
+
+// Singularity uses the apptainer subcommand convention — command is
+// "run"/"exec", args is the in-container argv. The CLI emits the `exec`
+// subcommand and inlines the script body via `-c` because apptainer
+// doesn't bind-mount ${NOMAD_TASK_DIR} by default (the standard
+// auto-binds are HOME, /tmp, /proc, /sys, /dev, CWD — none of which
+// covers the Nomad alloc task dir, so referencing a script file there
+// fails inside the container).
+func TestGenerate_SingularityEmitsExecSubcommandWithInlineScript(t *testing.T) {
+	spec := Spec{
+		Name:        "sing-wrap",
+		Driver:      "singularity",
+		Datacenters: []string{"dc1"},
+		Nodes:       1,
+		DriverConfig: map[string]string{
+			"image": "docker://alpine:3.19",
+		},
+	}
+	hcl := Generate(spec, "run.sh", "#!/bin/sh\necho hello from singularity\n")
+	if !containsCommand(hcl, "exec") {
+		t.Fatalf("expected command = \"exec\" (apptainer subcommand), got:\n%s", hcl)
+	}
+	// args = [shell, "-c", "<inlined script body>"]. The body is the
+	// user's script verbatim — Nomad interpolations like ${NOMAD_*} get
+	// escaped to $${NOMAD_*} so they reach the shell, not Nomad's renderer.
+	if !regexp.MustCompile(`args\s+= \["/bin/sh", "-c", `).MatchString(hcl) {
+		t.Fatalf("expected args = [shell, -c, <inline>], got:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, `echo hello from singularity`) {
+		t.Fatalf("expected inlined script content in args, got:\n%s", hcl)
+	}
+	// image passes through as a regular driver-config field.
+	if !regexp.MustCompile(`image\s+= "docker://alpine:3.19"`).MatchString(hcl) {
+		t.Fatalf("expected image = docker://alpine:3.19 to be preserved, got:\n%s", hcl)
+	}
+	// And the OCI default hostname stanza still fires.
+	if !strings.Contains(hcl, `hostname = "${NOMAD_SHORT_ALLOC_ID}"`) {
+		t.Fatalf("expected hostname stanza, got:\n%s", hcl)
+	}
+}
+
+// Walltime on singularity prepends `timeout <n>` to the in-container
+// argv (timeout is in every standard base image: coreutils on debian/
+// ubuntu, busybox on alpine).
+func TestGenerate_SingularityWalltime(t *testing.T) {
+	spec := Spec{
+		Name:         "sing-walltime",
+		Driver:       "singularity",
+		Datacenters:  []string{"dc1"},
+		Nodes:        1,
+		WalltimeSecs: 120,
+		DriverConfig: map[string]string{"image": "docker://alpine:3.19"},
+	}
+	hcl := Generate(spec, "run.sh", "echo ok\n")
+	if !containsCommand(hcl, "exec") {
+		t.Fatalf("expected command = exec, got:\n%s", hcl)
+	}
+	// timeout-prefixed form: args starts with ["timeout", "120", shell, "-c", …]
+	if !regexp.MustCompile(`args\s+= \["timeout", "120", "/bin/sh", "-c", `).MatchString(hcl) {
+		t.Fatalf("expected timeout-prefixed args, got:\n%s", hcl)
+	}
+}
+
+// --shell=bash override on singularity flips the inner shell to bash
+// (image must ship bash, but that's the user's call).
+func TestGenerate_SingularityShellOverride(t *testing.T) {
+	spec := Spec{
+		Name:         "sing-bash",
+		Driver:       "singularity",
+		Shell:        "bash",
+		Datacenters:  []string{"dc1"},
+		Nodes:        1,
+		DriverConfig: map[string]string{"image": "docker://ubuntu:24.04"},
+	}
+	hcl := Generate(spec, "run.sh", "echo ok\n")
+	if !regexp.MustCompile(`args\s+= \["/bin/bash", "-c", `).MatchString(hcl) {
+		t.Fatalf("expected --shell=bash to push /bin/bash into args, got:\n%s", hcl)
 	}
 }
 
