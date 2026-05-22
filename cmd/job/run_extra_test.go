@@ -190,8 +190,8 @@ func TestJobRun_PixiExecRuntimeWrapsScript(t *testing.T) {
 	if !strings.Contains(out, `abc_runtime`) || !strings.Contains(out, "pixi-exec") {
 		t.Errorf("expected abc_runtime pixi-exec in meta, got:\n%s", out)
 	}
-	if !strings.Contains(out, `abc_from`) || !strings.Contains(out, "/cluster/proj/pixi.toml") {
-		t.Errorf("expected abc_from in meta, got:\n%s", out)
+	if !strings.Contains(out, `abc_from_file`) || !strings.Contains(out, "/cluster/proj/pixi.toml") {
+		t.Errorf("expected abc_from_file in meta, got:\n%s", out)
 	}
 	if !strings.Contains(out, `pixi run --manifest-path`) {
 		t.Errorf("expected pixi run --manifest-path in templated script, got:\n%s", out)
@@ -223,8 +223,8 @@ func TestJobRun_RuntimeFromCLIOverride(t *testing.T) {
 	if !strings.Contains(out, "/override/pixi.toml") {
 		t.Errorf("expected CLI --from to override preamble in meta and wrapper, got:\n%s", out)
 	}
-	if !strings.Contains(out, `abc_from`) || !strings.Contains(out, `"/override/pixi.toml"`) {
-		t.Errorf("expected meta abc_from from CLI, got:\n%s", out)
+	if !strings.Contains(out, `abc_from_file`) || !strings.Contains(out, `"/override/pixi.toml"`) {
+		t.Errorf("expected meta abc_from_file from CLI, got:\n%s", out)
 	}
 	// Original #ABC lines remain in the script body as comments; only meta + wrapper use the override.
 }
@@ -266,6 +266,29 @@ func TestJobRun_FromFileDirective(t *testing.T) {
 	}
 	if !strings.Contains(out, "/dir/pixi.toml") {
 		t.Errorf("expected #ABC --from-file= value in HCL, got:\n%s", out)
+	}
+}
+
+// Meta-key alignment: the canonical key is abc_from_file; the legacy
+// abc_from is ALSO emitted as a deprecated alias for one release window
+// so any in-flight downstream consumer (Grafana, jurist, ad-hoc nomad
+// job inspect scripts) keeps working until they migrate.
+func TestJobRun_FromFileMetaKeyTransition(t *testing.T) {
+	script := "#!/bin/bash\n#ABC --name=meta-transition\n#ABC --runtime=pixi-exec\n#ABC --from-file=/x/pixi.toml\necho ok\n"
+	p := writeTempScript(t, "meta_transition.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `abc_from_file`) {
+		t.Errorf("expected canonical abc_from_file key in meta, got:\n%s", out)
+	}
+	if !strings.Contains(out, `abc_from `) && !strings.Contains(out, `abc_from=`) && !strings.Contains(out, `abc_from "`) {
+		// HCL prints meta as `  abc_from   = "<value>"`. Be tolerant of
+		// alignment whitespace by checking common prefix shapes.
+		if !regexp.MustCompile(`abc_from\s*=`).MatchString(out) {
+			t.Errorf("expected deprecated abc_from alias still emitted during transition window, got:\n%s", out)
+		}
 	}
 }
 
@@ -1865,9 +1888,9 @@ func TestJobRun_MicromambaLocalMode_WrapperUsesTaskDir(t *testing.T) {
 	if !strings.Contains(out, `${NOMAD_TASK_DIR}/environment.yml`) {
 		t.Errorf("expected NOMAD_TASK_DIR/environment.yml path, got:\n%s", out)
 	}
-	// abc_from meta should show runtime path, not local submit-time path.
-	if !strings.Contains(out, `abc_from`) {
-		t.Errorf("expected abc_from meta key, got:\n%s", out)
+	// abc_from_file meta should show runtime path, not local submit-time path.
+	if !strings.Contains(out, `abc_from_file`) {
+		t.Errorf("expected abc_from_file meta key, got:\n%s", out)
 	}
 	if strings.Contains(out, dir) {
 		t.Errorf("local submit-time path must not appear in HCL, got:\n%s", out)

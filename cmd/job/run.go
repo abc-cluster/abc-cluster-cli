@@ -1246,7 +1246,7 @@ func resolvePixiLocalMode(spec *jobSpec) error {
 	// NOMAD_TASK_DIR in exec mode IS the local/ dir, so templates at
 	// destination="local/pixi.toml" are at ${NOMAD_TASK_DIR}/pixi.toml.
 	spec.From = "${NOMAD_TASK_DIR}/pixi.toml"
-	// Refresh meta so abc_from reflects the runtime path, not the local submit-time path.
+	// Refresh meta so abc_from_file reflects the runtime path, not the local submit-time path.
 	syncStackMetaKeys(spec)
 	// Store the base URL (without platform suffix); the wrapper downloads pixi
 	// via curl at job start using shell-side uname detection.

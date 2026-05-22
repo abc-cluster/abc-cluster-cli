@@ -381,8 +381,16 @@ func bashDoubleQuote(s string) string {
 	return `"` + s + `"`
 }
 
-// syncStackMetaKeys writes abc_runtime / abc_from from spec fields into meta.
-// Call after any source (preamble, CLI, params) may have set Runtime or From.
+// syncStackMetaKeys writes abc_runtime / abc_from_file from spec fields into
+// meta. Call after any source (preamble, CLI, params) may have set Runtime
+// or From.
+//
+// Meta-key naming aligns with the CLI flag rename (`--from` → `--from-file`,
+// 2026-05-22). For one release window we ALSO emit the legacy `abc_from`
+// key so any in-flight downstream consumer (Grafana panel query, jurist
+// rule pinned to the old name, ad-hoc `nomad job inspect` script) keeps
+// working until they migrate. Drop `abc_from` together with the CLI
+// `--from` alias in the same release.
 func syncStackMetaKeys(spec *jobSpec) {
 	if spec == nil {
 		return
@@ -399,6 +407,8 @@ func syncStackMetaKeys(spec *jobSpec) {
 		spec.Meta["abc_runtime"] = rt
 	}
 	if from != "" {
+		spec.Meta["abc_from_file"] = from
+		// Legacy alias — deprecated, drops with --from in the same release.
 		spec.Meta["abc_from"] = from
 	}
 }

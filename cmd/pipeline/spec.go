@@ -238,12 +238,12 @@ func (s *PipelineSpec) defaults() {
 		s.NfVersion = "25.10.4"
 	}
 	if s.NfPluginVersion == "" {
-		s.NfPluginVersion = "0.4.0-edge3"
+		s.NfPluginVersion = "0.4.0-edge5"
 	}
 	if s.Namespace == "" {
 		s.Namespace = "default"
 	}
 	if len(s.Datacenters) == 0 {
-		s.Datacenters = []string{"dc1"}
+		s.Datacenters = []string{"*"}
 	}
 }

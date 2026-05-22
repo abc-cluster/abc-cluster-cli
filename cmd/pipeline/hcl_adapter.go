@@ -39,14 +39,15 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 		return ""
 	}
 	var staticEnv map[string]string
+	skipNomadVarCreds := false
 	if c, err := cfg.Load(); err == nil {
 		actx := c.ActiveCtx()
 		staticEnv = cfg.AbcNodesMonitoringEnv(actx)
 		// Inject MinIO / S3 env vars from admin.services.minio.* so the
 		// Nextflow aws { } block can reach the cluster's MinIO instance.
-		// These go into the env {} block as plaintext fallbacks; if the
-		// operator has also created nomad/jobs/secrets Nomad Variables, the
-		// template-rendered values (env = true) take precedence at runtime.
+		// When credentials are present here, skip the nomadVar template that
+		// reads from nomad/jobs/secrets — that template blocks task startup
+		// on clusters where the Nomad Variable doesn't exist.
 		if ep := actx.MinioS3APIEndpoint(); ep != "" {
 			if staticEnv == nil {
 				staticEnv = map[string]string{}
@@ -58,6 +59,7 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 				staticEnv = map[string]string{}
 			}
 			staticEnv["AWS_ACCESS_KEY_ID"] = ak
+			skipNomadVarCreds = true
 		}
 		if sk, ok := cfg.GetAdminFloorField(&actx.Admin.Services, "minio", "secret_key"); ok && sk != "" {
 			if staticEnv == nil {
@@ -66,10 +68,14 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 			staticEnv["AWS_SECRET_ACCESS_KEY"] = sk
 		}
 	}
-	return generateHeadJobHCLWithStaticEnv(spec, nomadAddr, nomadToken, runUUID, staticEnv)
+	return generateHeadJobHCLWithStaticEnvAndFlags(spec, nomadAddr, nomadToken, runUUID, staticEnv, skipNomadVarCreds)
 }
 
 func generateHeadJobHCLWithStaticEnv(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string, staticEnv map[string]string) string {
+	return generateHeadJobHCLWithStaticEnvAndFlags(spec, nomadAddr, nomadToken, runUUID, staticEnv, false)
+}
+
+func generateHeadJobHCLWithStaticEnvAndFlags(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string, staticEnv map[string]string, skipNomadVarCreds bool) string {
 	if spec == nil {
 		return ""
 	}
@@ -113,10 +119,11 @@ func generateHeadJobHCLWithStaticEnv(spec *PipelineSpec, nomadAddr, nomadToken, 
 		NextflowBinURL:  spec.NextflowBinURL,
 		Plugins:         plugins,
 		ExtraBinaries:   bins,
-		StaticEnv:       staticEnv,
-		WaveEndpoint:     spec.WaveEndpoint,
-		FusionEnabled:    spec.FusionEnabled,
-		ContainerRuntime: spec.ContainerRuntime,
-		Identity:         resolveIdentity(spec),
+		StaticEnv:         staticEnv,
+		SkipNomadVarCreds: skipNomadVarCreds,
+		WaveEndpoint:      spec.WaveEndpoint,
+		FusionEnabled:     spec.FusionEnabled,
+		ContainerRuntime:  spec.ContainerRuntime,
+		Identity:          resolveIdentity(spec),
 	}, nomadAddr, nomadToken, runUUID)
 }

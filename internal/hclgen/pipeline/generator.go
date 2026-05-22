@@ -136,6 +136,14 @@ type Spec struct {
 	// pulls the augmented OCI image from the Wave proxy and converts it to SIF locally,
 	// instead of relying on Wave to build the SIF (which Wave Lite cannot do).
 	ContainerRuntime string
+
+	// SkipNomadVarCreds, when true, omits the `secrets/aws.env` Nomad
+	// template that reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from
+	// `nomad/jobs/secrets/*` Nomad Variables. Set this when the credentials
+	// are already injected via StaticEnv (e.g. from admin.services.minio.*
+	// in the active context). Without this flag, the template blocks task
+	// startup on clusters where the Nomad Variable doesn't exist.
+	SkipNomadVarCreds bool
 }
 
 // PluginRef is one entry in a Nextflow plugins { ... } block.
@@ -447,19 +455,23 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	// AWS_SECRET_ACCESS_KEY from `nomad/jobs/secrets/<NAME>` — the operator
 	// seeds these once, no per-job-name var seeding required.
 	//
-	// Each `with nomadVar` is independent so the head still starts even when
-	// only one of the two creds is present (e.g. read-only debugging mode).
-	awsTmpl := taskBody.AppendNewBlock("template", nil).Body()
-	awsTmpl.SetAttributeValue("destination", cty.StringVal("secrets/aws.env"))
-	awsTmpl.SetAttributeValue("env", cty.BoolVal(true))
-	awsTmpl.SetAttributeValue("data", cty.StringVal(
-		"{{- with nomadVar \"nomad/jobs/secrets/AWS_ACCESS_KEY_ID\" -}}\n"+
-			"AWS_ACCESS_KEY_ID={{ .AWS_ACCESS_KEY_ID }}\n"+
-			"{{- end }}\n"+
-			"{{- with nomadVar \"nomad/jobs/secrets/AWS_SECRET_ACCESS_KEY\" -}}\n"+
-			"AWS_SECRET_ACCESS_KEY={{ .AWS_SECRET_ACCESS_KEY }}\n"+
-			"{{- end }}\n",
-	))
+	// Skipped when SkipNomadVarCreds is set (credentials already injected via
+	// StaticEnv). Without this guard the template blocks task startup on
+	// clusters where the Nomad Variable doesn't exist or isn't accessible to
+	// the task's workload identity.
+	if !spec.SkipNomadVarCreds {
+		awsTmpl := taskBody.AppendNewBlock("template", nil).Body()
+		awsTmpl.SetAttributeValue("destination", cty.StringVal("secrets/aws.env"))
+		awsTmpl.SetAttributeValue("env", cty.BoolVal(true))
+		awsTmpl.SetAttributeValue("data", cty.StringVal(
+			"{{- with nomadVar \"nomad/jobs/secrets/AWS_ACCESS_KEY_ID\" -}}\n"+
+				"AWS_ACCESS_KEY_ID={{ .AWS_ACCESS_KEY_ID }}\n"+
+				"{{- end }}\n"+
+				"{{- with nomadVar \"nomad/jobs/secrets/AWS_SECRET_ACCESS_KEY\" -}}\n"+
+				"AWS_SECRET_ACCESS_KEY={{ .AWS_SECRET_ACCESS_KEY }}\n"+
+				"{{- end }}\n",
+		))
+	}
 
 	// Template: Seqera / Tower access token — injected as TOWER_ACCESS_TOKEN and
 	// SEQERA_ACCESS_TOKEN when Fusion is enabled. Fusion v2 requires these for Wave
