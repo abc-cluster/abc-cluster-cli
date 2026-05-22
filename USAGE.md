@@ -35,7 +35,7 @@ This document describes every command available in the `abc` CLI.
   - [pipeline params](#pipeline-params-name)
 - [module run](#module-run)
 - [job run](#job-run)
-  - [Software stack: runtime and from](#software-stack-runtime-and-from)
+  - [Software stack: runtime and from-file](#software-stack-runtime-and-from-file)
   - [Task workspace temp](#task-workspace-temp)
   - [Preamble directives](#preamble-directives)
   - [Package manager directives](#package-manager-directives)
@@ -632,7 +632,7 @@ abc submit <target> [flags]
 | 6 | `<target>` matches a saved pipeline name in Nomad Variables | `pipeline run` |
 | — | no match | error — use `--type` |
 
-> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, `--from-file`, and **`--task-tmp`** (see [Software stack](#software-stack-runtime-and-from) and [Task workspace temp](#task-workspace-temp) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
+> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, `--from-file`, and **`--task-tmp`** (see [Software stack](#software-stack-runtime-and-from-file) and [Task workspace temp](#task-workspace-temp) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
 
 ### Flags
 
@@ -1011,8 +1011,9 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--output`                      | `--output=<filename>`               | Tee stdout to `$NOMAD_TASK_DIR/<filename>`                        |
 | `--error`                       | `--error=<filename>`                | Tee stderr to `$NOMAD_TASK_DIR/<filename>`                        |
 | `--conda`                       | `--conda=<spec>`                    | Conda spec (meta `abc_conda`; no automatic conda wrapper)         |
-| `--runtime`                     | `--runtime=<kind>`                  | Software stack provisioner (`pixi-exec`, alias `pixi`); orthogonal to `--driver` |
-| `--from-file`                        | `--from-file=<path>`              | Native stack definition for `--runtime` (Pixi: path to `pixi.toml` on the execution host) |
+| `--runtime`                     | `--runtime=<kind>`                  | Software stack provisioner: `pixi-exec` (alias `pixi`), `micromamba-exec` (alias `micromamba`/`mamba`), `wave-exec` (alias `wave`). Orthogonal to `--driver`. See [Software stack](#software-stack-runtime-and-from-file). |
+| `--from-file`                   | `--from-file=<path>`                | Local path to the runtime's definition file: Pixi → `pixi.toml`/`pixi.lock`, micromamba → `environment.yml`, wave → `environment.yml`. (Deprecated alias: `--from`.) |
+| `--shell`                       | `--shell=<name-or-path>`            | Script interpreter override: bare name (`bash`, `sh`, `dash`, …) → `/bin/<name>`, absolute path used verbatim. OCI drivers default to `/bin/sh`; host drivers default to `/bin/bash`. See [Shell override](#shell-override). |
 | `--task-tmp`                    | `--task-tmp`                        | Task-local temp: `TMPDIR`/`TMP`/`TEMP` → `${NOMAD_TASK_DIR}/tmp` (see [below](#task-workspace-temp)) |
 | `--hpc-compat-env`              | `--hpc_compat_env`                  | Inject legacy `SLURM_*` / `PBS_*` compatibility aliases           |
 | `--no-network`                  | `--no-network`                      | Disable network access (Nomad mode = `"none"`)                    |
@@ -1034,37 +1035,213 @@ These flags configure Nomad HCL stanza fields and can also be set via script pre
 | `--reschedule-delay`    | `--reschedule-delay=<duration>`     | Base reschedule delay (e.g. `5s`)         |
 | `--reschedule-max-delay`| `--reschedule-max-delay=<duration>` | Maximum reschedule delay (e.g. `1m`)      |
 
-### Software stack: runtime and from
+### Software stack: runtime and from-file
 
-These options configure **how dependencies are provided for your script**, separately from **`--driver`** (how Nomad launches the task: `exec`, `docker`, etc.).
+These options configure **how dependencies are provisioned for your script**, separately from **`--driver`** (how Nomad launches the task — `exec`, `containerd-driver`, `docker`, etc.). Three runtimes are wired up:
+
+| Runtime | Alias | `--from-file` extension | What it does |
+|---|---|---|---|
+| `pixi-exec` | `pixi` | `pixi.toml` or `pixi.lock` | Re-execs your script under `pixi run` against the manifest, so the body runs inside Pixi's project environment. |
+| `micromamba-exec` | `micromamba`, `mamba` | `environment.yml` / `environment.yaml` | Creates a per-task conda environment from the YAML, activates it, then runs your script. |
+| `wave-exec` | `wave` | `environment.yml` / `environment.yaml` | Asks the Wave service to build a container image containing the env, then runs your script in that image. (Cluster-side feature; requires a configured Wave endpoint.) |
+
+**Two flags, both required when a runtime is selected:**
 
 | Preamble directive | CLI flag | Description |
-|--------------------|----------|-------------|
-| `--runtime=<kind>` | `--runtime=<kind>` | Stack provisioner. Supported: **`pixi-exec`** (alias **`pixi`**). |
-| `--from-file=<path>`    | `--from-file=<path>`    | Backend-native definition. For **`pixi-exec`**: absolute or cluster-visible path to **`pixi.toml`**. |
+|---|---|---|
+| `--runtime=<kind>` | `--runtime=<kind>` | Stack provisioner. Use the canonical name (`pixi-exec`, `micromamba-exec`, `wave-exec`) or one of the aliases above. |
+| `--from-file=<path>` | `--from-file=<path>` | Local path to the environment definition file. Read at submit time and embedded as a Nomad template under `local/`. Aligns with `--from-file` on `abc auth context add`. (Deprecated alias: `--from`.) |
 
-**Resolution:** After `--driver` is chosen (default `exec`), the CLI checks that the driver is allowed for the selected runtime, then may **rewrite the embedded script** so the task re-invokes itself under Pixi.
+**Resolution:** After `--driver` is chosen, the CLI checks runtime × driver compatibility, then **rewrites the embedded script** so the task re-invokes itself through the runtime's wrapper. The user-visible UX is unchanged — submit a bash script, it runs.
 
-**Pixi (`pixi-exec`):** The generated script starts with a guard that runs:
+**Directive precedence:** CLI flag > `#ABC` preamble > params-file (same rule as every other `job run` setting).
 
-`pixi run --manifest-path <from> -- /bin/bash "${NOMAD_TASK_DIR}/local/<scriptname>" …`
+#### Pixi (`pixi-exec`)
 
-so the preamble and body execute inside the Pixi **default** environment for that manifest. (`pixi exec` does not support `--manifest-path` in current Pixi releases; workspace-bound execution uses `pixi run`.)
+The CLI prepends a guard to the embedded script that runs:
 
-**Allowed Nomad task drivers with `pixi-exec`:** `exec`, `raw_exec`, `docker`, `containerd-driver`, `hpc-bridge`. The cluster image or host must provide the `pixi` binary on `PATH`.
+```
+pixi run --manifest-path "${NOMAD_TASK_DIR}/local/<pixi-file>" \
+    -- /bin/sh "${NOMAD_TASK_DIR}/local/<scriptname>" "$@"
+```
 
-**Not supported with `pixi-exec`:** `slurm` — the bridge runs your script **inline**, so there is no task-local copy to re-exec under Pixi.
+so the preamble and body execute inside the **default** environment for that manifest. (`pixi exec` does not support `--manifest-path` in current releases; workspace-bound execution uses `pixi run`.)
 
-**Nomad meta:** `abc_runtime`, `abc_from` (canonical runtime id is `pixi-exec` even when you pass `pixi`).
+When you point `--from-file` at a **`pixi.lock`** instead of `pixi.toml`, the wrapper passes `--locked` to `pixi install`, giving bit-for-bit reproducibility across runs.
 
-**Directive precedence:** CLI overrides preamble for the same key (same as other `job run` flags).
+**Allowed Nomad task drivers with `pixi-exec`:** `exec`, `exec2`, `raw_exec`, `docker`, `containerd-driver`, `podman`, `singularity`, `hpc-bridge`. The cluster image or host must provide the `pixi` binary on `PATH` — if it doesn't, the wrapper downloads it once into the task directory using the URL configured at `contexts.<name>.admin.tools.pixi_url` (cluster-side setup; the operator runs `abc admin tools push pixi` to populate this).
 
-**Other edge cases:**
+**Not supported with `pixi-exec`:** `slurm`, `pbs` — those bridges run your script inline on the host scheduler, so there is no task-local copy to re-exec under Pixi.
 
-- **`--no-network`:** rejected with `pixi-exec` (Pixi needs the network to solve/download).
-- **`--conda` / `#ABC --conda`:** rejected together with `pixi-exec` (two stacks).
-- **`#ABC --pixi`:** still allowed as a separate meta hint; it does not turn on automatic wrapping (use `--runtime` + `--from-file` for that).
-- **Relative `--from-file`:** resolved on the execution host relative to the task working directory after any `#ABC --chdir`; prefer absolute cluster paths when unsure.
+**Worked example** — a small bioinformatics workload pinned via `pixi.lock`:
+
+```bash
+mkdir myproj && cd myproj
+pixi init                                                       # creates pixi.toml
+pixi add --feature bio --platform linux-64 samtools fastqc      # adds + resolves
+pixi install --locked --feature bio                             # writes pixi.lock
+
+cat > run.sh <<'EOF'
+#!/bin/bash
+#ABC --name=qc-batch
+#ABC --runtime=pixi-exec
+#ABC --from-file=pixi.lock
+#ABC --driver=containerd
+#ABC --driver.config.image=docker.io/library/debian:12-slim
+#ABC --cores=4
+#ABC --mem=8G
+set -euo pipefail
+samtools --version | head -1
+fastqc --version
+EOF
+
+abc job run run.sh
+```
+
+(The `debian:12-slim` image is just a stable rootfs — Pixi brings in samtools/fastqc itself, so the image doesn't need them.)
+
+**Edge cases:**
+
+- **`--no-network`** is rejected with `pixi-exec` (Pixi needs network to solve/download).
+- **`--conda` / `#ABC --conda`** is rejected together with `pixi-exec` (pick one stack).
+- **`#ABC --pixi`** (the bare meta hint) is still accepted as a label only; it does NOT turn on automatic wrapping. Use `--runtime=pixi-exec` + `--from-file=…` for that.
+- **Relative `--from-file`** is resolved on the **submit-side** filesystem at job-run time. The file content is embedded into a Nomad template under `local/`, so the cluster never reads the path again — but spelling errors at submit time fail loudly there.
+
+#### Micromamba (`micromamba-exec`)
+
+Creates a per-task conda environment from an `environment.yml`, activates it, and runs your script inside. Best for workloads where pinned conda packages (especially bioconda) are the right packaging story and you don't already have a Pixi project set up.
+
+The wrapper that gets prepended to your script runs:
+
+```
+micromamba create -y -p "${NOMAD_TASK_DIR}/conda-env" \
+    --file "${NOMAD_TASK_DIR}/local/<env-yaml>"
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate "${NOMAD_TASK_DIR}/conda-env"
+```
+
+then re-execs your script. The environment is task-local — created fresh per allocation, destroyed when the task ends.
+
+**Allowed Nomad task drivers:** same set as pixi-exec — `exec`, `exec2`, `raw_exec`, `docker`, `containerd-driver`, `podman`, `singularity`, `hpc-bridge`. The `micromamba` binary is fetched per-task from the URL at `contexts.<name>.admin.tools.micromamba_url` (operator-pushed via `abc admin tools push micromamba`), so the cluster image doesn't need it preinstalled.
+
+**Cleanup:** `#ABC --mamba-cleanup` (or `--mamba-cleanup` on the CLI) `rm -rf`s the env directory on exit. Off by default — on shared host filesystems the cached env can shave many seconds off the next run. Turn it on for one-shot jobs.
+
+**Worked example:**
+
+```bash
+cat > environment.yml <<'EOF'
+name: bio
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - samtools=1.20
+  - fastqc=0.12.1
+  - python=3.12
+EOF
+
+cat > qc.sh <<'EOF'
+#!/bin/bash
+#ABC --name=qc-mamba
+#ABC --runtime=micromamba-exec
+#ABC --from-file=environment.yml
+#ABC --driver=containerd
+#ABC --driver.config.image=docker.io/library/debian:12-slim
+#ABC --cores=4
+#ABC --mem=8G
+#ABC --mamba-cleanup
+set -euo pipefail
+samtools --version | head -1
+fastqc --version
+python -c 'import sys; print("python", sys.version.split()[0])'
+EOF
+
+abc job run qc.sh
+```
+
+**Edge cases:**
+
+- **`--no-network`** is rejected with `micromamba-exec` (conda needs network to download packages).
+- **`--conda` / `#ABC --conda`** is rejected together with `micromamba-exec` (two stacks; the legacy `--conda` flag predates `--runtime` and only writes a meta label — `--runtime=micromamba-exec` does the actual provisioning).
+
+#### Wave (`wave-exec`)
+
+Asks the [Seqera Wave](https://www.nextflow.io/docs/latest/wave.html) service to build a container image from an `environment.yml` at submit time, then runs your script in that image. The Wave-built image gets cached, so subsequent runs with the same env hash skip the build.
+
+This runtime requires a **cluster-side Wave endpoint** — operators configure it via `abc admin services wave …`. If your context doesn't have a Wave endpoint, the runtime errors at submit time with a friendly note pointing at the setup command.
+
+**Allowed Nomad task drivers:** `docker`, `containerd-driver`, `podman`, `singularity` (anything that runs OCI images). NOT supported on host-side drivers (`exec`, `exec2`, `raw_exec`) — Wave's whole point is to package the env *into* the image.
+
+Worked example: identical preamble to the micromamba example above, with `--runtime=wave-exec` instead. The image you specify in `--driver.config.image` gets ignored — Wave decides the base image based on what's in the env.
+
+#### Choosing between the three
+
+| If you have… | …use |
+|---|---|
+| an existing Pixi project (`pixi.toml` + lockfile already in the repo) | `pixi-exec` (bit-for-bit reproducible via the lock) |
+| an `environment.yml` from a colleague / a bioconda recipe | `micromamba-exec` (zero setup; runs anywhere a base rootfs works) |
+| a need for a portable, content-addressed image that downstream users can pull | `wave-exec` (Wave builds + caches the image; subsequent runs skip the build) |
+
+#### Common gotchas across all three
+
+- **`--shell`** still applies. If your runtime-wrapper script uses bashisms (arrays, `[[ ]]`, process substitution), keep the default `/bin/bash` shell on host drivers. On OCI drivers (containerd-driver, docker, podman, singularity) the wrapper-script default is `/bin/sh` for image portability; if your script needs bash and the image ships it, add `#ABC --shell=bash`. See the *Shell override* section below.
+- **Nomad meta** stamped on the job: `abc_runtime` (canonical name), `abc_from` (the path passed to `--from-file`). These join the standard `abc_user_whoami`, `abc_user_id`, `abc_workspace`, `abc_tenant`, `abc_cli_version`, `abc_submitted_at` keys that every job carries — pivot from one to the other in jurist / Grafana queries.
+- **Submitted file is canonical**: the CLI reads `--from-file` at submit time and embeds the contents as a Nomad template. The cluster never reads the original path again, so a working `abc job run` doesn't depend on the original file staying in place after submission.
+
+### Shell override
+
+The CLI picks a default interpreter for the embedded script based on the task driver, then runs the script via `<shell> ${NOMAD_TASK_DIR}/<script>` (OCI drivers) or `<shell> local/<script>` (host drivers). Defaults:
+
+| Driver | Default shell | Why |
+|---|---|---|
+| `docker`, `containerd-driver`, `podman`, `singularity` | `/bin/sh` | Image portability — alpine and other minimal images ship `sh` but not `bash`. The default works on every standard base image. |
+| `exec`, `exec2`, `raw_exec`, `java`, `hpc-bridge`, `slurm`, `pbs` | `/bin/bash` | Host filesystem — bash is reliably present on the Nomad client agent. |
+
+**Override** with `--shell=<name-or-path>`:
+
+| Form | Resolved to |
+|---|---|
+| `--shell=bash` | `/bin/bash` |
+| `--shell=sh` | `/bin/sh` |
+| `--shell=dash` (any bare shell name) | `/bin/<name>` |
+| `--shell=/usr/local/bin/fish` (absolute path) | used verbatim |
+
+Shell-metacharacter values (`;`, `|`, `&`, `$()`, backticks, etc.) are rejected at directive-parse time — the value lands directly in the HCL `command` attribute, so this is a real security boundary.
+
+**Worked examples:**
+
+```bash
+#ABC --driver=docker
+#ABC --driver.config.image=docker.io/library/alpine:3.19
+# default /bin/sh, alpine has it → works
+
+#ABC --driver=docker
+#ABC --driver.config.image=docker.io/library/ubuntu:24.04
+#ABC --shell=bash
+# ubuntu ships bash → opt back in for arrays, [[ ]], process substitution
+
+#ABC --driver=exec
+# host driver → defaults to /bin/bash without an override
+```
+
+If your script's first line is `#!/usr/bin/env bash`, the CLI does NOT consult the shebang when picking the interpreter — it uses `--shell` (or the driver default). To run a bash-only script on an OCI driver, write `#ABC --shell=bash` even if the shebang already declares bash.
+
+### Driver alignment notes
+
+Every OCI driver (`docker`, `containerd-driver`, `podman`, `singularity`) now produces equivalent user-visible behaviour for the standard `abc job run` UX:
+
+- Same default shell (`/bin/sh`).
+- Same in-container `$(hostname)` shape (`${NOMAD_SHORT_ALLOC_ID}` — 8-char Nomad alloc identifier).
+- Same script-wrapping pattern (singularity uses an inlined `-c` body because apptainer doesn't bind `${NOMAD_TASK_DIR}` by default — see the smoke notes in the brainstorm tracker; from the user's side it's transparent).
+
+**Auto-driver resolution** picks the safer option when you don't pin a driver:
+
+| Hint | Resolves to (when both available) |
+|---|---|
+| `--driver=auto-container` | `containerd-driver` (rootless) over `docker` (root daemon) |
+| `--driver=auto-exec` | `exec2` (dynamic non-root UID + landlock fs + zero caps) over `exec` (legacy) |
+
+The priority order is configurable per-context via `contexts.<name>.job.driver.container_priority` and `…exec_priority` lists — see `abc config set --help`.
 
 ### Task workspace temp
 
@@ -1128,7 +1305,7 @@ block so the script can read the value at execution time.
 | Preamble directive | Description |
 |--------------------|-------------|
 | `#ABC --conda=<spec>` | Conda environment label (`spec` = package name or env file path). Recorded as `abc_conda` in Nomad meta. Does not wrap the script automatically. |
-| `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in Nomad meta. For automatic Pixi wrapping, use **`#ABC --runtime=pixi-exec`** and **`#ABC --from-file=…/pixi.toml`** (see [Software stack](#software-stack-runtime-and-from)). |
+| `#ABC --pixi` | Pixi hint; recorded as `abc_pixi=true` in Nomad meta. For automatic Pixi wrapping, use **`#ABC --runtime=pixi-exec`** and **`#ABC --from-file=…/pixi.toml`** (see [Software stack](#software-stack-runtime-and-from-file)). |
 | `#ABC --task-tmp` | Task-local temp defaults (`TMPDIR`/`TMP`/`TEMP` under `${NOMAD_TASK_DIR}/tmp`). See [Task workspace temp](#task-workspace-temp). |
 
 ### Meta flags (Class 3)

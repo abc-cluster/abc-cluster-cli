@@ -141,33 +141,73 @@ abc job run hello-me.sh --cores=2 --mem=512M
 
 ### 1.5 Attach a software environment
 
-`--runtime=micromamba-exec` installs a conda environment on the cluster node before running your script. Pass the environment spec with `--from-file`:
+The CLI ships three software-stack runtimes, all wired through the same `--runtime` + `--from-file` pair. Pick the one that matches how your project pins dependencies today.
+
+#### Option A — Pixi (`--runtime=pixi-exec`)
+
+Best if you already have (or want) a Pixi project with a lockfile for reproducibility.
 
 ```bash
-cat > bio-job.sh << 'EOF'
+mkdir bio-pixi && cd bio-pixi
+pixi init
+pixi add --feature bio --platform linux-64 samtools fastqc
+pixi install --locked --feature bio          # writes pixi.lock
+
+cat > bio-pixi.sh << 'EOF'
 #!/bin/bash
-#ABC --name=bio-demo
-#ABC --runtime=micromamba-exec
-#ABC --from-file=environment.yml
+#ABC --name=bio-pixi-demo
+#ABC --runtime=pixi-exec
+#ABC --from-file=pixi.lock
+#ABC --driver=containerd
+#ABC --driver.config.image=docker.io/library/debian:12-slim
 #ABC --cores=4
 #ABC --mem=8G
 set -euo pipefail
 samtools --version | head -1
 fastqc --version
 EOF
+
+abc job run bio-pixi.sh
 ```
+
+`pixi.lock` (vs `pixi.toml`) gives bit-for-bit reproducibility — the wrapper invokes `pixi install --locked`. `debian:12-slim` is just a base rootfs; Pixi brings in everything the script needs.
+
+#### Option B — Micromamba (`--runtime=micromamba-exec`)
+
+Best if you have an `environment.yml` from a colleague or a bioconda recipe and don't want to add a new tool to your workflow.
 
 ```bash
 cat > environment.yml << 'EOF'
 name: bio
-channels: [bioconda, conda-forge]
+channels:
+  - conda-forge
+  - bioconda
 dependencies:
-  - samtools>=1.20
-  - fastqc>=0.12
+  - samtools=1.20
+  - fastqc=0.12.1
 EOF
 
-abc job run bio-job.sh
+cat > bio-mamba.sh << 'EOF'
+#!/bin/bash
+#ABC --name=bio-mamba-demo
+#ABC --runtime=micromamba-exec
+#ABC --from-file=environment.yml
+#ABC --driver=containerd
+#ABC --driver.config.image=docker.io/library/debian:12-slim
+#ABC --cores=4
+#ABC --mem=8G
+#ABC --mamba-cleanup
+set -euo pipefail
+samtools --version | head -1
+fastqc --version
+EOF
+
+abc job run bio-mamba.sh
 ```
+
+`#ABC --mamba-cleanup` removes the per-task conda environment when the script ends — sensible for one-shot jobs; omit for iterative runs that benefit from caching.
+
+> **Note on `--from-file`** — this is the canonical flag name across the CLI (same as `abc auth context add --from-file`). The older `--from` is still accepted but emits a deprecation nudge.
 
 ---
 

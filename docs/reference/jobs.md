@@ -20,9 +20,10 @@ Pass `--dry-run` to print the generated HCL without submitting.
 | Flag | Description |
 |---|---|
 | `--name NAME` | Override the Nomad job name |
-| `--runtime RUNTIME` | Runtime identifier (`pixi-exec`, `micromamba-exec`, …) |
-| `--from PATH` | Path to the runtime definition file (`pixi.toml`, `pixi.lock`, `environment.yml`) |
-| `--driver DRIVER` | Nomad task driver (`exec`, `docker`) |
+| `--runtime RUNTIME` | Runtime identifier: `pixi-exec` (alias `pixi`), `micromamba-exec` (alias `micromamba`/`mamba`), `wave-exec` (alias `wave`) |
+| `--from-file PATH` | Path to the runtime definition file (`pixi.toml`, `pixi.lock`, `environment.yml`). Deprecated alias: `--from`. |
+| `--driver DRIVER` | Nomad task driver: `docker`, `containerd-driver` (alias `containerd`), `podman`, `singularity`, `exec`, `exec2`, `raw_exec`, `hpc-bridge`; or `auto-container` / `auto-exec` for cluster-aware resolution. |
+| `--shell NAME` | Script interpreter override: bare name → `/bin/<name>`, absolute path used verbatim. |
 | `--cores N` | CPU core count |
 | `--mem SIZE` | Memory allocation (`512M`, `8G`, `4096`) |
 | `--time HH:MM:SS` | Walltime limit |
@@ -43,7 +44,7 @@ All flags available on the command line can also be embedded directly in the scr
 #!/bin/bash
 #ABC --name=my-analysis
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.toml
+#ABC --from-file=pixi.toml
 #ABC --cores=8
 #ABC --mem=16G
 #ABC --time=04:00:00
@@ -83,7 +84,8 @@ All flags available on the command line can also be embedded directly in the scr
 | Directive | Example | Description |
 |---|---|---|
 | `--runtime=RUNTIME` | `--runtime=pixi-exec` | Runtime to use (see [Runtimes](#runtimes) below) |
-| `--from=PATH` | `--from=pixi.toml` | Runtime definition file |
+| `--from-file=PATH` | `--from-file=pixi.toml` | Runtime definition file. (Deprecated alias: `--from`.) |
+| `--shell=NAME` | `--shell=bash` | Script interpreter override: bare name → `/bin/<name>`, absolute path used verbatim. OCI drivers default to `/bin/sh`; host drivers default to `/bin/bash`. |
 | `--pixi-cleanup` | | Remove pixi env from disk after the job completes |
 | `--mamba-cleanup` | | Remove micromamba env from disk after the job completes |
 | `--conda=ENV` | `--conda=bioinf` | Named conda environment (legacy) |
@@ -166,7 +168,7 @@ Installs a [Pixi](https://pixi.sh) conda/PyPI environment from a `pixi.toml` man
 #!/bin/bash
 #ABC --name=trim-reads
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.toml          # path resolved at submit time
+#ABC --from-file=pixi.toml          # path resolved at submit time
 #ABC --cores=8
 #ABC --mem=16G
 #ABC --time=04:00:00
@@ -197,13 +199,13 @@ At runtime, the CLI:
 
 #### From a locked `pixi.lock` (reproducible installs)
 
-For bit-for-bit reproducibility across runs, point `--from` at a `pixi.lock` file. The CLI automatically locates the companion `pixi.toml` in the same directory, embeds both files, and passes `--locked` to `pixi install`.
+For bit-for-bit reproducibility across runs, point `--from-file` at a `pixi.lock` file. The CLI automatically locates the companion `pixi.toml` in the same directory, embeds both files, and passes `--locked` to `pixi install`.
 
 ```bash
 #!/bin/bash
 #ABC --name=trim-reads-locked
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.lock          # companion pixi.toml must exist alongside it
+#ABC --from-file=pixi.lock          # companion pixi.toml must exist alongside it
 #ABC --cores=8
 #ABC --mem=16G
 #ABC --time=04:00:00
@@ -240,7 +242,7 @@ Installs a conda environment from an `environment.yml` file using [micromamba](h
 #!/bin/bash
 #ABC --name=align-bwa
 #ABC --runtime=micromamba-exec
-#ABC --from=environment.yml    # path resolved at submit time
+#ABC --from-file=environment.yml    # path resolved at submit time
 #ABC --cores=16
 #ABC --mem=32G
 #ABC --time=08:00:00
