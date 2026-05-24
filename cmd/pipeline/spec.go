@@ -89,6 +89,13 @@ type PipelineSpec struct {
 	// Wave-side SIF build needed (compatible with Wave Lite).
 	ContainerRuntime string `json:"containerRuntime,omitempty" yaml:"containerRuntime,omitempty"`
 
+	// S5cmdSkipTLS, when true, emits `useTLS = false` in the auto-generated
+	// nomad.s5cmd.s3 config block. Normally inferred automatically from the
+	// active context's MinIO endpoint (HTTPS → private CA → skip verify).
+	// Saveable in a pipeline spec so an operator can lock it for a known
+	// private-CA cluster without relying on context detection.
+	S5cmdSkipTLS bool `json:"s5cmdSkipTLS,omitempty" yaml:"s5cmdSkipTLS,omitempty"`
+
 	// Head job resource overrides
 	CPU      int    `json:"cpu,omitempty" yaml:"cpu,omitempty"`           // MHz
 	MemoryMB int    `json:"memoryMB,omitempty" yaml:"memoryMB,omitempty"` // MB
@@ -235,7 +242,7 @@ func (s *PipelineSpec) defaults() {
 		s.MemoryMB = 2048
 	}
 	if s.NfVersion == "" {
-		s.NfVersion = "25.10.4"
+		s.NfVersion = "26.04.2"
 	}
 	if s.NfPluginVersion == "" {
 		s.NfPluginVersion = "0.4.0-edge5"

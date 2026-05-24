@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"strings"
+
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -40,6 +42,7 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 	}
 	var staticEnv map[string]string
 	skipNomadVarCreds := false
+	s5cmdSkipTLS := false
 	if c, err := cfg.Load(); err == nil {
 		actx := c.ActiveCtx()
 		staticEnv = cfg.AbcNodesMonitoringEnv(actx)
@@ -53,6 +56,17 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 				staticEnv = map[string]string{}
 			}
 			staticEnv["NF_MINIO_ENDPOINT"] = ep
+			// abc-seedling (and any private deployment) uses HTTPS with a
+			// self-signed / private CA. Worker container images (e.g.
+			// quay.io/nextflow/bash) don't carry the cluster CA, so s5cmd
+			// fails with "x509: certificate signed by unknown authority"
+			// unless --no-verify-ssl is set. Detect this case by checking
+			// whether the endpoint is HTTPS — public cloud endpoints (AWS S3,
+			// GCS) are never configured via admin.services.minio, so HTTPS
+			// here always means a private deployment with a private CA.
+			if strings.HasPrefix(ep, "https://") {
+				s5cmdSkipTLS = true
+			}
 		}
 		if ak, ok := cfg.GetAdminFloorField(&actx.Admin.Services, "minio", "access_key"); ok && ak != "" {
 			if staticEnv == nil {
@@ -68,7 +82,11 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 			staticEnv["AWS_SECRET_ACCESS_KEY"] = sk
 		}
 	}
-	return generateHeadJobHCLWithStaticEnvAndFlags(spec, nomadAddr, nomadToken, runUUID, staticEnv, skipNomadVarCreds)
+	if spec.S5cmdSkipTLS {
+		// Explicit override on the spec wins (e.g. saved pipeline or test).
+		s5cmdSkipTLS = true
+	}
+	return generateHeadJobHCLWithStaticEnvAndFlagsEx(spec, nomadAddr, nomadToken, runUUID, staticEnv, skipNomadVarCreds, s5cmdSkipTLS)
 }
 
 func generateHeadJobHCLWithStaticEnv(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string, staticEnv map[string]string) string {
@@ -76,6 +94,14 @@ func generateHeadJobHCLWithStaticEnv(spec *PipelineSpec, nomadAddr, nomadToken, 
 }
 
 func generateHeadJobHCLWithStaticEnvAndFlags(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string, staticEnv map[string]string, skipNomadVarCreds bool) string {
+	return generateHeadJobHCLWithStaticEnvAndFlagsEx(spec, nomadAddr, nomadToken, runUUID, staticEnv, skipNomadVarCreds, false)
+}
+
+// generateHeadJobHCLWithStaticEnvAndFlagsEx is the canonical implementation.
+// All other generateHeadJobHCL* helpers funnel into this one.
+// s5cmdSkipTLS controls whether the generated nomad.s5cmd.s3 block includes
+// `useTLS = false` — required on abc-seedling where MinIO uses a private CA.
+func generateHeadJobHCLWithStaticEnvAndFlagsEx(spec *PipelineSpec, nomadAddr, nomadToken, runUUID string, staticEnv map[string]string, skipNomadVarCreds, s5cmdSkipTLS bool) string {
 	if spec == nil {
 		return ""
 	}
@@ -91,6 +117,18 @@ func generateHeadJobHCLWithStaticEnvAndFlags(spec *PipelineSpec, nomadAddr, noma
 		url, err := tools.ArtifactURL(name, "")
 		if err == nil {
 			bins = append(bins, hclpipeline.ToolBinary{Name: name, SourceURL: url})
+		}
+	}
+	// When S3 credentials are injected into the head job via staticEnv (i.e.
+	// SkipNomadVarCreds == true), nf-nomad must mirror them onto every worker
+	// job so processes can write .exitcode and result files back to the S3
+	// work dir. Collect the keys that are actually present in staticEnv.
+	var extraPassthrough []string
+	if skipNomadVarCreds {
+		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NF_MINIO_ENDPOINT"} {
+			if staticEnv[k] != "" {
+				extraPassthrough = append(extraPassthrough, k)
+			}
 		}
 	}
 	return hclpipeline.Generate(hclpipeline.Spec{
@@ -119,11 +157,13 @@ func generateHeadJobHCLWithStaticEnvAndFlags(spec *PipelineSpec, nomadAddr, noma
 		NextflowBinURL:  spec.NextflowBinURL,
 		Plugins:         plugins,
 		ExtraBinaries:   bins,
-		StaticEnv:         staticEnv,
-		SkipNomadVarCreds: skipNomadVarCreds,
+		StaticEnv:               staticEnv,
+		SkipNomadVarCreds:       skipNomadVarCreds,
+		ExtraPassthroughEnvKeys: extraPassthrough,
 		WaveEndpoint:      spec.WaveEndpoint,
 		FusionEnabled:     spec.FusionEnabled,
 		ContainerRuntime:  spec.ContainerRuntime,
+		S5cmdSkipTLS:      s5cmdSkipTLS,
 		Identity:          resolveIdentity(spec),
 	}, nomadAddr, nomadToken, runUUID)
 }

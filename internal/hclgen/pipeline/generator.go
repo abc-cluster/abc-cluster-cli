@@ -128,6 +128,17 @@ type Spec struct {
 	// Defaults to "nomad/jobs:wave_token" when empty and FusionEnabled is set.
 	WaveTokenSecret string
 
+	// S5cmdSkipTLS, when true, emits `useTLS = false` in the generated
+	// nomad.s5cmd.s3 config block. Set this when the cluster's S3 endpoint
+	// uses a private CA certificate that worker container images don't trust.
+	// Without it, s5cmd calls inside the worker bootstrap script fail with
+	// "x509: certificate signed by unknown authority".
+	//
+	// Automatically set by the CLI when the active context's MinIO endpoint
+	// starts with "https://" — abc-seedling always uses HTTPS with a private
+	// CA, so every container that doesn't mount the CA bundle needs this.
+	S5cmdSkipTLS bool
+
 	// ContainerRuntime selects the Nextflow container engine. Valid values:
 	//   ""  or "docker"     → docker  { enabled = true }  (default)
 	//   "singularity"       → singularity { enabled = true; ociAutoPull = true* }
@@ -144,6 +155,14 @@ type Spec struct {
 	// in the active context). Without this flag, the template blocks task
 	// startup on clusters where the Nomad Variable doesn't exist.
 	SkipNomadVarCreds bool
+
+	// ExtraPassthroughEnvKeys lists additional env var names (already set on
+	// the head task via StaticEnv) that nf-nomad should mirror onto every
+	// child Nomad job via identityEnvPassthrough. Use this to propagate S3
+	// credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, NF_MINIO_ENDPOINT)
+	// to worker tasks when they are injected via staticEnv rather than through
+	// Nomad Variables.
+	ExtraPassthroughEnvKeys []string
 }
 
 // PluginRef is one entry in a Nextflow plugins { ... } block.
@@ -239,10 +258,20 @@ func (i Identity) MetaMap() map[string]string {
 }
 
 // identityPassthroughLine emits the nomad.jobs.identityEnvPassthrough config
-// line (or empty when no identity fields are set, so legacy runs stay byte-
-// identical). Sorted for determinism.
-func identityPassthroughLine(id Identity) string {
+// line (or empty when no identity fields are set AND no extra keys are given,
+// so legacy runs stay byte-identical). Sorted for determinism.
+func identityPassthroughLine(id Identity, extra ...string) string {
+	seen := map[string]struct{}{}
 	names := id.EnvVarNames()
+	for _, n := range names {
+		seen[n] = struct{}{}
+	}
+	for _, n := range extra {
+		if _, ok := seen[n]; !ok {
+			names = append(names, n)
+			seen[n] = struct{}{}
+		}
+	}
 	if len(names) == 0 {
 		return ""
 	}
@@ -252,6 +281,75 @@ func identityPassthroughLine(id Identity) string {
 		quoted[i] = `"` + n + `"`
 	}
 	return "identityEnvPassthrough  = [" + strings.Join(quoted, ", ") + "]"
+}
+
+// hasPlugin returns true when any PluginRef in the list has the given ID.
+func hasPlugin(plugins []PluginRef, id string) bool {
+	for _, p := range plugins {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// s5cmdBucketAndPrefix splits an S3 URI (e.g. "s3://bucket/prefix/path")
+// into the bucket root ("s3://bucket") and the first path segment ("prefix").
+// Used to populate s5cmd.workDir.bucket and s5cmd.workDir.prefix.
+func s5cmdBucketAndPrefix(workDir string) (bucket, prefix string) {
+	// Strip s3:// or s3a:// scheme
+	rest := workDir
+	if strings.HasPrefix(rest, "s3a://") {
+		rest = rest[6:]
+	} else if strings.HasPrefix(rest, "s3://") {
+		rest = rest[5:]
+	}
+	// rest = "bucket/prefix/..."
+	slash := strings.Index(rest, "/")
+	if slash < 0 {
+		return "s3://" + rest, ""
+	}
+	bucketName := rest[:slash]
+	remainder := strings.TrimPrefix(rest[slash:], "/")
+	// Take only the first path segment as the prefix
+	if next := strings.Index(remainder, "/"); next >= 0 {
+		prefix = remainder[:next]
+	} else {
+		prefix = remainder
+	}
+	return "s3://" + bucketName, prefix
+}
+
+// buildS5cmdBlock emits the nomad.s5cmd { ... } config block for nf-nomad-s5cmd.
+// Credentials and endpoint are read from the head task's environment (already
+// injected via StaticEnv) so workers inherit the same values via the bootstrap
+// script's env exports.
+//
+// skipTLS, when true, adds `useTLS = false` — required when the cluster's S3
+// endpoint uses a private CA that worker images don't trust (abc-seedling norm).
+func buildS5cmdBlock(workDir string, skipTLS bool) string {
+	bucket, prefix := s5cmdBucketAndPrefix(workDir)
+	prefixLine := ""
+	if prefix != "" {
+		prefixLine = fmt.Sprintf("\n      prefix  = %q", prefix)
+	}
+	tlsLine := ""
+	if skipTLS {
+		tlsLine = "\n      useTLS          = false   // private CA — disables cert verification"
+	}
+	return fmt.Sprintf(`  s5cmd {
+    workDir {
+      enabled = true
+      bucket  = %q%s
+    }
+    s3 {
+      endpoint        = System.getenv("NF_MINIO_ENDPOINT") ?: ""
+      accessKeyId     = System.getenv("AWS_ACCESS_KEY_ID") ?: ""
+      secretAccessKey = System.getenv("AWS_SECRET_ACCESS_KEY") ?: ""
+      usePathStyle    = true%s
+    }
+  }
+`, bucket, prefixLine, tlsLine)
 }
 
 // EnvVarNames returns the head-task env var names whose values nf-nomad
@@ -564,14 +662,38 @@ func parseWaveTokenSecret(s string) (path, key string) {
 func buildNextflowConfig(spec Spec) string {
 	var sb strings.Builder
 
-	// nf-nomad volumes block: omit when work dir is S3 (no shared local disk needed).
+	// nf-nomad volumes block. When work dir is S3 and nf-nomad-s5cmd is in the
+	// plugin list, mount the nf-work host volume as /nxf-work so workers can
+	// find the s5cmd binary at /nxf-work/bin/s5cmd (see S5cmdNomadInterop).
+	// Otherwise omit the volume when S3 is the work dir (no shared local disk needed).
 	hostVol := spec.HostVolume
 	if hostVol == "" || hostVol == "-" {
 		hostVol = "nextflow-work"
 	}
-	volumesLine := fmt.Sprintf(`volumes = [{ type "host" name "%s" path "%s" }]`, hostVol, spec.WorkDir)
+	// Use Groovy map literal syntax ([key: val, ...]) rather than the DSL closure form
+	// ({ type "host" name "nf-work" ... }) to avoid a Nextflow ≥26.04.2 config-parser
+	// regression: the parser now chokes on `type` as a bare identifier inside a list
+	// closure (it treats it as a reserved keyword). Map syntax is unambiguous to any
+	// Groovy/Nextflow parser version.
+	volumesLine := fmt.Sprintf(`volumes = [[type: "host", name: "%s", path: "%s"]]`, hostVol, spec.WorkDir)
 	if isS3URI(spec.WorkDir) || spec.HostVolume == "-" {
-		volumesLine = `volumes = []`
+		if isS3URI(spec.WorkDir) && hasPlugin(spec.Plugins, "nf-nomad-s5cmd") {
+			// Mount nf-work host volume into workers — bootstrap script prepends /nxf-work/bin
+			// to PATH so s5cmd is found at /nxf-work/bin/s5cmd (see S5cmdNomadInterop.bootstrapScript).
+			// readOnly omitted: nf-nomad auto-marks the first volume as workDir, which
+			// conflicts with readOnly=true per validate(); the mount is effectively read-only
+			// by convention (workers only read the s5cmd binary, never write to nf-work).
+			volumesLine = `volumes = [[type: "host", name: "nf-work", path: "/nxf-work"]]`
+		} else {
+			volumesLine = `volumes = []`
+		}
+	}
+
+	// nf-nomad-s5cmd config block: emitted inside nomad { } when S3 work dir
+	// AND nf-nomad-s5cmd plugin is loaded. Derives bucket and prefix from WorkDir.
+	s5cmdBlock := ""
+	if isS3URI(spec.WorkDir) && hasPlugin(spec.Plugins, "nf-nomad-s5cmd") {
+		s5cmdBlock = buildS5cmdBlock(spec.WorkDir, spec.S5cmdSkipTLS)
 	}
 
 	// Per-process Nomad constraint via the `constraints` process directive.
@@ -616,9 +738,13 @@ process {
 		pluginsBody = strings.Join(lines, "\n")
 	}
 
-	// Container runtime block: docker (default), singularity, or apptainer.
+	// Container runtime block: docker (default), singularity, apptainer, or podman.
 	// For singularity/apptainer with Wave, ociAutoPull lets the local runtime convert
 	// the Wave OCI proxy image to SIF — no Wave-side SIF build required (Wave Lite safe).
+	// For podman: nf-nomad 0.4.0-edge5 has a regression where it calls PodmanConfig.setEnabled()
+	// which Nextflow 26.04.2 does not support. We therefore do NOT emit a podman {} block; instead
+	// withContainerFlag is set to "-with-podman" and appended to the nextflow run command, which
+	// enables Podman without going through the setEnabled code path.
 	var containerBlock string
 	switch strings.ToLower(spec.ContainerRuntime) {
 	case "singularity":
@@ -643,6 +769,14 @@ process {
   enabled = true
 }`
 		}
+	case "podman":
+		// nf-nomad always uses the Nomad Docker task driver for worker jobs
+		// (isContainerNative() = true, JobBuilder hardcodes driver = "docker").
+		// Emitting podman { enabled = true } triggers a Nextflow core bug (≥25.10.0):
+		// TaskRun.setEnabled() is called on an immutable PodmanConfig (no setter).
+		// Since nf-nomad ignores the podman config block for worker execution anyway,
+		// we fall through to the docker default which works correctly.
+		fallthrough
 	default:
 		containerBlock = `docker {
   enabled = true
@@ -702,6 +836,7 @@ nomad {
     namespace                = "%s"
     deleteOnCompletion       = false
     cpuMode                  = "cores"
+    privileged               = false
     failOnPlacementFailure   = true
     placementFailureTimeout  = "5m"
     %s
@@ -711,8 +846,8 @@ nomad {
       reschedule: [attempts: 1]
     ]
   }
-}
-%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity), waveBlock, processConstraint)
+%s}
+%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), s5cmdBlock, waveBlock, processConstraint)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")
