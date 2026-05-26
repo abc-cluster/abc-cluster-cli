@@ -36,6 +36,32 @@ func defaultDevPlugins() []PluginRef {
 	}
 }
 
+// defaultClusterPlugins is the baseline plugin set this abc-cluster build
+// assumes every Nextflow pipeline launched against this cluster needs. Merged
+// into spec.Plugins after spec defaults run, only for IDs not already pinned
+// by --plugin or by a saved spec — so user overrides win.
+//
+// These are published Nextflow plugins (resolved via Nextflow's standard
+// registry), distinct from the 99.99.99 dev bundle that flows via --dev-plugins.
+//
+// TODO: move to cluster-capability config (contexts.<name>.cluster.plugins)
+// once a second deployment needs a different baseline. Hard-coded here keeps
+// the seedling-prod baseline visible in one place for now.
+//
+// Precedence (highest → lowest):
+//  1. --plugin id@version (CLI override; explicit operator intent)
+//  2. saved-spec PluginRef (--from-file)
+//  3. defaultClusterPlugins() (this function)
+//
+// --dev-plugins replaces the entire set with defaultDevPlugins() (99.99.99
+// versions), bypassing this baseline.
+func defaultClusterPlugins() []PluginRef {
+	return []PluginRef{
+		{ID: "nf-nomad", Version: "0.4.0-edge7"},
+		{ID: "nf-nomad-s5cmd", Version: "0.1.0"},
+	}
+}
+
 // defaultDevPluginBinaries names the cluster tool binaries the dev plugin set
 // requires at runtime. Each entry must be registered in tools.toml so its
 // per-arch URL can be resolved via tools.ArtifactURL(name, "").

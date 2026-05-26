@@ -122,12 +122,22 @@ func generateHeadJobHCLWithStaticEnvAndFlagsEx(spec *PipelineSpec, nomadAddr, no
 	// When S3 credentials are injected into the head job via staticEnv (i.e.
 	// SkipNomadVarCreds == true), nf-nomad must mirror them onto every worker
 	// job so processes can write .exitcode and result files back to the S3
-	// work dir. Collect the keys that are actually present in staticEnv.
-	var extraPassthrough []string
+	// work dir.
+	//
+	// SECURITY: split into two lists. AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+	// are secrets — they go into `secretEnvPassthrough` (worker task env ONLY,
+	// never job.meta — nf-nomad refuses to mirror these to meta). The endpoint
+	// is non-secret runtime config and stays in identityEnvPassthrough alongside
+	// abc_* identity fields, where it's available for jurist/xtdb correlation.
+	var extraPassthrough []string  // identity — env + meta (non-secret)
+	var secretPassthrough []string // secret — env only, never meta
 	if skipNomadVarCreds {
-		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NF_MINIO_ENDPOINT"} {
+		if staticEnv["NF_MINIO_ENDPOINT"] != "" {
+			extraPassthrough = append(extraPassthrough, "NF_MINIO_ENDPOINT")
+		}
+		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} {
 			if staticEnv[k] != "" {
-				extraPassthrough = append(extraPassthrough, k)
+				secretPassthrough = append(secretPassthrough, k)
 			}
 		}
 	}
@@ -160,6 +170,7 @@ func generateHeadJobHCLWithStaticEnvAndFlagsEx(spec *PipelineSpec, nomadAddr, no
 		StaticEnv:               staticEnv,
 		SkipNomadVarCreds:       skipNomadVarCreds,
 		ExtraPassthroughEnvKeys: extraPassthrough,
+		SecretPassthroughEnvKeys: secretPassthrough,
 		WaveEndpoint:      spec.WaveEndpoint,
 		FusionEnabled:     spec.FusionEnabled,
 		ContainerRuntime:  spec.ContainerRuntime,

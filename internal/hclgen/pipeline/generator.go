@@ -158,11 +158,24 @@ type Spec struct {
 
 	// ExtraPassthroughEnvKeys lists additional env var names (already set on
 	// the head task via StaticEnv) that nf-nomad should mirror onto every
-	// child Nomad job via identityEnvPassthrough. Use this to propagate S3
-	// credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, NF_MINIO_ENDPOINT)
-	// to worker tasks when they are injected via staticEnv rather than through
-	// Nomad Variables.
+	// child Nomad job via identityEnvPassthrough. Use this for non-secret
+	// runtime config (e.g. NF_MINIO_ENDPOINT) — values flow to both task
+	// env AND job.meta on the child job (visible via `nomad job inspect`).
 	ExtraPassthroughEnvKeys []string
+
+	// SecretPassthroughEnvKeys lists env var names that nf-nomad should
+	// mirror onto every child Nomad job's TASK ENV ONLY — never into
+	// job.meta. Use this for secrets (AWS_ACCESS_KEY_ID,
+	// AWS_SECRET_ACCESS_KEY, registry creds) that the worker needs at
+	// runtime but must not leak through `nomad job inspect`.
+	//
+	// Requires nf-nomad ≥ the secretEnvPassthrough patch (2026-05-25).
+	// On older nf-nomad, this config key is ignored (silently) — the
+	// abc CLI keeps these out of identityEnvPassthrough so secrets never
+	// reach meta even when the worker can't read them. Operators on
+	// pre-patch nf-nomad must instead use the nomadVar-based credential
+	// path (SkipNomadVarCreds = false).
+	SecretPassthroughEnvKeys []string
 }
 
 // PluginRef is one entry in a Nextflow plugins { ... } block.
@@ -281,6 +294,23 @@ func identityPassthroughLine(id Identity, extra ...string) string {
 		quoted[i] = `"` + n + `"`
 	}
 	return "identityEnvPassthrough  = [" + strings.Join(quoted, ", ") + "]"
+}
+
+// secretPassthroughLine emits the nomad.jobs.secretEnvPassthrough config
+// line. Distinct from identityEnvPassthrough — nf-nomad routes these to
+// child task env ONLY, never into job.meta. Use for AWS keys, registry
+// creds, etc. Empty list emits nothing (legacy byte-identical).
+func secretPassthroughLine(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	quoted := make([]string, len(sorted))
+	for i, n := range sorted {
+		quoted[i] = `"` + n + `"`
+	}
+	return "secretEnvPassthrough    = [" + strings.Join(quoted, ", ") + "]"
 }
 
 // hasPlugin returns true when any PluginRef in the list has the given ID.
@@ -841,13 +871,14 @@ nomad {
     placementFailureTimeout  = "5m"
     %s
     %s
+    %s
     failures = [
       restart   : [attempts: 1, mode: "fail"],
       reschedule: [attempts: 1]
     ]
   }
 %s}
-%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), s5cmdBlock, waveBlock, processConstraint)
+%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), secretPassthroughLine(spec.SecretPassthroughEnvKeys), s5cmdBlock, waveBlock, processConstraint)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")
@@ -876,7 +907,13 @@ func buildEntrypoint(spec Spec) string {
 	// is the cheap, robust fix; the per-run cost (re-extracting the plugin
 	// bundle) is dwarfed by image-pull time.
 	nxfHome := "/local/.nxf-home"
-	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s\n\n", nxfHome)
+	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s\n", nxfHome)
+	// NXF_SYNTAX_PARSER=v1 forces the legacy (pre-25) config parser. Required
+	// for pipelines that use bareword "$ENV_VAR" interpolation in nextflow.config
+	// (e.g. nextflow-io/rnaseq-nf v2.3's Azure block). Nextflow 25+ defaults to
+	// the strict v2 parser which rejects undefined identifiers at parse time.
+	// Setting v1 is a no-op for pipelines that already use env('VAR') / params.
+	sb.WriteString("export NXF_SYNTAX_PARSER=v1\n\n")
 
 	// Move the auto-extracted plugin bundle into NXF_HOME/plugins before
 	// invoking nextflow. Nomad's artifact stanza (with ?archive=zip) unpacks

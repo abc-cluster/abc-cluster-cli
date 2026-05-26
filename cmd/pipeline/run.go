@@ -129,6 +129,16 @@ EXAMPLES
 		"Load the nf-abc-cluster-dev plugin bundle into the head container "+
 			"(requires `abc admin tools push` to have shipped the bundle)")
 
+	// Pin specific published plugin versions — repeatable, format `id@version`.
+	// Use to test a published plugin release without --dev-plugins, e.g.
+	//   --plugin nf-nomad@0.4.0-edge7 --plugin nf-nomad-s5cmd@0.1.0
+	// Plugins listed here go directly into the generated plugins {} block;
+	// Nextflow resolves them from its standard registry. Mutually exclusive
+	// with --dev-plugins (validated below).
+	cmd.Flags().StringArray("plugin", nil,
+		"Pin a Nextflow plugin to a specific version (repeatable, format `id@version`). "+
+			"Use for testing published plugin releases without the dev bundle.")
+
 	// Dev Nextflow binary — replace the image's built-in nextflow with a custom fork.
 	// Independent of --dev-plugins; the two flags can be combined freely.
 	cmd.Flags().Bool("dev-nextflow", false,
@@ -261,6 +271,24 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if devPlugins, _ := cmd.Flags().GetBool("dev-plugins"); devPlugins {
 		override.DevPlugins = true
 	}
+	// --plugin id@version (repeatable). Parsed into PluginRef entries; the
+	// generator's plugins {} block emits them verbatim. Empty value (no flag)
+	// leaves override.Plugins nil so the spec's saved plugins (if any) win.
+	if pluginSpecs, _ := cmd.Flags().GetStringArray("plugin"); len(pluginSpecs) > 0 {
+		for _, ps := range pluginSpecs {
+			ps = strings.TrimSpace(ps)
+			if ps == "" {
+				continue
+			}
+			id, ver, _ := strings.Cut(ps, "@")
+			id = strings.TrimSpace(id)
+			ver = strings.TrimSpace(ver)
+			if id == "" {
+				return fmt.Errorf("--plugin: empty plugin id in %q (expected `id@version`)", ps)
+			}
+			override.Plugins = append(override.Plugins, PluginRef{ID: id, Version: ver})
+		}
+	}
 	if devNextflow, _ := cmd.Flags().GetBool("dev-nextflow"); devNextflow {
 		override.DevNextflow = true
 	}
@@ -349,6 +377,46 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		}
 		if len(spec.ExtraBinaries) == 0 {
 			spec.ExtraBinaries = defaultDevPluginBinaries()
+		}
+	}
+
+	// Cluster-baseline plugins — every pipeline launched here needs nf-nomad
+	// (the executor) and, on seedling-prod, nf-nomad-s5cmd (work-dir over S3).
+	// Merge defaultClusterPlugins() AFTER any --plugin / saved-spec entries so
+	// operator overrides win on a per-ID basis. Skipped entirely under
+	// --dev-plugins, which already replaced spec.Plugins with the 99.99.99 set.
+	if !spec.DevPlugins {
+		pinned := map[string]bool{}
+		for _, p := range spec.Plugins {
+			pinned[p.ID] = true
+		}
+		for _, p := range defaultClusterPlugins() {
+			if !pinned[p.ID] {
+				spec.Plugins = append(spec.Plugins, p)
+			}
+		}
+	}
+
+	// Plugin-driven binary requirements — auto-add cluster tool binaries when
+	// the corresponding plugin is loaded, regardless of --dev-plugins. The
+	// head bootstrap shells out to these and the worker bootstrap probes
+	// PATH for them; without an artifact stanza pulling them into local/bin
+	// the head fails with "<tool>: command not found".
+	//
+	// Operators can still pin custom binaries via spec.ExtraBinaries; we
+	// only append, never replace.
+	pluginToBinary := map[string]string{
+		"nf-nomad-s5cmd": "s5cmd",
+		"nf-rclone":      "rclone",
+	}
+	have := map[string]bool{}
+	for _, b := range spec.ExtraBinaries {
+		have[b] = true
+	}
+	for _, p := range spec.Plugins {
+		if bin, ok := pluginToBinary[p.ID]; ok && !have[bin] {
+			spec.ExtraBinaries = append(spec.ExtraBinaries, bin)
+			have[bin] = true
 		}
 	}
 
