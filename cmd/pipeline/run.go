@@ -615,12 +615,16 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 		return err
 	}
 
+	// Display-only job ID for the "Pipeline submitted" banner. Must match
+	// the actual job ID embedded in jobJSON (set via headJobName() at the
+	// top of this function — runTag already encodes the submitter's whoami
+	// slug, so the slug is implicit). Historical code re-prepended the slug
+	// here, which doubled the prefix in the user-facing output (e.g.
+	// "slate-slate-sunbird-..." vs the real "slate-sunbird-..."); fixed
+	// 2026-05-26 — relying on spec.Name alone keeps display ↔ Nomad in sync.
 	jobName := "nextflow-head"
 	if spec.Name != "" {
 		jobName = spec.Name
-	}
-	if slug := utils.ActiveWhoamiSlug(); slug != "" {
-		jobName = slug + "-" + jobName
 	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting pipeline head job to Nomad...\n")
