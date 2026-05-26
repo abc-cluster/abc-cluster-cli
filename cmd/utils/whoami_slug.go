@@ -88,3 +88,52 @@ func ActiveWhoamiSlug() string {
 	}
 	return WhoamiSlug(ctx.Auth.Whoami)
 }
+
+// WhoamiPathSegment converts an auth.whoami value into a full-length
+// path-safe identifier suitable for use as a directory name inside an
+// S3 / MinIO bucket. Unlike WhoamiSlug (which abbreviates to 5 chars
+// for job-id prefixes), this preserves the full identity so users can
+// recognise their own paths at a glance.
+//
+// Rules:
+//   - When the value contains colons (e.g. "abc:default:cluster-admin"),
+//     only the rightmost segment is used.
+//   - Underscores → hyphens (so `slate_sunbird` → `slate-sunbird`).
+//   - Lowercased; everything outside [a-z0-9-] is stripped.
+//   - Leading / trailing hyphens trimmed; consecutive hyphens collapsed.
+//   - Returns "" when input is empty or produces an empty result.
+func WhoamiPathSegment(whoami string) string {
+	whoami = strings.TrimSpace(whoami)
+	if whoami == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(whoami, ":"); idx >= 0 {
+		whoami = whoami[idx+1:]
+	}
+	whoami = strings.ReplaceAll(strings.ToLower(strings.TrimSpace(whoami)), "_", "-")
+	var b strings.Builder
+	for _, r := range whoami {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+	return strings.Trim(out, "-")
+}
+
+// ActiveWhoamiPathSegment returns WhoamiPathSegment applied to the active
+// context's auth.whoami value, or "" if config is unavailable.
+func ActiveWhoamiPathSegment() string {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	ctx := cfg.ActiveCtx()
+	if ctx.Auth == nil {
+		return ""
+	}
+	return WhoamiPathSegment(ctx.Auth.Whoami)
+}

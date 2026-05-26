@@ -117,6 +117,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		Namespace:           spec.Namespace,
 		Region:              spec.Region,
 		Datacenters:         spec.Datacenters,
+		NodePool:            spec.NodePool,
 		Priority:            spec.Priority,
 		Nodes:               spec.Nodes,
 		Cores:               spec.Cores,

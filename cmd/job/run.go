@@ -196,7 +196,8 @@ EXAMPLES
 	cmd.Flags().String("name", "", "Job name")
 	cmd.Flags().String("namespace", "", "Nomad namespace")
 	cmd.Flags().String("region", "", "Nomad region")
-	cmd.Flags().StringSlice("dc", nil, "Target datacenter(s)")
+	cmd.Flags().StringSlice("dc", nil, "Target datacenter(s) — overrides active context's admin.services.nomad.datacenters")
+	cmd.Flags().String("node-pool", "", "Nomad node-pool the job must land in — overrides active context's admin.services.nomad.head_pool")
 	cmd.Flags().Int("priority", 0, "Scheduler priority (1-100)")
 	cmd.Flags().Int("nodes", 0, "Number of group instances")
 	cmd.Flags().Int("cores", 0, "CPU cores per task")
@@ -382,6 +383,29 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	if v, _ := cmd.Flags().GetStringSlice("dc"); len(v) > 0 {
 		spec.Datacenters = v
+	}
+	if v, _ := cmd.Flags().GetString("node-pool"); v != "" {
+		spec.NodePool = v
+	}
+	// Context fallback: when neither flag nor spec carries datacenters /
+	// node-pool, infer from the active context's admin.services.nomad
+	// configuration. Mirrors cmd/pipeline/run.go's analogous fallback.
+	// On seedling-prod: datacenters=["seedling-prod"], node_pool="platform".
+	if c, err := config.Load(); err == nil {
+		actx := c.ActiveCtx()
+		if len(spec.Datacenters) == 0 {
+			if dcs := actx.NomadDatacenters(); len(dcs) > 0 {
+				spec.Datacenters = dcs
+			}
+		}
+		if spec.NodePool == "" {
+			if hp := actx.NomadHeadPool(); hp != "" {
+				spec.NodePool = hp
+			} else {
+				// Build-time fallback, same as the pipeline path.
+				spec.NodePool = "platform"
+			}
+		}
 	}
 	if v, _ := cmd.Flags().GetInt("priority"); v != 0 {
 		spec.Priority = v

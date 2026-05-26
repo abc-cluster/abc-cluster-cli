@@ -608,8 +608,16 @@ func (c *Config) Set(key, value string) error {
 					ctx.Admin.Services.Nomad.Region = value
 				case "namespace":
 					ctx.Admin.Services.Nomad.Namespace = value
+				case "datacenters":
+					// Accept comma-separated input — "seedling-prod" or
+					// "seedling-prod,seedling-canary". Empty clears.
+					ctx.Admin.Services.Nomad.Datacenters = splitDatacenterList(value)
+				case "head_pool":
+					ctx.Admin.Services.Nomad.HeadPool = strings.TrimSpace(value)
+				case "worker_pool":
+					ctx.Admin.Services.Nomad.WorkerPool = strings.TrimSpace(value)
 				default:
-					return fmt.Errorf("unknown admin.services.nomad field %q (supported: addr, token, region, namespace)", parts[5])
+					return fmt.Errorf("unknown admin.services.nomad field %q (supported: addr, token, region, namespace, datacenters, head_pool, worker_pool)", parts[5])
 				}
 				c.Contexts[canon] = ctx
 				return nil
@@ -815,11 +823,18 @@ func (c *Config) Unset(key string) error {
 					ctx.Admin.Services.Nomad.Region = ""
 				case "namespace":
 					ctx.Admin.Services.Nomad.Namespace = ""
+				case "datacenters":
+					ctx.Admin.Services.Nomad.Datacenters = nil
+				case "head_pool":
+					ctx.Admin.Services.Nomad.HeadPool = ""
+				case "worker_pool":
+					ctx.Admin.Services.Nomad.WorkerPool = ""
 				default:
-					return fmt.Errorf("unknown admin.services.nomad field %q (supported: addr, token, region, namespace)", parts[5])
+					return fmt.Errorf("unknown admin.services.nomad field %q (supported: addr, token, region, namespace, datacenters, head_pool, worker_pool)", parts[5])
 				}
 				n := ctx.Admin.Services.Nomad
-				if n.Addr == "" && n.Token == "" && n.Region == "" && n.Namespace == "" {
+				if n.Addr == "" && n.Token == "" && n.Region == "" && n.Namespace == "" &&
+					len(n.Datacenters) == 0 && n.HeadPool == "" && n.WorkerPool == "" {
 					ctx.Admin.Services.Nomad = nil
 				}
 				c.Contexts[canon] = ctx

@@ -71,7 +71,28 @@ EXAMPLES
 	cmd.Flags().String("revision", "", "Pipeline revision (branch, tag, or commit SHA)")
 	cmd.Flags().String("profile", "", "Nextflow config profile(s), comma-separated")
 	cmd.Flags().String("config", "", "Extra nextflow config file to merge")
-	cmd.Flags().String("work-dir", "", "Shared work directory: local path or s3:// URI (default: /work/nextflow-work)")
+	cmd.Flags().String("work-dir", "", "Shared work directory: local path or s3:// URI. When omitted, auto-derived under s3://<group-bucket>/<scope>/<user>/workdir/<run-tag>/ — see --share and --visibility.")
+
+	// Visibility scope for auto-derived work-dir + outdir paths. Default is
+	// "user" (private to the submitter + group admins). --share is a boolean
+	// shortcut for --visibility=group (writable by submitter, readable by
+	// group members). Spec: abc-bucket-layout-phase-1.md.
+	cmd.Flags().Bool("share", false,
+		"Make auto-derived work-dir + results paths group-readable (shortcut for --visibility=group)")
+	cmd.Flags().String("visibility", "",
+		"Visibility scope for auto-derived work-dir + results: 'user' (default; private) or 'group' (shared with group members). "+
+			"Overrides --share when both set. No effect on explicit --work-dir / --param outdir=…")
+
+	// Node-pool placement. Heads + workers go to different pools by
+	// default on multi-pool clusters (platform / compute on seedling).
+	// Operator-pinned via active context's admin.services.nomad.{head_pool,
+	// worker_pool}; per-run override via these flags.
+	cmd.Flags().String("head-pool", "",
+		"Nomad node-pool the pipeline head must land in. Overrides the active context's admin.services.nomad.head_pool. "+
+			"Empty = use the active context's default (typically 'platform').")
+	cmd.Flags().String("worker-pool", "",
+		"Nomad node-pool nf-nomad workers should land in. Overrides the active context's admin.services.nomad.worker_pool. "+
+			"Bypassed when --pin-workers is set. Empty = use the active context's default (typically 'compute').")
 	cmd.Flags().String("host-volume", "", "Nomad host volume name for the work dir (default: nextflow-work; use \"-\" to disable)")
 	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (workers spread freely; combine with --pin-workers for single-host runs)")
 	cmd.Flags().Bool("pin-workers", false, "When --node is set, ALSO pin every spawned process to that node (single-host run; needed when there is no shared FS / nf-rclone)")
@@ -219,6 +240,12 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("worker-exclude-host"); v != "" {
 		override.WorkerExcludeHost = v
 	}
+	if v, _ := cmd.Flags().GetString("head-pool"); v != "" {
+		override.HeadPool = v
+	}
+	if v, _ := cmd.Flags().GetString("worker-pool"); v != "" {
+		override.WorkerPool = v
+	}
 	if v, _ := cmd.Flags().GetStringSlice("datacenter"); len(v) > 0 {
 		override.Datacenters = v
 	}
@@ -355,6 +382,86 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	spec := mergeSpec(base, override)
+
+	// Mint the run tag BEFORE spec.defaults() so the bucket-layout
+	// derivation below can use it. Spec defaults() sets spec.WorkDir to
+	// "/work/nextflow-work" if still empty — that's the legacy fallback;
+	// we want the user-rooted S3 default to take precedence on clusters
+	// where the active context yields a group bucket.
+	runTag := newRunTag()
+	spec.RunTag = runTag
+
+	// Bucket-layout defaults — auto-derive --work-dir and --outdir under
+	// s3://<group-bucket>/<scope>/<user>/{workdir,results}/<run-tag>/ so
+	// users stop inventing paths. Spec: abc-bucket-layout-phase-1.md.
+	shareFlag, _ := cmd.Flags().GetBool("share")
+	visFlag, _ := cmd.Flags().GetString("visibility")
+	scope, scopeErr := resolveScope(visFlag, shareFlag)
+	if scopeErr != nil {
+		return scopeErr
+	}
+	workDirSource := "auto"
+	outDirSource := "auto"
+	if c, cfgErr := abccfg.Load(); cfgErr == nil {
+		actx := c.ActiveCtx()
+		groupBucket := strings.TrimSpace(actx.NomadNamespace())
+		userSeg := ""
+		if actx.Auth != nil {
+			userSeg = utils.WhoamiPathSegment(actx.Auth.Whoami)
+		}
+
+		// Datacenter fallback: when neither --datacenter nor a saved-spec
+		// value supplied a list, read contexts.<name>.admin.services.nomad.
+		// datacenters. Operators set this once per context; users running
+		// `abc pipeline run` no longer need --datacenter on every command.
+		// CLI flag + saved spec still win when present.
+		if len(spec.Datacenters) == 0 {
+			if dcs := actx.NomadDatacenters(); len(dcs) > 0 {
+				spec.Datacenters = dcs
+			}
+		}
+
+		// Head- + worker-pool fallback. Resolution order:
+		//   1. CLI flag (--head-pool / --worker-pool) — already on spec via override
+		//   2. Active context (admin.services.nomad.{head_pool,worker_pool})
+		//   3. Build-time defaults (platform / compute) — seedling-shaped
+		// Build-time defaults are deliberately seedling-named; operators
+		// running on a single-pool cluster should clear them by setting
+		// admin.services.nomad.head_pool = "" via `abc config set`.
+		if spec.HeadPool == "" {
+			if hp := actx.NomadHeadPool(); hp != "" {
+				spec.HeadPool = hp
+			} else {
+				spec.HeadPool = "platform"
+			}
+		}
+		if spec.WorkerPool == "" {
+			if wp := actx.NomadWorkerPool(); wp != "" {
+				spec.WorkerPool = wp
+			} else {
+				spec.WorkerPool = "compute"
+			}
+		}
+		if spec.WorkDir == "" && groupBucket != "" && userSeg != "" {
+			spec.WorkDir = derivedWorkDir(groupBucket, scope, userSeg, runTag)
+		} else if spec.WorkDir != "" {
+			workDirSource = "user-set"
+			if w, _ := validateExplicitWorkDir(spec.WorkDir, groupBucket); w != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  WARNING: %s\n", w)
+			}
+		}
+		if groupBucket != "" && userSeg != "" {
+			if spec.Params == nil {
+				spec.Params = map[string]any{}
+			}
+			if _, ok := spec.Params["outdir"]; ok {
+				outDirSource = "user-set"
+			} else {
+				spec.Params["outdir"] = derivedOutDir(groupBucket, scope, userSeg, runTag)
+			}
+		}
+	}
+
 	spec.defaults()
 
 	// Translate secret://name param values to Nomad template refs for abc-nodes.
@@ -445,8 +552,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	// NomadHelper.childJobName prefers this over its session-derived
 	// fallback. Single-prefix correlation:
 	//   nomad job status -prefix nf-<run-tag>-     → head + every worker
-	runTag := newRunTag()
-	spec.RunTag = runTag
+	// runTag + bucket-layout derivation moved upstream (before spec.defaults).
 
 	// Pipeline slug leads the head job-id and every child job-id. `--name`
 	// (user override) takes precedence over the auto-derived slug so a user
@@ -481,7 +587,13 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	// Auto-attach to active project / investigation (spec abc-investigation §E).
 	runID := autoAttachPipelineRun(cmd, spec)
 
-	if err := submitAndWatch(cmd.Context(), cmd, nc, spec, hcl); err != nil {
+	// Banner context for the bucket-layout lines printed by submitAndWatch.
+	bannerCtx := bucketLayoutBanner{
+		Scope:         scope,
+		WorkDirSource: workDirSource,
+		OutDirSource:  outDirSource,
+	}
+	if err := submitAndWatch(cmd.Context(), cmd, nc, spec, hcl, bannerCtx); err != nil {
 		return err
 	}
 	// Spawn the run-watcher to write back completion fields. spec §E + OQ-6.
@@ -584,7 +696,17 @@ func nomadConnFromCmd(cmd *cobra.Command) (string, string) {
 	return addr, token
 }
 
-func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClient, spec *PipelineSpec, hcl string) error {
+// bucketLayoutBanner carries the resolved scope + source labels needed to
+// render the submit-time banner. Built once by the caller (where the
+// active context + flags are available); passed into submitAndWatch so
+// the banner stays at the existing print site.
+type bucketLayoutBanner struct {
+	Scope         string // "user" or "group"
+	WorkDirSource string // "auto" or "user-set"
+	OutDirSource  string // "auto" or "user-set"
+}
+
+func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClient, spec *PipelineSpec, hcl string, banner bucketLayoutBanner) error {
 	log := debuglog.FromContext(ctx)
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Parsing HCL via Nomad...\n")
@@ -643,6 +765,29 @@ func submitAndWatch(ctx context.Context, cmd *cobra.Command, nc *utils.NomadClie
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "\n  Pipeline submitted\n")
 	fmt.Fprintf(out, "  Job        %s\n", jobName)
+	// Bucket-layout banner lines — spec abc-bucket-layout-phase-1.md.
+	// Always print so users learn the layout (and notice when their
+	// explicit path differs from the auto-default).
+	if spec.WorkDir != "" {
+		fmt.Fprintf(out, "  Workdir    %s [%s]\n", spec.WorkDir, banner.WorkDirSource)
+	}
+	if od, ok := spec.Params["outdir"]; ok && od != nil {
+		if odStr := fmt.Sprintf("%v", od); odStr != "" {
+			fmt.Fprintf(out, "  Results    %s [%s]\n", odStr, banner.OutDirSource)
+		}
+	}
+	switch banner.Scope {
+	case scopeGroup:
+		fmt.Fprintf(out, "  Visibility group-readable (--share / --visibility=group)\n")
+	case scopeUser:
+		// Only mention the --share hint when we actually auto-derived (no
+		// point teaching the flag when the user explicitly set their path).
+		if banner.WorkDirSource == "auto" {
+			fmt.Fprintf(out, "  Visibility user-private (use --share for group-visible)\n")
+		} else {
+			fmt.Fprintf(out, "  Visibility user-private\n")
+		}
+	}
 	fmt.Fprintf(out, "  Eval ID    %s\n", resp.EvalID)
 	if resp.Warnings != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Warnings: %s\n", resp.Warnings)

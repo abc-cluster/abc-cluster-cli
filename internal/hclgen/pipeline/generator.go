@@ -73,6 +73,22 @@ type Spec struct {
 	// NodeConstraint for the canonical "head pinned, workers excluded" pattern.
 	WorkerExcludeHost string
 
+	// HeadPool is the Nomad node-pool name the head job must land in.
+	// On seedling: "platform". When empty, no `node_pool = …` attribute
+	// is emitted on the head job, so Nomad uses its `default` pool —
+	// fine for single-pool clusters; placement-failure on clusters that
+	// require all jobs to declare a non-default pool.
+	HeadPool string
+
+	// WorkerPool is the Nomad node-pool name nf-nomad-spawned worker jobs
+	// (per-process) should land in. On seedling: "compute". When empty,
+	// no `nomad.jobs.nodePool = …` line is emitted in the generated
+	// nextflow.headjob.config; workers go to Nomad's default pool. The
+	// per-process `--pin-workers` constraint overrides this — workers
+	// pinned to a specific node by hostname are not subject to the pool
+	// constraint.
+	WorkerPool string
+
 	// PluginBundleURL, when non-empty, makes the head job pull this artifact zip
 	// (typically the nf-abc-cluster-dev meta-plugin bundle) and extract it into
 	// $NXF_HOME/plugins before running Nextflow. Used to ship development plugin
@@ -296,6 +312,23 @@ func identityPassthroughLine(id Identity, extra ...string) string {
 	return "identityEnvPassthrough  = [" + strings.Join(quoted, ", ") + "]"
 }
 
+// workerNodePoolLine emits the `nodePool = "<pool>"` line inside the
+// generated nomad.jobs { ... } config block, which routes every
+// nf-nomad-spawned worker job to the named Nomad node-pool.
+//
+// Skipped (empty string) when `pinWorkers` is true — the --pin-workers
+// path uses a per-process node-name constraint, and a pool restriction
+// on top of it would either be redundant (head's node is in the pool)
+// or contradictory (head's node is NOT in the pool → placement fails).
+// Also skipped when workerPool is empty (operator/cluster doesn't use
+// pools — Nomad's default is fine).
+func workerNodePoolLine(workerPool string, pinWorkers bool) string {
+	if pinWorkers || workerPool == "" {
+		return ""
+	}
+	return fmt.Sprintf(`nodePool                 = %q`, workerPool)
+}
+
 // secretPassthroughLine emits the nomad.jobs.secretEnvPassthrough config
 // line. Distinct from identityEnvPassthrough — nf-nomad routes these to
 // child task env ONLY, never into job.meta. Use for AWS keys, registry
@@ -459,6 +492,15 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	jobBody.SetAttributeValue("type", cty.StringVal("batch"))
 	if spec.Namespace != "" && spec.Namespace != "default" {
 		jobBody.SetAttributeValue("namespace", cty.StringVal(spec.Namespace))
+	}
+	// node_pool — Nomad's pool of clients eligible to run this job.
+	// On clusters with all clients assigned to non-default pools (seedling-
+	// prod uses platform + compute), omitting this leaves the job in the
+	// "default" pool with zero eligible nodes → placement failure. The
+	// CLI fills this from active context (`admin.services.nomad.head_pool`)
+	// or its build-time default ("platform" on seedling).
+	if spec.HeadPool != "" {
+		jobBody.SetAttributeValue("node_pool", cty.StringVal(spec.HeadPool))
 	}
 
 	// run_uuid forces a new allocation on each submission.
@@ -872,13 +914,14 @@ nomad {
     %s
     %s
     %s
+    %s
     failures = [
       restart   : [attempts: 1, mode: "fail"],
       reschedule: [attempts: 1]
     ]
   }
 %s}
-%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), secretPassthroughLine(spec.SecretPassthroughEnvKeys), s5cmdBlock, waveBlock, processConstraint)
+%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), secretPassthroughLine(spec.SecretPassthroughEnvKeys), workerNodePoolLine(spec.WorkerPool, spec.PinWorkers), s5cmdBlock, waveBlock, processConstraint)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")

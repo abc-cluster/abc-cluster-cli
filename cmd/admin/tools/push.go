@@ -599,10 +599,24 @@ func ensureS5cmd(ctx context.Context, w io.Writer, dryRun bool) (string, error) 
 
 // writeEndpointToConfig persists the resolved S3 endpoint to config.yaml
 // under admin.tools.endpoint of the active context.
+// Only the storage root is written — never with bucket or prefix appended —
+// so that ArtifactURL() can safely join /{bucket}/{prefix}/{name} without
+// producing a doubled path.
 func writeEndpointToConfig(endpoint string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	// Strip any accidental bucket/prefix suffix before writing. The push
+	// command resolves the endpoint from admin.services.<svc>.endpoint which
+	// should be the storage root, but guard defensively.
+	tcfg, _, tcfgErr := loadToolsConfig()
+	if tcfgErr == nil && tcfg != nil {
+		suffix := "/" + tcfg.Push.Bucket + "/" + tcfg.Push.Prefix
+		if strings.HasSuffix(strings.TrimRight(endpoint, "/"), suffix) {
+			endpoint = strings.TrimSuffix(strings.TrimRight(endpoint, "/"), suffix)
+			fmt.Fprintf(os.Stderr, "[abc] warning: endpoint had bucket+prefix suffix; writing storage root only: %s\n", endpoint)
+		}
 	}
 	activeCtx := cfg.ActiveCtx()
 	// Only write back if the value changed.

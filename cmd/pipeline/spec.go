@@ -43,6 +43,16 @@ type PipelineSpec struct {
 	// (no accidental co-location that masks shared-FS assumptions).
 	WorkerExcludeHost string `json:"workerExcludeHost,omitempty" yaml:"workerExcludeHost,omitempty"`
 
+	// HeadPool is the Nomad node-pool the head job must land in. Empty falls
+	// through to the active context's admin.services.nomad.head_pool, then to
+	// the CLI's build-time default ("platform" on seedling).
+	HeadPool string `json:"headPool,omitempty" yaml:"headPool,omitempty"`
+	// WorkerPool is the Nomad node-pool nf-nomad workers should land in.
+	// Empty falls through to the active context's admin.services.nomad.
+	// worker_pool, then to the CLI's build-time default ("compute" on
+	// seedling). Bypassed when PinWorkers is true.
+	WorkerPool string `json:"workerPool,omitempty" yaml:"workerPool,omitempty"`
+
 	// DevPlugins toggles loading the cluster's nf-abc-cluster-dev meta-plugin
 	// bundle into the head container. When set, run.go resolves PluginBundleURL
 	// and Plugins from the active context's tools.toml + admin.tools.endpoint.
@@ -190,6 +200,12 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	}
 	if override.WorkerExcludeHost != "" {
 		base.WorkerExcludeHost = override.WorkerExcludeHost
+	}
+	if override.HeadPool != "" {
+		base.HeadPool = override.HeadPool
+	}
+	if override.WorkerPool != "" {
+		base.WorkerPool = override.WorkerPool
 	}
 	if override.DevPlugins {
 		base.DevPlugins = true

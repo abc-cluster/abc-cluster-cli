@@ -58,6 +58,7 @@ type jobSpec struct {
 	Namespace          string
 	Region             string
 	Datacenters        []string
+	NodePool           string // Nomad node-pool the job must land in. Empty = Nomad "default"; on multi-pool clusters this fails to place.
 	Priority           int
 	Nodes              int
 	Cores              int

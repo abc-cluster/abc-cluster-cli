@@ -91,6 +91,7 @@ type Spec struct {
 	Namespace          string
 	Region             string
 	Datacenters        []string
+	NodePool           string // Nomad node-pool; emits `node_pool = "..."` at job scope when non-empty.
 	Priority           int
 	Nodes              int
 	Cores              int
@@ -244,6 +245,12 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 			dcs[i] = cty.StringVal(dc)
 		}
 		jobBody.SetAttributeValue("datacenters", cty.ListVal(dcs))
+	}
+	// node_pool — emitted when non-empty so seedling-shaped clusters (where
+	// every node is in a non-default pool) can place this job. Empty leaves
+	// Nomad's `default` pool, which is fine on single-pool clusters.
+	if spec.NodePool != "" {
+		jobBody.SetAttributeValue("node_pool", cty.StringVal(spec.NodePool))
 	}
 	for _, c := range spec.Constraints {
 		b := jobBody.AppendNewBlock("constraint", nil).Body()

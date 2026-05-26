@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -77,6 +78,17 @@ func ArtifactURL(toolName, endpointOverride string) (string, error) {
 	}
 	bucket := cfg.Push.Bucket
 	prefix := cfg.Push.Prefix
+	// Guard against admin.tools.endpoint being written with the bucket+prefix
+	// already included (e.g. "https://s3.example.com/abc-reserved/binary_tools"
+	// instead of just "https://s3.example.com"). This was observed when a push
+	// wrote back the full remote path rather than the storage root. Strip the
+	// suffix defensively so the constructed URL doesn't double the path.
+	bucketPrefix := "/" + bucket + "/" + prefix
+	if strings.HasSuffix(ep, bucketPrefix) {
+		ep = strings.TrimSuffix(ep, bucketPrefix)
+		fmt.Fprintf(os.Stderr, "[abc] warning: admin.tools.endpoint contained bucket+prefix suffix %q — stripped. "+
+			"Run: abc config set contexts.<name>.admin.tools.endpoint %s\n", bucketPrefix, ep)
+	}
 	if isArchAgnosticLocal(cfg, toolName) {
 		return fmt.Sprintf("%s/%s/%s/%s-any", ep, bucket, prefix, toolName), nil
 	}
@@ -114,6 +126,13 @@ func runArtifactURL(w io.Writer, toolName, endpointOverride string, raw bool) er
 
 	bucket := cfg.Push.Bucket
 	prefix := cfg.Push.Prefix
+	// Same defensive strip as ArtifactURL() — see comment there.
+	bucketPrefixSuffix := "/" + bucket + "/" + prefix
+	if strings.HasSuffix(ep, bucketPrefixSuffix) {
+		ep = strings.TrimSuffix(ep, bucketPrefixSuffix)
+		fmt.Fprintf(w, "[abc] warning: admin.tools.endpoint contained bucket+prefix suffix %q — stripped. "+
+			"Run: abc config set contexts.<name>.admin.tools.endpoint %s\n", bucketPrefixSuffix, ep)
+	}
 
 	// Arch-agnostic local artifacts (path, no paths) use the "<name>-any" suffix.
 	// Arch-specific tools and locals (paths map) use Nomad interpolation.

@@ -15,6 +15,30 @@ type NomadService struct {
 	Region    string `yaml:"region,omitempty"`    // Nomad multi-region ID (e.g. global), not contexts.region
 	Namespace string `yaml:"namespace,omitempty"` // default Nomad namespace for all operations on this context
 
+	// Datacenters is the ordered list of Nomad datacenters to target by
+	// default for `abc pipeline run` (and, in the future, `abc job run`)
+	// when neither `--datacenter` nor a saved-spec value is provided.
+	// CLI flags still win when present. Typical seedling configuration:
+	// `datacenters: [seedling-prod]`. Empty falls through to the pipeline
+	// spec's own default (`["*"]`) so unconfigured contexts keep working.
+	Datacenters []string `yaml:"datacenters,omitempty"`
+
+	// HeadPool is the Nomad node-pool the pipeline HEAD job must land in.
+	// On seedling, this is "platform" (a tiny pool — typically a single
+	// node — sized for orchestrators, not heavy compute). When empty, the
+	// CLI applies a build-time default of "platform".
+	//
+	// Set this explicitly when the operator wants a non-default pool name,
+	// or to "" + a `default` Nomad pool when running against single-node
+	// clusters that don't have the platform/compute split.
+	HeadPool string `yaml:"head_pool,omitempty"`
+
+	// WorkerPool is the Nomad node-pool worker (per-process) jobs spawned
+	// by nf-nomad should land in. Default "compute". Bypassed when the
+	// user passes `--pin-workers` (which forces workers onto the same node
+	// as the head, regardless of pool).
+	WorkerPool string `yaml:"worker_pool,omitempty"`
+
 	// Deprecated: prefixed forms accepted on read, migrated to short names on save.
 	DeprecatedAddr   string `yaml:"nomad_addr,omitempty"`
 	DeprecatedToken  string `yaml:"nomad_token,omitempty"`
@@ -251,6 +275,59 @@ func (c Context) NomadServiceNamespace() string {
 	return strings.TrimSpace(c.Admin.Services.Nomad.Namespace)
 }
 
+// NomadHeadPool returns contexts.<name>.admin.services.nomad.head_pool —
+// the operator-pinned Nomad node-pool name for the pipeline HEAD job.
+// Returns "" when unset; callers should apply a build-time fallback
+// (currently "platform" for seedling). Trims whitespace.
+func (c Context) NomadHeadPool() string {
+	if c.Admin.Services.Nomad == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Nomad.HeadPool)
+}
+
+// NomadWorkerPool returns contexts.<name>.admin.services.nomad.worker_pool —
+// the operator-pinned Nomad node-pool name for nf-nomad-spawned worker jobs
+// (per-process). Returns "" when unset; callers should apply a build-time
+// fallback (currently "compute"). Trims whitespace.
+//
+// Note: --pin-workers bypasses this — workers go to the head's node, not
+// the worker-pool default.
+func (c Context) NomadWorkerPool() string {
+	if c.Admin.Services.Nomad == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Nomad.WorkerPool)
+}
+
+// NomadDatacenters returns contexts.<name>.admin.services.nomad.datacenters —
+// the operator-pinned default datacenter list for this context. Returns nil
+// when unset; the caller (typically `abc pipeline run`) falls through to a
+// command-line --datacenter flag or to the pipeline spec's own "*" default.
+//
+// Trims whitespace and drops empty entries so YAML accidents like
+// `datacenters: ["seedling-prod", ""]` don't propagate. Result is a defensive
+// copy so callers can mutate without affecting the cached context.
+func (c Context) NomadDatacenters() []string {
+	if c.Admin.Services.Nomad == nil {
+		return nil
+	}
+	src := c.Admin.Services.Nomad.Datacenters
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(src))
+	for _, dc := range src {
+		if s := strings.TrimSpace(dc); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // TerraformDeployDir returns contexts.<name>.admin.services.terraform.deploy_dir.
 // Returns "" when unset; callers fall back to CWD or a flag value.
 func (c Context) TerraformDeployDir() string {
@@ -350,10 +427,17 @@ func normalizeContextNomad(ctx *Context) {
 		token = strings.TrimSpace(ctx.LegacyNomadToken)
 	}
 
-	// Preserve namespace — it has no deprecated form so carry it through.
-	var ns string
+	// Preserve namespace + datacenters + pool fields — they have no
+	// deprecated form, so carry them through the legacy-field flush below.
+	var ns, headPool, workerPool string
+	var datacenters []string
 	if ctx.Admin.Services.Nomad != nil {
 		ns = strings.TrimSpace(ctx.Admin.Services.Nomad.Namespace)
+		headPool = strings.TrimSpace(ctx.Admin.Services.Nomad.HeadPool)
+		workerPool = strings.TrimSpace(ctx.Admin.Services.Nomad.WorkerPool)
+		if len(ctx.Admin.Services.Nomad.Datacenters) > 0 {
+			datacenters = append([]string(nil), ctx.Admin.Services.Nomad.Datacenters...)
+		}
 	}
 
 	// Clear all legacy / deprecated fields.
@@ -361,7 +445,8 @@ func normalizeContextNomad(ctx *Context) {
 	ctx.LegacyNomadAddr = ""
 	ctx.LegacyNomadToken = ""
 
-	if addr == "" && token == "" && region == "" && ns == "" {
+	if addr == "" && token == "" && region == "" && ns == "" && len(datacenters) == 0 &&
+		headPool == "" && workerPool == "" {
 		ctx.Admin.Services.Nomad = nil
 		return
 	}
@@ -372,13 +457,18 @@ func normalizeContextNomad(ctx *Context) {
 		addr = CanonicalNomadAPIAddrForYAML(addr)
 	}
 	ctx.Admin.Services.Nomad = &NomadService{
-		Addr:      addr,
-		Token:     token,
-		Region:    region,
-		Namespace: ns,
+		Addr:        addr,
+		Token:       token,
+		Region:      region,
+		Namespace:   ns,
+		Datacenters: datacenters,
+		HeadPool:    headPool,
+		WorkerPool:  workerPool,
 	}
 	if ctx.Admin.Services.Nomad.Addr == "" && ctx.Admin.Services.Nomad.Token == "" &&
-		ctx.Admin.Services.Nomad.Region == "" && ctx.Admin.Services.Nomad.Namespace == "" {
+		ctx.Admin.Services.Nomad.Region == "" && ctx.Admin.Services.Nomad.Namespace == "" &&
+		len(ctx.Admin.Services.Nomad.Datacenters) == 0 &&
+		ctx.Admin.Services.Nomad.HeadPool == "" && ctx.Admin.Services.Nomad.WorkerPool == "" {
 		ctx.Admin.Services.Nomad = nil
 	}
 }
@@ -391,4 +481,27 @@ func first(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// splitDatacenterList parses a comma-separated `abc config set ... datacenters`
+// value into the trimmed-non-empty slice stored on NomadService.Datacenters.
+// Empty input returns nil (which the writer treats as "clear the field").
+// Accepts whitespace around commas: "seedling-prod, seedling-canary" →
+// ["seedling-prod", "seedling-canary"].
+func splitDatacenterList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
