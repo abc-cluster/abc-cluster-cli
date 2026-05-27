@@ -1,10 +1,13 @@
 package workbench
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -107,7 +110,7 @@ func LaunchVM(node NodeSSH, vmName string, cpus, memMB int, w io.Writer) error {
 	}
 	fmt.Fprintf(w, "  Launching VM %s (%d CPUs, %dG RAM, 40G disk)...\n", vmName, cpus, memG)
 	out, err := runOnNode(node,
-		"multipass", "launch", "ubuntu:24.04",
+		"multipass", "launch", "24.04",
 		"--name", vmName,
 		"--cpus", fmt.Sprintf("%d", cpus),
 		"--memory", fmt.Sprintf("%dG", memG),
@@ -168,6 +171,80 @@ func WaitForSSH(node NodeSSH, vmName string) error {
 		time.Sleep(3 * time.Second)
 	}
 	return fmt.Errorf("VM %q SSH not ready after 60s", vmName)
+}
+
+// InjectSSHKey adds the local machine's SSH public key to the VM's
+// authorized_keys so the user can SSH in with their normal identity.
+// Tries ~/.ssh/id_ed25519.pub, id_rsa.pub, id_ecdsa.pub in order; skips
+// silently if no key file is found.
+// Uses bash -s (stdin) to avoid quoting issues passing the key through SSH.
+func InjectSSHKey(node NodeSSH, vmName string) error {
+	pubKey := readFirstPubKey()
+	if pubKey == "" {
+		return nil // no local key found; user must add their key manually
+	}
+
+	// Script reads the key from stdin (/dev/stdin becomes $KEY) and appends
+	// it idempotently to authorized_keys.
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+KEY=$(cat /dev/stdin)
+mkdir -p /home/ubuntu/.ssh
+chmod 700 /home/ubuntu/.ssh
+grep -qxF "$KEY" /home/ubuntu/.ssh/authorized_keys 2>/dev/null || echo "$KEY" >> /home/ubuntu/.ssh/authorized_keys
+chmod 600 /home/ubuntu/.ssh/authorized_keys
+`
+	// We need to pass two things via stdin to the remote bash:
+	// the script itself (to bash -s) AND the key.
+	// Work around this by embedding the key in the script itself
+	// using a here-doc, which is safe since base64 has no special chars.
+	keyB64 := base64Encode(pubKey)
+	embedded := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+KEY=$(echo '%s' | base64 -d)
+mkdir -p /home/ubuntu/.ssh
+chmod 700 /home/ubuntu/.ssh
+grep -qxF "$KEY" /home/ubuntu/.ssh/authorized_keys 2>/dev/null || echo "$KEY" >> /home/ubuntu/.ssh/authorized_keys
+chmod 600 /home/ubuntu/.ssh/authorized_keys
+`, keyB64)
+	_ = script // replaced by embedded
+
+	full := []string{
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=30",
+		"-o", "StrictHostKeyChecking=no",
+		node.Host,
+		"multipass", "exec", vmName, "--", "bash", "-s",
+	}
+	cmd := exec.Command("ssh", full...)
+	cmd.Stdin = strings.NewReader(embedded)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// base64Encode returns the standard base64 encoding of s (no line breaks).
+func base64Encode(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+// readFirstPubKey returns the content of the first local SSH public key found.
+func readFirstPubKey() string {
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(home, ".ssh", "id_ed25519.pub"),
+		filepath.Join(home, ".ssh", "id_rsa.pub"),
+		filepath.Join(home, ".ssh", "id_ecdsa.pub"),
+	}
+	for _, p := range candidates {
+		data, err := os.ReadFile(p)
+		if err == nil && len(data) > 0 {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	return ""
 }
 
 // ProvisionVM runs the idempotent provision script inside the VM.
@@ -234,9 +311,20 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq 2>&1 | tail -2
 sudo apt-get install -y -qq curl git build-essential python3-pip python3-venv ca-certificates 2>&1 | tail -3
 
-# Jupyter Server
+# Jupyter Server — install into a dedicated venv to avoid PEP 668 issues
+# on Ubuntu 24.04's externally-managed Python.
 echo "Installing Jupyter..."
-pip3 install --quiet --user jupyterlab jupyter-server 2>&1 | tail -2
+if [ ! -d "$HOME/.venv/jupyter" ]; then
+    python3 -m venv "$HOME/.venv/jupyter" 2>&1 | tail -2
+fi
+"$HOME/.venv/jupyter/bin/pip" install --quiet jupyterlab jupyter-server 2>&1 | tail -3
+# Expose jupyter on PATH via a thin wrapper.
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/jupyter" << 'WRAPPER'
+#!/usr/bin/env bash
+exec "$HOME/.venv/jupyter/bin/jupyter" "$@"
+WRAPPER
+chmod +x "$HOME/.local/bin/jupyter"
 echo "  Jupyter done"
 
 # pixi

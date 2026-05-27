@@ -430,12 +430,21 @@ func runStartVM(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir
 			return err
 		}
 		// Bind-mount the user's persistent homedir.
+		// ensureRemoteDir creates the host-side directory (mkdir -p via SSH).
+		// MountHomedir then asks multipass to bind-mount it into the VM.
 		homedirPath := "/data/workbench/" + user + "/home"
+		if mkErr := ensureRemoteDir(ctx, nodeName, homedirPath); mkErr != nil {
+			fmt.Fprintf(w, "  warning: create homedir on %s: %v\n", nodeName, mkErr)
+		}
 		if mErr := workbench.MountHomedir(node, vmName, homedirPath, "/home/ubuntu"); mErr != nil {
 			fmt.Fprintf(w, "  warning: mount homedir: %v\n", mErr)
 		}
 		if err := workbench.WaitForSSH(node, vmName); err != nil {
 			return err
+		}
+		// Inject the local SSH public key so the user can connect via Remote SSH.
+		if err := workbench.InjectSSHKey(node, vmName); err != nil {
+			fmt.Fprintf(w, "  warning: inject SSH key: %v\n", err)
 		}
 		if err := workbench.ProvisionVM(node, vmName, w); err != nil {
 			return err
