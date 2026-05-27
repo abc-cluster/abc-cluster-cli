@@ -18,6 +18,7 @@ import (
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/auth/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/doctor"
 	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/investigation"
@@ -250,6 +251,7 @@ func init() {
 	rootCmd.AddCommand(job.NewCmd())
 	rootCmd.AddCommand(job.NewLogsCmd())
 	rootCmd.AddCommand(cluster.NewCmd())
+	rootCmd.AddCommand(doctor.NewCmd())
 	rootCmd.AddCommand(accounting.NewCmd())
 	// `abc status` is a deprecated alias of `abc cluster status` (kept for one
 	// release). The canonical command lives under abc cluster status.
