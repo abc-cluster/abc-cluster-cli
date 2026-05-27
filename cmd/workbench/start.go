@@ -476,6 +476,16 @@ func runStartVM(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir
 		return fmt.Errorf("get VM IP: %w", err)
 	}
 
+	// Register (or update) the /<user>/* → vmIP:8080 route in the workbench
+	// Caddy via admin API. Idempotent: PUT replaces on IP change; POST on first run.
+	if routeErr := workbench.RegisterWorkbenchRoute(node, user, vmIP); routeErr != nil {
+		// Non-fatal: the direct URL still works; warn so the user knows the
+		// path-based URL won't work until the route is registered.
+		fmt.Fprintf(w, "  warning: caddy route registration: %v\n", routeErr)
+	} else {
+		fmt.Fprintf(w, "  ✓ workbench route registered\n")
+	}
+
 	// Write ~/.ssh/config entry (idempotent; updates HostName if IP changed).
 	newSSHEntry := !workbench.SSHConfigPresent(vmName)
 	if sshErr := workbench.WriteSSHConfigEntry(vmName, vmIP, jumpHost); sshErr != nil {

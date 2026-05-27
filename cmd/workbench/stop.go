@@ -82,6 +82,13 @@ func stopVMSession(cmd *cobra.Command, ctx config.Context, db *sql.DB, sess *wor
 		fmt.Fprintln(cmd.ErrOrStderr(), "(marking session as stopped in local db anyway)")
 	}
 
+	// Deregister the Caddy route so the path-based URL cleanly 404s while the
+	// session is suspended. On next 'abc workbench start' the route is re-registered
+	// with the current VM IP (handles IP changes across VM recreates).
+	if routeErr := workbench.DeregisterWorkbenchRoute(node, sess.User); routeErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  warning: caddy route deregistration: %v\n", routeErr)
+	}
+
 	if err := workbench.UpdateStopped(context.Background(), db, sess.SessionID); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not update session record: %v\n", err)
 	}
