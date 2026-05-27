@@ -52,7 +52,7 @@ func runURL(cmd *cobra.Command, args []string) error {
 	if strings.HasPrefix(sess.JobID, "wb-") {
 		return printVMURL(cmd, ctx, sess, user)
 	}
-	return printDockerURL(cmd, sess)
+	return printDockerURL(cmd, sess, user)
 }
 
 // printVMURL prints the stable URL, password, and SSH alias for a VM-backend session.
@@ -87,12 +87,18 @@ Connect from VS Code or Positron:  Remote SSH → %s
 	return nil
 }
 
-// printDockerURL prints the host:port URL and password for a Docker-backend session.
-func printDockerURL(cmd *cobra.Command, sess *workbench.Session) error {
+// printDockerURL prints the URL and password for a Docker-backend session.
+// The path-based HTTPS URL is the primary access point (registered in the
+// workbench Caddy at session start). The direct Tailscale URL is shown as a
+// fallback for users with network access to the platform node.
+func printDockerURL(cmd *cobra.Command, sess *workbench.Session, user string) error {
 	if sess.Host == "" || sess.Port == 0 {
 		return fmt.Errorf("session is starting, port not yet assigned — try again in a moment")
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "http://%s:%d\n", sess.Host, sess.Port)
-	fmt.Fprintf(cmd.OutOrStdout(), "password: %s\n", sess.Token)
+	workbenchURL := fmt.Sprintf("https://workbench.seedling.abc-cluster.cloud/%s/", user)
+	directURL := fmt.Sprintf("http://%s:%d", sess.Host, sess.Port)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Browser:  %s\n", workbenchURL)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Direct:   %s  (Tailscale / platform network only)\n", directURL)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Password: %s\n", sess.Token)
 	return nil
 }

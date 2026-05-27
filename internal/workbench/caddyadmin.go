@@ -14,9 +14,12 @@ const caddyAdminAddr = "localhost:2019"
 
 // caddyRouteTmpl generates the Caddy JSON config for one workbench user route.
 //
-// Route structure: /<user>/* → strip prefix /<user> → reverse_proxy vmIP:8080.
-// The "@id" field enables idempotent upsert: PUT /id/<routeID> updates an
-// existing route; POST /config/.../routes creates a new one.
+// Route structure: /<user>/* → strip prefix /<user> → reverse_proxy upstreamAddr.
+// upstreamAddr is a "host:port" string — for VM backend it is vmIP:8080; for
+// Docker backend it is the dynamic allocation port (e.g. 100.70.185.46:23456).
+//
+// The "@id" field enables idempotent management: DELETE (tolerate 404) + POST
+// on every start replaces stale routes without duplicate-ID conflicts.
 //
 // WebSocket headers (Upgrade/Connection) are forwarded explicitly so that
 // code-server and Jupyter kernel connections survive the inner aither→VM hop.
@@ -35,7 +38,7 @@ var caddyRouteTmpl = template.Must(template.New("caddy-route").Parse(`{
         {"handler": "rewrite", "strip_path_prefix": "/{{.User}}"},
         {
           "handler": "reverse_proxy",
-          "upstreams": [{"dial": "{{.VMIP}}:{{.Port}}"}],
+          "upstreams": [{"dial": "{{.UpstreamAddr}}"}],
           "headers": {"request": {"set": {
             "Upgrade":    ["{http.request.header.Upgrade}"],
             "Connection": ["{http.request.header.Connection}"]
@@ -101,21 +104,23 @@ else
 fi
 `))
 
-// RegisterWorkbenchRoute registers (or updates) the /<user>/* → vmIP:8080
+// RegisterWorkbenchRoute registers (or updates) the /<user>/* → upstreamAddr
 // route in the workbench Caddy running on the platform node.
 //
-// Idempotent: safe to call on every 'abc workbench start --backend=vm'.
-// On VM recreate (new IP), the existing route is replaced via PUT.
-// On first start, the route is appended via POST.
-func RegisterWorkbenchRoute(node NodeSSH, user, vmIP string) error {
+// upstreamAddr is a "host:port" string:
+//   - VM backend:     vmIP + ":8080"  (e.g. "10.216.45.192:8080")
+//   - Docker backend: alloc host + ":" + dynamic port (e.g. "100.70.185.46:23456")
+//
+// Idempotent: DELETE (tolerate 404) + POST replaces any stale route on every
+// start, including after a VM recreate that produces a new IP.
+func RegisterWorkbenchRoute(node NodeSSH, user, upstreamAddr string) error {
 	routeID := "wb-" + user
 
 	var routeBuf bytes.Buffer
 	if err := caddyRouteTmpl.Execute(&routeBuf, struct {
-		User string
-		VMIP string
-		Port int
-	}{user, vmIP, 8080}); err != nil {
+		User         string
+		UpstreamAddr string
+	}{user, upstreamAddr}); err != nil {
 		return fmt.Errorf("render caddy route JSON: %w", err)
 	}
 

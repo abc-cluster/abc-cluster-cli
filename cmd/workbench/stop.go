@@ -64,7 +64,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 	if strings.HasPrefix(sess.JobID, "wb-") {
 		return stopVMSession(cmd, ctx, db, sess)
 	}
-	return stopDockerSession(cmd, db, sess)
+	return stopDockerSession(cmd, ctx, db, sess)
 }
 
 // stopVMSession suspends the Multipass VM (preserves in-memory state; ~8s to resume).
@@ -98,13 +98,24 @@ func stopVMSession(cmd *cobra.Command, ctx config.Context, db *sql.DB, sess *wor
 	return nil
 }
 
-// stopDockerSession deregisters the Nomad service job.
-func stopDockerSession(cmd *cobra.Command, db *sql.DB, sess *workbench.Session) error {
+// stopDockerSession deregisters the Nomad service job and removes the Caddy route.
+func stopDockerSession(cmd *cobra.Command, ctx config.Context, db *sql.DB, sess *workbench.Session) error {
 	nc := utils.NomadClientFromConfig().WithNamespace(sess.Namespace)
 	_, stopErr := nc.StopJob(context.Background(), sess.JobID, sess.Namespace, false)
 	if stopErr != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Nomad stop returned error: %v\n", stopErr)
 		fmt.Fprintln(cmd.ErrOrStderr(), "(marking session as stopped in local db anyway)")
+	}
+
+	// Deregister the Caddy route so the path-based URL returns 404 while the
+	// session is stopped. Mirror the VM backend behaviour.
+	nodeName := "aither"
+	if wn, ok := config.GetAdminFloorField(&ctx.Admin.Services, "workbench", "node"); ok && wn != "" {
+		nodeName = wn
+	}
+	node := workbench.NodeSSHFromName(nodeName)
+	if routeErr := workbench.DeregisterWorkbenchRoute(node, sess.User); routeErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  warning: caddy route deregistration: %v\n", routeErr)
 	}
 
 	if err := workbench.UpdateStopped(context.Background(), db, sess.SessionID); err != nil {

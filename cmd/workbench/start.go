@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,6 +122,8 @@ func runStart(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir s
 			return fmt.Errorf("resolve workbench node: %w\nuse --node <node-name> to specify explicitly", err)
 		}
 	}
+	// SSH handle for Caddy admin API calls (route registration after alloc starts).
+	node := workbench.NodeSSHFromName(nodeName)
 
 	// Resolve MinIO credentials from context.
 	s3Endpoint, s3AccessKey, s3SecretKey := resolveS3Creds(ctx)
@@ -226,21 +229,40 @@ func runStart(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir s
 
 	_ = allocID // available for future log attachment
 
-	ideURL := fmt.Sprintf("http://%s:%d", host, port)
+	// Register the path-based Caddy route so the session is reachable via the
+	// public HTTPS URL (same mechanism as the VM backend). If the allocation host
+	// is 0.0.0.0 (bound on all interfaces), use 127.0.0.1 as the upstream address
+	// — the workbench Caddy is co-located on the same node.
+	upstreamHost := host
+	if upstreamHost == "" || upstreamHost == "0.0.0.0" || upstreamHost == "::" {
+		upstreamHost = "127.0.0.1"
+	}
+	upstreamAddr := upstreamHost + ":" + strconv.Itoa(port)
+	if routeErr := workbench.RegisterWorkbenchRoute(node, user, upstreamAddr); routeErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  warning: caddy route registration: %v\n", routeErr)
+	} else {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  ✓ workbench route registered\n")
+	}
+
+	workbenchURL := fmt.Sprintf("https://workbench.seedling.abc-cluster.cloud/%s/", user)
+	directURL := fmt.Sprintf("http://%s:%d", host, port)
 
 	if isFirstSession {
 		fmt.Printf(`Your workbench session is ready.
 
-  IDE:      %s  (password: abc workbench url)
+  Browser:  %s
+  Direct:   %s  (Tailscale / aither network only)
+  Password: %s
+
   Homedir:  /home/%s/            (persists across sessions on this node)
   MinIO:    s3://%s/             (pipeline outputs, uploaded data)
 
-Note: your homedir and MinIO storage are separate. Use s5cmd or mc inside
-the terminal to move data between them. Run 'abc workbench url' to show
-credentials and the IDE link again.
-`, ideURL, user, user)
+Run 'abc workbench url' to show credentials again.
+Stop when done: abc workbench stop
+`, workbenchURL, directURL, token, user, user)
 	} else {
-		fmt.Printf("Session ready: %s\n  password: %s\n", ideURL, token)
+		fmt.Printf("Session ready.\n\n  %s\n  password: %s\n\nStop when done: abc workbench stop\n",
+			workbenchURL, token)
 	}
 	return nil
 }
@@ -404,7 +426,9 @@ func runStartVM(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir
 	}
 
 	node := workbench.NodeSSHFromName(nodeName)
-	vmName := "wb-" + user
+	// Multipass VM names must match [a-z0-9][a-z0-9-]* — replace underscores
+	// (present in pool-user pseudonyms like lunar_hornbill) with hyphens.
+	vmName := "wb-" + strings.ReplaceAll(user, "_", "-")
 	jumpHost := "sun-" + nodeName
 
 	// Resolve token.
@@ -477,8 +501,8 @@ func runStartVM(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir
 	}
 
 	// Register (or update) the /<user>/* → vmIP:8080 route in the workbench
-	// Caddy via admin API. Idempotent: PUT replaces on IP change; POST on first run.
-	if routeErr := workbench.RegisterWorkbenchRoute(node, user, vmIP); routeErr != nil {
+	// Caddy via admin API. Idempotent: DELETE+POST replaces any stale route.
+	if routeErr := workbench.RegisterWorkbenchRoute(node, user, vmIP+":8080"); routeErr != nil {
 		// Non-fatal: the direct URL still works; warn so the user knows the
 		// path-based URL won't work until the route is registered.
 		fmt.Fprintf(w, "  warning: caddy route registration: %v\n", routeErr)
@@ -529,11 +553,10 @@ func runStartVM(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir
 Workbench ready.
 
   Browser:    %s
-  Direct:     %s  (via Tailscale or on aither's network)
+  Direct:     %s  (Tailscale / aither network only)
   Remote SSH: %s
 
-Connect from VS Code or Positron:
-  Remote SSH → %s
+Connect from VS Code or Positron:  Remote SSH → %s
 
 Your files are at ~/  (persists across sessions)
              and s3://%s/  (pipeline outputs, uploaded data)
@@ -542,7 +565,7 @@ Stop when done: abc workbench stop
 `, workbenchURL, directURL, vmName, vmName, user)
 	} else {
 		fmt.Printf("\nWorkbench ready.\n\n  %s\n  Remote SSH: %s\n\nStop when done: abc workbench stop\n",
-			directURL, vmName)
+			workbenchURL, vmName)
 	}
 	return nil
 }
