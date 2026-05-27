@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=pixi-lock-verify
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.lock
+#ABC --from-file=pixi.lock
 #ABC --time=00:15:00
 
 set -euo pipefail

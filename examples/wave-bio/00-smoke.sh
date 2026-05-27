@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=wave-smoke
 #ABC --runtime=wave-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --driver=docker
 #ABC --cores=2
 #ABC --mem=4G

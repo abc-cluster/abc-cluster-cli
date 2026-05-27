@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=pixi-verify
 #ABC --runtime=pixi-exec
-#ABC --from=pixi-min.toml
+#ABC --from-file=pixi-min.toml
 #ABC --time=00:15:00
 
 set -euo pipefail

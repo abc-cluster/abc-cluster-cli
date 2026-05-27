@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=bcftools-cohort
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.toml
+#ABC --from-file=pixi.toml
 #ABC --cores=8
 #ABC --mem=32G
 #ABC --time=12:00:00

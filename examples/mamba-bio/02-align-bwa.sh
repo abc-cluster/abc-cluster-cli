@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=mamba-align-bwa
 #ABC --runtime=micromamba-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --cores=16
 #ABC --mem=32G
 #ABC --time=08:00:00

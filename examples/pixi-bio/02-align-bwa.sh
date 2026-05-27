@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=align-bwa
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.toml
+#ABC --from-file=pixi.toml
 #ABC --cores=16
 #ABC --mem=32G
 #ABC --time=08:00:00

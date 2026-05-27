@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=mamba-trim-reads
 #ABC --runtime=micromamba-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --cores=8
 #ABC --mem=16G
 #ABC --time=04:00:00

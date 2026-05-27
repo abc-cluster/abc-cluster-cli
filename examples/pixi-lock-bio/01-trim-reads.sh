@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=trim-reads-locked
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.lock
+#ABC --from-file=pixi.lock
 #ABC --cores=8
 #ABC --mem=16G
 #ABC --time=04:00:00

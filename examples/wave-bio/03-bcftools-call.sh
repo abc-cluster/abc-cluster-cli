@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=wave-bcftools-call
 #ABC --runtime=wave-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --driver=docker
 #ABC --cores=8
 #ABC --mem=16G

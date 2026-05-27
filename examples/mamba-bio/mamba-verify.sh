@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=mamba-verify
 #ABC --runtime=micromamba-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --time=00:45:00
 
 set -euo pipefail

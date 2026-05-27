@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=wave-align-bwa
 #ABC --runtime=wave-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --driver=docker
 #ABC --cores=16
 #ABC --mem=32G

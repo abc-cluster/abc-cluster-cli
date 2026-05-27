@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=mamba-bcftools-call
 #ABC --runtime=micromamba-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --cores=8
 #ABC --mem=16G
 #ABC --time=06:00:00

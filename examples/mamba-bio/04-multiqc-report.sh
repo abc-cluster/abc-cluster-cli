@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=mamba-multiqc-report
 #ABC --runtime=micromamba-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --cores=4
 #ABC --mem=8G
 #ABC --time=01:00:00

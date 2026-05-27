@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=multiqc-report
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.toml
+#ABC --from-file=pixi.toml
 #ABC --cores=2
 #ABC --mem=8G
 #ABC --time=01:00:00

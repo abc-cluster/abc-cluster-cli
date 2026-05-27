@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=minimap2-long
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.toml
+#ABC --from-file=pixi.toml
 #ABC --cores=16
 #ABC --mem=64G
 #ABC --time=12:00:00

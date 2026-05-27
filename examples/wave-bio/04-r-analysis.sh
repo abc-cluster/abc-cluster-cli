@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=wave-r-deseq2
 #ABC --runtime=wave-exec
-#ABC --from=environment.yml
+#ABC --from-file=environment.yml
 #ABC --driver=docker
 #ABC --cores=8
 #ABC --mem=32G

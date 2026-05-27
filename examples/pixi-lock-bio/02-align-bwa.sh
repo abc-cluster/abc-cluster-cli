@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=align-bwa-locked
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.lock
+#ABC --from-file=pixi.lock
 #ABC --cores=16
 #ABC --mem=32G
 #ABC --time=08:00:00

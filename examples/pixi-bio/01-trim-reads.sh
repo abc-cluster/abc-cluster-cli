@@ -1,7 +1,7 @@
 #!/bin/bash
 #ABC --name=trim-reads
 #ABC --runtime=pixi-exec
-#ABC --from=pixi.toml
+#ABC --from-file=pixi.toml
 #ABC --cores=8
 #ABC --mem=16G
 #ABC --time=04:00:00
