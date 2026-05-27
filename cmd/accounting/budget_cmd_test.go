@@ -1,4 +1,4 @@
-package budget
+package accounting
 
 import (
 	"strings"
@@ -15,7 +15,7 @@ import (
 // Spec cli-verb-tree-restructure §E. Mirrors the rejection-test pattern
 // in cmd/report/report_test.go (TestRejectAllContexts).
 func TestRejectAtSeedling(t *testing.T) {
-	d := capability.Require(budgetCapabilities, nil, nil)
+	d := capability.Require(accountingCapabilities, nil, nil)
 	if !d.Failed() {
 		t.Fatal("expected budget capabilities to fail at seedling (no services available)")
 	}

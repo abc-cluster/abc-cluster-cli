@@ -82,8 +82,8 @@ and requires grove+/cloud (gated by the capability layer):
 
 ```bash
 abc report                                # closed-loop showback (all tiers)
-abc --cloud accounting budget list        # cloud namespace cap list
-abc --cloud accounting budget set \
+abc --cloud accounting list        # cloud namespace cap list
+abc --cloud accounting set \
     --namespace=genpath --monthly=50000   # set a cap
 abc compliance --cloud                    # compliance status summary
 ```

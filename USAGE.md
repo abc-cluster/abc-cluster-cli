@@ -70,9 +70,9 @@ This document describes every command available in the `abc` CLI.
   - [cluster capabilities show](#cluster-capabilities-show)
 - [report](#report)
 - [accounting](#accounting)
-  - [accounting budget list](#accounting-budget-list)
-  - [accounting budget show](#accounting-budget-show)
-  - [accounting budget set](#accounting-budget-set)
+  - [accounting list](#accounting-list)
+  - [accounting show](#accounting-show)
+  - [accounting set](#accounting-set)
 - [compliance](#compliance)
 - [admin services](#admin-services)
 - [status (alias)](#status-alias)
@@ -2339,7 +2339,7 @@ abc --cloud cluster decommission my-cluster --yes
 
 `abc report` is the **canonical showback verb**. It reads `~/.abc/local.db` only — no network calls, no controller dependency — and prints the closed-loop summary: investigations completed, pipeline runs, total compute, spend, carbon emissions, and estimated researcher-time saved.
 
-The same rate-card resolver feeds `abc accounting budget` (write-side caps) and `abc report` (read-side showback), so spend and emissions agree to within float epsilon for the same window.
+The same rate-card resolver feeds `abc accounting` (write-side caps) and `abc report` (read-side showback), so spend and emissions agree to within float epsilon for the same window.
 
 ### Synopsis
 
@@ -2437,7 +2437,7 @@ The `--json` and `--technical` outputs use stable IDs frozen at the v1 ship and 
 | `resource_fit` | Right-sized requests |
 | `cost_per_investigation` | Spend per question (ZAR) |
 | `emissions_per_investigation` | Carbon per question (kg CO₂e) |
-| `spend_zar` | Total spend (window aggregate, matches `accounting budget` for same window) |
+| `spend_zar` | Total spend (window aggregate, matches `accounting` for same window) |
 | `emissions_kgco2e` | Total emissions (window aggregate) |
 | `hours_saved` | Research time saved — headline composite |
 
@@ -2467,39 +2467,39 @@ The `Rate card (effective)` footer reflects whichever layer each value came from
 The verb tree is:
 
 ```
-abc accounting budget {list, set, show}
+abc accounting {list, set, show}
 ```
 
 The `budget` subgroup requires `abc-controller-svc` and `abc-policy-svc`. At seedling (no controller, no policy gate) the verbs reject with a clear capability message:
 
 ```
-error: abc accounting budget requires abc-controller-svc; not available in this context.
+error: abc accounting requires abc-controller-svc; not available in this context.
 ```
 
 Top-level alias: **`cost`** (e.g. `abc cost budget list`).
 
-### `accounting budget list`
+### `accounting list`
 
 List all configured spend caps:
 
 ```bash
-abc accounting budget list
+abc accounting list
 ```
 
-### `accounting budget show`
+### `accounting show`
 
 Show one namespace's cap detail:
 
 ```bash
-abc accounting budget show --namespace genpath
+abc accounting show --namespace genpath
 ```
 
-### `accounting budget set`
+### `accounting set`
 
 Set or update a namespace spend cap:
 
 ```bash
-abc accounting budget set [flags]
+abc accounting set [flags]
 ```
 
 | Flag          | Description                                                   | Default |
@@ -2512,10 +2512,10 @@ abc accounting budget set [flags]
 
 ```bash
 # 50,000 ZAR/month cap, alert at 80%, block at 100%
-abc accounting budget set --namespace genpath --monthly 50000 --currency ZAR --alert-at 0.8 --block-at 1.0
+abc accounting set --namespace genpath --monthly 50000 --currency ZAR --alert-at 0.8 --block-at 1.0
 
 # Unlimited (0 = no cap), alert-only at the 90% mark of zero (effectively disables alerts)
-abc accounting budget set --namespace lab-internal --monthly 0
+abc accounting set --namespace lab-internal --monthly 0
 ```
 
 When `current_spend / monthly` reaches `alert-at`, an alert is emitted; when it reaches `block-at`, new pipeline / job submissions in the namespace are rejected by the policy service until the next billing cycle or a `set --monthly` raise.

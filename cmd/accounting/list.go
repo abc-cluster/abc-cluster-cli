@@ -1,4 +1,4 @@
-package budget
+package accounting
 
 import (
 	"fmt"
@@ -24,7 +24,7 @@ func newListCmd() *cobra.Command {
 }
 
 func runBudgetList(cmd *cobra.Command, _ []string) error {
-	if err := requireBudgetCapabilities(cmd); err != nil {
+	if err := requireAccountingCapabilities(cmd); err != nil {
 		return err
 	}
 	if err := requireCloud(cmd); err != nil {

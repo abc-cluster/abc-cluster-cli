@@ -14,36 +14,36 @@ caps and admission-gate thresholds, enforced by Jurist (`abc-policy-svc`)
 and stored by the controller service (`abc-controller-svc`). The verb tree is:
 
 ```
-abc accounting budget {list, set, show}
+abc accounting {list, set, show}
 ```
 
 Available at the **grove tier and above**. At seedling the verbs reject
 with the standard capability message:
 
 ```
-abc accounting budget requires abc-controller-svc; not available in this
+abc accounting requires abc-controller-svc; not available in this
 context. Configure controller_url to point at a grove-tier deployment.
 ```
 
 ## Synopsis
 
 ```
-abc accounting budget list
-abc accounting budget show --namespace=<name>
-abc accounting budget set  --namespace=<name> --monthly=<amount> [flags]
+abc accounting list
+abc accounting show --namespace=<name>
+abc accounting set  --namespace=<name> --monthly=<amount> [flags]
 ```
 
 The verbs require `controller_url` to be set on the active context (a
 grove-tier deployment of abc-controller-svc). Admission-side enforcement
 happens in Jurist regardless of which client wrote the cap.
 
-## `abc accounting budget list`
+## `abc accounting list`
 
 Lists every namespace cap visible to the caller, with the current spend
 and admission-gate status.
 
 ```
-$ abc accounting budget list
+$ abc accounting list
   NAMESPACE                CAP/MONTH    CURRENT SPEND  CCY      STATUS
   ──────────────────────────────────────────────────────────────────────────
   genpath                  50000.00     12420.50       ZAR      ok
@@ -55,13 +55,13 @@ $ abc accounting budget list
 relative to the namespace's `alert_at` and `block_at` thresholds. A
 `blocked` namespace will reject new submissions at admission.
 
-## `abc accounting budget show --namespace=<name>`
+## `abc accounting show --namespace=<name>`
 
 Detailed view for a single namespace, including the configured alert
 and block thresholds.
 
 ```
-$ abc accounting budget show --namespace=genpath
+$ abc accounting show --namespace=genpath
   Namespace      genpath
   Cap            50000.00 ZAR/month
   Current spend  12420.50 ZAR
@@ -74,14 +74,14 @@ $ abc accounting budget show --namespace=genpath
 |---|---|---|
 | `--namespace=<name>` | `$ABC_NAMESPACE` / `$NOMAD_NAMESPACE` | Namespace to query (required) |
 
-## `abc accounting budget set`
+## `abc accounting set`
 
 Creates or updates a namespace cap. The cap is the monthly spend ceiling
 in the workspace currency; `--alert-at` and `--block-at` are fractions
 of that ceiling.
 
 ```
-$ abc accounting budget set \
+$ abc accounting set \
     --namespace=genpath --monthly=75000 --currency=ZAR \
     --alert-at=0.8 --block-at=1.0
   Budget cap for "genpath" set to 75000.00 ZAR/month.
@@ -90,7 +90,7 @@ $ abc accounting budget set \
 To remove a cap (make the namespace unlimited), pass `--monthly=0`:
 
 ```
-$ abc accounting budget set --namespace=genpath --monthly=0
+$ abc accounting set --namespace=genpath --monthly=0
   Budget cap for "genpath" removed (unlimited).
 ```
 
