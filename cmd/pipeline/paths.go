@@ -85,6 +85,47 @@ func bucketFromS3URI(uri string) string {
 	return rest
 }
 
+// deriveCloudCachePath returns the Nextflow CloudCache base path that
+// `NXF_CLOUDCACHE_PATH` should point at, given a canonical CLI work-dir
+// of the form `s3://<bucket>/<scope>/<user>/workdir/<run-tag>/`.
+//
+// Returned cache path:  `s3://<bucket>/<scope>/<user>/cache/<run-tag>/`
+//   — sibling of workdir/ and results/ under the same scope+user prefix
+//   — inherits the user's existing per-bucket IAM (no shared-write
+//     surface; abuse vector limited to other users in the SAME group,
+//     which the group already trusts)
+//   — per-run-tag base ensures Nextflow's `<base>/history` is unique
+//     per run, so simultaneous runs by the same user never race
+//
+// Returns "" when the work-dir doesn't match the canonical pattern
+// (e.g. operator-supplied `--work-dir s3://other/...`) — the caller
+// then omits NXF_CLOUDCACHE_PATH and Nextflow falls back to its
+// default local-fs LevelDB.
+//
+// Resume semantics: when the caller passes `--work-dir <prev>` to
+// resume an earlier run, this function parses <prev>'s components
+// (bucket / scope / user / run-tag) and yields the SAME cache path
+// the earlier run wrote to. Nextflow reads it back and the cached
+// tasks skip on the resume run. No special-casing needed.
+func deriveCloudCachePath(workDir string) string {
+	const s3Prefix = "s3://"
+	if !strings.HasPrefix(workDir, s3Prefix) {
+		return ""
+	}
+	rest := strings.TrimSuffix(strings.TrimPrefix(workDir, s3Prefix), "/")
+	parts := strings.Split(rest, "/")
+	// Canonical shape: <bucket>/<scope>/<user>/workdir/<run-tag>
+	// → 5 parts; parts[3] MUST be the literal "workdir".
+	if len(parts) < 5 || parts[3] != "workdir" {
+		return ""
+	}
+	bucket, scope, user, runTag := parts[0], parts[1], parts[2], parts[4]
+	if bucket == "" || scope == "" || user == "" || runTag == "" {
+		return ""
+	}
+	return fmt.Sprintf("s3://%s/%s/%s/cache/%s/", bucket, scope, user, runTag)
+}
+
 // validateExplicitWorkDir returns a warning string when the explicit
 // --work-dir bucket doesn't align with the active context's group
 // bucket. Empty warning + ok=true means the path is fine; non-empty

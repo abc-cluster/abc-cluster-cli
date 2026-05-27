@@ -81,6 +81,43 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 			}
 			staticEnv["AWS_SECRET_ACCESS_KEY"] = sk
 		}
+		// Nextflow CloudCache — persist .nextflow/cache + history on S3 so
+		// `-resume` can find previously-completed tasks across head-task
+		// restarts. Without this, the LevelDB session cache lives only on
+		// the ephemeral head container's /local fs and is lost when the
+		// alloc terminates → `-resume` always re-runs everything.
+		//
+		// The cache lives **inside the user's group bucket**, as a
+		// sibling of workdir/ and results/ under the same scope+user
+		// prefix. This inherits the user's existing IAM (no shared-write
+		// surface; no cross-group abuse vector) and matches the
+		// bucket-layout convention.
+		//
+		// Path: s3://<group-bucket>/<scope>/<user>/cache/<run-tag>/
+		//   • Derived by parsing spec.WorkDir, which canonical CLI paths
+		//     already follow:  s3://<bucket>/<scope>/<user>/workdir/<tag>/
+		//   • On `--resume` + `--work-dir <prev>`, parsing the prev path
+		//     produces the prev cache path → resume picks up the
+		//     previous session's LevelDB → cached tasks skip.
+		//
+		// Future: a periodic ingestion job (admin-credentialed) will walk
+		// each group bucket's cache/ prefixes and write task-hash → S3
+		// pointers into a postgres-backed global index. That's the
+		// "shared cache across users" plan, without giving any user
+		// write access to a shared bucket.
+		//
+		// Skipped when WorkDir doesn't match the canonical pattern OR
+		// isn't s3:// — operator-supplied custom paths don't get a
+		// cache override (their pipelines run without -resume support,
+		// which is the existing behaviour pre-cloudcache).
+		if isS3URI(spec.WorkDir) {
+			if cp := deriveCloudCachePath(spec.WorkDir); cp != "" {
+				if staticEnv == nil {
+					staticEnv = map[string]string{}
+				}
+				staticEnv["NXF_CLOUDCACHE_PATH"] = cp
+			}
+		}
 	}
 	if spec.S5cmdSkipTLS {
 		// Explicit override on the spec wins (e.g. saved pipeline or test).

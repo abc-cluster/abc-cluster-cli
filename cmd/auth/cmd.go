@@ -40,6 +40,7 @@ workspace and region settings.
   abc auth whoami          Show the current authenticated identity
   abc auth token           Print the active access token (pipe-safe)
   abc auth refresh         Refresh an expiring token (stub)
+  abc auth claim ...       Redeem a one-time claim code into a ready-to-use config
   abc auth context ...     Manage saved authentication contexts (list/show/use/add/delete)`,
 	}
 
@@ -48,6 +49,7 @@ workspace and region settings.
 	cmd.AddCommand(newWhoamiCmd())
 	cmd.AddCommand(newTokenCmd())
 	cmd.AddCommand(newRefreshCmd())
+	cmd.AddCommand(newClaimCmd())
 	cmd.AddCommand(contextcmd.NewCmd())
 
 	return cmd
