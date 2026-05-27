@@ -206,7 +206,11 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 
 	// ── Step 1: Build service set ─────────────────────────────────────────────
 
-	svcSet, via, err := buildServiceSet(bg, nc)
+	// Pass the active context's namespace so pool/member tokens (which
+	// don't have cluster-wide service:read) succeed against their own
+	// namespace. Empty namespace = cluster-wide query, which only mgmt
+	// + multi-group-admin tokens can satisfy.
+	svcSet, via, err := buildServiceSet(bg, nc, ctx.NomadNamespace())
 	if err != nil {
 		return err
 	}
@@ -432,22 +436,35 @@ func tierDefaultServices(clusterType string) map[string]config.ServiceCapability
 
 // buildServiceSet returns a set of running abc-nodes service names.
 // It tries the Nomad services API first; on 403 it falls back to job listing.
-func buildServiceSet(ctx context.Context, nc *utils.NomadClient) (map[string]bool, string, error) {
-	services, err := nc.ListServices(ctx, "")
+//
+// `namespace` is the active context's Nomad namespace; passing it
+// scopes the services query so pool/member tokens (which lack
+// cluster-wide service:read) succeed against their own namespace.
+// Empty string runs the cluster-wide query (mgmt / multi-group-admin
+// tokens). Bug history: pre-2026-05-27 the cluster-wide call always
+// 403'd for pool tokens, which made `abc cluster capabilities sync`
+// unusable from any researcher account.
+func buildServiceSet(ctx context.Context, nc *utils.NomadClient, namespace string) (map[string]bool, string, error) {
+	services, err := nc.ListServices(ctx, namespace)
 	if err == nil {
 		set := make(map[string]bool, len(services))
 		for _, s := range services {
 			set[s.ServiceName] = true
 		}
-		return set, "Nomad service registry", nil
+		via := "Nomad service registry"
+		if namespace != "" {
+			via += " (namespace " + namespace + ")"
+		}
+		return set, via, nil
 	}
 
 	if !isPermissionDenied(err) {
 		return nil, "", fmt.Errorf("list services from Nomad: %w", err)
 	}
 
-	// 403: fall back to listing jobs with prefix abc-nodes-.
-	jobs, jobErr := nc.ListJobs(ctx, "abc-nodes-", "")
+	// 403: fall back to listing jobs with prefix abc-nodes-, scoped to
+	// the same namespace so the pool/member-token path still works.
+	jobs, jobErr := nc.ListJobs(ctx, "abc-nodes-", namespace)
 	if jobErr != nil {
 		return nil, "", fmt.Errorf(
 			"list services from Nomad: 403 Forbidden (token needs namespace:read-job); "+

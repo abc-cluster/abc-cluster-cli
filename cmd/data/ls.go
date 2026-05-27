@@ -10,6 +10,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// parseBucketPath normalises an `abc data ls`/`stat` argument into
+// (bucket, prefix-or-key). It accepts:
+//
+//	bucket                  → ("bucket", "")
+//	bucket/                 → ("bucket", "")
+//	bucket/some/prefix      → ("bucket", "some/prefix")
+//	s3://bucket             → ("bucket", "")
+//	s3://bucket/some/prefix → ("bucket", "some/prefix")
+//
+// The s3:// scheme is accepted because the rest of the CLI emits
+// s3:// URIs (workdir, results, upload destination paths in
+// `abc pipeline run` output) — users naturally paste those into
+// `abc data ls`. A naive strings.Cut on the first `/` would split
+// inside the `//` in `s3://` and produce a `s3:` bucket name (which
+// MinIO rejects with InvalidBucketName — the symptom that surfaced
+// this bug during the 2026-05-27 hostgen demo dress rehearsal).
+func parseBucketPath(arg string) (bucket, rest string) {
+	arg = strings.TrimPrefix(arg, "s3://")
+	bucket, rest, _ = strings.Cut(arg, "/")
+	return bucket, rest
+}
+
 func newLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls [bucket[/prefix]]",
@@ -153,9 +175,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Parse "bucket" or "bucket/prefix".
-	path := args[0]
-	bucket, prefix, _ := strings.Cut(path, "/")
+	bucket, prefix := parseBucketPath(args[0])
 
 	objects, commonPrefixes, err := s3.ListObjects(cmd.Context(), bucket, prefix, maxKeys)
 	if err != nil {
@@ -210,8 +230,8 @@ func runStat(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	path := args[0]
-	bucket, key, ok := strings.Cut(path, "/")
+	bucket, key := parseBucketPath(args[0])
+	ok := bucket != "" && key != ""
 	if !ok || key == "" {
 		return fmt.Errorf("specify <bucket>/<key>, e.g. tusd/my-upload-id")
 	}

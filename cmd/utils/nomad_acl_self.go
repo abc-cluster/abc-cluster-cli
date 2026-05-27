@@ -32,12 +32,23 @@ func (c *NomadClient) GetACLTokenSelf(ctx context.Context) (*NomadACLToken, erro
 }
 
 // NomadWhoamiLabelFromACLToken builds a short human-readable label for config.auth.whoami.
+//
+// Pool-token Names carry a `pool-` prefix (`provision-pool.sh` mints
+// tokens like `pool-lunar_hornbill`) so the operator can distinguish
+// pool from named-user tokens at a glance in the Nomad UI. The CLI's
+// `auth.whoami` is used downstream as a path segment (pipeline workdir,
+// upload destination, job-ID prefix), where the slot pseudonym alone
+// is the desired identity — the `pool-` prefix is operator metadata,
+// not researcher identity. The tusd mover already strips this prefix
+// when computing the upload destination path; doing it here keeps the
+// CLI's notion of identity consistent across all paths (job IDs,
+// pipeline workdirs, upload destinations).
 func NomadWhoamiLabelFromACLToken(tok *NomadACLToken) string {
 	if tok == nil {
 		return ""
 	}
 	if n := strings.TrimSpace(tok.Name); n != "" {
-		return n
+		return strings.TrimPrefix(n, "pool-")
 	}
 	if strings.EqualFold(strings.TrimSpace(tok.Type), "management") {
 		return "management"

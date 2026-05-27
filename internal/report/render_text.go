@@ -32,6 +32,16 @@ type TextOptions struct {
 	// provenance footer. When zero, the renderer falls back to the
 	// Layer-0 ZA defaults so unit tests stay deterministic.
 	RateCard acct.RateCard
+
+	// ShowRateCard opts into the detailed "Rate card (effective):"
+	// provenance block at the end of the report. Off by default
+	// (2026-05-27): the rate values themselves are confusing without
+	// an accompanying methodology page, and the cost/emissions
+	// headline numbers already carry an "estimates based on default
+	// values" disclaimer that's enough for the demo audience.
+	// Power users / methods-section work flip this on for the full
+	// per-rate provenance + override hints.
+	ShowRateCard bool
 }
 
 // RenderText writes the §5.10 mockup-style summary to w. Reads the
@@ -90,54 +100,32 @@ func RenderText(ctx context.Context, db *sql.DB, w io.Writer, opts TextOptions, 
 	}
 	fmt.Fprintln(w)
 
-	// Time-saved breakdown.
-	fmt.Fprintln(w, "Research time saved (estimated):")
-	rows := timeSavedRows(ctx, db, opts.Window, opts.ContextName)
-	maxLabel := 0
-	for _, r := range rows {
-		if n := len(r.label); n > maxLabel {
-			maxLabel = n
-		}
-	}
-	for _, r := range rows {
-		fmt.Fprintf(w, "  %-*s →  %s\n", maxLabel, r.label, r.value)
-	}
-	fmt.Fprintln(w, "  "+strings.Repeat("─", 50))
-	hoursSaved, _ := ResultByID(results, "hours_saved")
-	totalStr := "n/a"
-	if hoursSaved.Computable {
-		if v, ok := hoursSaved.Value.(float64); ok {
-			totalStr = fmt.Sprintf("~%.1f hrs", v)
-		}
-	}
-	fmt.Fprintf(w, "  %-*s    %s\n", maxLabel, "Total:", totalStr)
-	fmt.Fprintln(w)
+	// "Research time saved" (and the postdoc-rate currency translation
+	// that follows it) was removed from the default render on
+	// 2026-05-27 — the underlying heuristic isn't yet backed by real
+	// measurement (it counts auto-retries, accepted defaults, etc. with
+	// hardcoded multipliers) and presenting it as a number was
+	// misleading at the seedling tier. The cost + emissions headline
+	// above is now the only quantitative output by default.
+	//
+	// A future, instrumented hours-saved metric may return — at which
+	// point it should land behind a separate `--show-time-saved` flag
+	// with its provenance documented.
 
-	// Currency translation. Postdoc rate flows through the same Layer
-	// 0/1 resolver `abc accounting` uses — drift between the report and
-	// accounting verbs is a regression (see the integration test in
-	// integration_test.go).
-	hours := 0.0
-	if hoursSaved.Computable {
-		if v, ok := hoursSaved.Value.(float64); ok {
-			hours = v
-		}
-	}
-	postdocRate := card.Cost.PostdocPerHour.Value
-	amount := hours * postdocRate
-	fmt.Fprintf(w, "%-23s %.1f hours\n", labelOrTech(opts, "Research time saved:", "hours_saved"), hours)
-	fmt.Fprintf(w, "%-23s %s %s\n",
-		labelOrTech(opts, "Hourly compensation:", "postdoc_per_hour"),
-		currencySym, formatRate(postdocRate))
-	fmt.Fprintf(w, "%-23s %s %s\n",
-		labelOrTech(opts, "Amount:", "amount_zar"),
-		currencySym, formatThousands(amount))
-	fmt.Fprintln(w)
+	// Always-on disclaimer. Two short lines, no rate-detail clutter.
+	// The detailed per-rate breakdown is gated behind --show-rate-card
+	// (see ShowRateCard on TextOptions).
+	fmt.Fprintln(w, "These rates are suggestive based on the reasonable default values,")
+	fmt.Fprintln(w, "the real-time rates are coming soon.")
 
-	// Unified provenance footer: every rate-card AND grid-intensity
-	// value used, with layer + citation. Same shape as
-	// `abc accounting --rate-source=full`. One block, no duplication.
-	writeProvenanceFooter(w, card)
+	if opts.ShowRateCard {
+		fmt.Fprintln(w)
+		writeProvenanceFooter(w, card)
+	}
+	// Quiet the dead-code linter — `currencySym` is still referenced
+	// inside the gated ShowRateCard branch's helpers, but the Go
+	// compiler only sees the spend-line block above.
+	_ = currencySym
 	return nil
 }
 
@@ -244,7 +232,8 @@ func writeProvenanceFooter(w io.Writer, card acct.RateCard) {
 		fmt.Fprintf(w, "  %-*s  %-8s  %-10s  (%s)\n", maxKey, r.Key, r.Value, src, r.Citation)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "These rates are showback estimates; not invoice-grade. To override:")
+	fmt.Fprintln(w, "These rates are suggestive based on the reasonable default values,")
+	fmt.Fprintln(w, "the real-time rates are coming soon. To override locally:")
 	fmt.Fprintln(w, "  abc config accounting set cost.postdoc_per_hour=400")
 	fmt.Fprintln(w, "  abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950")
 }

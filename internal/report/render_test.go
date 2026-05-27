@@ -11,11 +11,12 @@ import (
 	acct "github.com/abc-cluster/abc-cluster-cli/internal/accounting"
 )
 
-// TestRenderText_AcceptanceShape: the §"Acceptance: end-to-end" sample
-// in the spec gives the canonical text-mode shape. We don't pin every
-// number, but we do pin the section headers and the rate-card footer
-// — drift in those is the kind of breakage downstream doc snippets
-// catch only after they've been regenerated wrong.
+// TestRenderText_AcceptanceShape: pins the default-render section
+// headers + the always-on disclaimer. Updated 2026-05-27 — the
+// "Research time saved" block and the detailed "Rate card (effective)"
+// block both moved off the default path (the former removed pending
+// real measurement, the latter gated behind --show-rate-card). See
+// TestRenderText_ShowRateCard for the gated-on path.
 func TestRenderText_AcceptanceShape(t *testing.T) {
 	db := openFixtureDB(t)
 	insertRun(t, db, "r1", "completed", 1700000000, 1700003600, 3600, 1.0)
@@ -30,28 +31,64 @@ func TestRenderText_AcceptanceShape(t *testing.T) {
 		"Questions explored (investigations):",
 		"Pipeline runs:",
 		"Total compute:",
-		"Research time saved (estimated):",
-		"Auto-retry handled it for you",
-		"Failure summaries (vs. log diving)",
-		"Reused protocols (vs. from scratch)",
 		"Spend this period:",
 		"Emissions this period:",
-		"Research time saved:",
-		"Hourly compensation:",
-		"Amount:",
-		"Rate card (effective):",
-		"cost.postdoc_per_hour",
-		"emissions.grid_factor_gco2_per_kwh",
+		"These rates are suggestive based on the reasonable default values,",
+		"the real-time rates are coming soon.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("RenderText output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	// Things that must NOT appear in default output (the surface
+	// changes that motivated this rev; regression-pin them).
+	for _, mustNotHave := range []string{
+		"Research time saved",   // removed pending real instrumentation
+		"Auto-retry handled",    // sub-row of removed block
+		"Hourly compensation:",  // currency translation of removed block
+		"Rate card (effective):", // gated behind --show-rate-card
+		"cost.postdoc_per_hour", // ditto
+		"showback estimates; not invoice-grade", // old disclaimer wording
+	} {
+		if strings.Contains(out, mustNotHave) {
+			t.Errorf("default render leaked %q (should be gated or removed)\nfull output:\n%s", mustNotHave, out)
+		}
+	}
+}
+
+// TestRenderText_ShowRateCard: --show-rate-card surfaces the full
+// per-rate provenance footer + override hints. The same disclaimer
+// wording is shared with the default path so attendees see one
+// consistent line.
+func TestRenderText_ShowRateCard(t *testing.T) {
+	db := openFixtureDB(t)
+	insertRun(t, db, "r1", "completed", 1700000000, 1700003600, 3600, 1.0)
+
+	res := Compute(context.Background(), db, QueryOptions{Window: fullWindow, ContextName: "ctx"})
+	var buf bytes.Buffer
+	if err := RenderText(context.Background(), db, &buf, TextOptions{Window: fullWindow, ShowRateCard: true}, res); err != nil {
+		t.Fatalf("RenderText: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"Rate card (effective):",
+		"cost.postdoc_per_hour",
+		"emissions.grid_factor_gco2_per_kwh",
+		"suggestive based on the reasonable default values",
+		"abc config accounting set cost.postdoc_per_hour=400",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--show-rate-card output missing %q\nfull output:\n%s", want, out)
 		}
 	}
 }
 
 // TestRenderText_TechnicalMode: --technical replaces the human Title
 // labels with the metric IDs in the headline lines (still keeps the
-// gloss text where rendered). Useful sanity check for doc snippets.
+// gloss text where rendered). Updated 2026-05-27: the metric IDs
+// asserted are limited to the metrics still in the default render
+// (the hours_saved family moved off the default path; see
+// TestRenderText_AcceptanceShape).
 func TestRenderText_TechnicalMode(t *testing.T) {
 	db := openFixtureDB(t)
 	insertRun(t, db, "r1", "completed", 1700000000, 1700003600, 3600, 1.0)
@@ -61,7 +98,7 @@ func TestRenderText_TechnicalMode(t *testing.T) {
 		t.Fatalf("RenderText: %v", err)
 	}
 	out := buf.String()
-	for _, id := range []string{"investigations_count", "runs_count", "compute_hours", "hours_saved", "postdoc_per_hour", "amount_zar", "spend_zar", "emissions_kgco2e"} {
+	for _, id := range []string{"investigations_count", "runs_count", "compute_hours", "spend_zar", "emissions_kgco2e"} {
 		if !strings.Contains(out, id) {
 			t.Errorf("--technical text missing %q", id)
 		}

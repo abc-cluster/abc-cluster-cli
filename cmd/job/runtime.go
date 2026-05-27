@@ -255,12 +255,13 @@ func pixiWrapperLines(scriptName, manifestPath, driver string, cleanup bool, bin
 			`  export ABC_RUNTIME_PIXI_PHASE=inner`,
 		}
 		if binaryURL != "" {
-			qURL := bashDoubleQuote(binaryURL)
 			lines = append(lines,
 				`  _ABC_KERNEL="$(uname -s | tr '[:upper:]' '[:lower:]')"`,
 				`  _ABC_ARCH="$(uname -m)"`,
 				`  case "${_ABC_ARCH}" in x86_64) _ABC_ARCH=amd64 ;; aarch64) _ABC_ARCH=arm64 ;; esac`,
-				fmt.Sprintf(`  curl -fsSL %s-"${_ABC_KERNEL}-${_ABC_ARCH}" -o "${NOMAD_TASK_DIR}/pixi" || { echo "[abc] pixi download failed" >&2; exit 1; }`, qURL),
+				// Combine URL + platform suffix in one double-quoted string to avoid
+				// the SC2140 shellcheck warning from "url"-"${var}" concatenation.
+				fmt.Sprintf(`  curl -fsSL "%s-${_ABC_KERNEL}-${_ABC_ARCH}" -o "${NOMAD_TASK_DIR}/pixi" || { echo "[abc] pixi download failed" >&2; exit 1; }`, binaryURL),
 			)
 		}
 		lines = append(lines,
@@ -332,12 +333,13 @@ func micromambaWrapperLines(scriptName, envPath, driver string, cleanup bool, bi
 			`  export ABC_RUNTIME_MAMBA_PHASE=inner`,
 		}
 		if binaryURL != "" {
-			qURL := bashDoubleQuote(binaryURL)
 			lines = append(lines,
 				`  _ABC_KERNEL="$(uname -s | tr '[:upper:]' '[:lower:]')"`,
 				`  _ABC_ARCH="$(uname -m)"`,
 				`  case "${_ABC_ARCH}" in x86_64) _ABC_ARCH=amd64 ;; aarch64) _ABC_ARCH=arm64 ;; esac`,
-				fmt.Sprintf(`  curl -fsSL %s-"${_ABC_KERNEL}-${_ABC_ARCH}" -o "${NOMAD_TASK_DIR}/micromamba" || { echo "[abc] micromamba download failed" >&2; exit 1; }`, qURL),
+				// Combine URL + platform suffix in one double-quoted string to avoid
+				// the SC2140 shellcheck warning from "url"-"${var}" concatenation.
+				fmt.Sprintf(`  curl -fsSL "%s-${_ABC_KERNEL}-${_ABC_ARCH}" -o "${NOMAD_TASK_DIR}/micromamba" || { echo "[abc] micromamba download failed" >&2; exit 1; }`, binaryURL),
 			)
 		}
 		lines = append(lines,

@@ -51,6 +51,7 @@ mapping table and JSON schema.`,
 	cmd.Flags().String("by", "", "aggregation axis: investigation|pipeline|project|user (JSON only in v1)")
 	cmd.Flags().Bool("json", false, "emit machine-readable JSON; metric IDs are keys")
 	cmd.Flags().Bool("technical", false, "use metric IDs instead of human titles in text output")
+	cmd.Flags().Bool("show-rate-card", false, "include the detailed per-rate provenance block + override hints (default hidden)")
 	cmd.Flags().Bool("all-contexts", false, "(Phase 2 — currently rejects with a clear error)")
 	return cmd
 }
@@ -73,6 +74,7 @@ func runReport(cmd *cobra.Command, _ []string) error {
 
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	technical, _ := cmd.Flags().GetBool("technical")
+	showRateCard, _ := cmd.Flags().GetBool("show-rate-card")
 	by, _ := cmd.Flags().GetString("by")
 
 	// v1 grouping policy (per-spec clarification): JSON mode supports
@@ -111,7 +113,7 @@ func runReport(cmd *cobra.Command, _ []string) error {
 		return rep.RenderJSON(cmd.OutOrStdout(), window, contextName, card, results, groups)
 	}
 
-	textOpts := rep.TextOptions{Window: window, Technical: technical, ContextName: contextName, RateCard: card}
+	textOpts := rep.TextOptions{Window: window, Technical: technical, ShowRateCard: showRateCard, ContextName: contextName, RateCard: card}
 	return rep.RenderText(cmd.Context(), db, cmd.OutOrStdout(), textOpts, results)
 }
 

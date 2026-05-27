@@ -87,37 +87,44 @@ func newClaimCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "claim <claim-code>",
 		Short: "Claim a pool slot and install a ready-to-use config",
-		Long: `Redeem a one-time claim_code against an abc-cluster signup service.
+		Long: `Redeem a claim_code against an abc-cluster signup service.
 
 The server (today: abc-signup-svc on the seedling deployment) calls the
-Supabase claim_slot RPC, marks the slot claimed, and returns a complete
-config.yaml. This command installs that config at ~/.abc/config.yaml
-(or ABC_CLI_CONFIG_FILE) and makes it the active context — equivalent
-to running 'abc auth context add --from-file' on a downloaded YAML
-file, but in one step.
+Supabase claim_slot RPC, draws an unclaimed slot from the code's group,
+marks it claimed, and returns a complete config.yaml. This command
+installs that config at ~/.abc/config.yaml (or ABC_CLI_CONFIG_FILE) and
+makes it the active context — equivalent to running
+'abc auth context add --from-file' on a downloaded YAML file, but in
+one step.
 
-Endpoint resolution:
-  --endpoint URL          explicit URL wins
-  --tier <name>           composes https://signup.<name>.abc-cluster.cloud/claim
-  neither                 defaults to --tier=seedling (the canonical
-                          deployment today)
+Most users only need the first form below. The other flags exist for
+multi-deployment, scripting, and debugging scenarios.
 
 Examples:
-  # Claim with a code, all flags
-  abc auth claim FF7C-EKY8-u6mR --tier seedling \
-    --email researcher@sun.ac.za --name "A. Researcher" --consent
+  # Default (minimal) — uses --tier=seedling, prompts for consent
+  abc auth claim <CODE> --email <you>@sun.ac.za --name "Your Name"
 
-  # Blind-pool draw (no code; server picks any free slot in the group)
-  abc auth claim --tier seedling --group-name demo \
-    --email researcher@sun.ac.za --name "A. Researcher"
+  # Skip the consent prompt (you must have read the deployment policy)
+  abc auth claim <CODE> --email <you>@sun.ac.za --name "Your Name" --consent
 
   # Read claim code from stdin (keeps it out of shell history)
-  echo "$CLAIM_CODE" | abc auth claim --code-stdin --tier seedling \
-    --email researcher@sun.ac.za --name "A. Researcher" --consent
+  echo "$CLAIM_CODE" | abc auth claim --code-stdin \
+    --email <you>@sun.ac.za --name "Your Name" --consent
 
-  # Print the YAML without touching the on-disk config
-  abc auth claim FF7C --tier seedling --email …@sun.ac.za \
-    --name "…" --consent --print-only
+  # Blind-pool draw (no code; server picks any free slot in the group)
+  abc auth claim --group-name demo \
+    --email <you>@sun.ac.za --name "Your Name"
+
+  # Non-default deployment (e.g. grove or a custom tier)
+  abc auth claim <CODE> --tier grove --email <you>@example.com --name "…"
+
+  # Print the YAML without touching the on-disk config (debug / piping)
+  abc auth claim <CODE> --email <you>@sun.ac.za --name "…" --consent --print-only
+
+Endpoint resolution (rarely needed):
+  --endpoint URL          explicit URL wins
+  --tier <name>           composes https://signup.<name>.abc-cluster.cloud/claim
+  neither                 defaults to --tier=seedling
 `,
 		Args: cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
