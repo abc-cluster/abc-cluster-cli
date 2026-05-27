@@ -1,6 +1,7 @@
 package workbench
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -173,41 +175,35 @@ func WaitForSSH(node NodeSSH, vmName string) error {
 	return fmt.Errorf("VM %q SSH not ready after 60s", vmName)
 }
 
+// injectKeyTmpl embeds the base64-encoded public key directly in the script
+// so there are no quoting issues passing it through SSH argument handling.
+// base64 output contains only [A-Za-z0-9+/=] — safe to single-quote in bash.
+var injectKeyTmpl = template.Must(template.New("inject-key").Parse(`#!/usr/bin/env bash
+set -euo pipefail
+KEY=$(echo '{{.KeyB64}}' | base64 -d)
+mkdir -p /home/ubuntu/.ssh
+chmod 700 /home/ubuntu/.ssh
+grep -qxF "$KEY" /home/ubuntu/.ssh/authorized_keys 2>/dev/null \
+  || echo "$KEY" >> /home/ubuntu/.ssh/authorized_keys
+chmod 600 /home/ubuntu/.ssh/authorized_keys
+`))
+
 // InjectSSHKey adds the local machine's SSH public key to the VM's
 // authorized_keys so the user can SSH in with their normal identity.
 // Tries ~/.ssh/id_ed25519.pub, id_rsa.pub, id_ecdsa.pub in order; skips
 // silently if no key file is found.
-// Uses bash -s (stdin) to avoid quoting issues passing the key through SSH.
 func InjectSSHKey(node NodeSSH, vmName string) error {
 	pubKey := readFirstPubKey()
 	if pubKey == "" {
-		return nil // no local key found; user must add their key manually
+		return nil
 	}
 
-	// Script reads the key from stdin (/dev/stdin becomes $KEY) and appends
-	// it idempotently to authorized_keys.
-	script := `#!/usr/bin/env bash
-set -euo pipefail
-KEY=$(cat /dev/stdin)
-mkdir -p /home/ubuntu/.ssh
-chmod 700 /home/ubuntu/.ssh
-grep -qxF "$KEY" /home/ubuntu/.ssh/authorized_keys 2>/dev/null || echo "$KEY" >> /home/ubuntu/.ssh/authorized_keys
-chmod 600 /home/ubuntu/.ssh/authorized_keys
-`
-	// We need to pass two things via stdin to the remote bash:
-	// the script itself (to bash -s) AND the key.
-	// Work around this by embedding the key in the script itself
-	// using a here-doc, which is safe since base64 has no special chars.
-	keyB64 := base64Encode(pubKey)
-	embedded := fmt.Sprintf(`#!/usr/bin/env bash
-set -euo pipefail
-KEY=$(echo '%s' | base64 -d)
-mkdir -p /home/ubuntu/.ssh
-chmod 700 /home/ubuntu/.ssh
-grep -qxF "$KEY" /home/ubuntu/.ssh/authorized_keys 2>/dev/null || echo "$KEY" >> /home/ubuntu/.ssh/authorized_keys
-chmod 600 /home/ubuntu/.ssh/authorized_keys
-`, keyB64)
-	_ = script // replaced by embedded
+	var buf bytes.Buffer
+	if err := injectKeyTmpl.Execute(&buf, map[string]string{
+		"KeyB64": base64.StdEncoding.EncodeToString([]byte(pubKey)),
+	}); err != nil {
+		return fmt.Errorf("render inject-key script: %w", err)
+	}
 
 	full := []string{
 		"-o", "BatchMode=yes",
@@ -217,17 +213,12 @@ chmod 600 /home/ubuntu/.ssh/authorized_keys
 		"multipass", "exec", vmName, "--", "bash", "-s",
 	}
 	cmd := exec.Command("ssh", full...)
-	cmd.Stdin = strings.NewReader(embedded)
+	cmd.Stdin = &buf
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// base64Encode returns the standard base64 encoding of s (no line breaks).
-func base64Encode(s string) string {
-	return base64.StdEncoding.EncodeToString([]byte(s))
 }
 
 // readFirstPubKey returns the content of the first local SSH public key found.
@@ -251,7 +242,6 @@ func readFirstPubKey() string {
 // Safe to call on an already-provisioned VM.
 func ProvisionVM(node NodeSSH, vmName string, w io.Writer) error {
 	fmt.Fprintf(w, "  Provisioning tools (first time, ~3-5 min)...\n")
-	// Feed the provision script to bash via multipass exec.
 	full := []string{
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=60",
@@ -269,11 +259,52 @@ func ProvisionVM(node NodeSSH, vmName string, w io.Writer) error {
 	return nil
 }
 
+// startServicesTmpl starts code-server and Jupyter Server inside the VM.
+// Token is shell-quoted via the quote template function.
+var startServicesTmpl = template.Must(
+	template.New("start-services").
+		Funcs(template.FuncMap{
+			// quote produces a shell-safe double-quoted string (same as Go %q).
+			"quote": func(s string) string { return fmt.Sprintf("%q", s) },
+		}).
+		Parse(`#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$HOME/.pixi/bin:$HOME/.local/bin:$PATH"
+
+# Stop stale instances gracefully.
+pkill -f 'code-server' 2>/dev/null || true
+pkill -f 'jupyter server' 2>/dev/null || true
+sleep 1
+
+# Jupyter Server.
+nohup jupyter server \
+    --no-browser --ip=0.0.0.0 --port=8888 \
+    --ServerApp.token={{.Token | quote}} \
+    --ServerApp.password="" \
+    > /tmp/jupyter.log 2>&1 &
+
+# code-server.
+PASSWORD={{.Token | quote}} nohup code-server \
+    --bind-addr 0.0.0.0:8080 \
+    --auth password \
+    > /tmp/code-server.log 2>&1 &
+
+sleep 3
+CS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 2>/dev/null || echo "ERR")
+JP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888 2>/dev/null || echo "ERR")
+echo "  code-server: $CS  jupyter: $JP"
+`))
+
 // StartWorkbenchServices starts code-server and Jupyter Server inside the VM.
 // Idempotent — kills stale instances first.
 func StartWorkbenchServices(node NodeSSH, vmName, token string, w io.Writer) error {
 	fmt.Fprintf(w, "  Starting workbench services...\n")
-	script := fmt.Sprintf(vmStartServicesScript, token, token)
+
+	var buf bytes.Buffer
+	if err := startServicesTmpl.Execute(&buf, map[string]string{"Token": token}); err != nil {
+		return fmt.Errorf("render start-services script: %w", err)
+	}
+
 	full := []string{
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=30",
@@ -282,7 +313,7 @@ func StartWorkbenchServices(node NodeSSH, vmName, token string, w io.Writer) err
 		"multipass", "exec", vmName, "--", "bash", "-s",
 	}
 	cmd := exec.Command("ssh", full...)
-	cmd.Stdin = strings.NewReader(script)
+	cmd.Stdin = &buf
 	cmd.Stdout = w
 	cmd.Stderr = w
 	return cmd.Run()
@@ -351,34 +382,4 @@ fi
 sudo systemctl enable --now ssh 2>/dev/null || true
 
 echo "--- provision complete ---"
-`
-
-// vmStartServicesScript starts code-server and Jupyter Server.
-// %s args: token, token (used for both services).
-const vmStartServicesScript = `#!/usr/bin/env bash
-set -euo pipefail
-export PATH="$HOME/.pixi/bin:$HOME/.local/bin:$PATH"
-
-# Stop stale instances gracefully.
-pkill -f 'code-server' 2>/dev/null || true
-pkill -f 'jupyter server' 2>/dev/null || true
-sleep 1
-
-# Jupyter Server.
-nohup jupyter server \
-    --no-browser --ip=0.0.0.0 --port=8888 \
-    --ServerApp.token=%q \
-    --ServerApp.password="" \
-    > /tmp/jupyter.log 2>&1 &
-
-# code-server.
-PASSWORD=%q nohup code-server \
-    --bind-addr 0.0.0.0:8080 \
-    --auth password \
-    > /tmp/code-server.log 2>&1 &
-
-sleep 3
-CS=$(curl -s -o /dev/null -w "%%{http_code}" http://localhost:8080 2>/dev/null || echo "ERR")
-JP=$(curl -s -o /dev/null -w "%%{http_code}" http://localhost:8888 2>/dev/null || echo "ERR")
-echo "  code-server: $CS  jupyter: $JP"
 `
