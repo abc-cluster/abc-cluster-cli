@@ -6,13 +6,13 @@
 //     checks that a Nomad address and access token are configured.
 //  2. Connectivity — probes each configured service endpoint directly
 //     (Nomad health, MinIO liveness, upload endpoint reachability).
-//  3. Workload — submits a minimal raw_exec batch job (echo), waits
-//     for it to complete, then purges it. Proves the full submit→schedule→
-//     run→complete path without requiring a container runtime.
+//  3. Workload — submits a minimal raw_exec batch job (echo) as a probe,
+//     waits for it to complete, then purges it. Proves the full submit→
+//     schedule→run→complete path without requiring a container runtime.
 //
 // Flags:
 //
-//	--skip-job      skip the workload smoke test (groups 1+2 only)
+//	--skip-job      skip the workload probe (groups 1+2 only)
 //	--json          emit a single JSON object with all check results
 //	--context <n>   run against a named context instead of the active one
 //	-q / --quiet    already set on rootCmd; suppresses the mode banner
@@ -48,7 +48,7 @@ Three check groups run in order:
                     and access token are present.
   2. Connectivity — Nomad is reachable and healthy. MinIO is probed when an
                     S3 endpoint is configured in the active context.
-  3. Workload     — a minimal batch job (raw_exec echo) is submitted, waits
+  3. Workload     — a minimal raw_exec batch job is submitted as a probe, waits
                     up to 60 s for completion, then purged. Skip with --skip-job.
 
 Exit code 0 = all checks passed. Exit code 1 = one or more failed.
@@ -58,10 +58,10 @@ Use 'abc doctor' when you need to prove the full client→cluster path works.`,
 		RunE: runDoctor,
 	}
 
-	cmd.Flags().Bool("skip-job", false, "Skip the workload smoke test (groups 1 and 2 only)")
+	cmd.Flags().Bool("skip-job", false, "Skip the workload probe (groups 1 and 2 only)")
 	cmd.Flags().Bool("json", false, "Emit results as a single JSON object")
 	cmd.Flags().String("context", "", "Run checks against this named context instead of the active one")
-	cmd.Flags().Duration("job-timeout", 60*time.Second, "Maximum time to wait for the smoke job to complete")
+	cmd.Flags().Duration("job-timeout", 60*time.Second, "Maximum time to wait for the probe job to complete")
 
 	return cmd
 }
@@ -426,7 +426,7 @@ func resolveMinioEndpoint(_ *config.Config, ctx *config.Context) string {
 
 // ── Check group 3: Workload ───────────────────────────────────────────────────
 
-// doctorJobTTL is how long to let the smoke job linger on Nomad before purging.
+// doctorJobTTL is how long to let the probe job linger on Nomad before purging.
 // We purge immediately on completion, but use this as a Nomad-side GC fallback.
 const doctorJobTTL = 5 * time.Minute
 
@@ -436,7 +436,7 @@ func checkWorkload(ctx context.Context, cfg *config.Config, activeCtx *config.Co
 
 	if activeCtx == nil {
 		g.Checks = append(g.Checks, checkResult{
-			Name:   "smoke job",
+			Name:   "probe job",
 			Status: statusSkip,
 			Detail: "skipped (config check failed)",
 		})
@@ -452,14 +452,14 @@ func checkWorkload(ctx context.Context, cfg *config.Config, activeCtx *config.Co
 	}
 
 	// Build a unique job ID so concurrent doctor runs don't collide.
-	jobID := fmt.Sprintf("abc-doctor-smoke-%d", time.Now().UnixMilli()%100000)
+	jobID := fmt.Sprintf("abc-doctor-probe-%d", time.Now().UnixMilli()%100000)
 
 	// Build the minimal inline batch job JSON. We use raw_exec (enabled on all
 	// seedling-prod nodes per ADR-0058) so no container runtime is required.
-	jobJSON, err := buildSmokeJobJSON(jobID, namespace)
+	jobJSON, err := buildProbeJobJSON(jobID, namespace)
 	if err != nil {
 		g.Checks = append(g.Checks, checkResult{
-			Name:   "build smoke job",
+			Name:   "build probe job",
 			Status: statusFail,
 			Detail: err.Error(),
 		})
@@ -472,7 +472,7 @@ func checkWorkload(ctx context.Context, cfg *config.Config, activeCtx *config.Co
 	resp, err := nc.RegisterJob(ctx, jobJSON)
 	if err != nil {
 		g.Checks = append(g.Checks, checkResult{
-			Name:   "smoke job submit",
+			Name:   "probe job submit",
 			Status: statusFail,
 			Detail: err.Error(),
 		})
@@ -480,15 +480,15 @@ func checkWorkload(ctx context.Context, cfg *config.Config, activeCtx *config.Co
 	}
 	_ = resp // EvalID noted; we poll allocs directly
 	g.Checks = append(g.Checks, checkResult{
-		Name:   "smoke job submit",
+		Name:   "probe job submit",
 		Status: statusPass,
 		Detail: jobID,
 	})
 
 	// Wait for the job to reach a terminal alloc state.
-	allocID, allocStatus, waitErr := waitForSmokeJobAlloc(ctx, nc, jobID, namespace, timeout, errw)
+	allocID, allocStatus, waitErr := waitForProbeJobAlloc(ctx, nc, jobID, namespace, timeout, errw)
 
-	// Always purge the smoke job (best-effort).
+	// Always purge the probe job (best-effort).
 	defer func() {
 		purgeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -497,7 +497,7 @@ func checkWorkload(ctx context.Context, cfg *config.Config, activeCtx *config.Co
 
 	if waitErr != nil {
 		g.Checks = append(g.Checks, checkResult{
-			Name:   "smoke job complete",
+			Name:   "probe job complete",
 			Status: statusFail,
 			Detail: waitErr.Error(),
 		})
@@ -506,7 +506,7 @@ func checkWorkload(ctx context.Context, cfg *config.Config, activeCtx *config.Co
 
 	if !strings.EqualFold(allocStatus, "complete") {
 		g.Checks = append(g.Checks, checkResult{
-			Name:   "smoke job complete",
+			Name:   "probe job complete",
 			Status: statusFail,
 			Detail: fmt.Sprintf("alloc %s ended with status %q (expected \"complete\")", shortID(allocID), allocStatus),
 		})
@@ -514,22 +514,22 @@ func checkWorkload(ctx context.Context, cfg *config.Config, activeCtx *config.Co
 	}
 
 	g.Checks = append(g.Checks, checkResult{
-		Name:   "smoke job complete",
+		Name:   "probe job complete",
 		Status: statusPass,
 		Detail: fmt.Sprintf("alloc %s", shortID(allocID)),
 	})
 	return g
 }
 
-// waitForSmokeJobAlloc polls Nomad until the smoke job's allocation reaches a
+// waitForProbeJobAlloc polls Nomad until the probe job's allocation reaches a
 // terminal state or the timeout elapses.
-func waitForSmokeJobAlloc(ctx context.Context, nc *utils.NomadClient,
+func waitForProbeJobAlloc(ctx context.Context, nc *utils.NomadClient,
 	jobID, namespace string, timeout time.Duration, _ *os.File) (allocID, status string, err error) {
 
 	deadline := time.Now().Add(timeout)
 	for {
 		if time.Now().After(deadline) {
-			return "", "", fmt.Errorf("timed out after %s waiting for smoke job allocation", timeout)
+			return "", "", fmt.Errorf("timed out after %s waiting for probe job allocation", timeout)
 		}
 		select {
 		case <-ctx.Done():
@@ -552,13 +552,13 @@ func waitForSmokeJobAlloc(ctx context.Context, nc *utils.NomadClient,
 	}
 }
 
-// buildSmokeJobJSON constructs the Nomad job object JSON for the smoke test.
+// buildProbeJobJSON constructs the Nomad job object JSON for the doctor probe.
 // Uses raw_exec driver with a single-line echo so no container image is required.
 //
 // Important: utils.NomadClient.RegisterJob wraps the payload in {"Job": <json>}
 // before posting to /v1/jobs, so this function returns only the job object —
 // NOT a {"Job": {...}} wrapper.
-func buildSmokeJobJSON(jobID, namespace string) (json.RawMessage, error) {
+func buildProbeJobJSON(jobID, namespace string) (json.RawMessage, error) {
 	// We build the struct in Go and marshal to JSON directly — no HCL roundtrip
 	// needed for such a trivial job.
 	type task struct {
@@ -591,7 +591,7 @@ func buildSmokeJobJSON(jobID, namespace string) (json.RawMessage, error) {
 	}
 
 	t := task{
-		Name:   "smoke",
+		Name:   "probe",
 		Driver: "raw_exec",
 		Config: map[string]any{
 			"command": "/bin/sh",
@@ -623,7 +623,7 @@ func buildSmokeJobJSON(jobID, namespace string) (json.RawMessage, error) {
 
 	b, err := json.Marshal(j)
 	if err != nil {
-		return nil, fmt.Errorf("marshal smoke job: %w", err)
+		return nil, fmt.Errorf("marshal probe job: %w", err)
 	}
 	return json.RawMessage(b), nil
 }
