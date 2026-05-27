@@ -18,5 +18,6 @@ Complete flag and option documentation for every `abc` command.
 | [infra](./infra) | Compute node and storage management |
 | [admin services](./admin) | Proxy into Nomad, Vault, Consul, Tailscale CLIs |
 | [cluster](./cluster) | Cluster capability sync |
+| [workbench](./workbench) | Interactive IDE sessions (VS Code / Jupyter) — ⚠ admin-provisioned only |
 
 The full flag reference is also maintained in [USAGE.md](https://github.com/abc-cluster/abc-cluster-cli/blob/main/USAGE.md) on GitHub.
