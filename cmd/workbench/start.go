@@ -116,8 +116,15 @@ func runStart(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir s
 	s3Endpoint, s3AccessKey, s3SecretKey := resolveS3Creds(ctx)
 
 	// Generate session ID and token.
+	// Token is derived deterministically from the MinIO secret key so it is stable
+	// across sessions — users don't need to run 'abc workbench url' after every start.
+	// Falls back to a random token if no S3 credentials are available.
 	sessionID := state.NewWorkbenchID()
-	token := randomToken(16)
+	token := workbench.DeriveToken(s3SecretKey)
+	if token == workbench.DeriveToken("") {
+		// Empty secret key produces a predictable token — use random instead.
+		token = randomToken(16)
+	}
 
 	// Determine datacenter.
 	datacenter := "seedling-prod"

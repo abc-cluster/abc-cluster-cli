@@ -1,6 +1,17 @@
 package workbench
 
-import "fmt"
+import (
+	"crypto/sha256"
+	"fmt"
+)
+
+// DeriveToken produces a stable 16-char hex workbench password from the user's
+// MinIO secret key. Same key → same password every session. If secretKey is
+// empty (e.g. operator-configured cluster), a random token should be used instead.
+func DeriveToken(secretKey string) string {
+	h := sha256.Sum256([]byte(secretKey))
+	return fmt.Sprintf("%x", h[:8]) // 16 hex chars
+}
 
 // ideImages maps IDE name → default container image.
 // quarto uses abc-quarto-base (in-house image, built separately).
@@ -69,7 +80,11 @@ func GenerateHCL(c JobConfig) string {
 	cpuMHz := c.Cores * 1000
 
 	jobID := "abc-workbench-" + c.User
-	volumeID := "homedir-" + c.User
+	// Homedir: bind-mounted from host via docker.volumes.enabled = true.
+	// Host path: /data/workbench/<user>/home  (created by abc workbench start before job submission)
+	// Container path: /home/<user>
+	// No Nomad host_volume registration required — eliminates per-user Nomad restarts.
+	hostHomedir := "/data/workbench/" + c.User + "/home"
 	homedir := "/home/" + c.User
 
 	// s3EnvLines is injected inside the single env {} block (not a separate block).
@@ -131,24 +146,17 @@ job %q {
       }
     }
 
-    volume %q {
-      type      = "host"
-      read_only = false
-      source    = %q
-    }
-
     task "session" {
       driver       = "docker"
       kill_timeout = "120s"
 
       config {
-        image = %q
-        ports = ["http"]
-      }
-
-      volume_mount {
-        volume      = %q
-        destination = %q
+        image   = %q
+        ports   = ["http"]
+        # Bind mount homedir via docker.volumes.enabled = true in Nomad plugin config.
+        # Host path created by abc workbench start before job submission.
+        # No Nomad host_volume registration required.
+        volumes = [%q]
       }
 
       env {
@@ -177,9 +185,8 @@ job %q {
 		c.SessionID,
 		jobID, c.Namespace, c.Datacenter, c.NodePool,
 		nodeConstraint,
-		volumeID, volumeID,
 		c.Image,
-		volumeID, homedir,
+		fmt.Sprintf("%s:%s", hostHomedir, homedir),
 		c.Token, c.Token,
 		c.SessionID, c.User, c.IDE,
 		fmt.Sprintf("%d", c.IdleTimeoutSecs),
