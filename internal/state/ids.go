@@ -35,6 +35,9 @@ func NewRunID() string { return "RUN-" + NewULID() }
 // NewFreezeID returns an F-prefixed ULID.
 func NewFreezeID() string { return "F-" + NewULID() }
 
+// NewWorkbenchID returns a WB-prefixed ULID for workbench sessions.
+func NewWorkbenchID() string { return "WB-" + NewULID() }
+
 // LooksLikeULID reports whether s appears to be a (possibly prefixed) ULID
 // rather than a slug. Heuristic: contains uppercase chars after any "X-"
 // prefix and length ≥ 16. Slugs are all-lowercase + digits + dashes.

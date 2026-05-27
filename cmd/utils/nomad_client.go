@@ -183,6 +183,7 @@ type NomadDynamicPort struct {
 }
 
 type nomadAllocNetwork struct {
+	IP            string             `json:"IP"`   // host-side IP for bridge/host network; fallback when DynamicPort.HostIP is empty
 	DynamicPorts  []NomadDynamicPort `json:"DynamicPorts"`
 	ReservedPorts []NomadDynamicPort `json:"ReservedPorts"`
 }
@@ -634,8 +635,16 @@ func (c *NomadClient) ParseHCLWithVars(ctx context.Context, hcl, variables strin
 
 func (c *NomadClient) RegisterJob(ctx context.Context, jobJSON json.RawMessage) (*NomadRegisterResponse, error) {
 	body := json.RawMessage(fmt.Sprintf(`{"Job":%s}`, string(jobJSON)))
+	// Nomad ACL checks the ?namespace= query param on /v1/jobs, not the
+	// namespace embedded in the job body. Forward defaultNamespace so pool
+	// tokens (which only have write access in their own namespace) are not
+	// rejected with 403 — same pattern as ParseHCLWithVars.
+	q := url.Values{}
+	if ns := c.defaultNamespace; ns != "" {
+		q.Set("namespace", ns)
+	}
 	var out NomadRegisterResponse
-	return &out, c.post(ctx, "/v1/jobs", &body, &out)
+	return &out, c.postWithQuery(ctx, "/v1/jobs", q, &body, &out)
 }
 
 func (c *NomadClient) PlanJob(ctx context.Context, jobID string, jobJSON json.RawMessage) (*NomadPlanResponse, error) {

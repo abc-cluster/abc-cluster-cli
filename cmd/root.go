@@ -30,6 +30,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/workbench"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
@@ -252,6 +253,7 @@ func init() {
 	rootCmd.AddCommand(job.NewLogsCmd())
 	rootCmd.AddCommand(cluster.NewCmd())
 	rootCmd.AddCommand(doctor.NewCmd())
+	rootCmd.AddCommand(workbench.NewCmd())
 	rootCmd.AddCommand(accounting.NewCmd())
 	// `abc status` is a deprecated alias of `abc cluster status` (kept for one
 	// release). The canonical command lives under abc cluster status.
