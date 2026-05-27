@@ -669,7 +669,36 @@ func autoAttachPipelineRun(cmd *cobra.Command, spec *PipelineSpec) string {
 		fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: %v (continuing without run record)\n", err)
 		return ""
 	}
+	// Stash the workdir root so the future Nextflow-cache aggregator
+	// (brainstorm: brainstorms/abc-report-use-cases/2026-05-27-…) can
+	// join per-task cost rows across resumes that share this prefix.
+	// Soft-fail: if the column isn't there or the write breaks, the
+	// run record stays intact — the aggregator just won't see this row.
+	if root := pipelineWorkdirRoot(spec.WorkDir); root != "" {
+		if err := state.UpdateRunWorkdirRoot(cmd.Context(), db, res.RunID, root); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[abc] auto-attach: workdir_root write failed: %v\n", err)
+		}
+	}
 	return res.RunID
+}
+
+// pipelineWorkdirRoot returns the stable workdir prefix shared across
+// resumes for a canonical CLI-derived workdir path. Examples:
+//
+//	s3://su-demo/user/slate-sunbird/workdir/slate-sunbird-1779…/  → same
+//	s3://su-demo/user/slate-sunbird/workdir/slate-sunbird-1779…   → same (trailing / normalised)
+//	/scratch/local/nf-work/foo/                                    → "" (operator path, no resume model)
+//	""                                                              → ""
+//
+// Resume-as-the-same-pipeline means re-using the same --work-dir, so
+// the path itself is the resume key. We normalise the trailing slash
+// so two writes (one with /, one without) collide on the same root
+// in the aggregator's GROUP BY.
+func pipelineWorkdirRoot(workdir string) string {
+	if !strings.HasPrefix(workdir, "s3://") {
+		return ""
+	}
+	return strings.TrimRight(workdir, "/") + "/"
 }
 
 func nomadConnFromCmd(cmd *cobra.Command) (string, string) {

@@ -53,6 +53,8 @@ mapping table and JSON schema.`,
 	cmd.Flags().Bool("technical", false, "use metric IDs instead of human titles in text output")
 	cmd.Flags().Bool("show-rate-card", false, "include the detailed per-rate provenance block + override hints (default hidden)")
 	cmd.Flags().Bool("all-contexts", false, "(Phase 2 — currently rejects with a clear error)")
+	// Subverbs.
+	cmd.AddCommand(newRunsCmd())
 	return cmd
 }
 

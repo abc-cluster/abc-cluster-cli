@@ -90,7 +90,13 @@ func Watch(addr, token, region string, target WatchTarget, cfg Config, logTo io.
 //
 // Returns the number of runs successfully reconciled. Errors are logged to
 // logTo (non-fatal: the report continues with whatever data is available).
-func ReconcileStuckRuns(ctx context.Context, nomadAddr, token, region string, minAge time.Duration, logTo io.Writer) int {
+//
+// Pass `fallbackNamespace` to handle runs whose namespace column was never
+// populated (`abc job run` historically didn't always write it). When the
+// row's namespace is "", reconcile uses the fallback — typically the
+// active context's Nomad namespace — instead of letting the Nomad
+// client default to "default" and 404.
+func ReconcileStuckRuns(ctx context.Context, nomadAddr, token, region string, minAge time.Duration, logTo io.Writer, fallbackNamespace ...string) int {
 	if nomadAddr == "" {
 		return 0
 	}
@@ -147,10 +153,19 @@ func ReconcileStuckRuns(ctx context.Context, nomadAddr, token, region string, mi
 		return 0
 	}
 
+	fallbackNS := ""
+	if len(fallbackNamespace) > 0 {
+		fallbackNS = fallbackNamespace[0]
+	}
+
 	nc := utils.NewNomadClient(nomadAddr, token, region)
 	reconciled := 0
 	for _, r := range stuck {
-		target := WatchTarget{RunID: r.runID, JobID: r.jobID, Namespace: r.ns}
+		ns := r.ns
+		if ns == "" {
+			ns = fallbackNS
+		}
+		target := WatchTarget{RunID: r.runID, JobID: r.jobID, Namespace: ns}
 		if final, ok := pollOnce(ctx, db, nc, target, logTo); ok {
 			if logTo != nil {
 				fmt.Fprintf(logTo, "[abc] reconcile: run %s completed → %s\n", r.runID, final)

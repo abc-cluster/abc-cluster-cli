@@ -872,6 +872,19 @@ func UpdateRunJobID(ctx context.Context, db *sql.DB, runID, jobID string) error 
 	return err
 }
 
+// UpdateRunWorkdirRoot stores the stable workdir path for a pipeline run
+// (the part of the s3:// workdir prefix that's identical across resumes).
+// Migration 0012 added the column for the future cache aggregator that
+// will join per-task cost data across a resume chain — this writer keeps
+// the column populated so that aggregator can group resumes without
+// requiring a schema migration later. NULL for job rows (single-alloc
+// jobs don't have a workdir-keyed resume model).
+func UpdateRunWorkdirRoot(ctx context.Context, db *sql.DB, runID, workdirRoot string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE runs SET workdir_root = ? WHERE run_id = ?`, workdirRoot, runID)
+	return err
+}
+
 // ListRunsForInvestigation returns runs attached to an investigation.
 func ListRunsForInvestigation(ctx context.Context, db *sql.DB, investigationID string) ([]Run, error) {
 	rows, err := db.QueryContext(ctx, `
