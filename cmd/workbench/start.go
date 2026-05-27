@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -114,6 +115,17 @@ func runStart(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir s
 
 	// Resolve MinIO credentials from context.
 	s3Endpoint, s3AccessKey, s3SecretKey := resolveS3Creds(ctx)
+
+	// Ensure the homedir exists on the cluster node before submitting the job.
+	// For the Docker bind-mount model, Nomad will refuse to start the container if
+	// the host path does not exist. We create it via SSH to aither so the operator
+	// does not need to manually provision per-user directories.
+	homedirPath := "/data/workbench/" + user + "/home"
+	if mkErr := ensureRemoteDir(ctx, nodeName, homedirPath); mkErr != nil {
+		// Non-fatal: warn and continue — the job may still work if the dir was
+		// created out-of-band, but most likely it will fail at the container start.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not create homedir on %s: %v\n", nodeName, mkErr)
+	}
 
 	// Generate session ID and token.
 	// Token is derived deterministically from the MinIO secret key so it is stable
@@ -308,6 +320,24 @@ func resolveS3Creds(ctx config.Context) (endpoint, accessKey, secretKey string) 
 		}
 	}
 	return "", "", ""
+}
+
+// ensureRemoteDir creates a directory on the named Nomad node via SSH.
+// It reads the aither SSH config from the active context (same path as abc doctor).
+// Silently succeeds if the directory already exists.
+func ensureRemoteDir(ctx config.Context, nodeName, path string) error {
+	sshHost, ok := config.GetAdminFloorField(&ctx.Admin.Services, "ssh", nodeName)
+	if !ok || sshHost == "" {
+		// Fall back to the node name itself as the SSH hostname — works when
+		// the node name matches the SSH Host alias in ~/.ssh/config (e.g. "sun-aither").
+		sshHost = "sun-" + nodeName
+	}
+	cmd := exec.Command("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+		sshHost, "mkdir", "-p", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ssh %s mkdir -p %s: %w\n%s", sshHost, path, err, out)
+	}
+	return nil
 }
 
 // randomToken generates a random hex-encoded string of tokenLen characters.
