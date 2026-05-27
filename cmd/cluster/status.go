@@ -25,17 +25,29 @@ type ClusterDetail struct {
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status [name]",
-		Short: "Show cluster status",
-		Long: `Show the status of the active cluster.
+		Short: "Show cluster and service status",
+		Long: `Show the status of the active cluster and its backend services.
 
 Without --cloud, probes the Nomad endpoint configured in the active context
 directly — works on bare seedling and grove deployments without abc-cloud.
+Shows: Nomad health, node count, running jobs, active context.
 
-With --cloud, delegates to the abc-cloud gateway for multi-cluster fleet
-operations (requires an infrastructure-tier token).`,
+With --cloud, delegates to the abc-cloud gateway: shows cluster detail
+(name, region, datacenters, node count) plus a full backend service health
+table (nomad, jurist, minio, tus, etc. with version and latency).
+
+This command was formerly accessible as top-level 'abc status'; that alias
+is deprecated — use 'abc cluster status' going forward.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runClusterStatus,
 	}
+}
+
+// NewStatusCmd exports a top-level "status" command variant for the
+// deprecated root-level alias. New callers should use NewCmd() and
+// invoke 'abc cluster status' directly.
+func NewStatusCmd() *cobra.Command {
+	return newStatusCmd()
 }
 
 func runClusterStatus(cmd *cobra.Command, args []string) error {
@@ -45,42 +57,93 @@ func runClusterStatus(cmd *cobra.Command, args []string) error {
 	return runClusterStatusLocal(cmd)
 }
 
-// runClusterStatusCloud is the original cloud-gateway path.
+// ServiceHealth is the health summary for one backend service (returned by
+// the abc-cloud gateway). Mirrors the type in cmd/service but defined here
+// to avoid a cross-package import cycle.
+type ServiceHealth struct {
+	Name      string `json:"Name"`
+	Status    string `json:"Status"`
+	Version   string `json:"Version"`
+	LatencyMs int    `json:"LatencyMs"`
+}
+
+// runClusterStatusCloud is the cloud-gateway path. It shows cluster detail
+// (name, region, node count, datacenters) followed by the full backend
+// service health table (formerly top-level 'abc status').
 func runClusterStatusCloud(cmd *cobra.Command, args []string) error {
 	nc := nomadClientFromCmd(cmd)
+	out := cmd.OutOrStdout()
 
+	// ── Context header ────────────────────────────────────────────────────────
+	if cfg, err := config.Load(); err == nil && cfg != nil && strings.TrimSpace(cfg.ActiveContext) != "" {
+		fmt.Fprintf(out, "  Context      %s\n", cfg.ActiveContext)
+		if canon := cfg.ResolveContextName(cfg.ActiveContext); canon != "" && canon != cfg.ActiveContext {
+			fmt.Fprintf(out, "  Canonical    %s\n", canon)
+		}
+		fmt.Fprintln(out)
+	}
+
+	// ── Cluster detail (optional — requires --cluster or ABC_CLUSTER) ─────────
 	name := utils.ClusterFromCmd(cmd)
 	if len(args) > 0 {
 		name = args[0]
 	}
-	if name == "" {
-		return fmt.Errorf("specify a cluster name as argument or via --cluster / ABC_CLUSTER")
+	if name != "" {
+		var detail ClusterDetail
+		if err := nc.CloudGetCluster(cmd.Context(), name, &detail); err != nil {
+			fmt.Fprintf(out, "  Cluster      %s (unavailable: %v)\n\n", name, err)
+		} else {
+			fmt.Fprintf(out, "  Cluster      %s\n", detail.Name)
+			fmt.Fprintf(out, "  Region       %s\n", detail.Region)
+			fmt.Fprintf(out, "  Status       %s\n", detail.Status)
+			fmt.Fprintf(out, "  Nodes        %d\n", detail.NodeCount)
+			fmt.Fprintf(out, "  Nomad        %s\n", detail.NomadVersion)
+			if len(detail.Datacenters) > 0 {
+				fmt.Fprintf(out, "  Datacenters  %s\n", strings.Join(detail.Datacenters, ", "))
+			}
+			if len(detail.Meta) > 0 {
+				keys := make([]string, 0, len(detail.Meta))
+				for k := range detail.Meta {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					fmt.Fprintf(out, "    %-16s %s\n", k, detail.Meta[k])
+				}
+			}
+			fmt.Fprintln(out)
+		}
 	}
 
-	var detail ClusterDetail
-	if err := nc.CloudGetCluster(cmd.Context(), name, &detail); err != nil {
-		return fmt.Errorf("fetching cluster %q: %w", name, err)
+	// ── Backend service health table (formerly 'abc status') ─────────────────
+	var services []ServiceHealth
+	if err := nc.CloudGetServiceHealth(cmd.Context(), &services); err != nil {
+		fmt.Fprintf(out, "  Service health unavailable: %v\n", err)
+		return fmt.Errorf("fetching service health: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "  Name         %s\n", detail.Name)
-	fmt.Fprintf(out, "  Region       %s\n", detail.Region)
-	fmt.Fprintf(out, "  Status       %s\n", detail.Status)
-	fmt.Fprintf(out, "  Nodes        %d\n", detail.NodeCount)
-	fmt.Fprintf(out, "  Nomad        %s\n", detail.NomadVersion)
-	if len(detail.Datacenters) > 0 {
-		fmt.Fprintf(out, "  Datacenters  %v\n", detail.Datacenters)
+	fmt.Fprintf(out, "  %-22s %-10s %-12s %-10s\n", "SERVICE", "STATUS", "VERSION", "LATENCY")
+	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 58))
+
+	unhealthy := 0
+	for _, s := range services {
+		status := s.Status
+		if status == "" {
+			status = "unknown"
+		}
+		latency := "—"
+		if s.LatencyMs > 0 {
+			latency = fmt.Sprintf("%dms", s.LatencyMs)
+		}
+		fmt.Fprintf(out, "  %-22s %-10s %-12s %-10s\n", s.Name, status, s.Version, latency)
+		if status != "healthy" {
+			unhealthy++
+		}
 	}
-	if len(detail.Meta) > 0 {
-		fmt.Fprintf(out, "\n  Metadata:\n")
-		keys := make([]string, 0, len(detail.Meta))
-		for k := range detail.Meta {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(out, "    %-16s %s\n", k, detail.Meta[k])
-		}
+	fmt.Fprintln(out)
+
+	if unhealthy > 0 {
+		return fmt.Errorf("%d service(s) are not healthy", unhealthy)
 	}
 	return nil
 }
@@ -171,6 +234,6 @@ func runClusterStatusLocal(cmd *cobra.Command) error {
 	}
 	fmt.Fprintln(out)
 
-	fmt.Fprintf(out, "  Tip: run 'abc admin health' for a full service health breakdown.\n\n")
+	fmt.Fprintf(out, "  Tip: run 'abc doctor' for a full end-to-end config and workload health check.\n\n")
 	return nil
 }

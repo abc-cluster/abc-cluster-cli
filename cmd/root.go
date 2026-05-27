@@ -27,7 +27,6 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/project"
 	reportcmd "github.com/abc-cluster/abc-cluster-cli/cmd/report"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -252,7 +251,9 @@ func init() {
 	rootCmd.AddCommand(job.NewLogsCmd())
 	rootCmd.AddCommand(cluster.NewCmd())
 	rootCmd.AddCommand(accounting.NewCmd())
-	rootCmd.AddCommand(service.NewStatusCmd())
+	// `abc status` is a deprecated alias of `abc cluster status` (kept for one
+	// release). The canonical command lives under abc cluster status.
+	rootCmd.AddCommand(deprecatedRootStatusAlias())
 	rootCmd.AddCommand(auth.NewCmd())
 	// `abc context` is a deprecated alias of `abc auth context` (kept for one
 	// release). The canonical command lives under abc auth context.
@@ -303,6 +304,27 @@ func deprecatedRootContextAlias() *cobra.Command {
 			fmt.Fprintln(os.Stderr,
 				"[abc] note: 'abc context' has been relocated under 'abc auth context'; "+
 					"this alias is kept for one release. Update scripts to 'abc auth context ...'.")
+		}
+		if prev != nil {
+			prev(cmd, args)
+		}
+	}
+	return c
+}
+
+// deprecatedRootStatusAlias returns a root-level `abc status` command that
+// delegates to `abc cluster status` and prints a one-line stderr deprecation
+// note on every invocation. Kept for one release window; remove after.
+func deprecatedRootStatusAlias() *cobra.Command {
+	c := cluster.NewStatusCmd()
+	c.Use = "status"
+	c.Short = "(deprecated) Show cluster status — use 'abc cluster status'"
+	prev := c.PersistentPreRun
+	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if !quietMode() {
+			fmt.Fprintln(os.Stderr,
+				"[abc] note: 'abc status' has been relocated to 'abc cluster status'; "+
+					"this alias is kept for one release. Update scripts to 'abc cluster status'.")
 		}
 		if prev != nil {
 			prev(cmd, args)
