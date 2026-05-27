@@ -2,7 +2,6 @@ name: bio
 channels:
   - conda-forge
   - bioconda
-  - defaults
 dependencies:
   # sequence QC + trimming
   - fastqc>=0.12
