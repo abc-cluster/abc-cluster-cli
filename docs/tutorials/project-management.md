@@ -365,14 +365,17 @@ figure, run the closed-loop showback:
 
 ```bash
 abc report --since=2026-04-01
-abc report --json --by=investigation --since=2026-04-01   # per-investigation rollup
+abc report --since=2026-04-01 --show-rate-card               # + per-rate provenance
+abc report --json --by=investigation --since=2026-04-01      # per-investigation rollup
 ```
 
-Spend, emissions, and hours saved come back together with a "Rate card
-(effective)" provenance footer suitable for a methods appendix verbatim.
-See [`abc report`](../reference/abc-report.md) for the full flag
-reference and the per-metric table, including how to override
-coefficients with measured values via `abc config accounting set …` and
+The default output gives **spend + emissions** for the window. Add
+`--show-rate-card` to append the "Rate card (effective)" provenance
+footer — every cost/emissions coefficient with its layer and citation,
+suitable for a methods appendix verbatim. See
+[`abc report`](../reference/abc-report.md) for the full flag reference
+and the per-metric table, including how to override coefficients with
+measured values via `abc config accounting set …` and
 `abc config emissions set …`.
 
 ## Part 6 — Methods section export (5 min)

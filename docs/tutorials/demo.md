@@ -17,7 +17,7 @@ A focused walkthrough of the **ABC CLI** built around the three things researche
 
 | Part | What you will practise |
 |------|------------------------|
-| [Setup](#setup-5-min) | Install, configure, confirm identity |
+| [Setup](#setup-5-min) | Install, claim a code, preflight, sync capabilities |
 | [1 — Jobs](#part-1-submit-and-monitor-jobs-15-min) | Submit jobs, watch them run, read logs |
 | [2 — Upload & encrypt](#part-2-upload-and-encrypt-data-10-min) | Push data to the cluster, encrypt sensitive files |
 | [3 — Browse](#part-3-browse-data-10-min) | List buckets, inspect objects, stat a key |
@@ -48,34 +48,57 @@ Verify:
 abc --version
 ```
 
-### Configure context
+### Get your credentials
 
-Bootstrap the config directory if it doesn't exist:
+The fastest path is a **claim code** from your workshop facilitator —
+one command installs a ready-to-use config and makes it active:
 
 ```bash
-abc config init          # creates ~/.abc/config.yaml with a placeholder context
+abc auth claim <CLAIM_CODE> --email you@sun.ac.za --name "Your Name"
 ```
 
-Replace the placeholder with the YAML your workspace lead gave you:
+You'll be asked to accept POPIA consent; on success the CLI writes
+`~/.abc/config.yaml` and activates the new context. (See
+[Reference → auth](../reference/auth) for the blind-pool and stdin forms.)
+
+If your lead handed you a config YAML file directly instead of a code:
 
 ```bash
-cp ~/Downloads/<your-name>.yaml ~/.abc/config.yaml
+abc config init                              # if ~/.abc doesn't exist yet
+abc auth context add --from-file ~/Downloads/<your-name>.yaml
 ```
 
-Activate the **seedling** context and confirm it is the active one:
+Either way, confirm the active context and your identity:
 
 ```bash
-abc auth context use seedling
 abc auth context show
-```
-
-### Confirm your identity
-
-```bash
 abc auth whoami
 ```
 
-This contacts the Nomad API to resolve your token name and saves it to `auth.whoami` in the active context for future reference. If this command succeeds, you are ready.
+`abc auth whoami` contacts the Nomad API to resolve your token name and saves it to `auth.whoami` in the active context for future reference.
+
+### Preflight with `abc doctor`
+
+Before pulling cluster details or submitting work, confirm the CLI can reach **and run work on** the cluster. `abc doctor` checks your config, connectivity, and submits a tiny probe job end to end:
+
+```bash
+abc doctor
+
+# Config + connectivity only (skip the probe job):
+abc doctor --skip-job
+```
+
+Exit code `0` means you're good to go. If a check fails, the output tells you which group (config / connectivity / workload) and why — fix that first. See [Reference → doctor](../reference/doctor) for the full check list.
+
+### Sync cluster capabilities
+
+Pull your storage credentials, node inventory, and driver list into the active context:
+
+```bash
+abc cluster capabilities sync
+```
+
+This populates the S3 endpoint that `abc data ls` needs and the driver list `abc job run` uses for placement. Re-run it any time the cluster's capabilities change.
 
 ---
 
@@ -154,33 +177,73 @@ abc job run hello-me.sh --cores=2 --mem=512M
 
 ### 1.5 Attach a software environment
 
-`--runtime=micromamba-exec` installs a conda environment on the cluster node before running your script. Pass the environment spec with `--from`:
+The CLI ships three software-stack runtimes, all wired through the same `--runtime` + `--from-file` pair. Pick the one that matches how your project pins dependencies today.
+
+#### Option A — Pixi (`--runtime=pixi-exec`)
+
+Best if you already have (or want) a Pixi project with a lockfile for reproducibility.
 
 ```bash
-cat > bio-job.sh << 'EOF'
+mkdir bio-pixi && cd bio-pixi
+pixi init
+pixi add --feature bio --platform linux-64 samtools fastqc
+pixi install --locked --feature bio          # writes pixi.lock
+
+cat > bio-pixi.sh << 'EOF'
 #!/bin/bash
-#ABC --name=bio-demo
-#ABC --runtime=micromamba-exec
-#ABC --from=environment.yml
+#ABC --name=bio-pixi-demo
+#ABC --runtime=pixi-exec
+#ABC --from-file=pixi.lock
+#ABC --driver=containerd
+#ABC --driver.config.image=docker.io/library/debian:12-slim
 #ABC --cores=4
 #ABC --mem=8G
 set -euo pipefail
 samtools --version | head -1
 fastqc --version
 EOF
+
+abc job run bio-pixi.sh
 ```
+
+`pixi.lock` (vs `pixi.toml`) gives bit-for-bit reproducibility — the wrapper invokes `pixi install --locked`. `debian:12-slim` is just a base rootfs; Pixi brings in everything the script needs.
+
+#### Option B — Micromamba (`--runtime=micromamba-exec`)
+
+Best if you have an `environment.yml` from a colleague or a bioconda recipe and don't want to add a new tool to your workflow.
 
 ```bash
 cat > environment.yml << 'EOF'
 name: bio
-channels: [bioconda, conda-forge]
+channels:
+  - conda-forge
+  - bioconda
 dependencies:
-  - samtools>=1.20
-  - fastqc>=0.12
+  - samtools=1.20
+  - fastqc=0.12.1
 EOF
 
-abc job run bio-job.sh
+cat > bio-mamba.sh << 'EOF'
+#!/bin/bash
+#ABC --name=bio-mamba-demo
+#ABC --runtime=micromamba-exec
+#ABC --from-file=environment.yml
+#ABC --driver=containerd
+#ABC --driver.config.image=docker.io/library/debian:12-slim
+#ABC --cores=4
+#ABC --mem=8G
+#ABC --mamba-cleanup
+set -euo pipefail
+samtools --version | head -1
+fastqc --version
+EOF
+
+abc job run bio-mamba.sh
 ```
+
+`#ABC --mamba-cleanup` removes the per-task conda environment when the script ends — sensible for one-shot jobs; omit for iterative runs that benefit from caching.
+
+> **Note on `--from-file`** — this is the canonical flag name across the CLI (same as `abc auth context add --from-file`). The older `--from` is still accepted but emits a deprecation nudge.
 
 ---
 
@@ -314,6 +377,7 @@ The `researcher` and `project` metadata you passed with `--meta` in Part 2 appea
 
 | Symptom | Fix |
 |---------|-----|
+| Anything not working | `abc doctor` — runs config + connectivity + a probe job and tells you which layer failed |
 | `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
 | `403 Forbidden` | `abc auth context show` — confirm the **seedling** context is active and your token is set |
 | Job goes to wrong namespace | `abc auth context show` — check the `nomad_namespace` field |

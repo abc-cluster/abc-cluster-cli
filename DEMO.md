@@ -4,7 +4,7 @@ A focused walkthrough of the **ABC CLI** built around the three things researche
 
 | Part | What you will practise |
 |------|------------------------|
-| [Setup](#setup-~5-min) | Install, configure, confirm identity |
+| [Setup](#setup-~5-min) | Install, claim a code, preflight, sync capabilities |
 | [1 — Jobs](#part-1-submit-and-monitor-jobs-~15-min) | Submit jobs, watch them run, read logs |
 | [2 — Upload & encrypt](#part-2-upload-and-encrypt-data-~10-min) | Push data to the cluster, encrypt sensitive files |
 | [3 — Browse](#part-3-browse-data-~10-min) | List buckets, inspect objects, stat a key |
@@ -35,34 +35,65 @@ Verify:
 abc --version
 ```
 
-### Configure context
+### Get your credentials
 
-Bootstrap the config directory if it doesn't exist:
+The fastest path is a **claim code** from your workshop facilitator —
+one command installs a ready-to-use config and makes it active:
 
 ```bash
-abc config init          # creates ~/.abc/config.yaml with a placeholder context
+abc auth claim <CLAIM_CODE> --email you@sun.ac.za --name "Your Name"
 ```
 
-Replace the placeholder with the YAML your workspace lead gave you:
+You'll be asked to accept POPIA consent; on success the CLI writes
+`~/.abc/config.yaml` and activates the new context. (See
+[Reference → auth](./docs/reference/auth.md) for the blind-pool and stdin forms.)
+
+If your lead handed you a config YAML file directly instead of a code:
 
 ```bash
-cp ~/Downloads/<your-name>.yaml ~/.abc/config.yaml
+abc config init                              # if ~/.abc doesn't exist yet
+abc auth context add --from-file ~/Downloads/<your-name>.yaml
 ```
 
-Activate the **seedling** context and confirm it is the active one:
+Either way, confirm the active context and your identity:
 
 ```bash
-abc context use seedling
-abc context show
-```
-
-### Confirm your identity
-
-```bash
+abc auth context show
 abc auth whoami
 ```
 
-This contacts the Nomad API to resolve your token name and saves it to `auth.whoami` in the active context for future reference. If this command succeeds, you are ready.
+`abc auth whoami` contacts the Nomad API to resolve your token name and saves
+it to `auth.whoami` in the active context for future reference.
+
+### Preflight with `abc doctor`
+
+Before pulling cluster details or submitting work, confirm the CLI can reach
+**and run work on** the cluster. `abc doctor` checks your config, connectivity,
+and submits a tiny probe job end to end:
+
+```bash
+abc doctor
+
+# Config + connectivity only (skip the probe job):
+abc doctor --skip-job
+```
+
+Exit code `0` means you're good to go. If a check fails, the output tells you
+which group (config / connectivity / workload) and why — fix that first. See
+[Reference → doctor](./docs/reference/doctor.md) for the full check list.
+
+### Sync cluster capabilities
+
+Pull your storage credentials, node inventory, and driver list into the active
+context:
+
+```bash
+abc cluster capabilities sync
+```
+
+This populates the S3 endpoint that `abc data ls` needs and the driver list
+`abc job run` uses for placement. Re-run it any time the cluster's capabilities
+change.
 
 ---
 
@@ -341,9 +372,10 @@ The `researcher` and `project` metadata you passed with `--meta` in Part 2 appea
 
 | Symptom | Fix |
 |---------|-----|
+| Anything not working | `abc doctor` — runs config + connectivity + a probe job and tells you which layer failed |
 | `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
-| `403 Forbidden` | `abc context show` — confirm the **seedling** context is active and your token is set |
-| Job goes to wrong namespace | `abc context show` — check the `nomad_namespace` field |
+| `403 Forbidden` | `abc auth context show` — confirm the **seedling** context is active and your token is set |
+| Job goes to wrong namespace | `abc auth context show` — check the `nomad_namespace` field |
 | `abc data ls` returns no endpoint | Run `abc cluster capabilities sync` to pull storage credentials |
 | `unknown command` | `abc --help` for the command list; `abc <verb> --help` for flags |
 

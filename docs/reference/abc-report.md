@@ -8,9 +8,13 @@ network calls — `abc report` is a seed-tier-native verb.
 ```
 abc report                      # personal YTD summary, default text mode
 abc report --since=2026-01-01 --until=2026-04-30
+abc report --show-rate-card     # append the full per-rate provenance block
 abc report --json               # machine-readable; metric IDs as keys
 abc report --json --by=investigation
 abc report --technical          # metric IDs replace human Titles
+
+abc report runs                 # per-run cost + emissions table (subverb)
+abc report runs --full          # forensic per-row block (run_id, nomad job, …)
 ```
 
 ## Flags
@@ -20,9 +24,15 @@ abc report --technical          # metric IDs replace human Titles
 | `--since=YYYY-MM-DD` | Jan 1 of current year | Window start (UTC) |
 | `--until=YYYY-MM-DD` | now | Window end (inclusive end-of-day) |
 | `--by=<axis>` | _unset_ | Aggregation axis: `investigation` / `project` / `pipeline` / `user`. **JSON-only in v1**; text mode rejects with a "deferred to v2" message. |
+| `--show-rate-card` | `false` | Append the detailed per-rate provenance block (currency, CPU/GPU/memory/storage cost rates, all emissions coefficients) + override hints. Hidden by default — the headline already carries a "rates are suggestive default values" disclaimer. |
 | `--json` | `false` | Emit the structured JSON contract documented below |
 | `--technical` | `false` | Replace human Titles with metric IDs in the text headline (useful for reproducible doc snippets) |
 | `--all-contexts` | `false` | Cross-context aggregation. **Phase 2**: rejects with `--all-contexts requires abc-controller-svc; not available in this context.` (gated until the controller service is deployed) |
+
+> **Default output is cost + emissions only** (2026-05-27). The
+> "Research time saved" heuristic block was removed from the default
+> render pending real measurement (see the "Research time saved"
+> section below). The detailed rate card moved behind `--show-rate-card`.
 
 ## Two-layer metric naming
 
@@ -55,11 +65,19 @@ Adding a metric requires populating all four fields (ID, Title, Gloss, Unit) in
 the same patch. The ID contract is enforced by tests; titles are capped at 32
 characters.
 
-## Time-saved heuristics
+## Research time saved (heuristic; JSON / `--show-rate-card` only)
 
-The `hours_saved` headline is the sum of five compile-time heuristics. Values
-are intentionally conservative; runtime tuning lands when at least one user
-asks.
+> **Removed from default text output (2026-05-27).** The `hours_saved`
+> family is a set of compile-time heuristics (counts of auto-retries,
+> accepted defaults, etc. × hardcoded minute-multipliers) not yet backed
+> by real measurement, so presenting it as a headline number was
+> misleading at the seedling tier. The default `abc report` now shows
+> only cost + emissions. The metric is still computed and exposed in the
+> JSON contract (`metrics.hours_saved`) for downstream consumers; a
+> future instrumented version may return to the text view behind its own
+> flag.
+
+The `hours_saved` heuristic is the sum of five compile-time constants:
 
 | Constant | Minutes saved per applicable run | Source |
 |---|---|---|
@@ -89,6 +107,8 @@ write-side, admission-gate surface), see
 
 ## Sample output
 
+Default — cost + emissions headline only:
+
 ```
 $ abc report
 Your 2026 so far:
@@ -100,17 +120,15 @@ Total compute:                        47 CPU-hrs, 0 GPU-hrs
 Spend this period:                    R 1,420
 Emissions this period:                47.3 kg CO₂e
 
-Research time saved (estimated):
-  Auto-retry handled it for you      →  ~0.5 hrs
-  Smart resource defaults accepted   →  n/a (requires migration 0009 data)
-  Failure summaries (vs. log diving) →  ~1.0 hrs
-  Reused protocols (vs. from scratch)→  ~2.0 hrs
-  ──────────────────────────────────────────────────
-  Total:                                ~3.5 hrs
+These rates are suggestive based on the reasonable default values,
+the real-time rates are coming soon.
+```
 
-Research time saved:    3.5 hours
-Hourly compensation:    R 350
-Amount:                 R 1,225
+With `--show-rate-card` — appends the full per-rate provenance block:
+
+```
+$ abc report --show-rate-card
+[ … headline blocks as above … ]
 
 Rate card (effective):
   currency                            ZAR       built-in    (SA market default)
@@ -126,7 +144,8 @@ Rate card (effective):
   emissions.pue                       1.5       built-in    (Uptime Institute 2023 — generic on-prem average)
   emissions.storage_scratch_w_per_tb  8         built-in    (Samsung PM9A3 envelope amortised)
 
-These rates are showback estimates; not invoice-grade. To override:
+These rates are suggestive based on the reasonable default values,
+the real-time rates are coming soon. To override locally:
   abc config accounting set cost.postdoc_per_hour=400
   abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950
 ```
@@ -134,9 +153,52 @@ These rates are showback estimates; not invoice-grade. To override:
 The provenance footer is generated from the resolved rate card — every
 value carries its layer (`built-in` / `local` / `flag`) and citation. A
 Layer-1 override in `~/.abc/config.yaml` (e.g. `cost.postdoc_per_hour:
-525`) flows through the same path the other two verbs use, so the
-postdoc rate displayed here is the same value `abc accounting --by=user`
-would multiply against. One ledger, three lenses.
+525`) flows through the same resolver `abc accounting` uses. One ledger,
+two lenses (`abc report` for showback, `abc accounting` for budget caps).
+
+## `abc report runs` — per-run cost + emissions
+
+Lists one row per submitted job/pipeline with cost + emissions derived
+from the stored resources × the rate card. Jobs sort first (most-recent
+within), then pipelines. Reads `~/.abc/local.db`; re-probes Nomad for
+runs whose completion watcher died (the CLI exits seconds after
+submission, but jobs take minutes) unless `--no-reconcile` is passed.
+
+```
+abc report runs                       # last 30d, 20 rows, jobs first
+abc report runs --since=7d --limit=50
+abc report runs --verb=job            # jobs only (no pipeline footnote)
+abc report runs --verb=pipeline       # pipelines only
+abc report runs --full                # per-row forensic block
+abc report runs --json                # machine-readable
+abc report runs --no-reconcile        # skip the Nomad re-probe (faster offline)
+```
+
+```
+$ abc report runs --since=30m
+Runs · 2026-05-27 → 2026-05-27
+────────────────────────────────────────────────────────────────────────────
+TIME (UTC)        VERB      WORKLOAD              CPU·hr    COST(R)   CO₂e (kg)  STATUS
+2026-05-27 13:30  job       cpu-burn.sh             0.33       0.17        0.01  completed
+2026-05-27 13:25  job       timed-30.sh             0.01       0.00        0.00  completed
+2026-05-27 13:30  pipeline  nextflow-io/hello       0.02          —           —  completed
+
+(—) Pipeline cost/emissions are pending: the head-orchestrator's
+    resources alone undercount the real pipeline by 10-100×, so the
+    numbers are intentionally blank until the per-task cache aggregator
+    ships. Job rows are computed directly from Nomad alloc resources
+    and are honest.
+```
+
+**Jobs are honest; pipelines are head-only today.** A job is a single
+Nomad alloc — the watcher reads its resources and the cost is accurate.
+A pipeline is a head orchestrator that dispatches many worker jobs the
+watcher doesn't yet sum, so pipeline cost/emissions cells render `—`
+until the Nextflow-cache aggregator lands. `--full` adds a per-row
+vertical block surfacing `run_id`, `nomad_job_id`, `namespace`,
+`exit_code`, `exit_reason`, project / investigation attachments, and
+(for pipelines) `workdir_root` — useful for tracing a row to its Nomad
+job (`abc job show <nomad_job_id>`).
 
 ## JSON schema
 

@@ -38,6 +38,7 @@ const fullSidebar: SidebarsConfig = {
         {type: 'doc', id: 'reference/admin',             label: 'admin services'},
         {type: 'doc', id: 'reference/admin-tools',       label: 'admin tools'},
         {type: 'doc', id: 'reference/cluster',           label: 'cluster'},
+        {type: 'doc', id: 'reference/doctor',            label: 'doctor (preflight)'},
         {type: 'doc', id: 'reference/local-state',       label: 'local state (~/.abc/local.db)'},
       ],
     },
