@@ -27,6 +27,15 @@ func runURL(cmd *cobra.Command, args []string) error {
 	}
 	ctx := cfg.ActiveCtx()
 
+	// JupyterHub mode: if the context has a workbench.hub_url configured (or the
+	// seedling default), print the hub URL directly — no session lookup needed.
+	if hubURL := workbenchHubURL(ctx); hubURL != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "  Browser: %s\n", hubURL)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Log in with your pool username. Your server starts automatically.\n")
+		return nil
+	}
+
+	// Legacy Docker/VM path: look up running session in local.db.
 	user := strings.TrimSpace(ctx.Admin.Whoami)
 	if user == "" && ctx.Auth != nil {
 		user = strings.TrimSpace(ctx.Auth.Whoami)
@@ -43,7 +52,11 @@ func runURL(cmd *cobra.Command, args []string) error {
 	sess, err := workbench.ActiveSession(context.Background(), db, user)
 	if err != nil {
 		if errors.Is(err, workbench.ErrNoSession) {
-			return fmt.Errorf("no running workbench session — use 'abc workbench start' first")
+			// No active Docker/VM session — fall back to printing the hub URL.
+			hubURL := workbenchDefaultHubURL(ctx)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Browser: %s\n", hubURL)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Log in with your pool username. Your server starts automatically.\n")
+			return nil
 		}
 		return fmt.Errorf("look up session: %w", err)
 	}
@@ -53,6 +66,23 @@ func runURL(cmd *cobra.Command, args []string) error {
 		return printVMURL(cmd, ctx, sess, user)
 	}
 	return printDockerURL(cmd, sess, user)
+}
+
+// workbenchHubURL returns the JupyterHub URL from context config if set,
+// or empty string to fall through to the legacy Docker/VM path.
+func workbenchHubURL(ctx config.Context) string {
+	if wn, ok := config.GetAdminFloorField(&ctx.Admin.Services, "workbench", "hub_url"); ok && wn != "" {
+		return wn
+	}
+	return ""
+}
+
+// workbenchDefaultHubURL returns the canonical seedling hub URL.
+func workbenchDefaultHubURL(ctx config.Context) string {
+	if url := workbenchHubURL(ctx); url != "" {
+		return url
+	}
+	return "https://workbench.seedling.abc-cluster.cloud"
 }
 
 // printVMURL prints the stable URL, password, and SSH alias for a VM-backend session.
