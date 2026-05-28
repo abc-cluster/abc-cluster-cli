@@ -76,11 +76,17 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download build artifacts
         uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
+
+      - name: Stage install script alongside binaries
+        run: cp scripts/install-abc.sh dist/install-abc.sh
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
