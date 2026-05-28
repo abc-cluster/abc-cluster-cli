@@ -76,11 +76,11 @@ via the cloud gateway.
   abc --cloud accounting set --namespace=nf-genomics-lab --monthly=500
 
 Available at grove+ and cloud tiers (requires abc-controller-svc and
-abc-policy-svc). At seedling, these verbs reject with the standard
+abc-policy-svc). At seedling, these commands reject with the standard
 capability message.
 
 For showback (spend, emissions, runs), use the top-level ` + "`abc report`" + `
-verb. Rate-card overrides live under ` + "`abc config accounting set`" + `.
+command. Rate-card overrides live under ` + "`abc config accounting set`" + `.
 
 Legacy: ` + "`abc cost …`" + ` is an alias for ` + "`abc accounting …`" + `.`,
 		// Force "unknown command" for any subverb name that isn't one

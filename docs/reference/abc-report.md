@@ -1,7 +1,7 @@
 # `abc report`
 
 Researcher-productivity summary read entirely from `~/.abc/local.db`. No
-network calls — `abc report` is a seed-tier-native verb.
+network calls — `abc report` is a seed-tier-native command.
 
 ## Usage
 
@@ -87,12 +87,12 @@ The `hours_saved` heuristic is the sum of five compile-time constants:
 | `TemplateReuseSavedMinutes` | 60 | template / rerun vs. setup from scratch |
 | `AsyncRunSpectatorAvoidedMin` | 30 | spectator_hours; median observed monitoring session |
 
-## One ledger, one read-side verb
+## One ledger, one read-side command
 
 `abc report` is the canonical read-side surface over the local SQLite
 runs ledger. The Layer-0/1/2 rate-card resolver (`internal/accounting`)
 and the grid-intensity resolver are consumed directly here; the prior
-`abc accounting report` and `abc emissions [report]` verbs were folded
+`abc accounting report` and `abc emissions [report]` commands were folded
 into this single closed-loop output (spec
 `cli-verb-tree-restructure`).
 
@@ -258,7 +258,7 @@ lists feature flags advertised through the capability layer.
 ## No network guarantee
 
 `abc report` declares `Required{ AllOf: [{Service: "local-state"}] }` — the
-local-state pseudo-service derived from the migration framework. The verb
+local-state pseudo-service derived from the migration framework. The command
 makes zero outbound HTTP calls in any code path. A test in
 `cmd/report/report_test.go` swaps `http.DefaultTransport` for a tripwire and
 asserts zero `RoundTrip` calls during render.

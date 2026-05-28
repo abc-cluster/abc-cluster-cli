@@ -2337,7 +2337,7 @@ abc --cloud cluster decommission my-cluster --yes
 
 ## `report`
 
-`abc report` is the **canonical showback verb**. It reads `~/.abc/local.db` only — no network calls, no controller dependency — and prints the closed-loop summary: investigations completed, pipeline runs, total compute, spend, carbon emissions, and estimated researcher-time saved.
+`abc report` is the **canonical showback command**. It reads `~/.abc/local.db` only — no network calls, no controller dependency — and prints the closed-loop summary: investigations completed, pipeline runs, total compute, spend, carbon emissions, and estimated researcher-time saved.
 
 The same rate-card resolver feeds `abc accounting` (write-side caps) and `abc report` (read-side showback), so spend and emissions agree to within float epsilon for the same window.
 
@@ -2464,13 +2464,13 @@ The `Rate card (effective)` footer reflects whichever layer each value came from
 
 > For showback / cost reporting, see [`report`](#report). This section covers budget management only.
 
-The verb tree is:
+The commands are:
 
 ```
 abc accounting {list, set, show}
 ```
 
-The `budget` subgroup requires `abc-controller-svc` and `abc-policy-svc`. At seedling (no controller, no policy gate) the verbs reject with a clear capability message:
+The `budget` subgroup requires `abc-controller-svc` and `abc-policy-svc`. At seedling (no controller, no policy gate) the commands reject with a clear capability message:
 
 ```
 error: abc accounting requires abc-controller-svc; not available in this context.

@@ -8,7 +8,7 @@ Compute node and storage management. Requires `--sudo` or `--cloud` elevation.
 
 :::warning Deferred capability — not part of the shipped seedling product surface
 
-The **mutating** verbs in this group (`abc infra compute add`, and any future
+The **mutating** commands in this group (`abc infra compute add`, and any future
 `promote`) are **not** the supported path for seedling-tier cluster setup
 today. Seedling infrastructure provisioning is the responsibility of the
 separate **`abc-deployments`** project (Pulumi-driven): `pulumi up` against
@@ -24,9 +24,9 @@ account will use `abc infra compute add` to register those VMs as Nomad
 workers against an abc-cloud-managed control plane, without operating
 their own deployment codebase. **That cloud-tier capability is not shipped
 today.** Operators following the seedling-tier deployment guide should
-use `abc-deployments`, not these verbs.
+use `abc-deployments`, not these commands.
 
-**Read-only** verbs in this section — `infra compute list`, `infra compute
+**Read-only** commands in this section — `infra compute list`, `infra compute
 show`, `infra compute probe`, `infra compute node debug`, and `infra
 storage size` — are operational at all tiers and are the supported
 observability surface for inspecting an already-provisioned cluster.

@@ -95,7 +95,7 @@ the `--show-rate-card` provenance view, and the JSON schema.
 | `connect: connection refused` | You need to be on the Stellenbosch network or Tailscale VPN |
 | `403 Forbidden` on submit | `abc auth context show` — confirm the **seedling** context is active and your token is set |
 | Job goes to wrong namespace | `abc auth context show` — the `nomad_namespace` field in your config controls the default |
-| `unknown command` | `abc --help`, then `abc <verb> --help` |
+| `unknown command` | `abc --help`, then `abc <command> --help` |
 
 ## Next steps
 

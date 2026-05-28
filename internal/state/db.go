@@ -107,7 +107,7 @@ func migrateLegacyFilename(dir, canonical string) error {
 			_ = os.Rename(from, to) // best-effort
 		}
 	}
-	fmt.Fprintf(os.Stderr, "[abc] note: renamed ~/.abc/%s → ~/.abc/%s (one-shot; aligns with `abc localdb` verb).\n",
+	fmt.Fprintf(os.Stderr, "[abc] note: renamed ~/.abc/%s → ~/.abc/%s (one-shot; aligns with `abc localdb` command).\n",
 		LegacyDBFilename, DefaultDBFilename)
 	return nil
 }

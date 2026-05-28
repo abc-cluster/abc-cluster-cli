@@ -32,4 +32,4 @@ This documentation covers the **seedling tier**. Grove and garden are in progres
 
 > **Looking for the CLI docs?**
 > The **Cluster CLI** section covers the `abc` command-line tool — installation,
-> the verb model, and the full reference. Start at [CLI → Overview](/cli/).
+> the command structure, and the full reference. Start at [CLI → Overview](/cli/).

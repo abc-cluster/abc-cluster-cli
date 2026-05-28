@@ -11,13 +11,13 @@ sidebar_position: 11
 
 `abc accounting` is the namespace-budget management surface — monthly spend
 caps and admission-gate thresholds, enforced by Jurist (`abc-policy-svc`)
-and stored by the controller service (`abc-controller-svc`). The verb tree is:
+and stored by the controller service (`abc-controller-svc`). The commands are:
 
 ```
 abc accounting {list, set, show}
 ```
 
-Available at the **grove tier and above**. At seedling the verbs reject
+Available at the **grove tier and above**. At seedling the commands reject
 with the standard capability message:
 
 ```
@@ -33,7 +33,7 @@ abc accounting show --namespace=<name>
 abc accounting set  --namespace=<name> --monthly=<amount> [flags]
 ```
 
-The verbs require `controller_url` to be set on the active context (a
+The commands require `controller_url` to be set on the active context (a
 grove-tier deployment of abc-controller-svc). Admission-side enforcement
 happens in Jurist regardless of which client wrote the cap.
 
@@ -115,10 +115,10 @@ Required{ AllOf: [{abc-controller-svc}, {abc-policy-svc}] }
 ```
 
 At seedling neither service is in the active context's capability map,
-and the verb rejects with the standard `capability.Require()` message
+and the command rejects with the standard `capability.Require()` message
 before any network call.
 
-## Future verbs (deferred)
+## Future commands (deferred)
 
 These appear in the verb-tree restructure spec as out-of-scope for v1:
 

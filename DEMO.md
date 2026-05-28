@@ -377,7 +377,7 @@ The `researcher` and `project` metadata you passed with `--meta` in Part 2 appea
 | `403 Forbidden` | `abc auth context show` — confirm the **seedling** context is active and your token is set |
 | Job goes to wrong namespace | `abc auth context show` — check the `nomad_namespace` field |
 | `abc data ls` returns no endpoint | Run `abc cluster capabilities sync` to pull storage credentials |
-| `unknown command` | `abc --help` for the command list; `abc <verb> --help` for flags |
+| `unknown command` | `abc --help` for the command list; `abc <command> --help` for flags |
 
 ---
 

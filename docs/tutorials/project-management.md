@@ -6,7 +6,7 @@ title: Project management
 # Project management
 
 This tutorial walks through a realistic multi-month research project using
-`abc project` and `abc investigation` end-to-end. It exercises the verbs you'll
+`abc project` and `abc investigation` end-to-end. It exercises the commands you'll
 hit most often when running a real cohort study: branching for parallel
 approaches, dead-ending failed attempts with reasoning preserved, citing
 upstream insights, auto-attaching pipeline runs, project-level rollups for

@@ -30,7 +30,7 @@ binary remains CGO-free.
 - All write transactions use `BEGIN IMMEDIATE` semantics via the driver.
 - Every CLI invocation auto-applies pending migrations.
 
-## Admin verbs
+## Admin commands
 
 - `abc localdb status` — binary version, DB path, schema version, applied/pending/future migrations, table row counts, WAL size, applied-migration history.
 - `abc localdb migrate` — explicitly apply pending migrations.
@@ -44,7 +44,7 @@ binary remains CGO-free.
 
 The DB carries its schema version in the `schema_migrations` table. The
 binary embeds a set of migration files under `internal/state/migrations/`.
-On every `state.Open()` (which fires on every DB-backed verb) the CLI:
+On every `state.Open()` (which fires on every DB-backed command) the CLI:
 
 1. Compares applied migrations vs embedded migrations.
 2. **DB ahead of binary** (any applied row not in the embed) — refuse to
