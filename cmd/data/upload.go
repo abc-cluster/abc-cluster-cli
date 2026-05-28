@@ -23,6 +23,8 @@ import (
 
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
+	"github.com/abc-cluster/abc-cluster-cli/internal/state"
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/bdragon300/tusgo"
 	"github.com/spf13/cobra"
 )
@@ -298,15 +300,79 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 		}
 	}
 
+	// Resolve upload-registry context once; best-effort (never fatal).
+	registryFn := buildRegistryFn(cmd)
+
 	if isDir {
 		jobs := opts.parallelJobs
 		if !opts.parallel {
 			jobs = 1
 		}
-		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs, extraMeta)
+		var onSuccess func(uploadResult)
+		if registryFn != nil {
+			onSuccess = func(r uploadResult) {
+				registryFn(filepath.Base(r.absPath), r.absPath, r.checksum, r.sizeBytes)
+			}
+		}
+		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs, extraMeta, onSuccess)
 	}
 
-	return uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress, extraMeta)
+	uploadedName := opts.name
+	if uploadedName == "" {
+		uploadedName = filepath.Base(opts.filePath)
+	}
+	checksum, uploadErr := uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress, extraMeta)
+	if uploadErr != nil {
+		return uploadErr
+	}
+	if registryFn != nil {
+		registryFn(uploadedName, opts.filePath, checksum, info.Size())
+	}
+	return nil
+}
+
+// buildRegistryFn returns a closure that records a completed upload in the
+// local state DB. Returns nil when the DB cannot be opened or the active
+// context is missing bucket/identity info (best-effort — callers treat nil
+// as "skip recording").
+func buildRegistryFn(cmd *cobra.Command) func(filename, originalPath, checksum string, sizeBytes int64) {
+	cfg, err := abccfg.Load()
+	if err != nil {
+		return nil
+	}
+	actx := cfg.ActiveCtx()
+	bucket := strings.TrimSpace(actx.NomadNamespace())
+	var userSeg string
+	if actx.Auth != nil {
+		userSeg = utils.WhoamiPathSegment(actx.Auth.Whoami)
+	}
+	ctxName := cfg.ActiveContext
+
+	db, dbErr := state.Open()
+	if dbErr != nil {
+		return nil
+	}
+
+	return func(filename, originalPath, checksum string, sizeBytes int64) {
+		s3Path := ""
+		if bucket != "" && userSeg != "" && filename != "" {
+			s3Path = fmt.Sprintf("s3://%s/user/%s/data/%s", bucket, userSeg, filename)
+		}
+		_, _ = state.RecordUpload(db, state.Upload{
+			Filename:     filename,
+			S3Path:       s3Path,
+			OriginalPath: originalPath,
+			SizeBytes:    sizeBytes,
+			Checksum:     checksum,
+			ContextName:  ctxName,
+			UploadedAt:   time.Now(),
+		})
+		// Print the S3 path when we computed it — this is the missing feedback
+		// that users need to reference uploaded data in pipeline params.
+		if s3Path != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "  S3 path:  %s\n", s3Path)
+		}
+	}
 }
 
 func resolveEndpoint(endpoint, serverURL string) (string, error) {
@@ -325,13 +391,17 @@ func buildDefaultEndpoint(serverURL string) (string, error) {
 }
 
 type uploadResult struct {
-	relPath  string
-	sizeMB   string
-	checksum string
-	err      error
+	relPath   string
+	absPath   string // absolute local path; set by uploadDirectoryFile
+	sizeMB    string
+	sizeBytes int64 // raw bytes; set by uploadDirectoryFile
+	checksum  string
+	err       error
 }
 
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, jobs int, extraMeta map[string]string) error {
+// uploadDirectory uploads all files in dir. onSuccess is called for each
+// file that uploads without error; it may be nil.
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, jobs int, extraMeta map[string]string, onSuccess func(r uploadResult)) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -351,6 +421,9 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 			fmt.Fprintf(cmd.OutOrStdout(), "  Size: %s\n", result.sizeMB)
 			if checksumEnabled {
 				fmt.Fprintf(cmd.OutOrStdout(), "  Checksum: %s\n", result.checksum)
+			}
+			if onSuccess != nil {
+				onSuccess(result)
 			}
 		}
 		return nil
@@ -400,6 +473,9 @@ submitLoop:
 		fmt.Fprintf(cmd.OutOrStdout(), "  Size: %s\n", result.sizeMB)
 		if checksumEnabled {
 			fmt.Fprintf(cmd.OutOrStdout(), "  Checksum: %s\n", result.checksum)
+		}
+		if onSuccess != nil {
+			onSuccess(result)
 		}
 	}
 
@@ -488,11 +564,16 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 		debuglog.AttrsDataUpload(file.path, "", uploadInfo.Size(), "tus-directory")...,
 	)
 
+	result.absPath = file.path
+	result.sizeBytes = uploadInfo.Size()
 	result.sizeMB = formatSizeMB(uploadInfo.Size())
 	return result
 }
 
-func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) error {
+// uploadSingleFile uploads one file. Returns the checksum string (empty when
+// --checksum=false) and any error. Callers use the checksum to record the
+// upload in the local registry.
+func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) (checksum string, err error) {
 	metadata := make(map[string]string, len(extraMeta)+3)
 	for k, v := range extraMeta {
 		metadata[k] = v
@@ -511,20 +592,20 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	})
 	encryptDoneErr := encryptProgress.Complete()
 	if encryptDoneErr != nil {
-		return fmt.Errorf("failed to render encryption progress: %w", encryptDoneErr)
+		return "", fmt.Errorf("failed to render encryption progress: %w", encryptDoneErr)
 	}
 	if err != nil {
-		return fmt.Errorf("data encryption failed: %w", err)
+		return "", fmt.Errorf("data encryption failed: %w", err)
 	}
 	uploadInfo, err := os.Stat(uploadPath)
 	if err != nil {
-		return fmt.Errorf("failed to access upload file: %w", err)
+		return "", fmt.Errorf("failed to access upload file: %w", err)
 	}
 	var localChecksum string
 	if checksumEnabled {
 		checksumValue, err := fileSHA256(cmd.Context(), uploadPath)
 		if err != nil {
-			return fmt.Errorf("failed to compute checksum: %w", err)
+			return "", fmt.Errorf("failed to compute checksum: %w", err)
 		}
 		localChecksum = "sha256:" + checksumValue
 		metadata["checksum"] = localChecksum
@@ -542,18 +623,18 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	}), uploadPath, metadata)
 	uploadDoneErr := uploadProgress.Complete()
 	if uploadDoneErr != nil {
-		return fmt.Errorf("failed to render upload progress: %w", uploadDoneErr)
+		return "", fmt.Errorf("failed to render upload progress: %w", uploadDoneErr)
 	}
 	if cleanup != nil {
 		if cleanupErr := cleanup(); cleanupErr != nil {
-			return fmt.Errorf("failed to clean up encrypted file: %w", cleanupErr)
+			return "", fmt.Errorf("failed to clean up encrypted file: %w", cleanupErr)
 		}
 	}
 	if err != nil {
 		log.LogAttrs(cmd.Context(), debuglog.L1, "data.upload.failed",
 			debuglog.AttrsError("data.upload", err)...,
 		)
-		return networkError("data upload failed: %w", err)
+		return "", networkError("data upload failed: %w", err)
 	}
 	log.LogAttrs(cmd.Context(), debuglog.L1, "data.upload.complete",
 		debuglog.AttrsDataUpload(filePath, "", uploadInfo.Size(), "tus-single")...,
@@ -565,7 +646,7 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		fmt.Fprintf(cmd.OutOrStdout(), "  Checksum: %s\n", localChecksum)
 	}
 
-	return nil
+	return localChecksum, nil
 }
 
 func fileSHA256(ctx context.Context, filePath string) (string, error) {

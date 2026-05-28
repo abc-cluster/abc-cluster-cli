@@ -52,6 +52,9 @@ var migrationFeatures = map[string][]string{
 	"0010_runs_submission_source": {
 		"template-vs-handwritten",
 	},
+	"0014_uploads": {
+		"upload-registry",
+	},
 }
 
 // FeaturesIntroducedBy returns the features a single migration adds.

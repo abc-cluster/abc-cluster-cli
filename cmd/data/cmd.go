@@ -59,6 +59,7 @@ func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFact
 		Long:  `Commands for uploading and managing data on the abc-cluster platform.`,
 	}
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
+	cmd.AddCommand(newUploadsCmd())
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
