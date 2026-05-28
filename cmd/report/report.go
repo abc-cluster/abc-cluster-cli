@@ -55,6 +55,7 @@ mapping table and JSON schema.`,
 	cmd.Flags().Bool("all-contexts", false, "(Phase 2 — currently rejects with a clear error)")
 	// Subverbs.
 	cmd.AddCommand(newRunsCmd())
+	cmd.AddCommand(newComplianceCmd())
 	return cmd
 }
 

@@ -1,4 +1,4 @@
-// Package investigation registers `abc project investigation` verbs (canonical
+// Package investigation registers `abc project investigation` commands (canonical
 // path; relocated from the standalone `abc investigation` group on 2026-05-08).
 package investigation
 
@@ -7,7 +7,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -28,18 +27,6 @@ func NewCmd() *cobra.Command {
 // as a sibling of `investigation` under `abc project`.
 func NewInvAlias() *cobra.Command {
 	return buildCmd("inv", "Alias for `abc project investigation`")
-}
-
-// NewDeprecatedRootAlias returns the tree wired under the legacy root-level
-// path `abc investigation`, and emits a one-line deprecation note at
-// invocation. Kept for one release after the move under `abc project`.
-func NewDeprecatedRootAlias() *cobra.Command {
-	cmd := buildCmd("investigation",
-		"(deprecated) moved to `abc project investigation`")
-	cmd.PersistentPreRun = func(c *cobra.Command, _ []string) {
-		fmt.Fprintln(os.Stderr, "[abc] note: 'abc investigation' has moved to 'abc project investigation'; alias kept for one release")
-	}
-	return cmd
 }
 
 // buildCmd constructs the investigation Cobra tree. Re-invoked per

@@ -14,21 +14,17 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/auth"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/accounting"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/cluster"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/compliance"
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
-	contextcmd "github.com/abc-cluster/abc-cluster-cli/cmd/auth/context"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/doctor"
 	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/investigation"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/project"
 	reportcmd "github.com/abc-cluster/abc-cluster-cli/cmd/report"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/submit"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/workbench"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -245,34 +241,20 @@ func init() {
 
 	rootCmd.AddCommand(pipeline.NewCmd())
 	rootCmd.AddCommand(module.NewCmd())
-	rootCmd.AddCommand(submit.NewSubmitCmd())
 	rootCmd.AddCommand(data.NewCmd(&serverURL, &accessToken, &workspace))
 	rootCmd.AddCommand(infra.NewCmd())
 	rootCmd.AddCommand(admin.NewCmd())
 	rootCmd.AddCommand(job.NewCmd())
-	rootCmd.AddCommand(job.NewLogsCmd())
 	rootCmd.AddCommand(cluster.NewCmd())
 	rootCmd.AddCommand(doctor.NewCmd())
 	rootCmd.AddCommand(workbench.NewCmd())
 	rootCmd.AddCommand(accounting.NewCmd())
-	// `abc status` is a deprecated alias of `abc cluster status` (kept for one
-	// release). The canonical command lives under abc cluster status.
-	rootCmd.AddCommand(deprecatedRootStatusAlias())
 	rootCmd.AddCommand(auth.NewCmd())
-	// `abc context` is a deprecated alias of `abc auth context` (kept for one
-	// release). The canonical command lives under abc auth context.
-	rootCmd.AddCommand(deprecatedRootContextAlias())
 	rootCmd.AddCommand(cfgcmd.NewCmd())
 	rootCmd.AddCommand(secrets.NewCmd())
-	rootCmd.AddCommand(compliance.NewCmd())
 	rootCmd.AddCommand(project.NewCmd())
 	rootCmd.AddCommand(reportcmd.NewCmd())
-	// `abc investigation` is registered as a deprecated root-level alias for
-	// one release; the canonical command is `abc project investigation`.
-	rootCmd.AddCommand(investigation.NewDeprecatedRootAlias())
 	rootCmd.AddCommand(localdbcmd.NewCmd())
-	// `abc cache` is a deprecated alias of `abc localdb` (kept for one release).
-	rootCmd.AddCommand(localdbcmd.NewDeprecatedCacheAlias())
 	// `abc capability` typo redirect — users learning the codename surface
 	// from docs sometimes type the singular form. Forward to the canonical
 	// `abc cluster capabilities` with a one-line note. Hidden from help.
@@ -281,7 +263,7 @@ func init() {
 
 // capabilityTypoRedirect makes `abc capability ...` print a one-line
 // hint pointing at the canonical command. Hidden from help so it
-// doesn't pollute the verb listing.
+// doesn't pollute the command listing.
 func capabilityTypoRedirect() *cobra.Command {
 	return &cobra.Command{
 		Use:                "capability",
@@ -294,47 +276,6 @@ func capabilityTypoRedirect() *cobra.Command {
 			return fmt.Errorf("unknown command 'abc capability' — see 'abc cluster capabilities'")
 		},
 	}
-}
-
-// deprecatedRootContextAlias returns a root-level `abc context` command that
-// delegates to `abc auth context` and prints a one-line stderr deprecation
-// note on every invocation. Kept for one release window; remove after.
-func deprecatedRootContextAlias() *cobra.Command {
-	c := contextcmd.NewCmd()
-	c.Short = "(deprecated) Manage saved authentication contexts — use 'abc auth context'"
-	prev := c.PersistentPreRun
-	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		if !quietMode() {
-			fmt.Fprintln(os.Stderr,
-				"[abc] note: 'abc context' has been relocated under 'abc auth context'; "+
-					"this alias is kept for one release. Update scripts to 'abc auth context ...'.")
-		}
-		if prev != nil {
-			prev(cmd, args)
-		}
-	}
-	return c
-}
-
-// deprecatedRootStatusAlias returns a root-level `abc status` command that
-// delegates to `abc cluster status` and prints a one-line stderr deprecation
-// note on every invocation. Kept for one release window; remove after.
-func deprecatedRootStatusAlias() *cobra.Command {
-	c := cluster.NewStatusCmd()
-	c.Use = "status"
-	c.Short = "(deprecated) Show cluster status — use 'abc cluster status'"
-	prev := c.PersistentPreRun
-	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		if !quietMode() {
-			fmt.Fprintln(os.Stderr,
-				"[abc] note: 'abc status' has been relocated to 'abc cluster status'; "+
-					"this alias is kept for one release. Update scripts to 'abc cluster status'.")
-		}
-		if prev != nil {
-			prev(cmd, args)
-		}
-	}
-	return c
 }
 
 // quietMode returns true when -q / --quiet is set or ABC_CLI_QUIET=1 in env

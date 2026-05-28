@@ -32,23 +32,6 @@ func NewCmd() *cobra.Command {
 	return cmd
 }
 
-// NewDeprecatedCacheAlias returns a `cache` command that proxies to localdb,
-// printing a one-line deprecation note. Kept for one release after the rename.
-func NewDeprecatedCacheAlias() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:    "cache",
-		Short:  "(deprecated) renamed to `abc localdb`",
-		Hidden: false,
-		PersistentPreRun: func(c *cobra.Command, _ []string) {
-			fmt.Fprintln(os.Stderr, "[abc] note: 'abc cache' has been renamed to 'abc localdb'; alias kept for one release")
-		},
-	}
-	cmd.AddCommand(newStatusCmd())
-	cmd.AddCommand(newMigrateCmd())
-	cmd.AddCommand(newVacuumCmd())
-	return cmd
-}
-
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",

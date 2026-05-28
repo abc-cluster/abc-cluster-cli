@@ -1,5 +1,4 @@
-// Package compliance implements "abc compliance" — compliance posture from the ABC API.
-package compliance
+package report
 
 import (
 	"bytes"
@@ -12,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the top-level "abc compliance" command.
-func NewCmd() *cobra.Command {
+// newComplianceCmd returns the `abc report compliance` subcommand.
+func newComplianceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "compliance",
 		Short: "Compliance status and reports from the ABC API",
