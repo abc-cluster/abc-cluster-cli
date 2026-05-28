@@ -20,13 +20,14 @@ func newStopCmd() *cobra.Command {
 		Short: "Stop the running workbench session",
 		Long: `Stop the running workbench session.
 
-For Docker-backend sessions: deregisters the Nomad service job.
-For VM-backend sessions: suspends the Multipass VM (state is preserved; resume in ~8s).
+For JupyterHub sessions (default): opens the hub control panel URL where you
+can stop your server. Your files are always preserved.
 
-Your homedir is always preserved on the cluster node. All installed tools,
-notebooks, and files survive the stop.
+For admin Docker/VM sessions:
+  Docker — deregisters the Nomad service job.
+  VM     — suspends the Multipass VM (state preserved; resumes in ~8 s).
 
-Run 'abc workbench start' (or 'abc workbench start --backend=vm') to reconnect.`,
+Run 'abc workbench start' to get the workbench URL again.`,
 		RunE: runStop,
 	}
 	return cmd
@@ -55,7 +56,10 @@ func runStop(cmd *cobra.Command, args []string) error {
 	sess, err := workbench.ActiveSession(context.Background(), db, user)
 	if err != nil {
 		if errors.Is(err, workbench.ErrNoSession) {
-			return fmt.Errorf("no running workbench session for user %q\nuse 'abc workbench status' to check", user)
+			// No active Docker/VM session — user is on JupyterHub.
+			// Direct them to the hub control panel to stop their server.
+			printHubStatus(cmd, ctx, "stop")
+			return nil
 		}
 		return fmt.Errorf("look up session: %w", err)
 	}

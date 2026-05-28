@@ -33,37 +33,53 @@ func newStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start an interactive workbench session",
-		Long: `Start a workbench session running code-server and Jupyter with your homedir mounted.
+		Long: `Print the workbench URL and open it in your browser.
 
-The session is accessible from your browser and from VS Code / Positron via
-Remote SSH. The IDE URL and SSH alias are printed after the session is ready.
-Use 'abc workbench stop' to release resources when done.
+The workbench runs on JupyterHub — log in at the printed URL with your
+pool username to start a JupyterLab session. No local setup required.
 
-The homedir (/home/ubuntu/ inside the session) is persisted on the cluster
-node across session restarts. Your data and installed packages survive
-'abc workbench stop' + 'abc workbench start'.
+Your home directory (/home/jovyan inside JupyterLab) is persisted on the
+cluster node across sessions. Files, notebooks, and installed packages
+survive server stop/start.
 
-Backends:
-  docker  — Nomad service job running a container (default, available immediately)
-  vm      — Multipass VM per user on the platform node (full Linux env, SSH via ProxyJump)`,
+Admin backends (explicit --backend flag required):
+  docker  — Nomad service job running a container
+  vm      — Multipass VM on the platform node (grove-tier precursor)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if backend == "vm" {
+			switch backend {
+			case "vm":
 				return runStartVM(cmd, cores, memMB, idleHours, ide, projectDir, noTelemetry, nodeName)
+			case "docker":
+				return runStart(cmd, cores, memMB, idleHours, ide, projectDir, noTelemetry, nodeName)
+			default: // "jupyterhub" or anything else — print hub URL
+				return runStartHub(cmd)
 			}
-			return runStart(cmd, cores, memMB, idleHours, ide, projectDir, noTelemetry, nodeName)
 		},
 	}
 
-	cmd.Flags().IntVar(&cores, "cores", 2, "CPU cores")
-	cmd.Flags().IntVar(&memMB, "mem", 4096, "Memory in MB")
-	cmd.Flags().IntVar(&idleHours, "idle-hours", 4, "Idle timeout in hours (0 = no timeout)")
-	cmd.Flags().StringVar(&ide, "ide", "quarto", "IDE: quarto or code-server (positron: not yet implemented)")
-	cmd.Flags().StringVar(&projectDir, "project", "", "Open this directory in the IDE")
-	cmd.Flags().BoolVar(&noTelemetry, "no-telemetry", false, "Disable session telemetry sidecar")
-	cmd.Flags().StringVar(&nodeName, "node", "", "Pin session to this node (default: platform node from context)")
-	cmd.Flags().StringVar(&backend, "backend", "docker", "Backend: docker (Nomad service job) or vm (Multipass VM)")
+	cmd.Flags().IntVar(&cores, "cores", 2, "CPU cores (docker/vm backends only)")
+	cmd.Flags().IntVar(&memMB, "mem", 4096, "Memory in MB (docker/vm backends only)")
+	cmd.Flags().IntVar(&idleHours, "idle-hours", 4, "Idle timeout in hours (docker/vm backends only)")
+	cmd.Flags().StringVar(&ide, "ide", "quarto", "IDE image: quarto or code-server (docker/vm backends only)")
+	cmd.Flags().StringVar(&projectDir, "project", "", "Open this directory in the IDE (docker/vm backends only)")
+	cmd.Flags().BoolVar(&noTelemetry, "no-telemetry", false, "Disable session telemetry sidecar (docker/vm backends only)")
+	cmd.Flags().StringVar(&nodeName, "node", "", "Pin session to this node (docker/vm backends only)")
+	cmd.Flags().StringVar(&backend, "backend", "jupyterhub", "Backend: jupyterhub (default) | docker (admin) | vm (admin)")
 
 	return cmd
+}
+
+// runStartHub is the default path: print the JupyterHub URL and open the browser.
+// No Nomad job is submitted — JupyterHub manages server lifecycle in the browser.
+func runStartHub(cmd *cobra.Command) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	ctx := cfg.ActiveCtx()
+	user := resolveUser(ctx)
+	printHubStart(cmd, ctx, user)
+	return nil
 }
 
 func runStart(cmd *cobra.Command, cores, memMB, idleHours int, ide, projectDir string, noTelemetry bool, nodeName string) error {

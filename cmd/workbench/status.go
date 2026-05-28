@@ -44,8 +44,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	sess, err := workbench.LatestSession(context.Background(), db, user)
 	if err != nil {
 		if errors.Is(err, workbench.ErrNoSession) {
-			fmt.Fprintf(cmd.OutOrStdout(), "No workbench session found for user %q.\n", user)
-			return fmt.Errorf("no session")
+			// No Docker/VM session in local.db — user is on JupyterHub.
+			// Show the hub URL; server status is visible in the hub UI.
+			printHubStatus(cmd, ctx, "check")
+			return nil
 		}
 		return fmt.Errorf("look up session: %w", err)
 	}
