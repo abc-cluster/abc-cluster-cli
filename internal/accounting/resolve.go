@@ -24,14 +24,18 @@ const (
 
 // Acceptable keys for the emissions block.
 const (
-	KeyGridFactor                = "grid_factor_gco2_per_kwh"
-	KeyCpuW                      = "cpu_w"
-	KeyGpuW                      = "gpu_w"
-	KeyMemoryGbW                 = "memory_gb_w"
-	KeyPue                       = "pue"
-	KeyStorageScratchWPerTb      = "storage_scratch_w_per_tb"
-	KeyStoragePersistentWPerTb   = "storage_persistent_w_per_tb"
-	KeyStorageEcAmplification    = "storage_ec_amplification"
+	KeyGridFactor               = "grid_factor_gco2_per_kwh"
+	KeyCpuW                     = "cpu_w"
+	KeyGpuW                     = "gpu_w"
+	KeyMemoryGbW                = "memory_gb_w"
+	KeyPue                      = "pue"
+	KeyStorageScratchWPerTb     = "storage_scratch_w_per_tb"
+	KeyStoragePersistentWPerTb  = "storage_persistent_w_per_tb"
+	KeyStorageEcAmplification   = "storage_ec_amplification"
+	// Water Usage Effectiveness (WUE) — added 2026-05-29.
+	// Shared with `abc water`; set via `abc config emissions set wue_site=`.
+	KeyWueSite            = "wue_site"
+	KeyGridWaterIntensity = "grid_water_intensity"
 )
 
 // AccountingKeys lists supported accounting keys (set/show/unset).
@@ -41,10 +45,12 @@ var AccountingKeys = []string{
 	KeyCostPostdocPerHour,
 }
 
-// EmissionsKeys lists supported emissions keys.
+// EmissionsKeys lists supported emissions keys (includes WUE fields shared
+// with `abc water`; both commands draw from the same emissions config block).
 var EmissionsKeys = []string{
 	KeyGridFactor, KeyCpuW, KeyGpuW, KeyMemoryGbW, KeyPue,
 	KeyStorageScratchWPerTb, KeyStoragePersistentWPerTb, KeyStorageEcAmplification,
+	KeyWueSite, KeyGridWaterIntensity,
 }
 
 var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
@@ -99,6 +105,19 @@ func ValidateEmissionsValue(key, raw string) (float64, error) {
 	case KeyStorageEcAmplification:
 		if v < 1.0 || v > 5.0 {
 			return 0, fmt.Errorf("%s: must be in [1.0, 5.0] (got %v) — 1.0 = no overhead, ~6.0 caps far-fetched 5x replication", key, v)
+		}
+	case KeyWueSite:
+		// WUE_site: direct cooling evaporation in L/kWh.
+		// Reasonable range 0–10 L/kWh; > 10 suggests a data-entry error.
+		if v < 0 || v > 10 {
+			return 0, fmt.Errorf("%s: must be in [0, 10] L/kWh (got %v); typical range 0.1–3.0", key, v)
+		}
+	case KeyGridWaterIntensity:
+		// I_water: grid-level indirect water intensity in L/kWh.
+		// Hydro can reach 25+ L/kWh; coal ~2–3 L/kWh; allow up to 50 for
+		// worst-case tropical hydro reservoirs.
+		if v < 0 || v > 50 {
+			return 0, fmt.Errorf("%s: must be in [0, 50] L/kWh (got %v); Eskom coal ~2.5, tropical hydro ~10–25", key, v)
 		}
 	default:
 		return 0, fmt.Errorf("unknown emissions key %q (allowed: %v)", key, EmissionsKeys)
@@ -182,6 +201,10 @@ func Resolve(z RateCard, layer1 LayeredOverrides, layer2 FlagOverrides) (RateCar
 				card.Emissions.StoragePersistentWPerTb = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			case KeyStorageEcAmplification:
 				card.Emissions.StorageEcAmplification = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyWueSite:
+				card.Emissions.WueSite = RateValue{Value: fv, Source: src, UpdatedAt: ts}
+			case KeyGridWaterIntensity:
+				card.Emissions.GridWaterIntensity = RateValue{Value: fv, Source: src, UpdatedAt: ts}
 			}
 		}
 		return nil

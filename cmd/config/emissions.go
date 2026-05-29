@@ -21,16 +21,33 @@ func newEmissionsCmd() *cobra.Command {
 		Short: "Manage per-context emissions coefficients in ~/.abc/config.yaml",
 		Long: `Manage the per-context emissions block (Layer 1 of the rate-card resolver).
 
+These values are shared by both ` + "`abc emissions`" + ` (CO₂e) and ` + "`abc water`" + ` (freshwater)
+since both use the same energy calculation as their base.
+
 Acceptable keys:
-  grid_factor_gco2_per_kwh   0–2000 g CO2e/kWh
-  cpu_w                      watts per CPU at full utilisation (≥ 0)
-  gpu_w                      watts per GPU (≥ 0)
-  memory_gb_w                watts per GB DRAM (≥ 0)
-  pue                        datacenter overhead multiplier (1.0–3.0)
+  grid_factor_gco2_per_kwh   0–2000 g CO2e/kWh          (abc emissions)
+  cpu_w                      watts per CPU (≥ 0)          (both)
+  gpu_w                      watts per GPU (≥ 0)          (both)
+  memory_gb_w                watts per GB DRAM (≥ 0)      (both)
+  pue                        PUE multiplier (1.0–3.0)     (both)
+  wue_site                   facility cooling evaporation, 0–10 L/kWh  (abc water)
+  grid_water_intensity       grid I_water, 0–50 L/kWh                  (abc water)
+
+Water formula: Water (L) = energy_kWh × (wue_site + grid_water_intensity)
+
+Built-in defaults for Cape Town / Eskom coal:
+  wue_site = 1.5 L/kWh   (evaporative cooling midpoint)
+  grid_water_intensity = 2.5 L/kWh   (Eskom thermal cooling towers)
+
+Per-node estimates (see brainstorms/water-carbon-scheduling/):
+  Belgium (KU Leuven nuclear+wind): wue_site=0.2 grid_water_intensity=0.9
+  Kenya (KPLC hydro, uncertain):    wue_site=0.5 grid_water_intensity=15
+  Eskom (SA coal, on-prem):         wue_site=1.5 grid_water_intensity=2.5
 
 Examples:
   abc config emissions show
   abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950
+  abc config emissions set wue_site=1.5 grid_water_intensity=2.5
   abc config emissions unset cpu_w`,
 	}
 	cmd.AddCommand(newEmissionsShowCmd())
@@ -85,6 +102,10 @@ func runEmissionsShow(cmd *cobra.Command, _ []string) error {
 	printRateF(out, "storage_scratch_w_per_tb", card.Emissions.StorageScratchWPerTb)
 	printRateF(out, "storage_persistent_w_per_tb", card.Emissions.StoragePersistentWPerTb)
 	printRateF(out, "storage_ec_amplification", card.Emissions.StorageEcAmplification)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Water (shared with `abc water`):")
+	printRateF(out, "wue_site", card.Emissions.WueSite)
+	printRateF(out, "grid_water_intensity", card.Emissions.GridWaterIntensity)
 	return nil
 }
 

@@ -24,12 +24,16 @@ const (
 	GroupByPipeline      GroupBy = "pipeline"
 )
 
-// ReportMode picks between cost (accounting) and emissions reports.
+// ReportMode picks between cost (accounting), emissions, and water reports.
 type ReportMode string
 
 const (
 	ModeAccounting ReportMode = "accounting"
 	ModeEmissions  ReportMode = "emissions"
+	// ModeWater reports freshwater consumption per job using the WUE formula:
+	//   Water (L) = energy_kWh × (WueSite + GridWaterIntensity)
+	// where energy_kWh uses the same coefficients as ModeEmissions.
+	ModeWater ReportMode = "water"
 )
 
 // EmissionsUnit picks the display unit for the emissions report.
@@ -39,6 +43,15 @@ const (
 	UnitKg EmissionsUnit = "kg"
 	UnitT  EmissionsUnit = "t"
 	UnitG  EmissionsUnit = "g"
+)
+
+// WaterUnit picks the display unit for the water report.
+type WaterUnit string
+
+const (
+	WaterUnitL  WaterUnit = "L"  // litres (default)
+	WaterUnitML WaterUnit = "mL" // millilitres (small jobs)
+	WaterUnitM3 WaterUnit = "m3" // cubic metres (large cohorts)
 )
 
 // RateSourceVerbosity picks the verbosity of the rate-card footer.
@@ -70,6 +83,7 @@ type ReportOptions struct {
 	Output            OutputFormat
 	RateSource        RateSourceVerbosity
 	EmissionsUnit     EmissionsUnit // only for ModeEmissions
+	WaterUnit         WaterUnit     // only for ModeWater
 }
 
 // Row is one aggregated line in the report.
@@ -108,12 +122,18 @@ func Aggregate(ctx context.Context, db *sql.DB, opts ReportOptions, card RateCar
 		Until:    opts.Until,
 		RateCard: card,
 	}
-	if opts.Mode == ModeEmissions {
+	switch opts.Mode {
+	case ModeEmissions:
 		rep.Unit = string(opts.EmissionsUnit)
 		if rep.Unit == "" {
 			rep.Unit = string(UnitKg)
 		}
-	} else {
+	case ModeWater:
+		rep.Unit = string(opts.WaterUnit)
+		if rep.Unit == "" {
+			rep.Unit = string(WaterUnitL)
+		}
+	default:
 		rep.Unit = card.Currency.Value
 	}
 
@@ -191,6 +211,20 @@ func Aggregate(ctx context.Context, db *sql.DB, opts ReportOptions, card RateCar
 			energyKwh += scratchEnergyKwh * card.Emissions.Pue.Value
 			co2Kg := energyKwh * card.Emissions.GridFactorGco2PerKwh.Value / 1000.0
 			r.Total = convertCO2Kg(co2Kg, opts.EmissionsUnit)
+		case ModeWater:
+			// Water formula (Program WUE from The Green Grid):
+			//   Water (L) = energy_kWh × (WueSite + GridWaterIntensity)
+			// energy_kWh is identical to ModeEmissions; both dimensions share
+			// the same energy base so the rate card provenance is consistent.
+			scratchEnergyKwh := r.ScratchGbHours * card.Emissions.StorageScratchWPerTb.Value /
+				1000.0 / 1000.0
+			energyKwh := ((r.CpuHours*card.Emissions.CpuW.Value +
+				r.GpuHours*card.Emissions.GpuW.Value +
+				r.MemoryGbHours*card.Emissions.MemoryGbW.Value) / 1000.0) *
+				card.Emissions.Pue.Value
+			energyKwh += scratchEnergyKwh * card.Emissions.Pue.Value
+			waterL := energyKwh * (card.Emissions.WueSite.Value + card.Emissions.GridWaterIntensity.Value)
+			r.Total = convertWaterL(waterL, opts.WaterUnit)
 		}
 		rep.Rows = append(rep.Rows, r)
 	}
@@ -208,6 +242,17 @@ func convertCO2Kg(kg float64, unit EmissionsUnit) float64 {
 		return kg * 1000.0
 	default:
 		return kg
+	}
+}
+
+func convertWaterL(l float64, unit WaterUnit) float64 {
+	switch unit {
+	case WaterUnitML:
+		return l * 1000.0
+	case WaterUnitM3:
+		return l / 1000.0
+	default: // WaterUnitL
+		return l
 	}
 }
 
@@ -282,18 +327,26 @@ func renderTable(w io.Writer, rep Report, opts ReportOptions) error {
 }
 
 func tableHeader(rep Report) string {
-	if rep.Mode == ModeEmissions {
+	switch rep.Mode {
+	case ModeEmissions:
 		unit := rep.Unit
 		if unit == "" {
 			unit = "kg"
 		}
 		return "Emissions (" + unit + " CO2e)"
+	case ModeWater:
+		unit := rep.Unit
+		if unit == "" {
+			unit = "L"
+		}
+		return "Water (" + unit + " freshwater)"
+	default:
+		curr := rep.RateCard.Currency.Value
+		if curr == "" {
+			curr = "ZAR"
+		}
+		return "Cost (" + curr + ")"
 	}
-	curr := rep.RateCard.Currency.Value
-	if curr == "" {
-		curr = "ZAR"
-	}
-	return "Cost (" + curr + ")"
 }
 
 // writeFullRateCard prints every rate used in the calculation with its
@@ -313,11 +366,18 @@ func writeFullRateCard(w io.Writer, rep Report) {
 			r.Source, formatProvenance(r))
 	}
 	fmt.Fprintln(w)
-	if rep.Mode == ModeAccounting {
+	switch rep.Mode {
+	case ModeAccounting:
 		fmt.Fprintln(w, "These figures are rough estimates based on built-in default rates.")
 		fmt.Fprintln(w, "In future releases, values will reflect dynamic resource measurements")
 		fmt.Fprintln(w, "from the cluster (CPU utilisation, memory, walltime via Nomad telemetry).")
-	} else {
+	case ModeWater:
+		fmt.Fprintln(w, "Water figures use the Program WUE formula (The Green Grid, 2012):")
+		fmt.Fprintln(w, "  Water (L) = energy_kWh × (wue_site + grid_water_intensity)")
+		fmt.Fprintln(w, "Override wue_site and grid_water_intensity for your facility and grid mix:")
+		fmt.Fprintln(w, "  abc config emissions set wue_site=<L/kWh> grid_water_intensity=<L/kWh>")
+		fmt.Fprintln(w, "Refer to brainstorms/water-carbon-scheduling/ for per-node estimates.")
+	default:
 		fmt.Fprintln(w, "These figures are rough estimates based on built-in default factors.")
 		fmt.Fprintln(w, "In future releases, emissions will be computed from live grid intensity")
 		fmt.Fprintln(w, "data and measured resource utilisation rather than static coefficients.")
@@ -370,7 +430,8 @@ type rateRow struct {
 func relevantRates(rep Report) []rateRow {
 	rc := rep.RateCard
 	var out []rateRow
-	if rep.Mode == ModeAccounting {
+	switch rep.Mode {
+	case ModeAccounting:
 		out = append(out,
 			fromRateValue("cost.cpu_hour", rc.Cost.CpuHour),
 			fromRateValue("cost.gpu_hour", rc.Cost.GpuHour),
@@ -378,13 +439,25 @@ func relevantRates(rep Report) []rateRow {
 			fromRateValue("cost.storage_scratch_gb_hour", rc.Cost.StorageScratchGbHour),
 			fromRateString("currency", rc.Currency),
 		)
-	} else {
+	case ModeEmissions:
 		out = append(out,
 			fromRateValue("emissions.grid_factor", rc.Emissions.GridFactorGco2PerKwh),
 			fromRateValue("emissions.cpu_w", rc.Emissions.CpuW),
 			fromRateValue("emissions.gpu_w", rc.Emissions.GpuW),
 			fromRateValue("emissions.memory_gb_w", rc.Emissions.MemoryGbW),
 			fromRateValue("emissions.pue", rc.Emissions.Pue),
+			fromRateValue("emissions.storage_scratch_w_per_tb", rc.Emissions.StorageScratchWPerTb),
+		)
+	case ModeWater:
+		// Water footer: show WUE coefficients first, then the shared energy
+		// coefficients so the reader can trace the full calculation.
+		out = append(out,
+			fromRateValue("emissions.wue_site", rc.Emissions.WueSite),
+			fromRateValue("emissions.grid_water_intensity", rc.Emissions.GridWaterIntensity),
+			fromRateValue("emissions.pue", rc.Emissions.Pue),
+			fromRateValue("emissions.cpu_w", rc.Emissions.CpuW),
+			fromRateValue("emissions.gpu_w", rc.Emissions.GpuW),
+			fromRateValue("emissions.memory_gb_w", rc.Emissions.MemoryGbW),
 			fromRateValue("emissions.storage_scratch_w_per_tb", rc.Emissions.StorageScratchWPerTb),
 		)
 	}

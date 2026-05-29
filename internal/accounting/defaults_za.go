@@ -44,6 +44,24 @@ const (
 	ZADefaultStorageScratchWPerTb    = 8.0  // W per TB, NVMe SSD active+amortised (Samsung PM9A3 envelope)
 	ZADefaultStoragePersistentWPerTb = 4.0  // W per TB, HDD idle-dominated (WD Ultrastar DC HC560)
 	ZADefaultStorageEcAmplification  = 1.33 // 3+1 erasure coding default; overrideable for replication / wider stripes
+
+	// Water Usage Effectiveness (WUE) coefficients — Cape Town on-prem defaults.
+	// Formula: Water (L) = energy_kWh × (WueSite + GridWaterIntensity)
+	//
+	// WueSite (direct cooling evaporation): 1.5 L/kWh
+	//   Midpoint of Cape Town evaporative cooling estimate (1.2–2.0 L/kWh).
+	//   Varies ±0.5 L/kWh across the diurnal cycle (wet-bulb temperature
+	//   driven). Override with measured facility value for grant reporting.
+	//   Source: The Green Grid WUE Measurement Methodology (2012); facility
+	//   estimates for Western Cape warm-climate data centres.
+	//
+	// GridWaterIntensity (indirect grid water, I_water): 2.5 L/kWh
+	//   Eskom coal-dominated grid — thermal power plant cooling tower
+	//   evaporation. Range 2.0–3.0 L/kWh depending on plant mix and season.
+	//   Source: Eskom Sustainability Report 2023; WRI Aqueduct grid-intensity
+	//   methodology; SA coal fleet cooling water withdrawal data.
+	ZADefaultWueSite            = 1.5 // L/kWh, direct facility cooling evaporation
+	ZADefaultGridWaterIntensity = 2.5 // L/kWh, Eskom coal grid indirect I_water
 )
 
 // cliReleaseDate is set at build time via -ldflags
@@ -148,6 +166,16 @@ func storageEcCitation() string {
 	return "RustFS 3+1 erasure coding default; override for replication / wider stripes"
 }
 
+// wueSiteCitation cites the direct facility cooling WUE default.
+func wueSiteCitation() string {
+	return "The Green Grid WUE Methodology (2012); Cape Town evap-cooling midpoint (1.2–2.0 L/kWh)" + dateSuffixSemicolon()
+}
+
+// gridWaterIntensityCitation cites the grid I_water default.
+func gridWaterIntensityCitation() string {
+	return "Eskom Sustainability Report 2023 + WRI Aqueduct; SA coal grid cooling tower evaporation (2.0–3.0 L/kWh)" + dateSuffixSemicolon()
+}
+
 // currencyCitation is the citation surfaced for the default currency tag.
 func currencyCitation() string {
 	return "SA market default"
@@ -227,6 +255,14 @@ func ZADefaults() RateCard {
 			StorageEcAmplification: RateValue{
 				Value: ZADefaultStorageEcAmplification, Source: SourceBuiltIn, UpdatedAt: now,
 				Citation: storageEcCitation(),
+			},
+			WueSite: RateValue{
+				Value: ZADefaultWueSite, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: wueSiteCitation(),
+			},
+			GridWaterIntensity: RateValue{
+				Value: ZADefaultGridWaterIntensity, Source: SourceBuiltIn, UpdatedAt: now,
+				Citation: gridWaterIntensityCitation(),
 			},
 		},
 	}

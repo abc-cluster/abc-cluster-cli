@@ -17,6 +17,7 @@ import (
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/doctor"
+	emissionscmd "github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
 	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
@@ -26,6 +27,7 @@ import (
 	reportcmd "github.com/abc-cluster/abc-cluster-cli/cmd/report"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	watercmd "github.com/abc-cluster/abc-cluster-cli/cmd/water"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/workbench"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
@@ -254,6 +256,8 @@ func init() {
 	rootCmd.AddCommand(secrets.NewCmd())
 	rootCmd.AddCommand(project.NewCmd())
 	rootCmd.AddCommand(reportcmd.NewCmd())
+	rootCmd.AddCommand(emissionscmd.NewCmd())
+	rootCmd.AddCommand(watercmd.NewCmd())
 	rootCmd.AddCommand(localdbcmd.NewCmd())
 	// `abc capability` typo redirect — users learning the codename surface
 	// from docs sometimes type the singular form. Forward to the canonical

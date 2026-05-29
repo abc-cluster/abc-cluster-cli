@@ -103,6 +103,23 @@ type EmissionsRates struct {
 	StorageScratchWPerTb    RateValue
 	StoragePersistentWPerTb RateValue
 	StorageEcAmplification  RateValue
+
+	// Water Usage Effectiveness (WUE) — added 2026-05-29.
+	// Formula: Water (L) = energy_kWh × (WueSite + GridWaterIntensity)
+	//
+	// WueSite is the facility-level direct cooling evaporation: litres of
+	// freshwater evaporated per kWh of IT load.  For Cape Town on-prem with
+	// evaporative cooling the indicative range is 1.2–2.0 L/kWh.
+	//
+	// GridWaterIntensity (I_water) is the indirect grid water footprint: litres
+	// consumed per kWh delivered at the meter from the regional grid mix.
+	// For Eskom's coal-heavy grid, cooling tower evaporation at thermal
+	// stations contributes ~2.0–3.0 L/kWh.
+	//
+	// References: The Green Grid WUE whitepaper (2012); SA water brainstorm
+	// brainstorms/water-carbon-scheduling/2026-05-29-cue-wue-aware-scheduling.md.
+	WueSite             RateValue
+	GridWaterIntensity  RateValue
 }
 
 // RateCard is the resolved set of rates for a (context, invocation) pair.
