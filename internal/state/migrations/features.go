@@ -55,6 +55,9 @@ var migrationFeatures = map[string][]string{
 	"0014_uploads": {
 		"upload-registry",
 	},
+	"0015_shell_history": {
+		"shell-history",
+	},
 }
 
 // FeaturesIntroducedBy returns the features a single migration adds.

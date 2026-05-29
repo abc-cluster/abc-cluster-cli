@@ -30,6 +30,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/traefik"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/vault"
+	adminworkbench "github.com/abc-cluster/abc-cluster-cli/cmd/admin/workbench"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/service"
 	"github.com/spf13/cobra"
 )
@@ -90,6 +91,7 @@ func NewCmd() *cobra.Command {
 	svcCmd.AddCommand(rclone.NewCmd())
 	svcCmd.AddCommand(traefik.NewCmd())
 	svcCmd.AddCommand(serviceconfig.NewCmd())
+	svcCmd.AddCommand(adminworkbench.NewCmd())
 	// Floor observability & notifications.
 	svcCmd.AddCommand(loki.NewCmd())
 	svcCmd.AddCommand(prometheus.NewCmd())
