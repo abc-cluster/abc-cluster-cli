@@ -1,6 +1,20 @@
 // Package water implements the top-level `abc water` verb — freshwater
 // consumption reporting using the Program WUE formula from The Green Grid.
 //
+// # Future consolidation
+//
+// This command, abc emissions (cmd/emissions), and abc accounting (cmd/accounting)
+// are intentionally separate top-level verbs while the rate-card machinery and
+// water formula stabilise. The planned end state is:
+//
+//	abc report emissions   (abc emissions → deprecated alias)
+//	abc report water       (abc water     → deprecated alias)
+//	abc report cost        (abc accounting → deprecated alias)
+//
+// Tracked in planning/deferred.md §"abc-cluster-cli repository".
+// Do not merge until abc report (cmd/report) has a unified renderer and the
+// researcher-productivity report subverbs are restructured to coexist.
+//
 // Formula:
 //
 //	Water (L) = energy_kWh × (wue_site + grid_water_intensity)
