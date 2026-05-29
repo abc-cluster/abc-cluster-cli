@@ -199,6 +199,64 @@ automatically. No user action required.
 | `--dry-run` | false | Show what would happen without changing anything |
 | `--node` | from config | SSH alias for the platform node |
 
+### Group common/shared mounts (geesefs)
+
+Operators can expose a group's MinIO bucket subdirectories as FUSE mounts
+inside every slot home directory. This is useful when a research group needs
+a shared read-only data drop (`~/group-common/`) or a collaborative scratch
+area (`~/group-shared/`).
+
+```bash
+# Mount for group mbhg-hostgen, all slots:
+abc admin services workbench provision-group-mounts --group mbhg-hostgen
+
+# Specific slots only:
+abc admin services workbench provision-group-mounts --group mbhg-hostgen \
+  --slots calm-dassie,lunar-hornbill
+
+# Dry-run first:
+abc admin services workbench provision-group-mounts --group mbhg-hostgen \
+  --dry-run
+```
+
+After this runs, every slot in the group sees:
+
+```
+~/group-common/    read-only view of s3://su-<group>/common/
+~/group-shared/    read-write view of s3://su-<group>/shared/
+```
+
+**How it works:**
+
+1. Installs `fuse3` and enables `user_allow_other` on the platform node.
+2. Downloads the pinned [geesefs](https://github.com/yandex-cloud/geesefs)
+   static binary to `/usr/local/bin/geesefs` (if absent).
+3. Creates `common/.keep` and `shared/.keep` placeholder objects in the
+   bucket so the prefixes appear in listings.
+4. Writes and starts one `abc-geesefs-<group>.service` systemd unit that
+   FUSE-mounts the bucket at `/mnt/abc-group-<group>/` — streaming
+   directly from MinIO. **Zero disk used on aither.**
+5. For each slot: adds two fstab bind-mount entries and mounts immediately.
+
+**Storage intent:** these directories are for casual copy operations only.
+Do not use them as Nextflow work directories or Nomad job scratch — FUSE
+latency degrades job throughput significantly.
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--group` | required | Group name, e.g. `mbhg-hostgen` (strips leading `su-` automatically) |
+| `--slots` | all | Comma-separated slot names |
+| `--geesefs-version` | `v0.42.1` | geesefs release to install if absent |
+| `--dry-run` | false | Show what would be done without changing anything |
+| `--node` | from config | SSH alias for the platform node |
+
+**Grove/garden upgrade path:** replace geesefs with JuiceFS backed by
+Redis/PostgreSQL for full POSIX semantics across multiple compute nodes.
+
+---
+
 ### Pool slot layout
 
 Each pool slot maps to a Linux system user on the platform node:
@@ -208,6 +266,7 @@ System user:   jupyter-<slot>          (e.g. jupyter-calm-dassie)
 Home dir:      /data/workbench/<slot>/home/
 Systemd unit:  jupyter-calm-dassie.service  (managed by TLJH + SystemdSpawner)
 Atuin DB:      /data/workbench/<slot>/home/.local/share/atuin/history.db
+Group mounts:  ~/group-common/ (ro)  ~/group-shared/ (rw)  — if provisioned
 ```
 
 Home directories are owned by `jupyter-<slot>:jupyter-<slot>` with mode
@@ -247,3 +306,24 @@ abc admin services workbench provision-atuin --slots <slot-name>
 
 Then ask the user to open a new terminal tab (existing tabs won't pick up
 the updated `.bashrc`).
+
+**group-common / group-shared not appearing**
+
+Check whether the geesefs service is running:
+
+```bash
+ssh sun-aither sudo systemctl status abc-geesefs-<group>.service
+```
+
+If stopped, check the journal for errors (typically a credential or endpoint
+misconfiguration):
+
+```bash
+ssh sun-aither sudo journalctl -u abc-geesefs-<group>.service -n 50
+```
+
+Re-run `provision-group-mounts` after fixing credentials:
+
+```bash
+abc admin services workbench provision-group-mounts --group <group>
+```
