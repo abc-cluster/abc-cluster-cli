@@ -52,6 +52,13 @@ func runOnNode(node NodeSSH, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// RunOnNodePublic is the exported version of runOnNode. It executes a command
+// on the node via SSH and returns combined output. Callers outside this package
+// (e.g. cmd/admin/workbench) use this to run arbitrary commands on a node.
+func RunOnNodePublic(node NodeSSH, args ...string) (string, error) {
+	return runOnNode(node, args...)
+}
+
 // runOnNodeStream executes a command streaming output to w.
 func runOnNodeStream(node NodeSSH, w io.Writer, args ...string) error {
 	full := append([]string{

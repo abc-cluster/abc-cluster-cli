@@ -7,8 +7,8 @@
 // Usage:
 //
 //	abc admin services workbench sessions                  List active JupyterHub sessions
-//	abc admin services workbench watch                     Idle-session reaper (polls + stops + imports)
-//	abc admin services workbench import-history <slot>     Import atuin shell history for one slot
+//	abc admin services workbench watch                     Idle-session reaper
+//	abc admin services workbench provision-atuin           Seed atuin into all slot home dirs
 package workbench
 
 import (
@@ -18,6 +18,10 @@ import (
 	wbinternal "github.com/abc-cluster/abc-cluster-cli/internal/workbench"
 	"github.com/spf13/cobra"
 )
+
+// HubClient is re-exported from the internal package for use within this
+// cmd package without needing to reference the internal path everywhere.
+type HubClient = wbinternal.HubClient
 
 // NewCmd returns the "workbench" subcommand group under abc admin services.
 func NewCmd() *cobra.Command {
@@ -34,13 +38,13 @@ Set it with:
 Available subcommands:
 
   sessions           List active sessions (running JupyterHub servers + idle time)
-  watch              Idle-session reaper — polls, imports atuin history, stops idle servers
-  import-history     Import atuin shell history for one slot from the platform node`,
+  watch              Idle-session reaper — polls and stops idle servers
+  provision-atuin    Seed atuin into slot home dirs so terminals get persistent history`,
 	}
 
 	cmd.AddCommand(newSessionsCmd())
 	cmd.AddCommand(newWatchCmd())
-	cmd.AddCommand(newImportHistoryCmd())
+	cmd.AddCommand(newProvisionAtuinCmd())
 	return cmd
 }
 
