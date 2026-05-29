@@ -703,10 +703,11 @@ func collectFiles(root string) ([]uploadFile, error) {
 }
 
 type tusUploader struct {
-	client      *tusgo.Client
-	opts        UploaderOptions
-	endpoint    string
-	accessToken string
+	client        *tusgo.Client
+	opts          UploaderOptions
+	endpoint      string
+	accessToken   string
+	serverMaxSize int64 // populated by PreflightNetwork from Tus-Max-Size header; 0 = unknown
 }
 
 func newTusUploader(endpoint, accessToken string, opts UploaderOptions) (Uploader, error) {
@@ -807,6 +808,15 @@ func (u *tusUploader) PreflightNetwork(ctx context.Context) error {
 		return fmt.Errorf("upload endpoint %q is reachable but did not return Tus-Version on OPTIONS; ensure this is a tus upload endpoint", endpoint)
 	}
 
+	// Cache the server's upload size limit so uploadSingleFile can give an
+	// immediate, clear error rather than failing mid-upload or deep in the
+	// tus error chain.
+	if maxSizeStr := strings.TrimSpace(resp.Header.Get("Tus-Max-Size")); maxSizeStr != "" {
+		if n, parseErr := strconv.ParseInt(maxSizeStr, 10, 64); parseErr == nil && n > 0 {
+			u.serverMaxSize = n
+		}
+	}
+
 	return nil
 }
 
@@ -863,6 +873,20 @@ func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[
 	info, err := file.Stat()
 	if err != nil {
 		return "", fmt.Errorf("stat file: %w", err)
+	}
+
+	// Early size check — fail immediately if the server advertised a max-size
+	// limit (populated by PreflightNetwork from the Tus-Max-Size header).
+	// This produces a clear error before any upload attempt rather than a
+	// buried tus protocol error after the POST request.
+	if u.serverMaxSize > 0 && info.Size() > u.serverMaxSize {
+		return "", fmt.Errorf(
+			"file too large: %s is %s (%d bytes) but the upload service only accepts files up to %s (%d bytes)\n"+
+				"  Raise -max-size on the tusd server or split the file into smaller parts.",
+			filePath,
+			formatSize(info.Size()), info.Size(),
+			formatSize(u.serverMaxSize), u.serverMaxSize,
+		)
 	}
 
 	metadataWithChecksum := copyMetadata(metadata)
