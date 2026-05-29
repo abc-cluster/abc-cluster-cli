@@ -17,33 +17,27 @@ import (
 
 type downloadOptions struct {
 	runName     string
-	accessions  []string
+	accessions  []string // from positional args and legacy --accession flag
+	from        string   // explicit database ID or alias (overrides auto-detection)
+	format      string   // output format override (default: database default)
 	configFile  string
 	paramsFile  string
 	profile     string
 	workDir     string
 	revision    string
-	tool        string
-	driver      string
-	source      string
 	destination string
 	storagePath string // overrides auto-derived s3:// path when --destination storage
-	urlFile     string
-	parallel    int
-	toolArgs    string
 
-	// placementNode is a Nomad node ID (UUID) or node name; adds a placement constraint to the generated job script.
+	// placementNode is a Nomad node ID (UUID) or node name; adds a placement constraint.
 	placementNode string
 
-	// workbench, when true, copies the S3 source directly into the active pool
-	// slot's workbench home directory (~/data/). Requires --source to be an
-	// S3 URI. Incompatible with --destination and --tool.
-	workbench bool
-
-	// local, when true, downloads the S3 source to the user's local machine
-	// by shelling out to s5cmd. Resumable via --if-size-differ.
-	// Requires --source to be an S3 URI; uses --destination as the local dir.
-	local bool
+	// legacy fields kept for backwards compatibility with buildToolScript
+	tool    string
+	driver  string
+	source  string
+	urlFile string
+	parallel int
+	toolArgs string
 }
 
 const defaultDockerImage = "ghcr.io/abc-cluster/abc-data-transfer:v2026-01-01"
@@ -60,138 +54,166 @@ func newDownloadCmd(serverURL, accessToken, workspace *string, factory PipelineC
 	opts := &downloadOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "download",
-		Short: "Download data via various tools",
-		Long: `Download data via selected tool and dispatch as Nomad job.
+		Use:   "download <accession> [accession...]",
+		Short: "Download data from a scientific database by accession",
+		Long: `Fetch data from a scientific repository by accession ID and store it in your
+cluster MinIO bucket. The source database is auto-detected from the accession
+format, or you can specify it explicitly with --from.
 
-Supports driver selection (exec, raw_exec, docker, or containerd) with a pinned OCI image when using docker or containerd; Nomad registers Roblox nomad-driver-containerd as task driver "containerd-driver" (the CLI maps --driver=containerd to that name).
+Supported databases:
 
-Use --destination for the directory on the task filesystem where files are written.
-Use --destination storage to push files directly to the cluster's S3 backend (rustfs or MinIO), resolved from the active context's admin.services config.
-Use --node to pin the job to a specific Nomad node (node UUID or node name).
-`,
+` + DatabaseSummaryTable() + `
+Examples:
+
+  # Download SRA runs by accession (auto-detects SRA):
+  abc data download SRR000001 SRR000002
+
+  # Download an entire BioProject:
+  abc data download PRJNA123456
+
+  # Download ENA data explicitly:
+  abc data download ERR123456 --from ena
+
+  # Download a RefSeq assembly:
+  abc data download GCF_000001405.40 --from refseq
+
+  # Download a GEO series (raw reads via fetchngs):
+  abc data download GSE123456
+
+  # Use FASTQ output format (default) or request BAM:
+  abc data download SRR000001 --format bam
+
+  # Override the output storage path:
+  abc data download SRR000001 \
+    --destination s3://su-mbhg-hostgen/user/calm-dassie/sra/
+
+  # Pass a custom fetchngs params file:
+  abc data download PRJNA123456 \
+    --params-file ./nf-params.json --profile singularity`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDownload(cmd, opts, *serverURL, *accessToken, *workspace, factory)
+			// Merge positional args with any legacy --accession flag values.
+			all := append(args, opts.accessions...)
+			var accessions []string
+			for _, a := range all {
+				a = strings.TrimSpace(a)
+				if a != "" {
+					accessions = append(accessions, a)
+				}
+			}
+			if len(accessions) == 0 && opts.paramsFile == "" {
+				return fmt.Errorf("requires at least one accession argument or --params-file\n\nRun 'abc data download --help' for examples and the supported database list.")
+			}
+			return runDownload(cmd, opts, accessions, *serverURL, *accessToken, *workspace, factory)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.runName, "name", "", "custom job name")
-	cmd.Flags().StringSliceVar(&opts.accessions, "accession", nil, "accession(s) for nextflow")
-	cmd.Flags().StringVar(&opts.configFile, "config", "", "nextflow config file")
-	cmd.Flags().StringVar(&opts.paramsFile, "params-file", "", "nextflow params file")
-	cmd.Flags().StringVar(&opts.profile, "profile", "", "nextflow profile")
-	cmd.Flags().StringVar(&opts.workDir, "work-dir", "", "nextflow work dir")
-	cmd.Flags().StringVar(&opts.revision, "revision", "", "nextflow revision tag/commit")
-
-	cmd.Flags().StringVar(&opts.tool, "tool", "aria2", "download tool: aria2,rclone,wget,s5cmd,nextflow")
-	cmd.Flags().StringVar(&opts.driver, "driver", "exec", "nomad driver: exec, raw_exec, docker, or containerd (oci drivers need image; containerd → Nomad task driver containerd-driver)")
-	cmd.Flags().StringVar(&opts.source, "source", "", "source URL/path or s3:// URI")
-	cmd.Flags().StringVar(&opts.destination, "destination", "",
-		"destination path on the task filesystem, an s3:// URI, or the special value 'storage' to push "+
-			"to the cluster's S3 backend (rustfs/MinIO) under downloads/<namespace>/<user>/")
+	cmd.Flags().StringVar(&opts.from, "from", "",
+		"source database ID or alias (auto-detected when omitted); e.g. sra, ena, geo, refseq")
+	cmd.Flags().StringVar(&opts.format, "format", "",
+		"output format (default: database default, e.g. fastq for sequence databases)")
+	cmd.Flags().StringVar(&opts.destination, "destination", "storage",
+		"where to store downloaded data:\n"+
+			"  storage      push to MinIO under downloads/<user>/ (default)\n"+
+			"  s3://...     explicit S3/MinIO destination URI")
 	cmd.Flags().StringVar(&opts.storagePath, "storage-path", "",
-		"override the S3 path used with --destination storage; accepts a full s3://bucket/prefix/ URI "+
-			"or a relative path appended to the default downloads/<namespace>/<user>/ base")
-	cmd.Flags().StringVar(&opts.placementNode, "node", "", "Nomad node to run the download job on (node UUID or node name; adds a placement constraint)")
-	cmd.Flags().StringVar(&opts.urlFile, "url-file", "", "newline-separated URL file")
-	cmd.Flags().IntVar(&opts.parallel, "parallel", 4, "parallelism")
-	cmd.Flags().StringVar(&opts.toolArgs, "tool-args", "", "extra flags passed to the download tool (for s5cmd, these become global flags before the subcommand, e.g. --tool-args='--no-sign-request')")
-	cmd.Flags().BoolVar(&opts.workbench, "workbench", false,
-		"stage an S3 object directly into the active pool slot's workbench home (~/data/); "+
-			"--source must be an s3:// URI; incompatible with --destination and --tool")
-	cmd.Flags().BoolVar(&opts.local, "local", false,
-		"download an S3 object to the local machine via s5cmd (resumable); "+
-			"--source must be an s3:// URI; --destination sets the local directory (default: current directory)")
+		"override the S3 path when --destination storage; accepts full s3://bucket/prefix/ "+
+			"or a relative path appended to the default downloads/<user>/ base")
+	cmd.Flags().StringVar(&opts.runName, "name", "", "custom Nomad job / pipeline run name")
+	cmd.Flags().StringVar(&opts.profile, "profile", "", "Nextflow profile (e.g. singularity, docker)")
+	cmd.Flags().StringVar(&opts.workDir, "work-dir", "", "Nextflow work directory")
+	cmd.Flags().StringVar(&opts.revision, "revision", "", "Nextflow pipeline revision (tag or commit)")
+	cmd.Flags().StringVar(&opts.configFile, "config", "", "Nextflow config file to include")
+	cmd.Flags().StringVar(&opts.paramsFile, "params-file", "",
+		"YAML or JSON params file passed to Nextflow (alternative to positional accessions)")
+	cmd.Flags().StringVar(&opts.placementNode, "node", "",
+		"pin the Nomad job to a specific node (UUID or name)")
+
+	// Legacy flag kept for backwards compat — positional args are preferred.
+	cmd.Flags().StringSliceVar(&opts.accessions, "accession", nil, "accession ID(s) (prefer positional arguments)")
+	_ = cmd.Flags().MarkHidden("accession")
 
 	return cmd
 }
 
-func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessToken, workspace string, factory PipelineClientFactory) error {
-	// --workbench: stage S3 source directly to workbench home — entirely
-	// different code path from the general download flow.
-	if opts.workbench {
-		if opts.source == "" {
-			return fmt.Errorf("--workbench requires --source to be an S3 URI (s3://...)")
+func runDownload(cmd *cobra.Command, opts *downloadOptions, accessions []string, serverURL, accessToken, workspace string, factory PipelineClientFactory) error {
+	// Resolve the target database.
+	var db *Database
+	if opts.from != "" {
+		db = LookupDatabase(opts.from)
+		if db == nil {
+			return fmt.Errorf("unknown database %q\n\nRun 'abc data download --help' to see supported databases and their IDs.", opts.from)
 		}
-		if opts.destination != "" {
-			return fmt.Errorf("--workbench and --destination are mutually exclusive")
+	} else if len(accessions) > 0 {
+		db = DetectDatabase(accessions[0])
+		if db == nil {
+			return fmt.Errorf("cannot auto-detect source database from accession %q\n\n"+
+				"Use --from to specify the database explicitly.\n"+
+				"Run 'abc data download --help' to see supported databases and accession formats.", accessions[0])
 		}
-		if cmd.Flags().Changed("tool") {
-			return fmt.Errorf("--workbench and --tool are mutually exclusive (tool is fixed to s5cmd for workbench staging)")
-		}
-		return StageS3ToWorkbench(cmd, opts.source)
+		fmt.Fprintf(cmd.OutOrStdout(), "Detected database: %s (%s)\n", db.Name, db.ID)
+	}
+	// db may be nil when only --params-file is provided; in that case fall through
+	// to the fetchngs backend which handles raw params files.
+
+	// Route pending databases to a helpful error before submitting anything.
+	if db != nil && db.IsPending() {
+		return fmt.Errorf("database %q (%s) is not yet implemented in abc data download.\n\n"+
+			"%s\n\n"+
+			"Track progress or request prioritisation at https://github.com/abc-cluster/abc-cluster-cli/issues",
+			db.ID, db.Name, db.Note)
 	}
 
-	// --local: download S3 source to the user's local machine via local s5cmd.
-	if opts.local {
-		if opts.source == "" {
-			return fmt.Errorf("--local requires --source to be an S3 URI (s3://...)")
-		}
-		if opts.workbench {
-			return fmt.Errorf("--local and --workbench are mutually exclusive")
-		}
-		return LocalFetchFromS3(cmd, opts.source, opts.destination, opts.parallel)
+	// datasets backend: NCBI datasets CLI for reference assemblies.
+	if db != nil && db.Backend == BackendDatasets {
+		return runDownloadDatasets(cmd, opts, accessions, db, serverURL, accessToken, workspace)
 	}
 
-	if opts.tool == "" {
-		opts.tool = "aria2"
-	}
-	if opts.driver == "" {
-		opts.driver = "exec"
-	}
+	// fetchngs backend (default): nf-core/fetchngs handles SRA, ENA, DDBJ, GEO.
+	// Also used when only --params-file is given (db == nil).
+	return runDownloadFetchngs(cmd, opts, accessions, db, serverURL, accessToken, workspace, factory)
+}
 
-	tool := strings.ToLower(opts.tool)
-	driver := strings.ToLower(opts.driver)
-
-	// raw_exec is the default for s5cmd: it runs directly on the node without a
-	// container, relying on the Nomad artifact stanza to stage the s5cmd binary.
-	if tool == "s5cmd" && !cmd.Flags().Changed("driver") {
-		driver = "raw_exec"
-		opts.driver = "raw_exec"
-	}
-
-	if tool != "nextflow" {
-		if driver != "exec" && driver != "raw_exec" && driver != "docker" && driver != "containerd" && driver != "containerd-driver" {
-			return fmt.Errorf("unsupported driver %q (use exec, raw_exec, docker, or containerd)", driver)
-		}
-		if (driver == "docker" || driver == "containerd" || driver == "containerd-driver") && opts.destination == "" {
-			opts.destination = "/tmp/abc-data-download"
-		}
-		uploadEndpoint, err := resolveUploadEndpoint(cmd, "", serverURL)
-		if err != nil {
-			return err
-		}
-		uploadToken := resolveUploadToken(cmd, "", accessToken)
-
-		if strings.TrimSpace(opts.placementNode) != "" && (driver == "exec" || driver == "raw_exec") && tool != "wget" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[abc] warning: --node pins the job to a node; with --driver=%s the node must have %q installed. Prefer --driver=containerd (Nomad: containerd-driver) or --driver=docker for pinned OCI images.\n", driver, tool)
-		}
-
-		downloadsScript, err := buildToolScript(opts, serverURL, accessToken, workspace, uploadEndpoint, uploadToken)
-		if err != nil {
-			return err
-		}
-		return submitJobWithDriver(cmd, opts, downloadsScript, driver)
-	}
-
-	if len(opts.accessions) == 0 && opts.paramsFile == "" {
-		return fmt.Errorf("must provide at least one --accession or --params-file")
-	}
-
+// runDownloadFetchngs submits a nf-core/fetchngs pipeline run for accession-based
+// sequence/expression data acquisition from SRA, ENA, DDBJ, or GEO.
+func runDownloadFetchngs(cmd *cobra.Command, opts *downloadOptions, accessions []string, db *Database, serverURL, accessToken, workspace string, factory PipelineClientFactory) error {
 	params, err := loadParamsFile(opts.paramsFile)
 	if err != nil {
 		return fmt.Errorf("failed to load params file: %w", err)
 	}
 
-	if len(opts.accessions) > 0 {
+	if len(accessions) > 0 {
 		if params == nil {
 			params = map[string]any{}
 		}
-		if len(opts.accessions) == 1 {
-			params["accession"] = opts.accessions[0]
+		if len(accessions) == 1 {
+			params["input"] = accessions[0]
 		} else {
-			params["accession"] = opts.accessions
+			params["input"] = accessions
 		}
+	}
+
+	// Output format: --format → nf-params "nf_core_pipeline" or "download_method"
+	// For fetchngs, format selection maps to the pipeline's built-in params.
+	if opts.format != "" && params != nil {
+		params["download_method"] = opts.format
+	}
+
+	// Destination: resolve to an s3:// path for the pipeline output.
+	if opts.destination != "" && opts.destination != "storage" {
+		if params == nil {
+			params = map[string]any{}
+		}
+		params["outdir"] = opts.destination
+	} else if opts.destination == "storage" {
+		info, err := resolveStorageDestInfo(opts.storagePath)
+		if err != nil {
+			return fmt.Errorf("--destination storage: %w", err)
+		}
+		if params == nil {
+			params = map[string]any{}
+		}
+		params["outdir"] = info.bucketPath
 	}
 
 	configText, err := loadTextFile(opts.configFile)
@@ -199,9 +221,14 @@ func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessTok
 		return fmt.Errorf("failed to load config file: %w", err)
 	}
 
+	runName := opts.runName
+	if runName == "" && db != nil {
+		runName = "data-download-" + db.ID
+	}
+
 	req := &api.PipelineRunRequest{
 		Pipeline:   "https://github.com/nf-core/fetchngs",
-		RunName:    opts.runName,
+		RunName:    runName,
 		Revision:   opts.revision,
 		Profile:    opts.profile,
 		WorkDir:    opts.workDir,
@@ -212,10 +239,14 @@ func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessTok
 	client := factory(serverURL, accessToken, workspace)
 	resp, err := client.SubmitPipelineRun(req)
 	if err != nil {
-		return fmt.Errorf("data download pipeline submission failed: %w", err)
+		return fmt.Errorf("download pipeline submission failed: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Data download pipeline submitted successfully.\n")
+	dbLabel := ""
+	if db != nil {
+		dbLabel = fmt.Sprintf(" (%s)", db.Name)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Download pipeline submitted successfully%s.\n", dbLabel)
 	fmt.Fprintf(cmd.OutOrStdout(), "  Run ID:   %s\n", resp.RunID)
 	if resp.RunName != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "  Run Name: %s\n", resp.RunName)
@@ -223,8 +254,20 @@ func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessTok
 	if resp.WorkflowID != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "  Workflow: %s\n", resp.WorkflowID)
 	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\nMonitor with: abc job logs %s\n", resp.RunID)
 
 	return nil
+}
+
+// runDownloadDatasets handles the NCBI datasets CLI backend for RefSeq assemblies.
+// This is a stub — the datasets CLI integration is not yet implemented.
+func runDownloadDatasets(cmd *cobra.Command, opts *downloadOptions, accessions []string, db *Database, serverURL, accessToken, workspace string) error {
+	return fmt.Errorf("NCBI datasets backend for %q (%s) is not yet implemented.\n\n"+
+		"Workaround: download manually with the NCBI datasets CLI and upload via:\n"+
+		"  datasets download genome accession %s\n"+
+		"  abc data upload <downloaded-file>\n\n"+
+		"Track progress at https://github.com/abc-cluster/abc-cluster-cli/issues",
+		db.ID, db.Name, strings.Join(accessions, " "))
 }
 
 func loadParamsFile(paramsFile string) (map[string]any, error) {
@@ -325,7 +368,6 @@ func buildToolCommand(opts *downloadOptions) (string, error) {
 }
 
 func isClusterOrBucketTarget(dest string) bool {
-	// For this MVP, treat non-filesystem path string as cluster/bucket/remote target.
 	if dest == "" {
 		return false
 	}
@@ -462,8 +504,6 @@ func buildStorageScript(opts *downloadOptions) (string, error) {
 	}
 
 	var sb strings.Builder
-	// Banner — surfaces the resolved plan up front so the alloc logs are
-	// self-describing before any tool runs.
 	sb.WriteString("echo '╭─ abc data download ─────────────────────────────────────────╮'\n")
 	sb.WriteString(fmt.Sprintf("echo '│ tool      : %s'\n", opts.tool))
 	sb.WriteString(fmt.Sprintf("echo '│ source    : %s'\n", opts.source+opts.urlFile))
@@ -495,12 +535,8 @@ func buildStorageScript(opts *downloadOptions) (string, error) {
 	if info.secretKey != "" {
 		sb.WriteString(fmt.Sprintf("export AWS_SECRET_ACCESS_KEY=%s\n", shellEscape(info.secretKey)))
 	}
-	// s5cmd 2.x hangs awaiting region resolution if AWS_REGION is unset on
-	// non-AWS endpoints. us-east-1 is a safe default for RustFS/MinIO.
 	sb.WriteString("export AWS_REGION=\"${AWS_REGION:-us-east-1}\"\n")
 	sb.WriteString("_t0=$(date +%s)\n")
-	// Pass --endpoint-url as a flag; AWS_ENDPOINT_URL env var is not reliably picked up
-	// by s5cmd 2.x on all platforms.
 	sb.WriteString(fmt.Sprintf("s5cmd --endpoint-url %s --numworkers %d cp '%s/*' %s\n",
 		shellEscape(info.endpoint), parallel, tmpDir, info.bucketPath))
 	sb.WriteString("printf '   ✓ uploaded in %ds\\n' \"$(($(date +%s)-_t0))\"\n")
@@ -511,7 +547,6 @@ func buildStorageScript(opts *downloadOptions) (string, error) {
 }
 
 func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, uploadEndpoint, uploadToken string) (string, error) {
-	// --destination storage: resolve cluster S3 backend and emit a two-step script.
 	if opts.destination == "storage" {
 		return buildStorageScript(opts)
 	}
@@ -526,7 +561,6 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, u
 		dest = "/tmp/abc-data-download"
 	}
 
-	// s3:// destinations are handled directly by tools like s5cmd — no local mkdir needed.
 	isS3Dest := strings.HasPrefix(dest, "s3://") || strings.HasPrefix(dest, "S3://")
 
 	var sb strings.Builder
@@ -534,10 +568,7 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, u
 		sb.WriteString(fmt.Sprintf("mkdir -p %s\n", shellEscape(dest)))
 	}
 
-	// s5cmd on non-AWS hosts (GCP, on-prem) has no AWS region configured.
-	// Without a region, it defaults to eu-west-1 and fails on us-east-1 buckets
-	// (e.g. SRA) with a BucketRegionError. us-east-1 is the correct default for
-	// public AWS S3 access when no endpoint override is specified.
+	// s5cmd on non-AWS hosts needs a default region.
 	if strings.ToLower(opts.tool) == "s5cmd" && !isS3Dest {
 		sb.WriteString("export AWS_DEFAULT_REGION=us-east-1\n")
 	}
@@ -545,7 +576,6 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, u
 	sb.WriteString("echo '=== Downloading files ==='\n")
 	sb.WriteString(cmdLine + "\n")
 
-	// For s3:// destinations the tool writes directly to object storage — no upload step.
 	if isS3Dest {
 		return sb.String(), nil
 	}
@@ -584,8 +614,6 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, u
 const s5cmdVersion = "v2.1.0"
 
 // rustfsPublicBase returns the HTTP base URL for rustfs public bucket downloads.
-// It uses the S3 API endpoint directly (the public bucket is accessible without
-// auth on the same port after anonymous read is enabled via mc).
 func rustfsPublicBase() string {
 	cfg, err := config.Load()
 	if err != nil {
@@ -596,14 +624,11 @@ func rustfsPublicBase() string {
 }
 
 // s5cmdBootstrapSnippet returns a bash snippet that downloads the s5cmd binary
-// into ${NOMAD_TASK_DIR} and prepends it to PATH. It tries the internal rustfs
-// first (short connect timeout), then falls back to the official GitHub release.
-// Returns an empty string if rustfsBase is empty (no rustfs configured).
+// into ${NOMAD_TASK_DIR} and prepends it to PATH.
 func s5cmdBootstrapSnippet(rustfsBase string) string {
 	if rustfsBase == "" {
 		return ""
 	}
-	// GitHub release filenames use the bare version (2.1.0), not the v-prefixed tag (v2.1.0).
 	fileVersion := strings.TrimPrefix(s5cmdVersion, "v")
 	ghBase := fmt.Sprintf("https://github.com/peak/s5cmd/releases/download/%s", s5cmdVersion)
 	return fmt.Sprintf(`set -x
@@ -653,11 +678,9 @@ func needsS5cmdBootstrap(driver, tool, destination string) bool {
 	if driver != "exec" && driver != "raw_exec" {
 		return false
 	}
-	// Direct s5cmd download job.
 	if strings.ToLower(tool) == "s5cmd" {
 		return true
 	}
-	// Two-step storage upload: Step 2 uses s5cmd regardless of the download tool.
 	if destination == "storage" {
 		return true
 	}
@@ -665,10 +688,6 @@ func needsS5cmdBootstrap(driver, tool, destination string) bool {
 }
 
 func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, driver string) error {
-	// Default RunName to the recognised "data-download" category prefix so the
-	// generated Nomad job ID becomes `<user>-data-download-<id>` rather than
-	// inheriting the random temp-script basename (which produced opaque IDs
-	// like `<user>-script-job-abc-data-1341971977-…`).
 	runName := strings.TrimSpace(opts.runName)
 	if runName == "" {
 		runName = "data-download"
@@ -684,12 +703,6 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 
 	if driver == "exec" || driver == "raw_exec" {
 		var artifacts []downloadArtifact
-		// Track per-artifact (tool name, URL basename) so the prelude can
-		// rename + chmod after Nomad fetches them. We set destination to the
-		// task-local dir (no filename) and mode=file so go-getter saves the
-		// fetched object using the URL's basename — this avoids the Nomad
-		// 1.11.x "readdirent ... not a directory" bug that fires when both
-		// destination *and* mode point to a single-file path.
 		type stagedTool struct{ tool, basename string }
 		var staged []stagedTool
 
@@ -698,12 +711,6 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 			if i := strings.LastIndex(artURL, "/"); i >= 0 {
 				basename = artURL[i+1:]
 			}
-			// Use a directory destination + auto-detect mode.
-			// Nomad 1.11.x's go-getter has bugs when destination is a single
-			// file path (mode=file → "not a directory"; auto → drops file in
-			// a subdir). With dest=local/ and no mode, the binary lands at
-			// ${NOMAD_TASK_DIR}/<basename> directly, which the prelude renames
-			// to the plain tool name.
 			artifacts = append(artifacts, downloadArtifact{
 				URL:  artURL,
 				Dest: "local/",
@@ -711,16 +718,12 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 			staged = append(staged, stagedTool{tool: toolName, basename: basename})
 		}
 
-		// Stage the primary download tool via Nomad artifact stanza when it is
-		// registered in tools.toml (preferred over runtime bash bootstrapping).
 		if tool != "wget" {
 			if artURL := toolNomadArtifactURL(tool); artURL != "" {
 				addArtifact(tool, artURL)
 			}
 		}
 
-		// Stage s5cmd for the --destination storage upload step when the primary
-		// tool is not s5cmd itself (s5cmd is already covered above in that case).
 		if opts.destination == "storage" && tool != "s5cmd" {
 			if artURL := toolNomadArtifactURL("s5cmd"); artURL != "" {
 				addArtifact("s5cmd", artURL)
@@ -729,8 +732,6 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 
 		if len(artifacts) > 0 {
 			submitOpts.Artifacts = artifacts
-			// Rename each fetched binary to its plain tool name (s5cmd-linux-amd64
-			// → s5cmd) and chmod +x. NOMAD_TASK_DIR is the task's local/ dir.
 			var prelude strings.Builder
 			prelude.WriteString("export PATH=\"${NOMAD_TASK_DIR}:${PATH}\"\n")
 			for _, st := range staged {
@@ -744,7 +745,6 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 			}
 			taskBody = prelude.String() + taskBody
 		} else if needsS5cmdBootstrap(driver, tool, opts.destination) {
-			// Fall back to inline bash bootstrap when tools.toml endpoint is not configured.
 			if snippet := s5cmdBootstrapSnippet(rustfsPublicBase()); snippet != "" {
 				taskBody = snippet + taskBody
 			}
@@ -754,12 +754,7 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 	return submitDataNomadScript(cmd, submitOpts, taskBody)
 }
 
-// toolNomadArtifactURL returns the Nomad artifact source URL for toolName,
-// embedding ${attr.kernel.name} and ${attr.cpu.arch} so Nomad resolves the
-// correct binary for each node at scheduling time.
-//
-// Returns empty string when tools.toml is absent, the tool is not listed, or
-// the endpoint has not yet been written back by `abc admin tools push`.
+// toolNomadArtifactURL returns the Nomad artifact source URL for toolName.
 func toolNomadArtifactURL(toolName string) string {
 	assetDir, err := utils.AssetDir()
 	if err != nil {
@@ -791,7 +786,6 @@ func toolNomadArtifactURL(toolName string) string {
 		return ""
 	}
 
-	// Verify the tool is known (either in [tools.*] or [local.*]) and not disabled.
 	known := false
 	if t, ok := rc.Tools[toolName]; ok && !t.Disabled {
 		known = true
@@ -823,11 +817,6 @@ func toolNomadArtifactURL(toolName string) string {
 		return ""
 	}
 
-	// Nomad 1.11.3 mishandles ${attr.*} substitution in artifact source URLs
-	// (downloads succeed but go-getter then fails with "readdirent ... not a
-	// directory" on the staged file). Hard-code linux-amd64 — matches every
-	// current cluster client — until the upstream issue is fixed. Re-introduce
-	// the template once Nomad's getter handles it reliably.
 	return fmt.Sprintf("%s/%s/%s/%s-linux-amd64",
 		endpoint, bucket, prefix, toolName)
 }
