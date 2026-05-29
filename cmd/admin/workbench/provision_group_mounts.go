@@ -1,16 +1,22 @@
 package workbench
 
 // provision-group-mounts sets up geesefs FUSE mounts for one or more S3
-// prefixes within a group's bucket and bind-mounts them read-only into each
-// slot's home directory.
+// prefixes within a group's bucket and bind-mounts them into each slot's
+// home directory.
+//
+// Read-only is enforced at two independent layers:
+//   1. The geesefs FUSE mount itself uses -o ro — the kernel rejects all
+//      writes at the VFS layer before they reach geesefs or MinIO, regardless
+//      of who accesses /mnt/abc-group-<group> directly.
+//   2. The per-slot fstab bind mounts use bind,ro as a second guard.
+//
+// This means there is no code path by which a JupyterLab session can corrupt
+// the shared S3 data. Write access (shared/) is deferred and requires a
+// proper POSIX-locking metadata layer (JuiceFS + Redis) before it is safe.
 //
 // One geesefs systemd service per group (not per slot) mounts the whole
-// group bucket. Per-slot bind mounts are fstab entries (bind,ro) with
+// group bucket. Per-slot bind mounts are fstab entries with
 // x-systemd.requires so they only activate after the geesefs service is up.
-//
-// The set of folders is configurable via --folders (default: common).
-// All mounts are read-only — write access (shared/) is a future concern
-// requiring full POSIX semantics analysis before enabling.
 //
 // Storage impact: zero bytes on aither — geesefs streams directly from MinIO.
 // Reads stream from MinIO on access; no data is replicated to aither's disk.
@@ -320,6 +326,8 @@ func geesefsMountPoint(group string) string {
 }
 
 // ensureGeesefsService writes, enables, and starts the geesefs systemd service.
+// The FUSE mount is opened with -o allow_other,ro so the kernel enforces
+// read-only at the VFS layer for all users, including root.
 // Idempotent — reloads systemd and restarts if the service file changed.
 func ensureGeesefsService(cmd *cobra.Command, node wbinternal.NodeSSH, group, bucket, endpoint, accessKey, secretKey string, dryRun bool) error {
 	svcName := geesefsServiceName(group)
@@ -339,7 +347,7 @@ ExecStart=/usr/local/bin/geesefs \
     --endpoint-url %s \
     --memory-limit 256 \
     --stat-cache-ttl 10s \
-    -o allow_other \
+    -o allow_other,ro \
     -f \
     %s %s
 ExecStop=/bin/fusermount3 -u %s
