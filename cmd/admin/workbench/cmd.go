@@ -9,6 +9,7 @@
 //	abc admin services workbench sessions                  List active JupyterHub sessions
 //	abc admin services workbench watch                     Idle-session reaper
 //	abc admin services workbench provision-atuin           Seed atuin into all slot home dirs
+//	abc admin services workbench provision-group-mounts    Mount group common/shared S3 prefixes via geesefs
 package workbench
 
 import (
@@ -37,14 +38,16 @@ Set it with:
 
 Available subcommands:
 
-  sessions           List active sessions (running JupyterHub servers + idle time)
-  watch              Idle-session reaper — polls and stops idle servers
-  provision-atuin    Seed atuin into slot home dirs so terminals get persistent history`,
+  sessions                List active sessions (running JupyterHub servers + idle time)
+  watch                   Idle-session reaper — polls and stops idle servers
+  provision-atuin         Seed atuin into slot home dirs so terminals get persistent history
+  provision-group-mounts  Mount group common/ and shared/ S3 prefixes via geesefs into slot home dirs`,
 	}
 
 	cmd.AddCommand(newSessionsCmd())
 	cmd.AddCommand(newWatchCmd())
 	cmd.AddCommand(newProvisionAtuinCmd())
+	cmd.AddCommand(newProvisionGroupMountsCmd())
 	return cmd
 }
 
