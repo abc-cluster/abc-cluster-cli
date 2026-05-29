@@ -1,16 +1,19 @@
 package workbench
 
-// provision-group-mounts sets up geesefs FUSE mounts for a group's common/
-// and shared/ S3 prefixes and bind-mounts them read-only (common/) and
-// read-write (shared/) into each slot's home directory.
+// provision-group-mounts sets up geesefs FUSE mounts for one or more S3
+// prefixes within a group's bucket and bind-mounts them read-only into each
+// slot's home directory.
 //
 // One geesefs systemd service per group (not per slot) mounts the whole
-// group bucket. Per-slot bind mounts are fstab entries with
+// group bucket. Per-slot bind mounts are fstab entries (bind,ro) with
 // x-systemd.requires so they only activate after the geesefs service is up.
 //
+// The set of folders is configurable via --folders (default: common).
+// All mounts are read-only — write access (shared/) is a future concern
+// requiring full POSIX semantics analysis before enabling.
+//
 // Storage impact: zero bytes on aither — geesefs streams directly from MinIO.
-// Writes to ~/group-shared/ go directly to the MinIO bucket; reads from
-// ~/group-common/ stream from MinIO on access.
+// Reads stream from MinIO on access; no data is replicated to aither's disk.
 //
 // Grove/garden upgrade path: replace geesefs with JuiceFS backed by a
 // Redis/PostgreSQL metadata store for full POSIX semantics across nodes.
@@ -37,42 +40,61 @@ func geesefsDownloadURL(version string) string {
 func newProvisionGroupMountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provision-group-mounts",
-		Short: "Mount group common/ and shared/ S3 prefixes into slot home dirs via geesefs",
-		Long: `Set up geesefs FUSE mounts so each workbench slot gets:
+		Short: "Mount specific S3 prefixes read-only into slot home dirs via geesefs",
+		Long: `Set up geesefs FUSE mounts so each workbench slot gets read-only access to
+one or more S3 prefixes from the group bucket.
 
-  ~/group-common/   read-only view of s3://<bucket>/common/
-  ~/group-shared/   read-write view of s3://<bucket>/shared/
+By default the command mounts the 'common' prefix, making it visible in
+every slot's JupyterLab home as:
 
-One geesefs systemd service per group mounts the bucket on aither.
-Per-slot bind mounts (fstab entries) expose the two subdirs into each
-slot's home directory.
+  ~/common/    read-only view of s3://su-<group>/common/
 
-Storage impact: zero — geesefs streams directly from MinIO. No data is
-replicated to aither's disk.
+Additional prefixes can be specified with --folders:
 
-These directories are for casual copy operations only, not job execution
-directories. Running Nextflow/Nomad workloads against them is unsupported
-(FUSE latency degrades job throughput).
+  abc admin services workbench provision-group-mounts \
+    --group mbhg-hostgen --folders common,reference-data,scripts
 
-Grove/garden upgrade path: replace geesefs with JuiceFS backed by
-Redis/PostgreSQL for full POSIX semantics across multiple nodes.
+Each named folder becomes a separate read-only bind mount in the slot home:
+
+  ~/common/           ← s3://su-mbhg-hostgen/common/
+  ~/reference-data/   ← s3://su-mbhg-hostgen/reference-data/
+  ~/scripts/          ← s3://su-mbhg-hostgen/scripts/
+
+All mounts are read-only (bind,ro in fstab). Write access to shared
+prefixes is deferred — requires POSIX semantics analysis before enabling.
+
+One geesefs systemd service per group mounts the bucket root on aither.
+Per-slot fstab bind entries (x-systemd.requires) activate after the
+geesefs service is up. Storage impact: zero — geesefs streams directly
+from MinIO; no data is replicated to aither's disk.
+
+These directories are for interactive access only, not Nomad job execution.
+Running Nextflow workloads against FUSE mounts is unsupported (latency).
+
+Grove/garden upgrade path: replace geesefs with JuiceFS backed by a
+Redis/PostgreSQL metadata store for full POSIX semantics across nodes.
 
 Examples:
 
-  # Mount for group mbhg-hostgen, all slots:
+  # Mount common/ for all slots in mbhg-hostgen:
   abc admin services workbench provision-group-mounts --group mbhg-hostgen
+
+  # Mount common/ and a reference-data prefix:
+  abc admin services workbench provision-group-mounts --group mbhg-hostgen \
+    --folders common,reference-data
 
   # Specific slots only:
   abc admin services workbench provision-group-mounts --group mbhg-hostgen \
     --slots calm-dassie,lunar-hornbill
 
-  # Dry-run:
+  # Dry-run to preview changes:
   abc admin services workbench provision-group-mounts --group mbhg-hostgen \
     --dry-run`,
 		RunE: runProvisionGroupMounts,
 	}
 
 	cmd.Flags().String("group", "", "Group name — the MinIO bucket/Nomad namespace suffix (e.g. mbhg-hostgen for su-mbhg-hostgen) [required]")
+	cmd.Flags().String("folders", "common", "Comma-separated S3 prefixes to mount read-only (e.g. common,reference-data,scripts)")
 	cmd.Flags().String("slots", "", "Comma-separated slot names to bind-mount (default: all slots under /data/workbench/)")
 	cmd.Flags().String("node", "", "SSH host alias for the platform node (default: sun-<node> from config or sun-aither)")
 	cmd.Flags().String("geesefs-version", defaultGeesefsVersion, "geesefs release tag to install if absent")
@@ -85,6 +107,7 @@ Examples:
 
 func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 	groupFlag, _ := cmd.Flags().GetString("group")
+	foldersFlag, _ := cmd.Flags().GetString("folders")
 	slotsFlag, _ := cmd.Flags().GetString("slots")
 	nodeOverride, _ := cmd.Flags().GetString("node")
 	geesefsVer, _ := cmd.Flags().GetString("geesefs-version")
@@ -93,6 +116,12 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 	// Normalise group name: strip leading "su-" if provided.
 	group := strings.TrimPrefix(groupFlag, "su-")
 	bucket := "su-" + group
+
+	// Parse and validate the folder list.
+	folders := parseFolderList(foldersFlag)
+	if len(folders) == 0 {
+		return fmt.Errorf("--folders must specify at least one prefix (e.g. common)")
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -112,7 +141,8 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(),
-		"Group: %s  Bucket: %s  Node: %s\n", group, bucket, node.Host,
+		"Group: %s  Bucket: %s  Node: %s  Folders (ro): %s\n",
+		group, bucket, node.Host, strings.Join(folders, ", "),
 	)
 
 	// 1. FUSE prerequisites — fuse3 package and user_allow_other.
@@ -125,8 +155,8 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 3. Ensure common/ and shared/ prefixes exist in the MinIO bucket.
-	if err := ensureGroupPrefixes(cmd, node, minioEndpoint, accessKey, secretKey, bucket, dryRun); err != nil {
+	// 3. Ensure each folder prefix exists in the MinIO bucket.
+	if err := ensureGroupPrefixes(cmd, node, minioEndpoint, accessKey, secretKey, bucket, folders, dryRun); err != nil {
 		return err
 	}
 
@@ -135,16 +165,16 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 5. Discover slots and add per-slot bind mount fstab entries.
+	// 5. Discover slots and add per-slot read-only bind mount fstab entries.
 	slots, err := resolveSlots(node, slotsFlag)
 	if err != nil {
 		return fmt.Errorf("resolve slots: %w", err)
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Adding bind mounts for %d slot(s)...\n", len(slots))
+	fmt.Fprintf(cmd.ErrOrStderr(), "Adding read-only bind mounts for %d slot(s)...\n", len(slots))
 
 	ok, failed := 0, 0
 	for _, slot := range slots {
-		if err := provisionSlotBindMounts(cmd, node, group, slot, dryRun); err != nil {
+		if err := provisionSlotBindMounts(cmd, node, group, slot, folders, dryRun); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "  [%s] error: %v\n", slot, err)
 			failed++
 		} else {
@@ -157,6 +187,19 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%d slot(s) failed", failed)
 	}
 	return nil
+}
+
+// parseFolderList parses a comma-separated folder list, trims whitespace and
+// leading/trailing slashes from each entry, and drops empty values.
+func parseFolderList(raw string) []string {
+	var out []string
+	for _, f := range strings.Split(raw, ",") {
+		f = strings.Trim(strings.TrimSpace(f), "/")
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // ensureFusePrereqs installs fuse3 and enables user_allow_other.
@@ -217,13 +260,23 @@ chmod 755 /usr/local/bin/geesefs
 	return nil
 }
 
-// ensureGroupPrefixes creates common/.keep and shared/.keep placeholder objects
-// in the bucket so the directories appear in geesefs listings.
-func ensureGroupPrefixes(cmd *cobra.Command, node wbinternal.NodeSSH, endpoint, accessKey, secretKey, bucket string, dryRun bool) error {
+// ensureGroupPrefixes creates <folder>/.keep placeholder objects for each
+// named folder in the bucket so the directories appear in geesefs listings.
+func ensureGroupPrefixes(cmd *cobra.Command, node wbinternal.NodeSSH, endpoint, accessKey, secretKey, bucket string, folders []string, dryRun bool) error {
 	if dryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "  [dry-run] would ensure s3://%s/common/ and s3://%s/shared/ exist\n", bucket, bucket)
+		for _, f := range folders {
+			fmt.Fprintf(cmd.OutOrStdout(), "  [dry-run] would ensure s3://%s/%s/ exists\n", bucket, f)
+		}
 		return nil
 	}
+
+	// Build a shell array of folder names to iterate over.
+	var quotedFolders []string
+	for _, f := range folders {
+		quotedFolders = append(quotedFolders, fmt.Sprintf("%q", f))
+	}
+	foldersArray := strings.Join(quotedFolders, " ")
+
 	script := fmt.Sprintf(`set -euo pipefail
 export AWS_ACCESS_KEY_ID=%q
 export AWS_SECRET_ACCESS_KEY=%q
@@ -234,17 +287,19 @@ if ! command -v "$MC" &>/dev/null; then MC=$(which mc || which mcli); fi
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 MC_CONFIG_DIR="$TMP" "$MC" alias set _abc %q %q %q --quiet
 
-# Create placeholder objects to establish the directory structure.
-for PREFIX in common shared; do
-    if ! MC_CONFIG_DIR="$TMP" "$MC" stat "_abc/%s/$PREFIX/.keep" &>/dev/null; then
-        echo -n "" | MC_CONFIG_DIR="$TMP" "$MC" pipe "_abc/%s/$PREFIX/.keep" --quiet
-        echo "  created s3://%s/$PREFIX/.keep"
+# Create placeholder object for each folder prefix.
+for FOLDER in %s; do
+    if ! MC_CONFIG_DIR="$TMP" "$MC" stat "_abc/%s/${FOLDER}/.keep" &>/dev/null; then
+        echo -n "" | MC_CONFIG_DIR="$TMP" "$MC" pipe "_abc/%s/${FOLDER}/.keep" --quiet
+        echo "  created s3://%s/${FOLDER}/.keep"
     else
-        echo "  s3://%s/$PREFIX/ already exists"
+        echo "  s3://%s/${FOLDER}/ already exists"
     fi
 done
 echo "ok"
-`, accessKey, secretKey, endpoint, accessKey, secretKey, bucket, bucket, bucket, bucket)
+`, accessKey, secretKey, endpoint, accessKey, secretKey,
+		foldersArray,
+		bucket, bucket, bucket, bucket)
 
 	out, err := wbinternal.RunOnNodePublic(node, "bash", "-c", script)
 	if err != nil {
@@ -342,57 +397,58 @@ systemctl is-active --quiet %s && echo "running" || { echo "FAILED to start %s";
 	return nil
 }
 
-// provisionSlotBindMounts adds fstab entries for ~/group-common and ~/group-shared
-// for one slot and mounts them. Idempotent — checks for the abc-workbench marker
-// before appending.
-func provisionSlotBindMounts(cmd *cobra.Command, node wbinternal.NodeSSH, group, slot string, dryRun bool) error {
+// provisionSlotBindMounts adds read-only fstab bind entries for each named
+// folder in the slot's home directory. Idempotent — uses a per-folder
+// marker comment to guard against duplicate entries.
+func provisionSlotBindMounts(cmd *cobra.Command, node wbinternal.NodeSSH, group, slot string, folders []string, dryRun bool) error {
 	mountPoint := geesefsMountPoint(group)
 	homeDir := "/data/workbench/" + slot + "/home"
 	svcName := geesefsServiceName(group)
-	marker := fmt.Sprintf("# abc-workbench-group-mount: su-%s slot %s", group, slot)
 
 	if dryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "  [dry-run] %s: would add bind mounts for group %s\n", slot, group)
+		for _, f := range folders {
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"  [dry-run] %s: would bind-mount (ro) %s/%s → %s/%s\n",
+				slot, mountPoint, f, homeDir, f)
+		}
 		return nil
 	}
 
-	script := fmt.Sprintf(`set -euo pipefail
-MARKER=%q
-HOME_DIR=%q
-MOUNT_POINT=%q
-SVC=%q
+	// Build per-folder mkdir + fstab + mount snippet.
+	var sb strings.Builder
+	sb.WriteString("set -euo pipefail\n")
+	sb.WriteString(fmt.Sprintf("HOME_DIR=%q\n", homeDir))
+	sb.WriteString(fmt.Sprintf("MOUNT_POINT=%q\n", mountPoint))
+	sb.WriteString(fmt.Sprintf("SVC=%q\n\n", svcName))
 
-# Create target mount dirs in the slot home.
-mkdir -p "$HOME_DIR/group-common" "$HOME_DIR/group-shared"
+	for _, folder := range folders {
+		marker := fmt.Sprintf("# abc-workbench-ro-mount: su-%s/%s slot %s", group, folder, slot)
+		sb.WriteString(fmt.Sprintf("# ── folder: %s ──\n", folder))
+		sb.WriteString(fmt.Sprintf("mkdir -p \"$HOME_DIR/%s\"\n", folder))
+		sb.WriteString(fmt.Sprintf("if ! grep -qF %q /etc/fstab; then\n", marker))
+		sb.WriteString(fmt.Sprintf("    printf '%%s\\n' %q >> /etc/fstab\n", marker))
+		sb.WriteString(fmt.Sprintf(
+			"    printf '%%s/%s %%s/%s none bind,ro,nofail,x-systemd.requires=%%s 0 0\\n' "+
+				"\"$MOUNT_POINT\" \"$HOME_DIR\" \"$SVC\" >> /etc/fstab\n",
+			folder, folder))
+		sb.WriteString("fi\n")
+		// Mount immediately if the geesefs service is already running.
+		sb.WriteString(fmt.Sprintf(
+			"if systemctl is-active --quiet \"$SVC\"; then\n"+
+				"    mountpoint -q \"$HOME_DIR/%s\" || mount \"$HOME_DIR/%s\"\n"+
+				"fi\n\n",
+			folder, folder))
+	}
+	sb.WriteString("echo ok\n")
 
-# Add fstab entries if marker not already present.
-if ! grep -qF "$MARKER" /etc/fstab; then
-    cat >> /etc/fstab << FSTAB
-$MARKER
-${MOUNT_POINT}/common ${HOME_DIR}/group-common none bind,ro,nofail,x-systemd.requires=${SVC} 0 0
-${MOUNT_POINT}/shared ${HOME_DIR}/group-shared none bind,nofail,x-systemd.requires=${SVC} 0 0
-FSTAB
-fi
-
-# Mount now if the geesefs service is running and dirs aren't already mounted.
-if systemctl is-active --quiet "$SVC"; then
-    mountpoint -q "$HOME_DIR/group-common" || mount "$HOME_DIR/group-common"
-    mountpoint -q "$HOME_DIR/group-shared" || mount "$HOME_DIR/group-shared"
-fi
-
-echo "ok"
-`,
-		marker, homeDir, mountPoint, svcName,
-	)
-
-	out, err := wbinternal.RunOnNodePublic(node, "sudo", "bash", "-c", script)
+	out, err := wbinternal.RunOnNodePublic(node, "sudo", "bash", "-c", sb.String())
 	if err != nil {
 		return fmt.Errorf("%w\n%s", err, out)
 	}
 	if !strings.Contains(out, "ok") {
 		return fmt.Errorf("unexpected output: %s", out)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  %s: ok\n", slot)
+	fmt.Fprintf(cmd.OutOrStdout(), "  %s: ok (%s)\n", slot, strings.Join(folders, ", "))
 	return nil
 }
 
