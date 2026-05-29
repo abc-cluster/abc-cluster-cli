@@ -56,12 +56,42 @@ func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFact
 	cmd := &cobra.Command{
 		Use:   "data",
 		Short: "Manage data",
-		Long:  `Commands for uploading and managing data on the abc-cluster platform.`,
+		Long: `Commands for uploading, downloading, and moving data on the abc-cluster platform.
+
+Common workflows:
+
+  Upload a file to cluster MinIO storage:
+    abc data upload ./genome.fa
+
+  Upload and immediately stage into your JupyterLab workbench:
+    abc data upload ./genome.fa --workbench
+
+  Fetch data from the internet into cluster MinIO (server-side Nomad job):
+    abc data fetch https://example.com/data.tar.gz
+
+  Download a file from MinIO to your local machine (resumable):
+    abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/results.csv
+
+  Stage a MinIO file into your workbench ~/data/ directory:
+    abc data stage s3://su-mbhg-hostgen/user/calm-dassie/data/genome.fa
+
+  Browse your MinIO bucket:
+    abc data ls
+
+Advanced / power-user commands:
+  abc data download   full-featured download: choose tool, driver, destination
+  abc data copy       server-side S3 copy
+  abc data move       server-side S3 move`,
 	}
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
 	cmd.AddCommand(newUploadsCmd())
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
+	// Focused data movement commands (easier to use than abc data download).
+	cmd.AddCommand(newFetchCmd(serverURL, accessToken, workspace))
+	cmd.AddCommand(newPullCmd())
+	cmd.AddCommand(newStageCmd())
+	// Power-user / backwards-compatible command with full flag surface.
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
 	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace))
 	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace))
