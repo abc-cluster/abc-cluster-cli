@@ -58,6 +58,11 @@ type uploadOptions struct {
 	noResume      bool
 	status        bool // show stored resume state; skip actual upload
 	clear         bool // clear stored resume state; skip actual upload
+
+	// workbench, when true, submits a follow-on Nomad job after a successful
+	// upload that copies the file from MinIO into the user's workbench home
+	// directory (/data/workbench/<slot>/home/data/<filename>).
+	workbench bool
 }
 
 type uploadProgressContextKey struct{}
@@ -177,6 +182,8 @@ Examples:
 	cmd.Flags().BoolVar(&opts.noResume, "no-resume", false, "ignore stored resume state and always start a fresh upload")
 	cmd.Flags().BoolVar(&opts.status, "status", false, "show stored tus resume state for the file (does not upload)")
 	cmd.Flags().BoolVar(&opts.clear, "clear", false, "clear stored tus resume state for the file (does not upload)")
+	cmd.Flags().BoolVar(&opts.workbench, "workbench", false,
+		"after a successful upload, stage the file from MinIO into the active pool slot's workbench home (~/data/)")
 
 	return cmd
 }
@@ -309,9 +316,30 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 			jobs = 1
 		}
 		var onSuccess func(uploadResult)
-		if registryFn != nil {
+		if registryFn != nil || opts.workbench {
+			cfg, _ := abccfg.Load()
 			onSuccess = func(r uploadResult) {
-				registryFn(filepath.Base(r.absPath), r.absPath, r.checksum, r.sizeBytes)
+				fname := filepath.Base(r.absPath)
+				if registryFn != nil {
+					registryFn(fname, r.absPath, r.checksum, r.sizeBytes)
+				}
+				if opts.workbench && cfg != nil {
+					actx := cfg.ActiveCtx()
+					slot, slotErr := workbenchSlotFromCtx(actx)
+					if slotErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "  [workbench] %v\n", slotErr)
+						return
+					}
+					s3Path := workbenchS3PathForFile(actx, fname)
+					if s3Path == "" {
+						fmt.Fprintf(cmd.ErrOrStderr(), "  [workbench] cannot compute S3 path for %q\n", fname)
+						return
+					}
+					dst := fmt.Sprintf("/data/workbench/%s/home/data/%s", slot, fname)
+					if err := stageToWorkbench(cmd, actx, s3Path, dst, slot); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "  [workbench] staging failed for %q: %v\n", fname, err)
+					}
+				}
 			}
 		}
 		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs, extraMeta, onSuccess)
@@ -327,6 +355,31 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 	}
 	if registryFn != nil {
 		registryFn(uploadedName, opts.filePath, checksum, info.Size())
+	}
+	if opts.workbench {
+		cfg, cfgErr := abccfg.Load()
+		if cfgErr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[workbench] cannot load config: %v\n", cfgErr)
+		} else {
+			actx := cfg.ActiveCtx()
+			slot, slotErr := workbenchSlotFromCtx(actx)
+			if slotErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "[workbench] %v\n", slotErr)
+			} else {
+				s3Path := workbenchS3PathForFile(actx, uploadedName)
+				if s3Path == "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "[workbench] cannot compute S3 path for %q (namespace or whoami not set)\n", uploadedName)
+				} else {
+					dst := fmt.Sprintf("/data/workbench/%s/home/data/%s", slot, uploadedName)
+					if err := stageToWorkbench(cmd, actx, s3Path, dst, slot); err != nil {
+						return fmt.Errorf("[workbench] staging to workbench failed: %w\n"+
+							"  File is still in MinIO at %s\n"+
+							"  Re-run: abc data download --workbench --source %s",
+							err, s3Path, s3Path)
+					}
+				}
+			}
+		}
 	}
 	return nil
 }

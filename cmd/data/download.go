@@ -34,6 +34,16 @@ type downloadOptions struct {
 
 	// placementNode is a Nomad node ID (UUID) or node name; adds a placement constraint to the generated job script.
 	placementNode string
+
+	// workbench, when true, copies the S3 source directly into the active pool
+	// slot's workbench home directory (~/data/). Requires --source to be an
+	// S3 URI. Incompatible with --destination and --tool.
+	workbench bool
+
+	// local, when true, downloads the S3 source to the user's local machine
+	// by shelling out to s5cmd. Resumable via --if-size-differ.
+	// Requires --source to be an S3 URI; uses --destination as the local dir.
+	local bool
 }
 
 const defaultDockerImage = "ghcr.io/abc-cluster/abc-data-transfer:v2026-01-01"
@@ -86,11 +96,43 @@ Use --node to pin the job to a specific Nomad node (node UUID or node name).
 	cmd.Flags().StringVar(&opts.urlFile, "url-file", "", "newline-separated URL file")
 	cmd.Flags().IntVar(&opts.parallel, "parallel", 4, "parallelism")
 	cmd.Flags().StringVar(&opts.toolArgs, "tool-args", "", "extra flags passed to the download tool (for s5cmd, these become global flags before the subcommand, e.g. --tool-args='--no-sign-request')")
+	cmd.Flags().BoolVar(&opts.workbench, "workbench", false,
+		"stage an S3 object directly into the active pool slot's workbench home (~/data/); "+
+			"--source must be an s3:// URI; incompatible with --destination and --tool")
+	cmd.Flags().BoolVar(&opts.local, "local", false,
+		"download an S3 object to the local machine via s5cmd (resumable); "+
+			"--source must be an s3:// URI; --destination sets the local directory (default: current directory)")
 
 	return cmd
 }
 
 func runDownload(cmd *cobra.Command, opts *downloadOptions, serverURL, accessToken, workspace string, factory PipelineClientFactory) error {
+	// --workbench: stage S3 source directly to workbench home — entirely
+	// different code path from the general download flow.
+	if opts.workbench {
+		if opts.source == "" {
+			return fmt.Errorf("--workbench requires --source to be an S3 URI (s3://...)")
+		}
+		if opts.destination != "" {
+			return fmt.Errorf("--workbench and --destination are mutually exclusive")
+		}
+		if cmd.Flags().Changed("tool") {
+			return fmt.Errorf("--workbench and --tool are mutually exclusive (tool is fixed to s5cmd for workbench staging)")
+		}
+		return StageS3ToWorkbench(cmd, opts.source)
+	}
+
+	// --local: download S3 source to the user's local machine via local s5cmd.
+	if opts.local {
+		if opts.source == "" {
+			return fmt.Errorf("--local requires --source to be an S3 URI (s3://...)")
+		}
+		if opts.workbench {
+			return fmt.Errorf("--local and --workbench are mutually exclusive")
+		}
+		return LocalFetchFromS3(cmd, opts.source, opts.destination, opts.parallel)
+	}
+
 	if opts.tool == "" {
 		opts.tool = "aria2"
 	}
