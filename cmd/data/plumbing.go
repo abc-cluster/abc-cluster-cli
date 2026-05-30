@@ -13,7 +13,7 @@ package data
 //   4. Calls execTool() which execs the binary, streaming stdout/stderr.
 //
 // Tool binary resolution order (findTool):
-//   1. ABC_<TOOL>_PATH environment variable (e.g. ABC_S5CMD_PATH)
+//   1. ABC_BIN_<TOOL> environment variable (e.g. ABC_BIN_S5CMD)
 //   2. ~/.abc/binaries/<tool>  — managed by `abc admin tools fetch`
 //   3. exec.LookPath(tool)     — system PATH
 //   4. Error with install instructions
@@ -30,7 +30,7 @@ import (
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
-	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
@@ -43,25 +43,37 @@ var installURLs = map[string]string{
 	"rclone": "https://rclone.org/install/",
 }
 
+// toolEnvVar maps a tool name to its registered ABC_BIN_<TOOL> environment variable.
+// Convention from envvars/registry.go: ABC_BIN_<TOOL> (BucketToolBinary).
+var toolEnvVar = map[string]string{
+	"s5cmd":  "ABC_BIN_S5CMD",
+	"rclone": "ABC_BIN_RCLONE",
+	"mcli":   "ABC_BIN_MCLI",
+	"mc":     "ABC_BIN_MC",
+	"aria2c": "ABC_BIN_ARIA2C",
+}
+
 // findTool resolves the path to a named binary using the following priority:
 //
-//  1. ABC_<TOOL>_PATH environment variable override
-//     (e.g. ABC_S5CMD_PATH=/opt/bin/s5cmd)
+//  1. ABC_<TOOL>_BIN environment variable override (registered in envvars registry)
+//     e.g. ABC_BIN_S5CMD=/opt/bin/s5cmd
 //  2. ~/.abc/binaries/<tool> — fetched and managed by `abc admin tools`
 //  3. exec.LookPath(tool)   — system PATH
 //
-// For "mcli": also checks for an "mc" binary on PATH and verifies it is
-// MinIO Client (not GNU Midnight Commander) before accepting it.
+// For "mcli": also checks ABC_BIN_MC, ~/.abc/binaries/mc, and mc on PATH,
+// verifying it is MinIO Client (not GNU Midnight Commander) before accepting.
 //
 // Returns an error with install instructions if the tool cannot be found.
 func findTool(name string) (string, error) {
-	// 1. Environment variable override.
-	envKey := "ABC_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_PATH"
-	if v := strings.TrimSpace(envvars.Get(envKey)); v != "" {
-		if isExecutable(v) {
-			return v, nil
+	// 1. Environment variable override (ABC_<TOOL>_BIN).
+	envKey := toolEnvVar[name]
+	if envKey != "" {
+		if v := strings.TrimSpace(envvars.Get(envKey)); v != "" {
+			if isExecutable(v) {
+				return v, nil
+			}
+			return "", fmt.Errorf("%s=%q: file not found or not executable", envKey, v)
 		}
-		return "", fmt.Errorf("%s=%q: file not found or not executable", envKey, v)
 	}
 
 	// 2. ~/.abc/binaries/<name> — managed by `abc admin tools fetch`.
@@ -78,17 +90,24 @@ func findTool(name string) (string, error) {
 		return p, nil
 	}
 
-	// 4. For mcli: also accept "mc" from PATH if it is MinIO Client.
+	// 4. For mcli: also accept "mc" from ABC_BIN_MC, ~/.abc/binaries/mc, or PATH.
 	if name == "mcli" {
-		if p, err := exec.LookPath("mc"); err == nil {
-			if isMinioClient(p) {
-				return p, nil
+		// Check ABC_BIN_MC env var.
+		if mcBin := strings.TrimSpace(envvars.Get("ABC_BIN_MC")); mcBin != "" {
+			if isExecutable(mcBin) && isMinioClient(mcBin) {
+				return mcBin, nil
 			}
 		}
-		// Also check ~/.abc/binaries/mc.
+		// Check ~/.abc/binaries/mc.
 		if managedPath, err := utils.ManagedBinaryPath("mc"); err == nil {
 			if isExecutable(managedPath) && isMinioClient(managedPath) {
 				return managedPath, nil
+			}
+		}
+		// Check PATH.
+		if p, err := exec.LookPath("mc"); err == nil {
+			if isMinioClient(p) {
+				return p, nil
 			}
 		}
 	}
@@ -129,6 +148,46 @@ func isMinioClient(binary string) bool {
 	return strings.Contains(lower, "minio") || strings.Contains(lower, "mc version")
 }
 
+// resolveS3Creds reads S3 credentials and endpoint from the active context
+// using a universal resolution that works for all cluster types (abc-nodes,
+// abc-seedling, abc-cloud). Resolution order within each service:
+//   admin.services.minio.{endpoint,access_key,secret_key}  (preferred)
+//   admin.services.rustfs.{endpoint,access_key,secret_key} (fallback)
+//   admin.abc_nodes.{s3_endpoint,s3_access_key,s3_secret_key} (legacy)
+func resolveS3Creds(ctx abccfg.Context) (endpoint, accessKey, secretKey string) {
+	for _, svc := range []string{"minio", "rustfs"} {
+		ep, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, svc, "endpoint")
+		if ep == "" {
+			ep, _ = abccfg.GetAdminFloorField(&ctx.Admin.Services, svc, "http")
+		}
+		ak, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, svc, "access_key")
+		if ak == "" {
+			ak, _ = abccfg.GetAdminFloorField(&ctx.Admin.Services, svc, "user")
+		}
+		sk, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, svc, "secret_key")
+		if sk == "" {
+			sk, _ = abccfg.GetAdminFloorField(&ctx.Admin.Services, svc, "password")
+		}
+		if ep != "" && ak != "" && sk != "" {
+			return strings.TrimRight(ep, "/"), ak, sk
+		}
+	}
+	// Legacy abc_nodes fields.
+	if n := ctx.Admin.ABCNodes; n != nil {
+		ep := strings.TrimRight(n.S3Endpoint, "/")
+		ak := n.S3AccessKey
+		if ak == "" {
+			ak = n.MinioRootUser
+		}
+		sk := n.S3SecretKey
+		if sk == "" {
+			sk = n.MinioRootPassword
+		}
+		return ep, ak, sk
+	}
+	return "", "", ""
+}
+
 // s3Env returns the OS environment with S3 credentials injected from the
 // active context. Does not mutate os.Environ() — returns a new slice.
 // Sets:
@@ -136,25 +195,25 @@ func isMinioClient(binary string) bool {
 //	AWS_ACCESS_KEY_ID
 //	AWS_SECRET_ACCESS_KEY
 //	AWS_REGION (us-east-1 if not already set)
-func s3Env(ctx config.Context) []string {
-	env := os.Environ()
-
-	envMap := ctx.AbcNodesMinioStorageCLIEnv()
-	if len(envMap) == 0 {
-		envMap = ctx.AbcNodesRustfsStorageCLIEnv()
-	}
+func s3Env(ctx abccfg.Context) []string {
+	_, ak, sk := resolveS3Creds(ctx)
 
 	toSet := map[string]string{
-		"AWS_ACCESS_KEY_ID":     envMap["AWS_ACCESS_KEY_ID"],
-		"AWS_SECRET_ACCESS_KEY": envMap["AWS_SECRET_ACCESS_KEY"],
+		"AWS_ACCESS_KEY_ID":     ak,
+		"AWS_SECRET_ACCESS_KEY": sk,
 		"AWS_REGION":            "us-east-1",
 	}
 
-	// Override any existing values.
+	env := os.Environ()
 	filtered := make([]string, 0, len(env))
 	overridden := make(map[string]bool)
 	for _, e := range env {
-		key := e[:strings.IndexByte(e, '=')]
+		idx := strings.IndexByte(e, '=')
+		if idx < 0 {
+			filtered = append(filtered, e)
+			continue
+		}
+		key := e[:idx]
 		if v, ok := toSet[key]; ok {
 			if v != "" {
 				filtered = append(filtered, key+"="+v)
@@ -172,26 +231,29 @@ func s3Env(ctx config.Context) []string {
 	return filtered
 }
 
-// s5cmdEndpoint returns the MinIO/rustfs S3 endpoint from the active context.
-// Prefers rustfs; falls back to MinIO.
-func s5cmdEndpoint(ctx config.Context) string {
-	if ep := strings.TrimRight(ctx.RustfsS3APIEndpoint(), "/"); ep != "" {
-		return ep
-	}
-	return strings.TrimRight(ctx.MinioS3APIEndpoint(), "/")
+// s5cmdEndpoint returns the S3 endpoint from the active context for use in
+// s5cmd --endpoint-url. Works for all cluster types.
+func s5cmdEndpoint(ctx abccfg.Context) string {
+	ep, _, _ := resolveS3Creds(ctx)
+	return ep
 }
 
-// s5cmdArgs constructs the s5cmd argument list: prepends the global
-// --endpoint-url flag before the subcommand and user-provided args.
+// s5cmdArgs constructs the s5cmd argument list. Global flags (e.g.
+// --numworkers, --no-sign-request) that must precede the subcommand are
+// passed via globalFlags. --endpoint-url is always prepended from the context.
 //
-//	s5cmdArgs(ctx, "ls", []string{"s3://bucket/"})
+//	s5cmdArgs(ctx, "ls", nil, []string{"s3://bucket/"})
 //	→ ["--endpoint-url", "http://localhost:9000", "ls", "s3://bucket/"]
-func s5cmdArgs(ctx config.Context, subcmd string, rest []string) []string {
+//
+//	s5cmdArgs(ctx, "cp", []string{"--numworkers", "8"}, []string{"src", "dst"})
+//	→ ["--endpoint-url", "http://...", "--numworkers", "8", "cp", "src", "dst"]
+func s5cmdArgs(ctx abccfg.Context, subcmd string, rest []string, globalFlags ...string) []string {
 	ep := s5cmdEndpoint(ctx)
-	args := make([]string, 0, 2+1+len(rest))
+	args := make([]string, 0, 2+len(globalFlags)+1+len(rest))
 	if ep != "" {
 		args = append(args, "--endpoint-url", ep)
 	}
+	args = append(args, globalFlags...)
 	args = append(args, subcmd)
 	args = append(args, rest...)
 	return args
@@ -205,14 +267,8 @@ func s5cmdArgs(ctx config.Context, subcmd string, rest []string) []string {
 //	alias, tmpDir, cleanup, err := mcliAlias(ctx)
 //	defer cleanup()
 //	// use MCLI_CONFIG_DIR=tmpDir mcli <alias>/bucket/...
-func mcliAlias(ctx config.Context) (alias, tmpDir string, cleanup func(), err error) {
-	ep := s5cmdEndpoint(ctx) // mcli uses the same endpoint
-	envMap := ctx.AbcNodesMinioStorageCLIEnv()
-	if len(envMap) == 0 {
-		envMap = ctx.AbcNodesRustfsStorageCLIEnv()
-	}
-	ak := envMap["AWS_ACCESS_KEY_ID"]
-	sk := envMap["AWS_SECRET_ACCESS_KEY"]
+func mcliAlias(ctx abccfg.Context) (alias, tmpDir string, cleanup func(), err error) {
+	ep, ak, sk := resolveS3Creds(ctx)
 
 	if ep == "" || ak == "" || sk == "" {
 		return "", "", func() {}, fmt.Errorf("no S3 endpoint or credentials in active context")
@@ -237,14 +293,8 @@ func mcliAlias(ctx config.Context) (alias, tmpDir string, cleanup func(), err er
 
 // rcloneConf writes a minimal rclone.conf with an S3 backend configured from
 // the active context and returns the file path and a cleanup function.
-func rcloneConf(ctx config.Context) (confPath string, cleanup func(), err error) {
-	ep := s5cmdEndpoint(ctx)
-	envMap := ctx.AbcNodesMinioStorageCLIEnv()
-	if len(envMap) == 0 {
-		envMap = ctx.AbcNodesRustfsStorageCLIEnv()
-	}
-	ak := envMap["AWS_ACCESS_KEY_ID"]
-	sk := envMap["AWS_SECRET_ACCESS_KEY"]
+func rcloneConf(ctx abccfg.Context) (confPath string, cleanup func(), err error) {
+	ep, ak, sk := resolveS3Creds(ctx)
 
 	if ep == "" || ak == "" || sk == "" {
 		return "", func() {}, fmt.Errorf("no S3 endpoint or credentials in active context")

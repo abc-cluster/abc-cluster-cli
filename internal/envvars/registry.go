@@ -40,7 +40,7 @@ const (
 	// BucketVendorFallback: NOMAD_*, VAULT_*, AWS_*, CONSUL_*. Read silently
 	// as last-resort fallback; never the documented path.
 	BucketVendorFallback
-	// BucketToolBinary: paths to subprocess binaries (ABC_*_BIN). Operator-only.
+	// BucketToolBinary: paths to subprocess binaries (ABC_BIN_<TOOL>). Operator-only.
 	BucketToolBinary
 	// BucketSubprocessOut: vendor env vars the CLI INJECTS into subprocesses.
 	// Outputs, not inputs. Listed for documentation only.
@@ -365,49 +365,59 @@ var Registry = []Entry{
 	// ── ABC COMPONENT (tool binaries) ───────────────────────────────────
 
 	{
-		Name:    "ABC_NOMAD_BIN",
+		Name:    "ABC_BIN_NOMAD",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the nomad binary",
 	},
 	{
-		Name:    "ABC_VAULT_BIN",
+		Name:    "ABC_BIN_VAULT",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the vault binary",
 	},
 	{
-		Name:    "ABC_RCLONE_BIN",
+		Name:    "ABC_BIN_RCLONE",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the rclone binary",
 	},
 	{
-		Name:    "ABC_MC_BIN",
+		Name:    "ABC_BIN_MC",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the mc (MinIO Client) binary",
 	},
 	{
-		Name:    "ABC_S5CMD_BIN",
+		Name:    "ABC_BIN_S5CMD",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the s5cmd binary",
 	},
 	{
-		Name:    "ABC_NEXTFLOW_BIN",
+		Name:    "ABC_BIN_NEXTFLOW",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the nextflow binary",
 	},
 	{
-		Name:    "ABC_NODE_PROBE_BIN",
+		Name:    "ABC_BIN_NODE_PROBE",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the abc-node-probe binary",
 	},
 	{
-		Name:    "ABC_SHELLCHECK_BIN",
+		Name:    "ABC_BIN_SHELLCHECK",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the shellcheck binary",
 	},
 	{
-		Name:    "ABC_EGET_BIN",
+		Name:    "ABC_BIN_EGET",
 		Bucket:  BucketToolBinary,
 		Purpose: "override path to the eget binary",
+	},
+	{
+		Name:    "ABC_BIN_ARIA2C",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the aria2c binary (used by abc data download for presigned-URL downloads)",
+	},
+	{
+		Name:    "ABC_BIN_MCLI",
+		Bucket:  BucketToolBinary,
+		Purpose: "override path to the mcli (MinIO Client) binary; ABC_BIN_MC is also checked as fallback",
 	},
 
 	// ── ABC COMPONENT (capability / upload / crypt / node) ──────────────

@@ -44,9 +44,6 @@ func defaultPipelineClientFactory(serverURL, accessToken, workspace string) Pipe
 var PipelineFactory = defaultPipelineClientFactory
 
 // NewCmd returns the "data" subcommand group.
-// serverURL, accessToken, and workspace are pointers to the root command's persistent flags
-// so that they are evaluated after flag parsing.
-// If factory is nil, the default uploader factory is used.
 func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFactory) *cobra.Command {
 	f := defaultClientFactory
 	if len(dataFactory) > 0 && dataFactory[0] != nil {
@@ -56,52 +53,76 @@ func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFact
 	cmd := &cobra.Command{
 		Use:   "data",
 		Short: "Manage data",
-		Long: `Commands for uploading, downloading, and moving data on the abc-cluster platform.
+		Long: `Commands for the full data lifecycle on abc-cluster.
 
 Common workflows:
 
-  Upload a file to cluster MinIO storage:
+  Upload a file to cluster MinIO (tus, resumable):
     abc data upload ./genome.fa
 
-  Upload and immediately stage into your JupyterLab workbench:
-    abc data upload ./genome.fa --workbench
+  Push a file to MinIO fast (s5cmd, no tracking):
+    abc data push ./genome.fa s3://su-mbhg-hostgen/user/calm-dassie/genome.fa
 
-  Fetch data from the internet into cluster MinIO (server-side Nomad job):
+  Fetch data from the internet into MinIO (server-side Nomad job):
     abc data fetch https://example.com/data.tar.gz
 
-  Download a file from MinIO to your local machine (resumable):
-    abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/results.csv
+  Fetch a public sequence dataset by accession:
+    abc data fetch SRR000001
 
-  Stage a MinIO file into your workbench ~/data/ directory:
-    abc data stage s3://su-mbhg-hostgen/user/calm-dassie/data/genome.fa
+  Download from MinIO to your local machine (resumable, aria2c):
+    abc data pull s3://su-mbhg-hostgen/user/calm-dassie/results.csv
+
+  Stage a MinIO file into your workbench ~/data/:
+    abc data stage s3://su-mbhg-hostgen/user/calm-dassie/genome.fa
+
+  Share a file with your group:
+    abc data share s3://su-mbhg-hostgen/user/calm-dassie/results.vcf --to shared
+
+  Generate a presigned link for external collaborators:
+    abc data presign s3://su-mbhg-hostgen/user/calm-dassie/report.pdf --expires 48h
 
   Browse your MinIO bucket:
-    abc data ls
+    abc data list s3://su-mbhg-hostgen/user/calm-dassie/
 
-Advanced / power-user commands:
-  abc data download   full-featured download: choose tool, driver, destination
-  abc data copy       server-side S3 copy
-  abc data move       server-side S3 move`,
+  Show disk usage:
+    abc data disk-usage s3://su-mbhg-hostgen/user/calm-dassie/
+
+Plumbing commands (short aliases accepted):
+  list (ls)  remove (rm, delete)  sync  cat  pipe
+  disk-usage (du)  make-bucket (mb)  remove-bucket (rb)  stat`,
 	}
-	// ── Porcelain: tus upload + state ───────────────────────────────────────
+
+	// ── Porcelain: tus upload ────────────────────────────────────────────────
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
 	cmd.AddCommand(newUploadsCmd())
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
 
-	// ── Porcelain: focused data movement ────────────────────────────────────
-	cmd.AddCommand(newFetchCmd(serverURL, accessToken, workspace))
-	cmd.AddCommand(newPullCmd())
-	cmd.AddCommand(newStageCmd())
+	// ── Porcelain: data movement ─────────────────────────────────────────────
+	cmd.AddCommand(newFetchCmd(serverURL, accessToken, workspace)) // external/accession → MinIO
+	cmd.AddCommand(newPushCmd())                                   // local → MinIO (s5cmd)
+	cmd.AddCommand(newPullCmd())                                   // MinIO → local (s5cmd)
+	cmd.AddCommand(newStageCmd())                                  // MinIO → workbench
+	cmd.AddCommand(newPresignCmd())                                // generate presigned URL
 
-	// ── Porcelain: accession-based acquisition / backwards-compat ───────────
+	// ── Porcelain: accession-based acquisition ───────────────────────────────
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
 
-	// ── Plumbing: tool wrappers (s5cmd / mcli / rclone / aria2c) ────────────
-	// Canonical names are full English words; unix short forms are aliases.
-	cmd.AddCommand(newListCmd()) // list  (alias: ls)  — replaces newLsCmd()
-	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace)) // copy  (alias: cp)
-	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace)) // move  (alias: mv)
-	cmd.AddCommand(newStatCmd())                                  // stat  (no alias)
+	// ── Porcelain: rclone Nomad jobs (server-side, backwards-compat) ─────────
+	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace))
+	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace))
+
+	// ── Plumbing: s5cmd / mcli wrappers ─────────────────────────────────────
+	// Canonical names are full English words; unix short forms are registered aliases.
+	cmd.AddCommand(newListCmd())         // list         aliases: ls
+	cmd.AddCommand(newRemoveCmd())       // remove       aliases: rm, delete
+	cmd.AddCommand(newSyncCmd())         // sync
+	cmd.AddCommand(newCatCmd())          // cat
+	cmd.AddCommand(newPipeCmd())         // pipe
+	cmd.AddCommand(newDiskUsageCmd())    // disk-usage   alias: du
+	cmd.AddCommand(newMakeBucketCmd())   // make-bucket  alias: mb
+	cmd.AddCommand(newRemoveBucketCmd()) // remove-bucket alias: rb
+	cmd.AddCommand(newStatCmd())         // stat
+
 	return cmd
 }
