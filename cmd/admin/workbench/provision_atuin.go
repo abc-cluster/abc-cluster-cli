@@ -158,7 +158,7 @@ sudo chmod 755 /usr/local/bin/atuin
 atuin --version
 `, tarball)
 
-	out, err := wbinternal.RunOnNodePublic(node, "bash", "-c", script)
+	out, err := wbinternal.RunScriptOnNodePublic(node, script, false)
 	if err != nil {
 		return fmt.Errorf("install atuin on %s: %w\n%s", node.Host, err, out)
 	}
@@ -180,8 +180,9 @@ func resolveSlots(node wbinternal.NodeSSH, slotsFlag string) ([]string, error) {
 	}
 
 	// Discover all slot home dirs: /data/workbench/<slot>/home must exist.
+	// Passed as a single SSH argument so the remote shell receives it verbatim
+	// (no bash -c wrapping, which SSH arg-joining would corrupt).
 	raw, err := wbinternal.RunOnNodePublic(node,
-		"bash", "-c",
 		`find /data/workbench -mindepth 2 -maxdepth 2 -name home -type d -printf '%P\n' 2>/dev/null | sed 's|/home||' | sort`,
 	)
 	if err != nil {
@@ -237,7 +238,7 @@ echo "ok"
 		atuinConfigTOML,
 	)
 
-	out, err := wbinternal.RunOnNodePublic(node, "bash", "-c", script)
+	out, err := wbinternal.RunScriptOnNodePublic(node, script, false)
 	if err != nil {
 		return fmt.Errorf("%w\n%s", err, out)
 	}

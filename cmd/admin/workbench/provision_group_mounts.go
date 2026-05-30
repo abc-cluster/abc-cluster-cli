@@ -4,15 +4,17 @@ package workbench
 // prefixes within a group's bucket and bind-mounts them into each slot's
 // home directory.
 //
-// Read-only is enforced at two independent layers:
-//   1. The geesefs FUSE mount itself uses -o ro — the kernel rejects all
-//      writes at the VFS layer before they reach geesefs or MinIO, regardless
-//      of who accesses /mnt/abc-group-<group> directly.
-//   2. The per-slot fstab bind mounts use bind,ro as a second guard.
+// Read-only is enforced at two layers:
+//   1. geesefs file/dir mode flags: --file-mode 0444 --dir-mode 0555 make all
+//      objects appear read-only at the FUSE layer. Note: geesefs v0.42.1 does
+//      not support -o ro (not a recognised FUSE option for this tool). For
+//      stronger enforcement, create a MinIO user with a read-only policy for
+//      the bucket and use those credentials in the systemd service.
+//   2. The per-slot fstab bind mounts use bind,ro — the kernel rejects writes
+//      from slot users accessing ~/common/ regardless of FUSE permissions.
 //
-// This means there is no code path by which a JupyterLab session can corrupt
-// the shared S3 data. Write access (shared/) is deferred and requires a
-// proper POSIX-locking metadata layer (JuiceFS + Redis) before it is safe.
+// Write access (shared/) is deferred pending proper POSIX-locking metadata
+// (JuiceFS + Redis) and a read-write MinIO credential per group.
 //
 // One geesefs systemd service per group (not per slot) mounts the whole
 // group bucket. Per-slot bind mounts are fstab entries with
@@ -25,7 +27,10 @@ package workbench
 // Redis/PostgreSQL metadata store for full POSIX semantics across nodes.
 
 import (
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -104,6 +109,8 @@ Examples:
 	cmd.Flags().String("slots", "", "Comma-separated slot names to bind-mount (default: all slots under /data/workbench/)")
 	cmd.Flags().String("node", "", "SSH host alias for the platform node (default: sun-<node> from config or sun-aither)")
 	cmd.Flags().String("geesefs-version", defaultGeesefsVersion, "geesefs release tag to install if absent")
+	cmd.Flags().String("node-minio-endpoint", "", "MinIO endpoint as seen from the node (default: value from config; override when the node reaches MinIO via localhost or a different address)")
+	cmd.Flags().String("sudo-pass-file", "~/.ssh/pass.sun-aither", "file containing the sudo password for the platform node")
 	cmd.Flags().Bool("dry-run", false, "Show what would be done without changing anything")
 
 	_ = cmd.MarkFlagRequired("group")
@@ -117,7 +124,12 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 	slotsFlag, _ := cmd.Flags().GetString("slots")
 	nodeOverride, _ := cmd.Flags().GetString("node")
 	geesefsVer, _ := cmd.Flags().GetString("geesefs-version")
+	sudoPassFile, _ := cmd.Flags().GetString("sudo-pass-file")
+	nodeMinioEndpoint, _ := cmd.Flags().GetString("node-minio-endpoint")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	// Read the sudo password for running privileged commands on the node.
+	sudoPass := readSudoPass(sudoPassFile)
 
 	// Normalise group name: strip leading "su-" if provided.
 	group := strings.TrimPrefix(groupFlag, "su-")
@@ -142,6 +154,14 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --node-minio-endpoint overrides the endpoint used in scripts that run ON
+	// the node itself. Useful when the node reaches MinIO via localhost or a
+	// Tailscale IP that differs from the client-side endpoint in the config.
+	nodeEndpoint := strings.TrimRight(minioEndpoint, "/")
+	if ep := strings.TrimSpace(nodeMinioEndpoint); ep != "" {
+		nodeEndpoint = strings.TrimRight(ep, "/")
+	}
+
 	if dryRun {
 		fmt.Fprintln(cmd.ErrOrStderr(), "[dry-run] No changes will be made.")
 	}
@@ -152,22 +172,24 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 	)
 
 	// 1. FUSE prerequisites — fuse3 package and user_allow_other.
-	if err := ensureFusePrereqs(cmd, node, dryRun); err != nil {
+	if err := ensureFusePrereqs(cmd, node, sudoPass, dryRun); err != nil {
 		return err
 	}
 
 	// 2. geesefs binary.
-	if err := ensureGeesefsInstalled(cmd, node, geesefsVer, dryRun); err != nil {
+	if err := ensureGeesefsInstalled(cmd, node, geesefsVer, sudoPass, dryRun); err != nil {
 		return err
 	}
 
 	// 3. Ensure each folder prefix exists in the MinIO bucket.
-	if err := ensureGroupPrefixes(cmd, node, minioEndpoint, accessKey, secretKey, bucket, folders, dryRun); err != nil {
+	// Uses nodeEndpoint — the address reachable from the node itself.
+	if err := ensureGroupPrefixes(cmd, node, nodeEndpoint, accessKey, secretKey, bucket, folders, dryRun); err != nil {
 		return err
 	}
 
 	// 4. Write and start the geesefs systemd service for this group.
-	if err := ensureGeesefsService(cmd, node, group, bucket, minioEndpoint, accessKey, secretKey, dryRun); err != nil {
+	// Uses nodeEndpoint — embedded in the systemd unit, runs on the node.
+	if err := ensureGeesefsService(cmd, node, group, bucket, nodeEndpoint, accessKey, secretKey, sudoPass, dryRun); err != nil {
 		return err
 	}
 
@@ -180,7 +202,7 @@ func runProvisionGroupMounts(cmd *cobra.Command, args []string) error {
 
 	ok, failed := 0, 0
 	for _, slot := range slots {
-		if err := provisionSlotBindMounts(cmd, node, group, slot, folders, dryRun); err != nil {
+		if err := provisionSlotBindMounts(cmd, node, group, slot, folders, sudoPass, dryRun); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "  [%s] error: %v\n", slot, err)
 			failed++
 		} else {
@@ -209,7 +231,7 @@ func parseFolderList(raw string) []string {
 }
 
 // ensureFusePrereqs installs fuse3 and enables user_allow_other.
-func ensureFusePrereqs(cmd *cobra.Command, node wbinternal.NodeSSH, dryRun bool) error {
+func ensureFusePrereqs(cmd *cobra.Command, node wbinternal.NodeSSH, sudoPass string, dryRun bool) error {
 	if dryRun {
 		fmt.Fprintln(cmd.OutOrStdout(), "  [dry-run] would ensure fuse3 installed + user_allow_other in /etc/fuse.conf")
 		return nil
@@ -226,7 +248,7 @@ if ! grep -qE '^\s*user_allow_other' "$FUSE_CONF" 2>/dev/null; then
 fi
 echo "ok"
 `
-	out, err := wbinternal.RunOnNodePublic(node, "sudo", "bash", "-c", script)
+	out, err := wbinternal.RunScriptOnNodePublic(node, script, true, sudoPass)
 	if err != nil {
 		return fmt.Errorf("fuse prereqs: %w\n%s", err, out)
 	}
@@ -236,7 +258,7 @@ echo "ok"
 
 // ensureGeesefsInstalled downloads and installs the pinned geesefs binary
 // to /usr/local/bin/geesefs if not already present.
-func ensureGeesefsInstalled(cmd *cobra.Command, node wbinternal.NodeSSH, version string, dryRun bool) error {
+func ensureGeesefsInstalled(cmd *cobra.Command, node wbinternal.NodeSSH, version string, sudoPass string, dryRun bool) error {
 	out, _ := wbinternal.RunOnNodePublic(node, "test", "-x", "/usr/local/bin/geesefs", "&&", "echo", "present")
 	if strings.Contains(out, "present") {
 		v, _ := wbinternal.RunOnNodePublic(node, "/usr/local/bin/geesefs", "--version")
@@ -258,7 +280,7 @@ chmod 755 /usr/local/bin/geesefs
 /usr/local/bin/geesefs --version
 `, dlURL)
 
-	out, err := wbinternal.RunOnNodePublic(node, "sudo", "bash", "-c", script)
+	out, err := wbinternal.RunScriptOnNodePublic(node, script, true, sudoPass)
 	if err != nil {
 		return fmt.Errorf("install geesefs: %w\n%s", err, out)
 	}
@@ -283,31 +305,37 @@ func ensureGroupPrefixes(cmd *cobra.Command, node wbinternal.NodeSSH, endpoint, 
 	}
 	foldersArray := strings.Join(quotedFolders, " ")
 
+	// Use s5cmd to create the placeholder objects — avoids the mc/mcli naming
+	// conflict (mc on Ubuntu is GNU Midnight Commander, not MinIO Client).
+	// s5cmd 2.x has no `stat` command; use `ls` to check existence instead.
 	script := fmt.Sprintf(`set -euo pipefail
 export AWS_ACCESS_KEY_ID=%q
 export AWS_SECRET_ACCESS_KEY=%q
-MC=/usr/local/bin/mc
-if ! command -v "$MC" &>/dev/null; then MC=$(which mc || which mcli); fi
+export AWS_REGION=us-east-1
 
-# Set up ephemeral alias.
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-MC_CONFIG_DIR="$TMP" "$MC" alias set _abc %q %q %q --quiet
+S5CMD=/usr/local/bin/s5cmd
+if ! command -v "$S5CMD" &>/dev/null; then
+    S5CMD=$(which s5cmd 2>/dev/null || echo /opt/abc-seedling/nf-work/bin/s5cmd)
+fi
+EP=%q
 
-# Create placeholder object for each folder prefix.
+# Create a placeholder .keep object for each folder prefix so the directory
+# appears in geesefs listings immediately after the service starts.
+# Use ls to check existence (s5cmd 2.x has no stat subcommand).
 for FOLDER in %s; do
-    if ! MC_CONFIG_DIR="$TMP" "$MC" stat "_abc/%s/${FOLDER}/.keep" &>/dev/null; then
-        echo -n "" | MC_CONFIG_DIR="$TMP" "$MC" pipe "_abc/%s/${FOLDER}/.keep" --quiet
-        echo "  created s3://%s/${FOLDER}/.keep"
+    KEY="s3://%s/${FOLDER}/.keep"
+    if "$S5CMD" --endpoint-url "$EP" ls "$KEY" 2>/dev/null | grep -q '.keep'; then
+        echo "  ${KEY} already exists"
     else
-        echo "  s3://%s/${FOLDER}/ already exists"
+        echo -n "" | "$S5CMD" --endpoint-url "$EP" pipe "$KEY"
+        echo "  created ${KEY}"
     fi
 done
 echo "ok"
-`, accessKey, secretKey, endpoint, accessKey, secretKey,
-		foldersArray,
-		bucket, bucket, bucket, bucket)
+`, accessKey, secretKey, endpoint,
+		foldersArray, bucket)
 
-	out, err := wbinternal.RunOnNodePublic(node, "bash", "-c", script)
+	out, err := wbinternal.RunScriptOnNodePublic(node, script, false)
 	if err != nil {
 		return fmt.Errorf("ensure group prefixes: %w\n%s", err, out)
 	}
@@ -329,7 +357,7 @@ func geesefsMountPoint(group string) string {
 // The FUSE mount is opened with -o allow_other,ro so the kernel enforces
 // read-only at the VFS layer for all users, including root.
 // Idempotent — reloads systemd and restarts if the service file changed.
-func ensureGeesefsService(cmd *cobra.Command, node wbinternal.NodeSSH, group, bucket, endpoint, accessKey, secretKey string, dryRun bool) error {
+func ensureGeesefsService(cmd *cobra.Command, node wbinternal.NodeSSH, group, bucket, endpoint, accessKey, secretKey, sudoPass string, dryRun bool) error {
 	svcName := geesefsServiceName(group)
 	mountPoint := geesefsMountPoint(group)
 
@@ -344,10 +372,12 @@ Environment=AWS_ACCESS_KEY_ID=%s
 Environment=AWS_SECRET_ACCESS_KEY=%s
 ExecStartPre=/bin/mkdir -p %s
 ExecStart=/usr/local/bin/geesefs \
-    --endpoint-url %s \
+    --endpoint %s \
     --memory-limit 256 \
     --stat-cache-ttl 10s \
-    -o allow_other,ro \
+    --file-mode 0444 \
+    --dir-mode 0555 \
+    -o allow_other \
     -f \
     %s %s
 ExecStop=/bin/fusermount3 -u %s
@@ -372,12 +402,18 @@ WantedBy=multi-user.target
 		return nil
 	}
 
+	// Base64-encode the service file content so newlines survive being embedded
+	// in the bash script variable (Go's %q escapes newlines as \n, which bash
+	// then treats as literal backslash-n, corrupting the INI file structure).
+	svcB64 := base64.StdEncoding.EncodeToString([]byte(svcContent))
+
 	script := fmt.Sprintf(`set -euo pipefail
 SVC_FILE=/etc/systemd/system/%s
-NEW_CONTENT=%q
+NEW_CONTENT=$(echo %s | base64 -d)
 
 # Write only if content changed (avoid unnecessary restarts).
-if [ "$(cat "$SVC_FILE" 2>/dev/null)" != "$NEW_CONTENT" ]; then
+OLD_CONTENT=$(cat "$SVC_FILE" 2>/dev/null || true)
+if [ "$OLD_CONTENT" != "$NEW_CONTENT" ]; then
     printf '%%s' "$NEW_CONTENT" > "$SVC_FILE"
     systemctl daemon-reload
     echo "service file updated"
@@ -390,14 +426,14 @@ if ! systemctl is-active --quiet %s; then
 fi
 systemctl is-active --quiet %s && echo "running" || { echo "FAILED to start %s"; exit 1; }
 `,
-		svcName, svcContent,
+		svcName, svcB64,
 		svcName,
 		svcName,
 		svcName,
 		svcName, svcName,
 	)
 
-	out, err := wbinternal.RunOnNodePublic(node, "sudo", "bash", "-c", script)
+	out, err := wbinternal.RunScriptOnNodePublic(node, script, true, sudoPass)
 	if err != nil {
 		return fmt.Errorf("geesefs service %s: %w\n%s", svcName, err, out)
 	}
@@ -408,7 +444,7 @@ systemctl is-active --quiet %s && echo "running" || { echo "FAILED to start %s";
 // provisionSlotBindMounts adds read-only fstab bind entries for each named
 // folder in the slot's home directory. Idempotent — uses a per-folder
 // marker comment to guard against duplicate entries.
-func provisionSlotBindMounts(cmd *cobra.Command, node wbinternal.NodeSSH, group, slot string, folders []string, dryRun bool) error {
+func provisionSlotBindMounts(cmd *cobra.Command, node wbinternal.NodeSSH, group, slot string, folders []string, sudoPass string, dryRun bool) error {
 	mountPoint := geesefsMountPoint(group)
 	homeDir := "/data/workbench/" + slot + "/home"
 	svcName := geesefsServiceName(group)
@@ -449,7 +485,7 @@ func provisionSlotBindMounts(cmd *cobra.Command, node wbinternal.NodeSSH, group,
 	}
 	sb.WriteString("echo ok\n")
 
-	out, err := wbinternal.RunOnNodePublic(node, "sudo", "bash", "-c", sb.String())
+	out, err := wbinternal.RunScriptOnNodePublic(node, sb.String(), true, sudoPass)
 	if err != nil {
 		return fmt.Errorf("%w\n%s", err, out)
 	}
@@ -514,4 +550,24 @@ func resolveMinioCredsForGeesefs(actx config.Context) (endpoint, accessKey, secr
 		)
 	}
 	return endpoint, accessKey, secretKey, nil
+}
+
+// readSudoPass reads the sudo password from a file path. Expands a leading "~/"
+// to the user's home directory. Returns an empty string if the file cannot be
+// read — callers should fall back to passwordless sudo in that case.
+func readSudoPass(passFile string) string {
+	if passFile == "" {
+		return ""
+	}
+	if strings.HasPrefix(passFile, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			passFile = filepath.Join(home, passFile[2:])
+		}
+	}
+	data, err := os.ReadFile(passFile)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }

@@ -55,8 +55,56 @@ func runOnNode(node NodeSSH, args ...string) (string, error) {
 // RunOnNodePublic is the exported version of runOnNode. It executes a command
 // on the node via SSH and returns combined output. Callers outside this package
 // (e.g. cmd/admin/workbench) use this to run arbitrary commands on a node.
+//
+// WARNING: do not use this with "bash", "-c", <script> for multi-line scripts.
+// SSH joins all post-hostname arguments with spaces without quoting, so the
+// remote shell receives only the first word of the script as the -c argument.
+// Use RunScriptOnNodePublic for multi-line bash scripts.
 func RunOnNodePublic(node NodeSSH, args ...string) (string, error) {
 	return runOnNode(node, args...)
+}
+
+// RunScriptOnNodePublic executes a multi-line bash script on the node via SSH.
+// The script is base64-encoded so that SSH argument joining (which concatenates
+// all post-hostname args with spaces, without quoting) cannot corrupt it.
+//
+// When sudo is true and sudoPass is non-empty, uses sudo -S (reads password
+// from stdin). When sudo is true and sudoPass is empty, uses sudo without -S
+// (requires passwordless sudo / NOPASSWD on the remote).
+//
+// Equivalent to:
+//
+//	ssh <node> 'echo <base64> | base64 -d | [sudo [-S]] bash'
+func RunScriptOnNodePublic(node NodeSSH, script string, sudo bool, sudoPass ...string) (string, error) {
+	b64 := base64.StdEncoding.EncodeToString([]byte(script))
+
+	var cmd string
+	if sudo {
+		pass := ""
+		if len(sudoPass) > 0 {
+			pass = sudoPass[0]
+		}
+		if pass != "" {
+			// Pipe the sudo password then the decoded script into sudo -S bash.
+			// printf is used instead of echo to avoid a trailing newline issue
+			// on some shells, and to keep the password off the process list.
+			passPart := fmt.Sprintf("{ printf '%%s\\n' %s; echo %s | base64 -d; }", shellQ(pass), b64)
+			cmd = fmt.Sprintf("%s | sudo -S bash 2>/dev/null", passPart)
+		} else {
+			cmd = fmt.Sprintf("echo %s | base64 -d | sudo bash", b64)
+		}
+	} else {
+		cmd = fmt.Sprintf("echo %s | base64 -d | bash", b64)
+	}
+	// Single argument after the hostname — SSH forwards it verbatim to the
+	// remote login shell, which executes the pipeline.
+	return runOnNode(node, cmd)
+}
+
+// shellQ wraps s in single quotes, escaping any existing single quotes.
+// Safe for use as a shell argument inside a remotely-executed command string.
+func shellQ(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // runOnNodeStream executes a command streaming output to w.
