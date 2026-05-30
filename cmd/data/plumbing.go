@@ -267,28 +267,34 @@ func s5cmdArgs(ctx abccfg.Context, subcmd string, rest []string, globalFlags ...
 //	alias, tmpDir, cleanup, err := mcliAlias(ctx)
 //	defer cleanup()
 //	// use MCLI_CONFIG_DIR=tmpDir mcli <alias>/bucket/...
-func mcliAlias(ctx abccfg.Context) (alias, tmpDir string, cleanup func(), err error) {
+func mcliAlias(ctx abccfg.Context) (bin, alias, tmpDir string, cleanup func(), err error) {
 	ep, ak, sk := resolveS3Creds(ctx)
 
 	if ep == "" || ak == "" || sk == "" {
-		return "", "", func() {}, fmt.Errorf("no S3 endpoint or credentials in active context")
+		return "", "", "", func() {}, fmt.Errorf("no S3 endpoint or credentials in active context")
+	}
+
+	resolvedBin, err := findTool("mcli")
+	if err != nil {
+		return "", "", "", func() {}, err
 	}
 
 	tmp, err := os.MkdirTemp("", "abc-mcli-*")
 	if err != nil {
-		return "", "", func() {}, fmt.Errorf("create mcli temp dir: %w", err)
+		return "", "", "", func() {}, fmt.Errorf("create mcli temp dir: %w", err)
 	}
 
 	cleanup = func() { os.RemoveAll(tmp) }
 
 	// Create the alias — mcli stores config in MCLI_CONFIG_DIR.
-	cmd := exec.Command("mcli", "alias", "set", "_abc", ep, ak, sk, "--quiet")
-	cmd.Env = append(os.Environ(), "MCLI_CONFIG_DIR="+tmp)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	// Use the resolved binary path (may be "mc" on some systems).
+	c := exec.Command(resolvedBin, "alias", "set", "abcctx", ep, ak, sk, "--quiet")
+	c.Env = append(os.Environ(), "MCLI_CONFIG_DIR="+tmp)
+	if out, err := c.CombinedOutput(); err != nil {
 		cleanup()
-		return "", "", func() {}, fmt.Errorf("mcli alias set: %w\n%s", err, out)
+		return "", "", "", func() {}, fmt.Errorf("mcli alias set: %w\n%s", err, out)
 	}
-	return "_abc", tmp, cleanup, nil
+	return resolvedBin, "abcctx", tmp, cleanup, nil
 }
 
 // rcloneConf writes a minimal rclone.conf with an S3 backend configured from

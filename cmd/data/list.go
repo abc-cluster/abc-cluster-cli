@@ -9,7 +9,7 @@ package data
 //   ABC_S5CMD_PATH env var → ~/.abc/binaries/s5cmd → system PATH
 
 import (
-	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +48,7 @@ Examples:
 		DisableFlagParsing: false,
 		SilenceUsage:       true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			cfg, err := abccfg.Load()
 			if err != nil {
 				return err
 			}
@@ -63,7 +63,7 @@ Examples:
 	return cmd
 }
 
-func runList(ctx config.Context, tool string, args []string) error {
+func runList(ctx abccfg.Context, tool string, args []string) error {
 	switch tool {
 	case "mcli":
 		return runListMcli(ctx, args)
@@ -72,7 +72,7 @@ func runList(ctx config.Context, tool string, args []string) error {
 	}
 }
 
-func runListS5cmd(ctx config.Context, args []string) error {
+func runListS5cmd(ctx abccfg.Context, args []string) error {
 	bin, err := findTool("s5cmd")
 	if err != nil {
 		return err
@@ -80,12 +80,8 @@ func runListS5cmd(ctx config.Context, args []string) error {
 	return execTool(bin, s5cmdArgs(ctx, "ls", args), s3Env(ctx))
 }
 
-func runListMcli(ctx config.Context, args []string) error {
-	bin, err := findTool("mcli")
-	if err != nil {
-		return err
-	}
-	alias, tmpDir, cleanup, err := mcliAlias(ctx)
+func runListMcli(ctx abccfg.Context, args []string) error {
+	bin, alias, tmpDir, cleanup, err := mcliAlias(ctx)
 	if err != nil {
 		return err
 	}

@@ -2,23 +2,26 @@ package data
 
 // presign.go — `abc data presign`
 //
-// Generates a presigned URL for any S3 object the active context can access.
-// Uses hand-rolled AWS Sig V4 query presign — no minio-go or aws-sdk-go dependency.
+// Generates a presigned URL for any accessible S3 object by wrapping mcli.
 //
-// Output is a bare URL on stdout, suitable for piping to curl or sharing
-// with external collaborators who have no cluster credentials.
+//   mcli share download _abc/<bucket>/<key> --expire <duration>
+//
+// mcli outputs several lines; this command extracts the URL and prints it
+// to stdout as a bare string — suitable for piping to curl or sharing with
+// external collaborators who have no cluster credentials.
+//
+// Tool resolution: findTool("mcli") — ABC_BIN_MCLI → ~/.abc/binaries/mcli → PATH.
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
 	"fmt"
-	"net/url"
+	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
+
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
 func newPresignCmd() *cobra.Command {
@@ -34,15 +37,15 @@ func newPresignCmd() *cobra.Command {
 The URL is printed to stdout (bare, no decoration) so it can be piped to
 curl or shared with collaborators who have no cluster credentials.
 
-Credentials never appear in the URL — the URL is signed with HMAC-SHA256
-and expires after --expires (default: 4h).
+Uses mcli share download under the hood. Install mcli if not present:
+  abc admin tools fetch mcli
 
 Examples:
 
   # Generate a download link (default):
   abc data presign s3://su-mbhg-hostgen/user/calm-dassie/results.vcf
 
-  # Short-lived link for a large BAM:
+  # Short-lived link:
   abc data presign s3://su-mbhg-hostgen/user/calm-dassie/sample.bam --expires 30m
 
   # 48-hour link for a collaborator:
@@ -51,8 +54,8 @@ Examples:
   # Download immediately with the generated URL:
   curl -L "$(abc data presign s3://bucket/key)" -o output.vcf
 
-  # Generate an upload URL (PUT):
-  abc data presign s3://su-mbhg-hostgen/user/calm-dassie/upload-here.fa --method PUT`,
+  # Generate an upload URL (PUT) — requires mcli share upload:
+  abc data presign s3://bucket/key --method PUT`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dur, err := time.ParseDuration(expires)
@@ -71,29 +74,22 @@ Examples:
 				return fmt.Errorf("--method must be GET or PUT")
 			}
 
-			cfg, err := config.Load()
+			cfg, err := abccfg.Load()
 			if err != nil {
 				return err
 			}
-			ctx := cfg.ActiveCtx()
 
-			endpoint, accessKey, secretKey, err := resolveWorkbenchMinioCredsFromCtx(ctx)
-			if err != nil {
-				return fmt.Errorf("resolve credentials: %w", err)
-			}
-
-			// Parse the s3:// URI into bucket and key.
 			bucket, key, err := parseS3URI(args[0])
 			if err != nil {
 				return err
 			}
 
-			signed, err := presignV4(endpoint, accessKey, secretKey, "us-east-1", bucket, key, method, dur)
+			url, err := presignViaMcli(cfg.ActiveCtx(), bucket, key, dur, method)
 			if err != nil {
-				return fmt.Errorf("sign URL: %w", err)
+				return err
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), signed)
+			fmt.Fprintln(cmd.OutOrStdout(), url)
 			return nil
 		},
 	}
@@ -109,94 +105,102 @@ func parseS3URI(uri string) (bucket, key string, err error) {
 	if !strings.HasPrefix(lower, "s3://") {
 		return "", "", fmt.Errorf("not an S3 URI (expected s3://bucket/key): %q", uri)
 	}
-	rest := uri[5:] // strip "s3://"
+	rest := uri[5:]
 	slash := strings.IndexByte(rest, '/')
 	if slash < 0 {
-		return rest, "", nil // bucket-only URI
+		return rest, "", nil
 	}
 	return rest[:slash], rest[slash+1:], nil
 }
 
-// presignV4 generates an AWS Sig V4 presigned URL for an S3 object.
-// No external dependencies — uses only stdlib crypto/hmac, crypto/sha256.
-func presignV4(endpoint, accessKey, secretKey, region, bucket, key, method string, expires time.Duration) (string, error) {
-	now := time.Now().UTC()
-	dateStr := now.Format("20060102")
-	datetimeStr := now.Format("20060102T150405Z")
-
-	ep := strings.TrimRight(endpoint, "/")
-	parsedEP, err := url.Parse(ep)
+// presignViaMcli uses mcli share download/upload to generate a presigned URL.
+// mcli outputs multiple lines; this function extracts the URL line.
+func presignViaMcli(ctx abccfg.Context, bucket, key string, expires time.Duration, method string) (string, error) {
+	bin, alias, tmpDir, cleanup, err := mcliAlias(ctx)
 	if err != nil {
-		return "", fmt.Errorf("parse endpoint %q: %w", ep, err)
+		return "", fmt.Errorf("mcli alias: %w", err)
 	}
-	host := parsedEP.Host
+	defer cleanup()
 
-	// Object path — always absolute.
-	objectPath := "/" + bucket
+	// mcli share download/upload _abc/bucket/key --expire <duration>
+	// duration format for mcli: mcli accepts "168h" style Go durations.
+	durationStr := fmtMcliDuration(expires)
+
+	mcliSubcmd := "download"
+	if method == "PUT" {
+		mcliSubcmd = "upload"
+	}
+
+	objectPath := alias + "/" + bucket
 	if key != "" {
 		objectPath += "/" + strings.TrimLeft(key, "/")
 	}
 
-	// Credential scope.
-	scope := dateStr + "/" + region + "/s3/aws4_request"
+	env := append(s3Env(ctx), "MCLI_CONFIG_DIR="+tmpDir)
 
-	// Canonical query string — must be sorted by key name.
-	q := url.Values{}
-	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
-	q.Set("X-Amz-Credential", accessKey+"/"+scope)
-	q.Set("X-Amz-Date", datetimeStr)
-	q.Set("X-Amz-Expires", fmt.Sprintf("%d", int(expires.Seconds())))
-	q.Set("X-Amz-SignedHeaders", "host")
-	canonicalQuery := q.Encode() // url.Values.Encode() sorts keys
+	// Run mcli and capture output — we need to parse the URL from it.
+	c := exec.Command(bin, "share", mcliSubcmd, objectPath, "--expire", durationStr)
+	c.Env = env
+	var out bytes.Buffer
+	c.Stdout = &out
+	c.Stderr = &out
+	if err := c.Run(); err != nil {
+		return "", fmt.Errorf("mcli share %s: %w\n%s", mcliSubcmd, err, out.String())
+	}
 
-	// Canonical request.
-	canonicalHeaders := "host:" + host + "\n"
-	signedHeaders := "host"
-	payloadHash := "UNSIGNED-PAYLOAD"
-	canonicalRequest := strings.Join([]string{
-		method,
-		objectPath,
-		canonicalQuery,
-		canonicalHeaders,
-		signedHeaders,
-		payloadHash,
-	}, "\n")
-
-	// String to sign.
-	reqHash := sigV4SHA256Hex(canonicalRequest)
-	stringToSign := strings.Join([]string{
-		"AWS4-HMAC-SHA256",
-		datetimeStr,
-		scope,
-		reqHash,
-	}, "\n")
-
-	// Signing key: HMAC chain — date → region → service → "aws4_request".
-	signingKey := hmacSHA256Bytes(
-		hmacSHA256Bytes(
-			hmacSHA256Bytes(
-				hmacSHA256Bytes([]byte("AWS4"+secretKey), dateStr),
-				region,
-			),
-			"s3",
-		),
-		"aws4_request",
-	)
-
-	// Final signature.
-	sig := hex.EncodeToString(hmacSHA256Bytes(signingKey, stringToSign))
-
-	return ep + objectPath + "?" + canonicalQuery + "&X-Amz-Signature=" + sig, nil
+	url := extractURLFromMcliOutput(out.String())
+	if url == "" {
+		return "", fmt.Errorf("mcli share %s: could not find URL in output:\n%s", mcliSubcmd, out.String())
+	}
+	return url, nil
 }
 
-func sigV4SHA256Hex(s string) string {
-	h := sha256.New()
-	h.Write([]byte(s))
-	return hex.EncodeToString(h.Sum(nil))
+// extractURLFromMcliOutput scans mcli share output for the presigned URL.
+// mcli prints several lines:
+//
+//	URL: http://host/bucket/key            ← plain URL, no signature
+//	Expire: 30 minutes 0 seconds
+//	Share: http://host/bucket/key?X-Amz-… ← presigned URL with signature
+//
+// We prefer the "Share:" line (which carries the signature query params) over
+// the "URL:" line (which does not). Fall back to any http URL if Share is absent.
+func extractURLFromMcliOutput(output string) string {
+	var fallback string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+
+		isShare := strings.HasPrefix(line, "Share:") || strings.HasPrefix(line, "Share :")
+		isURLPrefix := strings.HasPrefix(line, "URL:") || strings.HasPrefix(line, "URL :")
+
+		// Strip known prefixes.
+		for _, prefix := range []string{"Share:", "Share :", "URL:", "URL :"} {
+			if strings.HasPrefix(line, prefix) {
+				line = strings.TrimSpace(line[len(prefix):])
+				break
+			}
+		}
+
+		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+			if isShare {
+				return line // Prefer the Share line — it has the signature.
+			}
+			if isURLPrefix && fallback == "" {
+				fallback = line
+			}
+			if !isShare && !isURLPrefix && fallback == "" {
+				fallback = line
+			}
+		}
+	}
+	return fallback
 }
 
-func hmacSHA256Bytes(key []byte, data string) []byte {
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(data))
-	return mac.Sum(nil)
+// fmtMcliDuration converts a Go duration to a string mcli's --expire flag accepts.
+// mcli accepts standard Go duration strings directly (e.g. "30m", "4h0m0s", "168h").
+// We round to the nearest second and return the string representation.
+func fmtMcliDuration(d time.Duration) string {
+	// Round to seconds — mcli doesn't need sub-second precision.
+	secs := int64(d.Seconds())
+	rounded := time.Duration(secs) * time.Second
+	return rounded.String()
 }
