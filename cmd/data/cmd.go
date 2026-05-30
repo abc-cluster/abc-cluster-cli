@@ -83,19 +83,25 @@ Advanced / power-user commands:
   abc data copy       server-side S3 copy
   abc data move       server-side S3 move`,
 	}
+	// ── Porcelain: tus upload + state ───────────────────────────────────────
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
 	cmd.AddCommand(newUploadsCmd())
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
-	// Focused data movement commands (easier to use than abc data download).
+
+	// ── Porcelain: focused data movement ────────────────────────────────────
 	cmd.AddCommand(newFetchCmd(serverURL, accessToken, workspace))
 	cmd.AddCommand(newPullCmd())
 	cmd.AddCommand(newStageCmd())
-	// Power-user / backwards-compatible command with full flag surface.
+
+	// ── Porcelain: accession-based acquisition / backwards-compat ───────────
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
-	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace))
-	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace))
-	cmd.AddCommand(newLsCmd())
-	cmd.AddCommand(newStatCmd())
+
+	// ── Plumbing: tool wrappers (s5cmd / mcli / rclone / aria2c) ────────────
+	// Canonical names are full English words; unix short forms are aliases.
+	cmd.AddCommand(newListCmd()) // list  (alias: ls)  — replaces newLsCmd()
+	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace)) // copy  (alias: cp)
+	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace)) // move  (alias: mv)
+	cmd.AddCommand(newStatCmd())                                  // stat  (no alias)
 	return cmd
 }

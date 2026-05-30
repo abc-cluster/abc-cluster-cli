@@ -70,6 +70,29 @@ version = "latest"
 repo    = "rclone/rclone"
 version = "latest"
 
+# mcli: MinIO Client — S3-compatible object storage CLI.
+# Named "mcli" to avoid collision with GNU Midnight Commander ("mc" on Ubuntu).
+# Used by abc data plumbing commands as an alternative to s5cmd, and by
+# abc admin tools commands that need mc-specific operations (bucket policy, IAM).
+# GitHub releases provide "mc" as the binary name; eget renames to "mcli".
+#
+#   abc admin tools fetch mcli
+#   abc admin tools push mcli
+[tools.mcli]
+repo    = "minio/mc"
+version = "latest"
+
+# aria2c: multi-protocol download accelerator with byte-range resume.
+# Used by abc data download (MinIO → local via presigned URL) and
+# abc data fetch (URL → cluster storage via Nomad job).
+# GitHub releases provide "aria2c" as the binary name.
+#
+#   abc admin tools fetch aria2c
+#   abc admin tools push aria2c
+[tools.aria2c]
+repo    = "aria2/aria2"
+version = "latest"
+
 [tools.restic]
 repo     = "restic/restic"
 version  = "latest"
