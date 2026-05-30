@@ -63,6 +63,14 @@ type uploadOptions struct {
 	// upload that copies the file from MinIO into the user's workbench home
 	// directory (/data/workbench/<slot>/home/data/<filename>).
 	workbench bool
+
+	// group overrides the destination group bucket for the upload.
+	// Multi-group users (e.g. admins) belong to several group buckets
+	// (su-mbhg-hostgen, su-multi-group, etc.). By default the mover routes
+	// based on the Nomad token's primary namespace. --group selects a
+	// different bucket: e.g. --group mbhg-hostgen uploads to su-mbhg-hostgen.
+	// The mover validates that the token's policies include the requested group.
+	group string
 }
 
 type uploadProgressContextKey struct{}
@@ -180,6 +188,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.rawMaxRate, "max-rate", "", `maximum upload throughput (e.g. 50MB/s, 10MiB/s); default is unlimited`)
 	cmd.Flags().StringArrayVar(&opts.meta, "meta", nil, `additional tus upload metadata as key=value (repeatable, e.g. --meta project=abc)`)
 	cmd.Flags().BoolVar(&opts.noResume, "no-resume", false, "ignore stored resume state and always start a fresh upload")
+	cmd.Flags().StringVar(&opts.group, "group", "", "destination group bucket for the upload (multi-group users only; e.g. --group mbhg-hostgen uploads to su-mbhg-hostgen). Defaults to the primary group derived from your token. The mover validates that your token policies include the requested group.")
 	cmd.Flags().BoolVar(&opts.status, "status", false, "show stored tus resume state for the file (does not upload)")
 	cmd.Flags().BoolVar(&opts.clear, "clear", false, "clear stored tus resume state for the file (does not upload)")
 	cmd.Flags().BoolVar(&opts.workbench, "workbench", false,
@@ -289,6 +298,15 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 	extraMeta, err := parseMetaFlags(opts.meta)
 	if err != nil {
 		return inputError("invalid --meta flag: %w", err)
+	}
+	// --group injects targetGroup into TUS metadata so the mover can route
+	// the upload to the correct group bucket (validated server-side against
+	// the token's policies). Pool users without --group get the default
+	// namespace-derived bucket; multi-group admins use --group to pick.
+	if g := strings.TrimSpace(opts.group); g != "" {
+		if _, exists := extraMeta["targetGroup"]; !exists {
+			extraMeta["targetGroup"] = g
+		}
 	}
 
 	uploaderOpts := UploaderOptions{
