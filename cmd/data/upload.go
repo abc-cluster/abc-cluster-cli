@@ -308,6 +308,19 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 			extraMeta["targetGroup"] = g
 		}
 	}
+	// uploadedBy injects the caller's identity into TUS metadata so the mover
+	// and sweep can identify the file owner directly from the tusd .info file
+	// without relying solely on the hook-payload auth headers.  Uses
+	// ctx.Auth.Whoami (the Nomad ACL token label / slot name) when available.
+	// This enriches the .info before any data transfers, so even if the hook
+	// fires with missing auth headers the routing info is already present.
+	if _, exists := extraMeta["uploadedBy"]; !exists {
+		if cfg, cfgErr := abccfg.Load(); cfgErr == nil {
+			if whoami := strings.TrimSpace(cfg.ActiveCtx().Auth.Whoami); whoami != "" {
+				extraMeta["uploadedBy"] = whoami
+			}
+		}
+	}
 
 	uploaderOpts := UploaderOptions{
 		ChunkSize: chunkSize,
