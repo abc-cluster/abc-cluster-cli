@@ -39,7 +39,7 @@ func validateSubmittedScript(ctx context.Context, stderr io.Writer, scriptBase, 
 	out, err := shellcheck.Lint(ctx, scriptBody, shellcheck.Default())
 	if errors.Is(err, shellcheck.ErrShellcheckUnavailable) {
 		if mode == "error" {
-			return fmt.Errorf("--shellcheck=error requires `shellcheck` on PATH (set ABC_SHELLCHECK_BIN to override)")
+			return fmt.Errorf("--shellcheck=error requires `shellcheck` on PATH (set ABC_BIN_SHELLCHECK to override)")
 		}
 		return nil
 	}

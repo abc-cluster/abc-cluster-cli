@@ -14,5 +14,6 @@ func NewCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newCLICmd())
+	cmd.AddCommand(newSetupBucketCmd())
 	return cmd
 }

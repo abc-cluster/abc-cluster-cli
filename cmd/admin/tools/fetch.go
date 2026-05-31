@@ -218,14 +218,14 @@ func runFetch(ctx context.Context, w io.Writer, args []string, force, dryRun boo
 // ensureEget returns the path to a working eget binary, bootstrapping it if needed.
 // eget is stored as ~/.abc/binaries/eget (host arch only; not pushed to cluster).
 func ensureEget(ctx context.Context, w io.Writer, cfg *ToolsConfig, dryRun bool) (string, error) {
-	// Prefer eget on PATH (respects ABC_EGET_BIN env as well).
+	// Prefer eget on PATH (respects ABC_BIN_EGET env as well).
 	if p, err := exec.LookPath("eget"); err == nil {
 		fmt.Fprintf(w, "[abc] eget found: %s\n", p)
 		return p, nil
 	}
-	if v := strings.TrimSpace(envvars.Get("ABC_EGET_BIN")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("ABC_BIN_EGET")); v != "" {
 		if _, err := os.Stat(v); err == nil {
-			fmt.Fprintf(w, "[abc] eget found (ABC_EGET_BIN): %s\n", v)
+			fmt.Fprintf(w, "[abc] eget found (ABC_BIN_EGET): %s\n", v)
 			return v, nil
 		}
 	}

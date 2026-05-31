@@ -9,7 +9,7 @@
 //
 //  2. [Lint] — runs the system `shellcheck` binary (if present on PATH) for the
 //     full SC* rule set. No-op when shellcheck is unavailable, since the bash
-//     parser already caught the structural issues. Use ABC_SHELLCHECK_BIN to
+//     parser already caught the structural issues. Use ABC_BIN_SHELLCHECK to
 //     override the binary location.
 //
 // Plus abc-specific pre-checks for Nomad-heredoc gotchas — see [LintNomadHeredoc].
@@ -30,10 +30,10 @@ import (
 )
 
 // ErrShellcheckUnavailable is returned by [Lint] when no `shellcheck` binary
-// is on PATH and ABC_SHELLCHECK_BIN is unset. Callers that want a hard gate
+// is on PATH and ABC_BIN_SHELLCHECK is unset. Callers that want a hard gate
 // in CI should treat this as a failure; callers in user-facing flows should
 // treat it as a soft skip.
-var ErrShellcheckUnavailable = errors.New("shellcheck binary not found on PATH (set ABC_SHELLCHECK_BIN to override)")
+var ErrShellcheckUnavailable = errors.New("shellcheck binary not found on PATH (set ABC_BIN_SHELLCHECK to override)")
 
 // Options controls a single shellcheck invocation.
 type Options struct {
@@ -84,11 +84,11 @@ func HasShellcheck() bool {
 }
 
 func resolveShellcheck() (string, error) {
-	if env := envvars.Get("ABC_SHELLCHECK_BIN"); env != "" {
+	if env := envvars.Get("ABC_BIN_SHELLCHECK"); env != "" {
 		if _, err := os.Stat(env); err == nil {
 			return env, nil
 		}
-		return "", fmt.Errorf("ABC_SHELLCHECK_BIN=%s: %w", env, ErrShellcheckUnavailable)
+		return "", fmt.Errorf("ABC_BIN_SHELLCHECK=%s: %w", env, ErrShellcheckUnavailable)
 	}
 	if bin, err := exec.LookPath("shellcheck"); err == nil {
 		return bin, nil

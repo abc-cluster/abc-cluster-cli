@@ -17,7 +17,7 @@ to install the managed binary into ~/.abc/binaries (or ABC_CLI_BINARIES_DIR). Us
 --binary-location to select a specific binary (same convention as nomad/tailscale).
 
 Environment overrides when --binary-location is unset:
-  ABC_NODE_PROBE_BIN, ABC_NODE_PROBE_BINARY, NODE_PROBE_BINARY
+  ABC_BIN_NODE_PROBE, ABC_BIN_NODE_PROBEARY, NODE_PROBE_BINARY
 
 Use optional leading "--binary-location <path>" then "--" to pass all following arguments verbatim to abc-node-probe.`,
 		Args:               cobra.ArbitraryArgs,
@@ -37,7 +37,7 @@ func runProbeCLI(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if binaryLocation == "" {
-		binaryLocation = utils.EnvOrDefault("ABC_NODE_PROBE_BIN", "ABC_NODE_PROBE_BINARY", "NODE_PROBE_BINARY")
+		binaryLocation = utils.EnvOrDefault("ABC_BIN_NODE_PROBE", "ABC_BIN_NODE_PROBEARY", "NODE_PROBE_BINARY")
 		if binaryLocation == "" {
 			if managedPath, mErr := utils.ManagedBinaryPath("abc-node-probe"); mErr == nil {
 				if info, sErr := os.Stat(managedPath); sErr == nil && !info.IsDir() {

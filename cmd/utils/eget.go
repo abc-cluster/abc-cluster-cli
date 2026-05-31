@@ -18,15 +18,15 @@ import (
 // when the eget binary is available.
 //
 // Environment:
-//   ABC_CLI_USE_EGET  unset or "auto" — use eget when on PATH (or ABC_EGET_BIN)
+//   ABC_CLI_USE_EGET  unset or "auto" — use eget when on PATH (or ABC_BIN_EGET)
 //                     "0"/"false"/"no"/"off" — never use eget
-//   ABC_EGET_BIN      path to eget executable (defaults to PATH lookup)
+//   ABC_BIN_EGET      path to eget executable (defaults to PATH lookup)
 //
 // GitHub auth for eget matches eget's expectations: EGET_GITHUB_TOKEN or
 // GITHUB_TOKEN (abc already reads these in getGitHubToken).
 
 func egetExecutable() string {
-	if v := strings.TrimSpace(envvars.Get("ABC_EGET_BIN")); v != "" {
+	if v := strings.TrimSpace(envvars.Get("ABC_BIN_EGET")); v != "" {
 		return v
 	}
 	p, err := exec.LookPath("eget")
