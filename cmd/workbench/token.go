@@ -246,13 +246,17 @@ Useful when you saved a token value previously and want the URL again.`,
 			out := cmd.OutOrStdout()
 
 			switch clientType {
-			case "vscode", "positron":
+			case "vscode":
 				fmt.Fprintf(out, "JupyterHub server: %s\n", hubRoot)
 				fmt.Fprintf(out, "Username:          %s\n", client.User)
 				fmt.Fprintf(out, "Token:             %s\n", tokenValue)
 				fmt.Fprintln(out)
 				for _, line := range hubProviderGuidance(hubRoot, client.User) {
 					fmt.Fprintln(out, "  "+line)
+				}
+			case "positron":
+				for _, line := range positronGuidance(hubRoot) {
+					fmt.Fprintln(out, line)
 				}
 			case "jupyter-desktop", "raw", "":
 				fmt.Fprintln(out, connectURL(hub, client.User, tokenValue))
@@ -301,24 +305,40 @@ terminal it uses the in-session admin token instead — same result.)
 
 Clients:
   vscode          (default) VS Code — "Existing JupyterHub Server" provider
-  positron        Positron — "Existing JupyterHub Server" provider
+  positron        Positron — prints why a token won't work + the alternatives
   jupyter-desktop JupyterLab Desktop — File → New Connection → URL
   raw             print the bare single-user-server URL only (for scripts)
 
-VS Code / Positron connect via the JupyterHub provider: you paste the hub-root
-URL, your username, and the token as the password. (A JupyterHub token only
-authenticates as a header, so the plain "Existing Jupyter Server" provider —
-which puts ?token= in the URL — does not work.)
+VS Code connects via the JupyterHub provider: paste the hub-root URL, your
+username, and the token as the password. (A JupyterHub token authenticates only
+as a header, so the plain "Existing Jupyter Server" provider — which puts
+?token= in the URL — does not work.)
+
+Positron desktop has no remote-Jupyter provider (posit-dev/positron#8300), so a
+token can't be used there; --client positron explains the alternatives (VS Code,
+or browser Positron via jupyter-positron-server in the hub) without minting one.
 
 Examples:
   abc workbench connect
-  abc workbench connect --client positron
-  abc workbench connect --project my-analysis --client positron
+  abc workbench connect --client vscode
+  abc workbench connect --project my-analysis --client vscode
   abc workbench connect --check-proxy        # verify the URL actually reaches the hub`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientType = strings.ToLower(strings.TrimSpace(clientType))
 			if !isKnownClient(clientType) {
 				return fmt.Errorf("unknown --client %q (use vscode, positron, jupyter-desktop, or raw)", clientType)
+			}
+
+			// Positron desktop cannot consume a remote JupyterHub token (its
+			// notebook kernels are local / Remote-SSH interpreters only). Don't
+			// mint a token that can't be used — print the real options instead.
+			if clientType == "positron" {
+				out := cmd.OutOrStdout()
+				cfg, _ := abccfg.Load()
+				for _, line := range positronGuidance(strings.TrimRight(hubURL(cfg.ActiveCtx()), "/")) {
+					fmt.Fprintln(out, line)
+				}
+				return nil
 			}
 
 			dur, err := time.ParseDuration(expires)
@@ -499,8 +519,32 @@ func connectURLForClient(hub, slot, token, project, clientType string) string {
 // single-user server rejects with 403. The JupyterHub provider sends the token
 // as a header throughout — version probe, auth, spawn, and kernel connection —
 // so it is the only path that works for a JupyterHub-fronted workbench.
+//
+// Positron is deliberately NOT here: Positron desktop has no remote-Jupyter
+// provider (posit-dev/positron#8300), so a token can't be used. `--client
+// positron` short-circuits to positronGuidance() before minting.
 func usesHubProvider(clientType string) bool {
-	return clientType == "vscode" || clientType == "positron"
+	return clientType == "vscode"
+}
+
+// positronGuidance explains why Positron desktop can't use a workbench token and
+// what to do instead. Positron's notebook kernels are local / Remote-SSH
+// interpreters only — there is no "connect to a remote Jupyter server" provider
+// (posit-dev/positron#8300).
+func positronGuidance(hubRoot string) []string {
+	return []string{
+		"Positron desktop can't connect to the workbench with a token — its",
+		"notebook kernels are local (or Remote-SSH) interpreters only, with no",
+		"remote-Jupyter provider (posit-dev/positron#8300). Two options:",
+		"",
+		"  • Desktop editor today — use VS Code instead:",
+		"      abc workbench connect --client vscode",
+		"",
+		"  • Positron in the browser — launch it from the workbench (JupyterHub)",
+		"    launcher (requires jupyter-positron-server on the workbench):",
+		"      abc portal open workbench      then pick Positron from the launcher",
+		"      (" + hubRoot + ")",
+	}
 }
 
 // hubProviderGuidance returns the paste instructions for the "Existing
