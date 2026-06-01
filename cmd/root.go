@@ -27,6 +27,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/project"
 	reportcmd "github.com/abc-cluster/abc-cluster-cli/cmd/report"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
+	selfupdatecmd "github.com/abc-cluster/abc-cluster-cli/cmd/selfupdate"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	watercmd "github.com/abc-cluster/abc-cluster-cli/cmd/water"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/workbench"
@@ -107,7 +108,10 @@ from your terminal.`,
 		if utils.ExpFromCmd(cmd) && !quiet {
 			fmt.Fprintln(os.Stderr, "[abc exp] Experimental mode active — unstable features may change.")
 		}
-		maybePrintCLIUpdateNotice(os.Stderr, version, quiet)
+		// Don't nag about updates when the user is already running the updater.
+		if cmd.Name() != "self-update" {
+			maybePrintCLIUpdateNotice(os.Stderr, version, quiet)
+		}
 		return nil
 	},
 }
@@ -265,6 +269,7 @@ func init() {
 	rootCmd.AddCommand(reportcmd.NewCmd())
 	rootCmd.AddCommand(emissionscmd.NewCmd())
 	rootCmd.AddCommand(watercmd.NewCmd())
+	rootCmd.AddCommand(selfupdatecmd.NewCmd())
 	rootCmd.AddCommand(localdbcmd.NewCmd())
 	// `abc capability` typo redirect — users learning the codename surface
 	// from docs sometimes type the singular form. Forward to the canonical

@@ -90,6 +90,7 @@ Examples:
   abc water
   abc water --by=project --since=2026-01-01 --unit=m3
   abc water --by=namespace --output=csv > q1-2026-water.csv`,
+		Args: cobra.NoArgs, // flag-only; reject stray verbs like `water report`
 		RunE: runWater,
 	}
 

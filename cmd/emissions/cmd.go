@@ -47,6 +47,7 @@ Examples:
 
 Override rate card for your facility:
   abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950`,
+		Args: cobra.NoArgs, // flag-only; reject stray verbs like `emissions report`
 		RunE: runEmissions,
 	}
 

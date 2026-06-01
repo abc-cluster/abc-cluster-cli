@@ -21,8 +21,8 @@ func TestMaybePrintCLIUpdateNotice_PrintsWhenNewerReleaseExists(t *testing.T) {
 	if !strings.Contains(out, "update available: v1.5.0 (current v1.4.0)") {
 		t.Fatalf("expected update notice, got: %q", out)
 	}
-	if !strings.Contains(out, "--version v1.5.0") {
-		t.Fatalf("expected install script command with version, got: %q", out)
+	if !strings.Contains(out, "abc self-update") {
+		t.Fatalf("expected self-update upgrade hint, got: %q", out)
 	}
 }
 

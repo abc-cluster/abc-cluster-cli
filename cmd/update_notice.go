@@ -17,7 +17,6 @@ const (
 	cliRepoOwner          = "abc-cluster"
 	cliRepoName           = "abc-cluster-cli"
 	updateCheckTimeout    = 1200 * time.Millisecond
-	installScriptCmdFmt   = "curl -fsSL -H \"Accept: application/vnd.github.raw+json\" \"https://api.github.com/repos/abc-cluster/abc-cluster-cli/contents/scripts/install-abc.sh?ref=main\" | sh -s -- --version %s"
 )
 
 var fetchLatestCLITag = func(ctx context.Context) (string, error) {
@@ -56,7 +55,7 @@ func maybePrintCLIUpdateNotice(w io.Writer, currentVersion string, quiet bool) {
 	latestDisplay := ensureVPrefix(latestNorm)
 	currentDisplay := ensureVPrefix(currentNorm)
 	fmt.Fprintf(w, "[abc] update available: %s (current %s)\n", latestDisplay, currentDisplay)
-	fmt.Fprintf(w, "[abc] upgrade with:\n%s\n", fmt.Sprintf(installScriptCmdFmt, latestDisplay))
+	fmt.Fprintf(w, "[abc] upgrade with:  abc self-update\n")
 	fmt.Fprintf(w, "[abc] set %s=1 to silence this check\n", updateCheckDisableEnv)
 }
 

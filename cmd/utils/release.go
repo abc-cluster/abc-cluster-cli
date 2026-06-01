@@ -400,6 +400,84 @@ func GetLatestReleaseAssetURLForPlatform(owner, repo, binaryBase, goos, goarch s
 	return asset.DownloadURL, version, nil
 }
 
+// EnsureVPrefix returns v with a leading "v" (so "0.1.33" → "v0.1.33"); an
+// already-prefixed or empty string is returned unchanged.
+func EnsureVPrefix(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.HasPrefix(v, "v") {
+		return v
+	}
+	return "v" + v
+}
+
+// FindReleaseAssetURL returns the download URL and size (bytes) of the asset in
+// a release that matches the given platform, or an error if none matches.
+// Used by `abc self-update` to locate the binary for the running platform from
+// either the latest release or a pinned tag.
+func FindReleaseAssetURL(release *GitHubRelease, binaryBase, goos, goarch string) (string, int, error) {
+	asset := findAssetForPlatformTarget(release, binaryBase, goos, goarch)
+	if asset == nil {
+		return "", 0, fmt.Errorf("no %q asset found in release for platform %s/%s",
+			binaryBase, normalizeGOOS(goos), normalizeGOARCH(goarch))
+	}
+	return asset.DownloadURL, asset.Size, nil
+}
+
+// DownloadAssetToFile downloads url into destPath, writing first to a temp file
+// in the SAME directory (so the final os.Rename is atomic and stays on one
+// filesystem), setting mode 0755, and validating the byte count when
+// expectedSize > 0. Reuses the package's retrying HTTP client and GitHub auth.
+// Returns the temp path written; the caller renames it into place (so the
+// caller controls the final atomic swap and any privilege handling).
+func DownloadAssetToFile(ctx context.Context, url, destDir string, expectedSize int) (string, error) {
+	req, err := newGETRequest(url)
+	if err != nil {
+		return "", fmt.Errorf("building download request: %w", err)
+	}
+	req = req.WithContext(ctx)
+
+	resp, err := doRequestWithRetry(req)
+	if err != nil {
+		return "", fmt.Errorf("downloading asset: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	}
+
+	tmp, err := os.CreateTemp(destDir, ".abc-selfupdate-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("creating temp file in %s: %w", destDir, err)
+	}
+	tmpPath := tmp.Name()
+
+	n, err := io.Copy(tmp, resp.Body)
+	if err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("writing download: %w", err)
+	}
+	if expectedSize > 0 && n != int64(expectedSize) {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("size mismatch: expected %d bytes, got %d (truncated download?)", expectedSize, n)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("syncing download: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("closing download: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("making executable: %w", err)
+	}
+	return tmpPath, nil
+}
+
 func normalizeGOOS(goos string) string {
 	switch strings.ToLower(strings.TrimSpace(goos)) {
 	case "macos", "osx":
