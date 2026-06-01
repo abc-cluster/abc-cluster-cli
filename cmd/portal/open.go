@@ -63,7 +63,7 @@ func openPortal(name string, ctx config.Context, urls PortalURLs, linkOnly bool)
 	case "nomad":
 		return openNomad(ctx, urls, linkOnly)
 	case "grafana":
-		return openMagicLink(urls.Grafana, urls, ctx.NomadToken(), linkOnly)
+		return openMagicLinkPortal(urls.Grafana, "grafana", urls, ctx.NomadToken(), linkOnly)
 	case "workbench":
 		return openMagicLink(urls.Workbench, urls, ctx.NomadToken(), linkOnly)
 	case "upload":
@@ -106,8 +106,10 @@ func openNomad(ctx config.Context, urls PortalURLs, linkOnly bool) error {
 //   3. Browser visits /auth/redeem → abc-auth-svc sets session cookie (Domain=.seedling.*) → redirect to next
 
 type cliTokenRequest struct {
-	NomadToken string `json:"nomad_token"`
-	Next       string `json:"next"`
+	NomadToken    string `json:"nomad_token"`
+	Next          string `json:"next"`
+	Portal        string `json:"portal,omitempty"`
+	MinIOPassword string `json:"minio_password,omitempty"`
 }
 
 type cliTokenResponse struct {
@@ -127,10 +129,12 @@ func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomad
 	authBase := urls.AuthSvcBase() // e.g. https://workbench.seedling.abc-cluster.cloud
 	endpoint := authBase + "/auth/cli-token"
 
-	reqBody, _ := json.Marshal(cliTokenRequest{
+	req := cliTokenRequest{
 		NomadToken: nomadToken,
 		Next:       targetURL,
-	})
+		Portal:     portal,
+	}
+	reqBody, _ := json.Marshal(req)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(reqBody))
@@ -154,14 +158,21 @@ func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomad
 		return fmt.Errorf("unexpected auth service response: %s", string(body))
 	}
 
-	// Construct the redeem URL from the known authBase — do NOT use a URL
-	// returned by the server which would reflect the internal Tailscale host.
+	// Construct the redeem URL from the known portal URLs.
+	// Each portal's Caddy block exposes /auth/* → abc-auth-svc so the session
+	// cookie is scoped correctly for that subdomain.
 	var redeemURL string
-	if portal == "minio" {
-		// MinIO SSO uses a dedicated endpoint served from the minio subdomain
-		// so the session cookie is set for minio.seedling.abc-cluster.cloud
+	switch portal {
+	case "minio":
+		// MinIO SSO: /auth/minio-login on minio.seedling.* sets the MinIO
+		// console token cookie for the correct domain.
 		redeemURL = urls.MinIO + "/auth/minio-login?code=" + tok.Code
-	} else {
+	case "grafana":
+		// Grafana Caddy (:9082) exposes /auth/redeem so the link shows
+		// grafana.seedling.* (not workbench.seedling.*).
+		redeemURL = urls.Grafana + "/auth/redeem?code=" + tok.Code
+	default:
+		// workbench / upload: redeem via workbench Caddy which serves /auth/*
 		redeemURL = authBase + "/auth/redeem?code=" + tok.Code
 	}
 
@@ -201,11 +212,72 @@ func openMinIOSSO(ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	}
 
 	minioUser := minioAccessKey(ctx)
+	minioPw := minioPassword(ctx)
 	if !linkOnly {
 		fmt.Fprintf(os.Stderr, "[abc] opening MinIO console for %s (SSO via abc-auth-svc)\n", minioUser)
 		fmt.Fprintf(os.Stderr, "  %s\n", urls.MinIO)
 	}
-	return openMagicLinkPortal(urls.MinIO, "minio", urls, tok, linkOnly)
+	return openMagicLinkPortalWithMinio(urls.MinIO, urls, tok, minioPw, linkOnly)
+}
+
+// openMagicLinkPortalWithMinio is like openMagicLinkPortal but sends the
+// MinIO password explicitly for portal=minio SSO.
+func openMagicLinkPortalWithMinio(targetURL string, urls PortalURLs, nomadToken, minioPw string, linkOnly bool) error {
+	if nomadToken == "" {
+		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
+	}
+	authBase := urls.AuthSvcBase()
+	endpoint := authBase + "/auth/cli-token"
+
+	req := cliTokenRequest{
+		NomadToken:    nomadToken,
+		Next:          targetURL,
+		Portal:        "minio",
+		MinIOPassword: minioPw,
+	}
+	reqBody, _ := json.Marshal(req)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("could not reach auth service: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("token rejected by auth service")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("auth service returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tok cliTokenResponse
+	if err := json.Unmarshal(body, &tok); err != nil || tok.Code == "" {
+		return fmt.Errorf("unexpected auth service response: %s", string(body))
+	}
+
+	redeemURL := urls.MinIO + "/auth/minio-login?code=" + tok.Code
+	return openBrowser(redeemURL, linkOnly)
+}
+
+// minioPassword returns the MinIO console password from the active context.
+// For pool users this equals the Nomad token SecretID; for admin users it is
+// stored separately under admin.services.minio.cred_source.local["password"].
+func minioPassword(ctx config.Context) string {
+	if ctx.Admin.Services.MinIO != nil {
+		svc := ctx.Admin.Services.MinIO
+		if svc.CredSource != nil {
+			if pw := svc.CredSource.Local["password"]; pw != "" {
+				return pw
+			}
+		}
+		if svc.Password != "" {
+			return svc.Password
+		}
+	}
+	// Pool user fallback: Nomad token = MinIO password
+	return ctx.NomadToken()
 }
 
 // minioAccessKey returns the MinIO access key (username) from the active context.
