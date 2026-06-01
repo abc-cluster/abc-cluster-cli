@@ -74,6 +74,47 @@ JupyterLab File menu → **Stop My Server**.
 
 Stopping does not delete any files.
 
+### Connecting an external editor
+
+The browser JupyterLab needs no token — your cluster login handles it. If you
+prefer a desktop editor, mint a connection token from your laptop:
+
+```bash
+abc workbench connect --client vscode
+```
+
+This prints a **JupyterHub server URL**, your **username**, and a **token**
+(valid 7 days by default). In **VS Code**:
+
+1. Command Palette → **Jupyter: Specify Jupyter Server for Connections** →
+   **Existing JupyterHub Server** (the one *with* "Hub").
+2. **Server URL:** the hub root (e.g. `https://workbench.seedling.abc-cluster.cloud`)
+   — not a `/user/...` URL.
+3. **Username:** as printed.
+4. **Password:** paste the **token** (an API token is accepted in the password field).
+
+Then pick the JupyterHub server in the notebook's kernel selector.
+
+:::note Why the "Hub" provider, and not "Existing Jupyter Server"
+A JupyterHub token only authenticates as an HTTP header. VS Code's plain
+"Existing Jupyter Server" provider puts the token in the URL query string, which
+JupyterHub rejects — so it cannot connect. The "Existing **JupyterHub** Server"
+provider sends the token as a header throughout and is the only one that works.
+:::
+
+**Positron desktop** has no remote-Jupyter provider yet
+([posit-dev/positron#8300](https://github.com/posit-dev/positron/issues/8300)),
+so a token cannot be used there. Use VS Code, the browser, or — once your
+operator installs it — **Positron Server from the JupyterHub launcher** (browser
+Positron that needs no token, via
+[`jupyter-positron-server`](https://github.com/posit-dev/jupyter-positron-server)).
+
+Revoke a token when you're done (from a workbench terminal):
+
+```bash
+abc workbench token revoke <token-name>
+```
+
 ---
 
 ## For operators
