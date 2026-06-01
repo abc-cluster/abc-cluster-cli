@@ -53,6 +53,34 @@ After install, verify:
 abc --version
 ```
 
+### Updating
+
+Once `abc` is installed, upgrade in place — no need to re-run the install script:
+
+```bash
+abc self-update            # upgrade to the latest release
+abc self-update --check    # report current vs latest, download nothing
+abc self-update --version v1.2.3   # install a specific tag (up- or downgrade)
+abc self-update --yes      # skip the confirmation prompt
+```
+
+`self-update` detects your platform, downloads the matching release binary, and
+swaps the running `abc` atomically. If `abc` lives in a root-owned directory
+(e.g. `/usr/local/bin`), the final move is retried with `sudo` when you run it
+interactively, or it prints the exact `sudo mv` command for you to run.
+
+When a newer version exists, `abc` prints a one-line reminder on stderr:
+
+```
+[abc] update available: v1.2.4 (current v1.2.3)
+[abc] upgrade with:  abc self-update
+```
+
+Silence that check with `export ABC_CLI_DISABLE_UPDATE_CHECK=1`.
+
+> On Windows, a running `.exe` can't replace itself; `abc self-update` prints the
+> download URL to overwrite manually.
+
 ### Other methods
 
 #### `go install`

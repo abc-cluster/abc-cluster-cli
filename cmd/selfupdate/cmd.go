@@ -115,14 +115,12 @@ func runSelfUpdate(cmd *cobra.Command, pinVersion string, checkOnly, assumeYes b
 	}
 	targetTag := utils.EnsureVPrefix(strings.TrimSpace(release.TagName))
 
-	// Compare. With an explicit --version we always proceed (allows downgrade /
-	// re-pin); without it we skip when the current release is already >= target.
-	if pinVersion == "" && currentTag != "" && semver.IsValid(currentTag) && semver.IsValid(targetTag) {
-		if semver.Compare(currentTag, targetTag) >= 0 {
-			fmt.Fprintf(out, "[abc] already up to date (current %s, latest %s)\n",
-				currentTag, targetTag)
-			return nil
-		}
+	// Decide whether to proceed. With an explicit --version we always proceed
+	// (allows downgrade / re-pin); without it we skip when already >= target.
+	if alreadyCurrent(currentTag, targetTag, pinVersion != "") {
+		fmt.Fprintf(out, "[abc] already up to date (current %s, latest %s)\n",
+			currentTag, targetTag)
+		return nil
 	}
 
 	fmt.Fprintf(out, "[abc] current: %s\n", displayVersion(currentRaw, currentTag))
@@ -259,6 +257,21 @@ func baseSemverTag(raw string) string {
 		return semver.Canonical(v)
 	}
 	return ""
+}
+
+// alreadyCurrent reports whether self-update should skip the download because
+// the running version is already at or ahead of the target. A pinned --version
+// always proceeds (returns false) so users can re-pin or downgrade. A dev build
+// with no recognisable tag (currentTag == "") never short-circuits — it should
+// update to the released target. Invalid tags fall through to proceeding.
+func alreadyCurrent(currentTag, targetTag string, pinned bool) bool {
+	if pinned {
+		return false
+	}
+	if currentTag == "" || !semver.IsValid(currentTag) || !semver.IsValid(targetTag) {
+		return false
+	}
+	return semver.Compare(currentTag, targetTag) >= 0
 }
 
 func displayVersion(raw, tag string) string {
