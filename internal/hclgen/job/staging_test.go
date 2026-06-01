@@ -25,9 +25,9 @@ func TestGenerate_StagingEnabled(t *testing.T) {
 		Name: "penguins-rf", Driver: "exec", Nodes: 1, Priority: 50,
 		Staging: StagingSpec{
 			Enabled:          true,
-			StageInManifest:  "cp s3://b/common/penguins.csv /alloc/data/r1/analysis/data/external/penguins.csv\n",
-			StageOutManifest: "cp /alloc/data/r1/analysis/data/06_models/rf.pkl s3://b/user/s/p/jobs/r1/outputs/analysis/data/06_models/rf.pkl\n",
-			DestRoot:         "${NOMAD_ALLOC_DIR}/data/r1",
+			StageInManifest:  "cp s3://b/common/penguins.csv analysis/data/external/penguins.csv\n",
+			StageOutManifest: "cp analysis/data/06_models/rf.pkl s3://b/user/s/p/jobs/r1/outputs/analysis/data/06_models/rf.pkl\n",
+			DestRoot:         "$NOMAD_ALLOC_DIR/data/r1",
 			S5cmdPath:        "/nxf-work/bin/s5cmd",
 			HostVolumeName:   "nf-work",
 			HostVolumeSource: "/opt/abc-seedling/nf-work",
@@ -73,9 +73,11 @@ func TestGenerate_StagingEnabled(t *testing.T) {
 		`source = "/opt/abc-seedling/nf-work"`,
 		`volume_mount {`,
 		`destination = "/nxf-work"`,
-		`command = "/nxf-work/bin/s5cmd"`,
-		`args = ["run", "local/stage-in.txt"]`,
-		`args = ["run", "local/stage-out.txt"]`,
+		`command = "/bin/sh"`,
+		`/nxf-work/bin/s5cmd run`,         // s5cmd invoked inside the sh wrapper
+		`$NOMAD_ALLOC_DIR/data/r1`,        // cd into the alloc-shared DestRoot
+		`$NOMAD_TASK_DIR/local/stage-in.txt`,
+		`$NOMAD_TASK_DIR/local/stage-out.txt`,
 		`destination = "secrets/s5cmd.env"`, // creds injected as env
 		`destination = "local/stage-in.txt"`,
 		`destination = "local/stage-out.txt"`,

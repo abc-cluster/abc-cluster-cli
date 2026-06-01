@@ -112,6 +112,21 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		})
 	}
 
+	var stagingSpec jobhcl.StagingSpec
+	if spec.StageEnabled {
+		stagingSpec = jobhcl.StagingSpec{
+			Enabled:          true,
+			StageInManifest:  spec.StageInManifest,
+			StageOutManifest: spec.StageOutManifest,
+			DestRoot:         spec.StageDestRoot,
+			S5cmdPath:        spec.StageS5cmdPath,
+			HostVolumeName:   spec.StageHostVolumeName,
+			HostVolumeSource: spec.StageHostVolumeSource,
+			HostVolumeMount:  spec.StageHostVolumeMount,
+			Env:              spec.StageEnv,
+		}
+	}
+
 	hclSpec := jobhcl.Spec{
 		Name:                spec.Name,
 		Namespace:           spec.Namespace,
@@ -176,6 +191,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		Artifacts:           artifacts,
 		ExtraTemplates:      extraTemplates,
 		Wave:                waveSpec,
+		Staging:             stagingSpec,
 	}
 	return jobhcl.Generate(hclSpec, scriptName, scriptContent)
 }

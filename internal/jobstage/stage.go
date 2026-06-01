@@ -96,10 +96,17 @@ type StagedOutput struct {
 }
 
 // Plan is the full staging plan for one job run.
+//
+// Manifests use paths RELATIVE to the staged mirror root. The stage task cd's
+// into DestRoot (the alloc-shared dir, e.g. "$NOMAD_ALLOC_DIR/data/<run>",
+// resolved by the shell at runtime) before running s5cmd, so the relative
+// local paths resolve there. DestRoot is therefore NOT embedded in the manifest
+// (its absolute alloc path is unknown at generation time) — it is the task CWD,
+// passed to the HCL emitter.
 type Plan struct {
 	ProjectRoot string
 	RunPrefix   string // s3://<bucket>/user/<slot>/<proj>/jobs/<run>
-	DestRoot    string // node-local mirror root, e.g. /local/<run>
+	DestRoot    string // alloc-shared mirror root the stage tasks cd into (shell-expanded)
 	Inputs      []StagedInput
 	Outputs     []StagedOutput
 }
@@ -177,8 +184,8 @@ func (p Plan) StageInManifest() string {
 		if in.Kind == KindLocalOnly {
 			src = p.RunPrefix + "/inputs/" + in.RelPath
 		}
-		dst := p.DestRoot + "/" + in.RelPath
-		lines = append(lines, fmt.Sprintf("cp %s %s", src, dst))
+		// Destination is RELATIVE to the staged mirror (DestRoot, the task CWD).
+		lines = append(lines, fmt.Sprintf("cp %s %s", src, in.RelPath))
 	}
 	sort.Strings(lines)
 	return header("stage-in") + strings.Join(lines, "\n") + "\n"
@@ -192,11 +199,12 @@ func (p Plan) StageOutManifest() string {
 	lines := make([]string, 0, len(p.Outputs))
 	for _, o := range p.Outputs {
 		rel := o.RelPath
-		src := p.DestRoot + "/" + rel
+		// Source is RELATIVE to the staged mirror (DestRoot, the task CWD).
+		src := rel
 		dst := p.RunPrefix + "/outputs/" + rel
 		if strings.HasSuffix(rel, "/") {
 			// directory: recursive upload preserving structure
-			src = p.DestRoot + "/" + strings.TrimSuffix(rel, "/") + "/*"
+			src = strings.TrimSuffix(rel, "/") + "/*"
 		}
 		lines = append(lines, fmt.Sprintf("cp %s %s", src, dst))
 	}

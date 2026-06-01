@@ -131,21 +131,22 @@ func TestManifestsAndUploads(t *testing.T) {
 	}
 
 	in := p.StageInManifest()
-	// local-only fetched from per-run inputs prefix; preserves rel tree under DestRoot.
-	if !strings.Contains(in, "cp s3://su-mbhg-hostgen/user/calm_dassie/penguins/jobs/r123/inputs/analysis/data/02_intermediate/clean.parquet /local/r123/analysis/data/02_intermediate/clean.parquet") {
+	// local-only fetched from per-run inputs prefix → RELATIVE dest (CWD = DestRoot).
+	if !strings.Contains(in, "cp s3://su-mbhg-hostgen/user/calm_dassie/penguins/jobs/r123/inputs/analysis/data/02_intermediate/clean.parquet analysis/data/02_intermediate/clean.parquet") {
 		t.Errorf("stage-in missing local-only fetch:\n%s", in)
 	}
-	// common fetched from its existing bucket URI.
-	if !strings.Contains(in, "cp s3://su-mbhg-hostgen/common/datasets/palmerpenguins/penguins.csv /local/r123/analysis/data/external/penguins.csv") {
+	// common fetched from its existing bucket URI → RELATIVE dest.
+	if !strings.Contains(in, "cp s3://su-mbhg-hostgen/common/datasets/palmerpenguins/penguins.csv analysis/data/external/penguins.csv") {
 		t.Errorf("stage-in missing common fetch:\n%s", in)
 	}
 
 	out := p.StageOutManifest()
-	if !strings.Contains(out, "cp /local/r123/analysis/data/06_models/rf.pkl s3://su-mbhg-hostgen/user/calm_dassie/penguins/jobs/r123/outputs/analysis/data/06_models/rf.pkl") {
+	// RELATIVE source (CWD = DestRoot) → per-run outputs prefix.
+	if !strings.Contains(out, "cp analysis/data/06_models/rf.pkl s3://su-mbhg-hostgen/user/calm_dassie/penguins/jobs/r123/outputs/analysis/data/06_models/rf.pkl") {
 		t.Errorf("stage-out missing file upload:\n%s", out)
 	}
-	// directory output → recursive glob.
-	if !strings.Contains(out, "cp /local/r123/analysis/data/07_model_output/* s3://su-mbhg-hostgen/user/calm_dassie/penguins/jobs/r123/outputs/analysis/data/07_model_output/") {
+	// directory output → recursive glob (relative source).
+	if !strings.Contains(out, "cp analysis/data/07_model_output/* s3://su-mbhg-hostgen/user/calm_dassie/penguins/jobs/r123/outputs/analysis/data/07_model_output/") {
 		t.Errorf("stage-out missing dir upload:\n%s", out)
 	}
 

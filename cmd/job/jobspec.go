@@ -163,6 +163,20 @@ type jobSpec struct {
 	// from tools.toml. Resolved at submit time by resolveWaveInjectMode.
 	WaveInjectTools []string
 
+	// ── Data-staging fields (spec abc-job-data-staging-and-run-tags Part A) ───
+	// Populated by resolveStaging from the --in/--out flags + the jobstage Plan.
+	// When StageEnabled, the HCL generator emits prestart stage-in + poststop
+	// stage-out s5cmd tasks (see internal/hclgen/job.StagingSpec).
+	StageEnabled          bool
+	StageInManifest       string
+	StageOutManifest      string
+	StageDestRoot         string // alloc-shared CWD, e.g. "$NOMAD_ALLOC_DIR/data/<run>"
+	StageS5cmdPath        string
+	StageHostVolumeName   string
+	StageHostVolumeSource string
+	StageHostVolumeMount  string
+	StageEnv              map[string]string
+
 	// ── Debug / interactive directives ───────────────────────────────────────
 	// DebugSleepSecs injects a `sleep N` at the start of the job script so the
 	// user can exec into the running allocation to inspect state or attach a

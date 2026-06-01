@@ -21,6 +21,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
+	"github.com/abc-cluster/abc-cluster-cli/internal/jobstage"
 	"github.com/abc-cluster/abc-cluster-cli/internal/jurist"
 	"github.com/abc-cluster/abc-cluster-cli/internal/runner"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
@@ -189,6 +190,13 @@ EXAMPLES
 	cmd.Flags().Bool("dry-run", false, "Plan job server-side without submitting")
 	cmd.Flags().Bool("watch", false, "Stream logs after submission")
 	cmd.Flags().Duration("watch-timeout", 0, "Timeout for --watch log streaming (0 = no timeout)")
+
+	// Data staging (spec abc-job-data-staging-and-run-tags Part A). Opt-in:
+	// supplying --in or --out turns a plain `abc job run <script>` into a staged
+	// run — inputs are staged onto the node before the script and outputs staged
+	// back after. Paths are relative to the project root (PROJECT_ROOT.txt / .git).
+	cmd.Flags().StringArray("in", nil, "Stage this input onto the node before the run (repeatable; relative to project root, or an s3:// URI). Default in staging mode: data/.")
+	cmd.Flags().StringArray("out", nil, "Stage this output off the node after the run (repeatable; relative to project root). Required when --in is used.")
 	cmd.Flags().Bool("notify", false, "Print ntfy subscription URL after submit (requires capabilities.notifications)")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
 
@@ -647,6 +655,83 @@ func detectJobFormat(path string) string {
 	return "shell"
 }
 
+// commonMountFromEnv reads the optional read-only common-mount mapping for
+// staging from env (ABC_STAGE_COMMON_PATH/BUCKET/PREFIX). Empty disables
+// common detection (symlinks then stage as local uploads — still correct).
+// TODO(spec step 2): source this from the workbench service config instead.
+func commonMountFromEnv() jobstage.CommonMount {
+	return jobstage.CommonMount{
+		Path:   os.Getenv("ABC_STAGE_COMMON_PATH"),
+		Bucket: os.Getenv("ABC_STAGE_COMMON_BUCKET"),
+		Prefix: os.Getenv("ABC_STAGE_COMMON_PREFIX"),
+	}
+}
+
+// resolveStaging wires --in/--out into the spec's staging fields (spec
+// abc-job-data-staging-and-run-tags Part A). Opt-in: no --in/--out → returns
+// (nil,nil) and a plain `abc job run` is unchanged. It finds the project root,
+// classifies inputs, builds the jobstage.Plan, stamps the generated s5cmd
+// manifests + alloc-shared CWD onto spec, and sets spec.ChDir so the main task
+// runs in the staged mirror. Returns the plan for the submit path (upload of
+// local-only inputs + pull-back of outputs — completed against the cluster).
+func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec) (*jobstage.Plan, error) {
+	ins, _ := cmd.Flags().GetStringArray("in")
+	outs, _ := cmd.Flags().GetStringArray("out")
+	if len(ins) == 0 && len(outs) == 0 {
+		return nil, nil
+	}
+	if len(outs) == 0 {
+		return nil, fmt.Errorf("--in requires --out (declare where staged outputs go, e.g. --out results/)")
+	}
+	root, err := jobstage.FindProjectRoot(filepath.Dir(scriptPath))
+	if err != nil {
+		return nil, fmt.Errorf("data staging: %w", err)
+	}
+	if len(ins) == 0 {
+		ins = []string{filepath.Join(root, "data")} // convention default within staging mode
+	}
+	slot := utils.ActiveWhoamiSlug()
+	if slot == "" {
+		return nil, fmt.Errorf("data staging: cannot resolve slot — run `abc auth whoami`")
+	}
+	bucket := spec.Namespace
+	if bucket == "" {
+		return nil, fmt.Errorf("data staging: no bucket/namespace resolved for this run")
+	}
+	if runID == "" {
+		runID = "run"
+	}
+	plan := &jobstage.Plan{
+		ProjectRoot: root,
+		RunPrefix:   fmt.Sprintf("s3://%s/user/%s/%s/jobs/%s", bucket, slot, filepath.Base(root), runID),
+		DestRoot:    "$NOMAD_ALLOC_DIR/data/" + runID,
+	}
+	common := commonMountFromEnv()
+	for _, in := range ins {
+		si, err := jobstage.ClassifyInput(in, root, bucket, "user/"+slot, common)
+		if err != nil {
+			return nil, fmt.Errorf("data staging input %q: %w", in, err)
+		}
+		plan.Inputs = append(plan.Inputs, si)
+	}
+	for _, o := range outs {
+		plan.Outputs = append(plan.Outputs, jobstage.StagedOutput{RelPath: o})
+	}
+
+	spec.StageEnabled = true
+	spec.StageInManifest = plan.StageInManifest()
+	spec.StageOutManifest = plan.StageOutManifest()
+	spec.StageDestRoot = plan.DestRoot
+	spec.StageS5cmdPath = "/nxf-work/bin/s5cmd"
+	spec.StageHostVolumeName = "nf-work"
+	spec.StageHostVolumeSource = "/opt/abc-seedling/nf-work"
+	spec.StageHostVolumeMount = "/nxf-work"
+	// spec.StageEnv (MinIO creds + S3 endpoint + private-CA) is injected by the
+	// submit path against the cluster; empty here is fine for HCL emission.
+	spec.ChDir = plan.DestRoot // main task work_dir = staged mirror (A6)
+	return plan, nil
+}
+
 func runJob(cmd *cobra.Command, args []string) error {
 	scriptPath := args[0]
 	runID := autoAttachJobRun(cmd, scriptPath)
@@ -790,6 +875,23 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 	if err := resolveWaveLocalMode(spec); err != nil {
 		return err
+	}
+
+	// Data staging (spec abc-job-data-staging-and-run-tags Part A): opt-in via
+	// --in/--out. Stamps the s5cmd stage-in/stage-out manifests + alloc-shared
+	// CWD onto spec so the HCL generator emits the prestart/poststop tasks.
+	stagePlan, err := resolveStaging(cmd, scriptPath, runID, spec)
+	if err != nil {
+		return err
+	}
+	if stagePlan != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"[abc] staging: %d input(s) (%d local upload), %d output(s) → %s\n",
+			len(stagePlan.Inputs), len(stagePlan.LocalUploads()), len(stagePlan.Outputs), stagePlan.RunPrefix)
+		// TODO(cluster session, spec steps 4 & 8): before submit, `abc data push`
+		// stagePlan.LocalUploads(); after runner.Watch, pull RunPrefix/outputs/
+		// back to --out destinations and push stagePlan.RunManifest(...) →
+		// RunPrefix/run-manifest.json. Requires a live alloc to verify.
 	}
 
 	var scriptBody string

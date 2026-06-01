@@ -878,12 +878,16 @@ func appendStageTask(groupBody *hclwrite.Body, name, hook, manifest, manifestFil
 	mTmpl.SetAttributeValue("change_mode", cty.StringVal("noop"))
 
 	cfgBody := taskBody.AppendNewBlock("config", nil).Body()
-	cfgBody.SetAttributeValue("command", cty.StringVal(s.S5cmdPath))
-	// Relative "local/<file>" resolves against the exec task's working directory
-	// (same convention the wave prestart task uses), avoiding HCL ${...} escaping.
+	// Wrap s5cmd in a shell that creates + cd's into the alloc-shared DestRoot
+	// (shell-expands $NOMAD_ALLOC_DIR at runtime; the manifest's local paths are
+	// relative to it) then runs the manifest from the task dir. Bare $NOMAD_* (no
+	// braces) avoids hclwrite's ${...} escaping and is expanded by /bin/sh.
+	cfgBody.SetAttributeValue("command", cty.StringVal("/bin/sh"))
+	shCmd := fmt.Sprintf(`mkdir -p "%s" && cd "%s" && %s run "$NOMAD_TASK_DIR/local/%s"`,
+		s.DestRoot, s.DestRoot, s.S5cmdPath, manifestFile)
 	cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
-		cty.StringVal("run"),
-		cty.StringVal("local/" + manifestFile),
+		cty.StringVal("-c"),
+		cty.StringVal(shCmd),
 	}))
 
 	resBody := taskBody.AppendNewBlock("resources", nil).Body()
