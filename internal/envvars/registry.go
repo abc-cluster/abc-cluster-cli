@@ -420,6 +420,25 @@ var Registry = []Entry{
 		Purpose: "override path to the mcli (MinIO Client) binary; ABC_BIN_MC is also checked as fallback",
 	},
 
+	// ── JupyterHub env (injected by SystemdSpawner into the slot's
+	// singleuser environment; read by `abc workbench token …`) ─────────
+	{
+		Name:    "JUPYTERHUB_API_TOKEN",
+		Bucket:  BucketABCComponent,
+		Secret:  true,
+		Purpose: "JupyterHub user token for the spawned singleuser server; injected by SystemdSpawner. `abc workbench token` uses this to call the hub user-tokens API.",
+	},
+	{
+		Name:    "JUPYTERHUB_API_URL",
+		Bucket:  BucketABCComponent,
+		Purpose: "JupyterHub REST API base URL (e.g. http://127.0.0.1:15001/hub/api); injected by SystemdSpawner inside the slot.",
+	},
+	{
+		Name:    "JUPYTERHUB_USER",
+		Bucket:  BucketABCComponent,
+		Purpose: "JupyterHub username for the active singleuser server (e.g. slot-calm_dassie); injected by SystemdSpawner. Used to compose connect URLs.",
+	},
+
 	// ── ABC COMPONENT (capability / upload / crypt / node) ──────────────
 
 	{

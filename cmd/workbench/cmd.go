@@ -37,5 +37,7 @@ reconnect to the same URL. Use 'abc workbench stop' to release resources.
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newURLCmd())
 	cmd.AddCommand(newLogsCmd())
+	cmd.AddCommand(newTokenCmd())   // token create/list/revoke/url
+	cmd.AddCommand(newConnectCmd()) // porcelain: token + formatted URL
 	return cmd
 }
