@@ -87,9 +87,15 @@ Common workflows:
   Show disk usage:
     abc data disk-usage s3://su-mbhg-hostgen/user/calm-dassie/
 
+Deletion (three tiers, increasing finality):
+  remove (rm)   soft delete to trash/ — reversible (abc data trash restore)
+  delete (del)  permanent, current version — with confirmation
+  purge         permanent, ALL versions — type 'purge' to confirm
+  trash         list / restore / empty your soft-deleted objects
+
 Plumbing commands (short aliases accepted):
-  list (ls)  remove (rm, delete)  sync  cat  pipe
-  disk-usage (du)  make-bucket (mb)  remove-bucket (rb)  stat`,
+  list (ls)  sync  cat  pipe  disk-usage (du)
+  make-bucket (mb)  remove-bucket (rb)  stat`,
 	}
 
 	// ── Porcelain: tus upload ────────────────────────────────────────────────
@@ -104,6 +110,7 @@ Plumbing commands (short aliases accepted):
 	cmd.AddCommand(newPullCmd())                                   // MinIO → local (s5cmd)
 	cmd.AddCommand(newStageCmd())                                  // MinIO → workbench
 	cmd.AddCommand(newPresignCmd())                                // generate presigned URL
+	cmd.AddCommand(newShareCmd())                                  // intra-group: server-side copy → shared/ or common/
 
 	// ── Porcelain: accession-based acquisition ───────────────────────────────
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
@@ -112,10 +119,16 @@ Plumbing commands (short aliases accepted):
 	cmd.AddCommand(newCopyCmd(serverURL, accessToken, workspace))
 	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace))
 
+	// ── Deletion: three-tier model ─────────────────────────────────────────
+	// remove → trash (reversible); delete → permanent; purge → all versions.
+	cmd.AddCommand(newRemoveCmd()) // remove  alias: rm   (soft delete to trash)
+	cmd.AddCommand(newDeleteCmd()) // delete  alias: del  (permanent, current version)
+	cmd.AddCommand(newPurgeCmd())  // purge               (permanent, all versions)
+	cmd.AddCommand(newTrashCmd())  // trash list/restore/empty
+
 	// ── Plumbing: s5cmd / mcli wrappers ─────────────────────────────────────
 	// Canonical names are full English words; unix short forms are registered aliases.
-	cmd.AddCommand(newListCmd())         // list         aliases: ls
-	cmd.AddCommand(newRemoveCmd())       // remove       aliases: rm, delete
+	cmd.AddCommand(newListCmd())         // list         alias: ls
 	cmd.AddCommand(newSyncCmd())         // sync
 	cmd.AddCommand(newCatCmd())          // cat
 	cmd.AddCommand(newPipeCmd())         // pipe
