@@ -40,7 +40,7 @@ var allPortals = []Portal{
 		Name:    "upload",
 		Label:   "Upload",
 		Desc:    "Resumable browser upload — or use abc data upload from the CLI",
-		AuthHow: "magic-link",
+		AuthHow: "token-url",
 	},
 	{
 		Name:    "minio",

@@ -31,7 +31,7 @@ Portals and their auth methods:
   nomad      Token injected as ?token= URL param (Nomad native)
   grafana    Magic link: abc-auth-svc issues a one-time code → sets session
   workbench  Magic link (same as grafana)
-  upload     Magic link (same as grafana)
+  upload     Token injected as ?token= URL param (stored in localStorage)
   minio      MinIO SSO via abc-auth-svc; logs into console directly
 
 Use --link to print the pre-authenticated URL instead of opening the browser.
@@ -67,7 +67,7 @@ func openPortal(name string, ctx config.Context, urls PortalURLs, linkOnly bool)
 	case "workbench":
 		return openMagicLink(urls.Workbench, urls, ctx.NomadToken(), linkOnly)
 	case "upload":
-		return openMagicLink(urls.Upload, urls, ctx.NomadToken(), linkOnly)
+		return openUpload(ctx, urls, linkOnly)
 	case "minio":
 		return openMinIOSSO(ctx, urls, linkOnly)
 	default:
@@ -98,7 +98,39 @@ func openNomad(ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	return openBrowser(finalURL, linkOnly)
 }
 
-// ── magic link: workbench / grafana / upload ──────────────────────────────────
+// ── upload: token-in-URL pre-seed ─────────────────────────────────────────────
+//
+// The upload portal authenticates with a Nomad token stored in the browser's
+// localStorage (not a session cookie). The page reads ?token=<token> from the
+// URL on load, stores it, and strips it from the address bar. So `abc portal
+// open upload` simply appends the token as a query param — same pattern as
+// the Nomad UI.
+
+func openUpload(ctx config.Context, urls PortalURLs, linkOnly bool) error {
+	tok := ctx.NomadToken()
+	if tok == "" {
+		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
+	}
+	// urls.Upload is the .../files endpoint; the token pre-seed lives on the
+	// portal root, so derive the origin and append ?token=.
+	u, err := url.Parse(urls.Upload)
+	if err != nil {
+		return fmt.Errorf("invalid upload URL %q: %w", urls.Upload, err)
+	}
+	root := &url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/"}
+	q := root.Query()
+	q.Set("token", tok)
+	root.RawQuery = q.Encode()
+	finalURL := root.String()
+
+	if !linkOnly {
+		fmt.Fprintf(os.Stderr, "[abc] opening upload portal (token injected)\n")
+		fmt.Fprintf(os.Stderr, "  %s://%s\n", u.Scheme, u.Host)
+	}
+	return openBrowser(finalURL, linkOnly)
+}
+
+// ── magic link: workbench / grafana ───────────────────────────────────────────
 //
 // Flow:
 //   1. CLI POST /auth/cli-token  {nomad_token, next}  → {url: "https://.../auth/redeem?code=..."}

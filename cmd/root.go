@@ -94,6 +94,11 @@ from your terminal.`,
 
 		// ── Mode banners ──────────────────────────────────────────────────────
 		quiet, _ := cmd.Root().PersistentFlags().GetBool("quiet")
+		// Machine-readable subcommand flags (e.g. `portal open --link`) imply
+		// quiet so stdout carries only the requested value, no banners/notices.
+		if lf := cmd.Flags().Lookup("link"); lf != nil && lf.Changed {
+			quiet = true
+		}
 		if utils.CloudFromCmd(cmd) && !quiet {
 			fmt.Fprintln(os.Stderr, "[abc cloud] Infrastructure mode active — cloud gateway policy applies.")
 		} else if utils.SudoFromCmd(cmd) && !quiet {
