@@ -18,6 +18,8 @@ import (
 )
 
 func newOpenCmd() *cobra.Command {
+	var linkOnly bool
+
 	cmd := &cobra.Command{
 		Use:   "open <portal>",
 		Short: "Open a portal in the browser, pre-authenticated",
@@ -30,10 +32,10 @@ Portals and their auth methods:
   grafana    Magic link: abc-auth-svc issues a one-time code → sets session
   workbench  Magic link (same as grafana)
   upload     Magic link (same as grafana)
-  minio      URL opened + MinIO credentials printed to terminal
+  minio      MinIO SSO via abc-auth-svc; logs into console directly
 
-If the terminal has no display (e.g. SSH session without DISPLAY/WAYLAND_DISPLAY),
-the URL is printed instead of opened.`,
+Use --link to print the pre-authenticated URL instead of opening the browser.
+Useful for SSH sessions, sharing, or scripting.`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"nomad", "grafana", "workbench", "upload", "minio"},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,25 +49,27 @@ the URL is printed instead of opened.`,
 			if err != nil {
 				return err
 			}
-			return openPortal(name, ctx, urls)
+			return openPortal(name, ctx, urls, linkOnly)
 		},
 	}
+
+	cmd.Flags().BoolVar(&linkOnly, "link", false, "Print the pre-authenticated URL instead of opening the browser")
 	return cmd
 }
 
 // openPortal dispatches to the correct auth mechanism per portal.
-func openPortal(name string, ctx config.Context, urls PortalURLs) error {
+func openPortal(name string, ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	switch name {
 	case "nomad":
-		return openNomad(ctx, urls)
+		return openNomad(ctx, urls, linkOnly)
 	case "grafana":
-		return openMagicLink(urls.Grafana, urls, ctx.NomadToken())
+		return openMagicLink(urls.Grafana, urls, ctx.NomadToken(), linkOnly)
 	case "workbench":
-		return openMagicLink(urls.Workbench, urls, ctx.NomadToken())
+		return openMagicLink(urls.Workbench, urls, ctx.NomadToken(), linkOnly)
 	case "upload":
-		return openMagicLink(urls.Upload, urls, ctx.NomadToken())
+		return openMagicLink(urls.Upload, urls, ctx.NomadToken(), linkOnly)
 	case "minio":
-		return openMinIOSSO(ctx, urls)
+		return openMinIOSSO(ctx, urls, linkOnly)
 	default:
 		return fmt.Errorf("unknown portal %q — valid: nomad, grafana, workbench, upload, minio", name)
 	}
@@ -73,7 +77,7 @@ func openPortal(name string, ctx config.Context, urls PortalURLs) error {
 
 // ── nomad: token-in-URL ───────────────────────────────────────────────────────
 
-func openNomad(ctx config.Context, urls PortalURLs) error {
+func openNomad(ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	tok := ctx.NomadToken()
 	if tok == "" {
 		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
@@ -87,9 +91,11 @@ func openNomad(ctx config.Context, urls PortalURLs) error {
 	u.RawQuery = q.Encode()
 	finalURL := u.String()
 
-	fmt.Fprintf(os.Stderr, "[abc] opening Nomad UI (token injected)\n")
-	fmt.Fprintf(os.Stderr, "  %s\n", urls.Nomad)
-	return openBrowser(finalURL)
+	if !linkOnly {
+		fmt.Fprintf(os.Stderr, "[abc] opening Nomad UI (token injected)\n")
+		fmt.Fprintf(os.Stderr, "  %s\n", urls.Nomad)
+	}
+	return openBrowser(finalURL, linkOnly)
 }
 
 // ── magic link: workbench / grafana / upload ──────────────────────────────────
@@ -109,11 +115,11 @@ type cliTokenResponse struct {
 	TTL  int    `json:"ttl"`
 }
 
-func openMagicLink(targetURL string, urls PortalURLs, nomadToken string) error {
-	return openMagicLinkPortal(targetURL, "workbench", urls, nomadToken)
+func openMagicLink(targetURL string, urls PortalURLs, nomadToken string, linkOnly bool) error {
+	return openMagicLinkPortal(targetURL, "workbench", urls, nomadToken, linkOnly)
 }
 
-func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomadToken string) error {
+func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomadToken string, linkOnly bool) error {
 	if nomadToken == "" {
 		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
 	}
@@ -160,9 +166,11 @@ func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomad
 	}
 
 	portalName := portalLabelFromURL(targetURL)
-	fmt.Fprintf(os.Stderr, "[abc] opening %s (magic link, 60s TTL)\n", portalName)
-	fmt.Fprintf(os.Stderr, "  %s\n", targetURL)
-	return openBrowser(redeemURL)
+	if !linkOnly {
+		fmt.Fprintf(os.Stderr, "[abc] opening %s (magic link, 60s TTL)\n", portalName)
+		fmt.Fprintf(os.Stderr, "  %s\n", targetURL)
+	}
+	return openBrowser(redeemURL, linkOnly)
 }
 
 func portalLabelFromURL(rawURL string) string {
@@ -186,18 +194,18 @@ func portalLabelFromURL(rawURL string) string {
 // is routed to abc-auth-svc; it redeems the code and sets the MinIO token cookie
 // for the minio.* domain, then redirects to the MinIO console root.
 
-func openMinIOSSO(ctx config.Context, urls PortalURLs) error {
+func openMinIOSSO(ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	tok := ctx.NomadToken()
 	if tok == "" {
 		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
 	}
 
-	// Show human-readable context: access key from the MinIO cred_source if available
 	minioUser := minioAccessKey(ctx)
-	fmt.Fprintf(os.Stderr, "[abc] opening MinIO console for %s (SSO via abc-auth-svc)\n", minioUser)
-	fmt.Fprintf(os.Stderr, "  %s\n", urls.MinIO)
-
-	return openMagicLinkPortal(urls.MinIO, "minio", urls, tok)
+	if !linkOnly {
+		fmt.Fprintf(os.Stderr, "[abc] opening MinIO console for %s (SSO via abc-auth-svc)\n", minioUser)
+		fmt.Fprintf(os.Stderr, "  %s\n", urls.MinIO)
+	}
+	return openMagicLinkPortal(urls.MinIO, "minio", urls, tok, linkOnly)
 }
 
 // minioAccessKey returns the MinIO access key (username) from the active context.
@@ -222,15 +230,17 @@ func minioAccessKey(ctx config.Context) string {
 
 // ── browser open ─────────────────────────────────────────────────────────────
 
-// openBrowser opens url in the OS default browser.
-// If no display is available (SSH without DISPLAY/WAYLAND_DISPLAY), it prints
-// the URL to stdout instead so the user can open it manually.
-func openBrowser(rawURL string) error {
-	// Detect headless environment.
+// openBrowser opens rawURL in the OS default browser, or prints it when
+// linkOnly is true or when no display is available (SSH session).
+func openBrowser(rawURL string, linkOnly bool) error {
+	if linkOnly {
+		fmt.Println(rawURL)
+		return nil
+	}
+
+	// Detect headless Linux (SSH without display).
 	if runtime.GOOS == "linux" {
-		display := os.Getenv("DISPLAY")
-		wayland := os.Getenv("WAYLAND_DISPLAY")
-		if display == "" && wayland == "" {
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
 			fmt.Println(rawURL)
 			fmt.Fprintln(os.Stderr, "[abc] no display detected (SSH?); URL printed above — open it manually")
 			return nil
@@ -250,7 +260,6 @@ func openBrowser(rawURL string) error {
 		return nil
 	}
 	if err := cmd.Start(); err != nil {
-		// Fallback: print the URL so the user can open manually
 		fmt.Println(rawURL)
 		fmt.Fprintf(os.Stderr, "[abc] could not launch browser (%v); URL printed above\n", err)
 	}
