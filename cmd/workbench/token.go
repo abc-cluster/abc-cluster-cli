@@ -98,8 +98,7 @@ duration syntax (e.g. 24h, 720h for 30 days).`,
 			}
 
 			cfg, _ := abccfg.Load()
-			hub := hubURL(cfg.ActiveCtx())
-			url := connectURL(hub, client.User, tok.Token)
+			hubRoot := strings.TrimRight(hubURL(cfg.ActiveCtx()), "/")
 
 			out := cmd.OutOrStdout()
 			fmt.Fprintln(out, "Token created.")
@@ -112,14 +111,11 @@ duration syntax (e.g. 24h, 720h for 30 days).`,
 				fmt.Fprintf(out, "  Expires: in %s\n", dur)
 			}
 			fmt.Fprintln(out)
-			fmt.Fprintf(out, "  URL:     %s\n", url)
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, "  Paste the URL into VS Code:")
-			fmt.Fprintln(out, "    Command Palette → 'Jupyter: Specify Jupyter Server for Connections' → Existing")
+			for _, line := range hubProviderGuidance(hubRoot, client.User) {
+				fmt.Fprintln(out, "  "+line)
+			}
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, "  Note: the token value is shown ONCE. Capture it now or revoke + recreate later.")
-			fmt.Fprintln(cmd.ErrOrStderr())
-			fmt.Fprintln(cmd.ErrOrStderr(), forwardAuthCaveat())
 			return nil
 		},
 	}
@@ -246,17 +242,22 @@ Useful when you saved a token value previously and want the URL again.`,
 
 			cfg, _ := abccfg.Load()
 			hub := hubURL(cfg.ActiveCtx())
-			url := connectURL(hub, client.User, tokenValue)
+			hubRoot := strings.TrimRight(hub, "/")
+			out := cmd.OutOrStdout()
 
 			switch clientType {
-			case "vscode":
-				fmt.Fprintln(cmd.OutOrStdout(), url)
-				fmt.Fprintln(cmd.OutOrStdout())
-				fmt.Fprintln(cmd.OutOrStdout(), "  VS Code: Command Palette → 'Jupyter: Specify Jupyter Server for Connections' → Existing")
+			case "vscode", "positron":
+				fmt.Fprintf(out, "JupyterHub server: %s\n", hubRoot)
+				fmt.Fprintf(out, "Username:          %s\n", client.User)
+				fmt.Fprintf(out, "Token:             %s\n", tokenValue)
+				fmt.Fprintln(out)
+				for _, line := range hubProviderGuidance(hubRoot, client.User) {
+					fmt.Fprintln(out, "  "+line)
+				}
 			case "jupyter-desktop", "raw", "":
-				fmt.Fprintln(cmd.OutOrStdout(), url)
+				fmt.Fprintln(out, connectURL(hub, client.User, tokenValue))
 			default:
-				return fmt.Errorf("unknown --client %q (use vscode, jupyter-desktop, or raw)", clientType)
+				return fmt.Errorf("unknown --client %q (use vscode, positron, jupyter-desktop, or raw)", clientType)
 			}
 			return nil
 		},
@@ -299,10 +300,15 @@ Run it from your laptop after 'abc auth login'. (If run inside a JupyterLab
 terminal it uses the in-session admin token instead — same result.)
 
 Clients:
-  vscode          (default) VS Code Jupyter extension — "Existing Jupyter Server"
-  positron        Positron — New Connection → Existing Jupyter Server
+  vscode          (default) VS Code — "Existing JupyterHub Server" provider
+  positron        Positron — "Existing JupyterHub Server" provider
   jupyter-desktop JupyterLab Desktop — File → New Connection → URL
-  raw             print the bare URL only (for scripts)
+  raw             print the bare single-user-server URL only (for scripts)
+
+VS Code / Positron connect via the JupyterHub provider: you paste the hub-root
+URL, your username, and the token as the password. (A JupyterHub token only
+authenticates as a header, so the plain "Existing Jupyter Server" provider —
+which puts ?token= in the URL — does not work.)
 
 Examples:
   abc workbench connect
@@ -398,8 +404,6 @@ Examples:
 				}
 			}
 
-			url := connectURLForClient(hub, slot, tokenValue, project, clientType)
-
 			// Optional: probe the URL to detect forward_auth blocking.
 			if checkProxy {
 				if msg := probeWorkbench(cmd.Context(), hub, slot, tokenValue); msg != "" {
@@ -407,26 +411,49 @@ Examples:
 				}
 			}
 
+			hubRoot := strings.TrimRight(hub, "/")
 			out := cmd.OutOrStdout()
-			fmt.Fprintln(out, url)
-			if clientType != "raw" {
+
+			switch {
+			case clientType == "raw":
+				// Scriptable form: the single-user server URL carrying the token.
+				// Consumers MUST send the token as an `Authorization: token` header
+				// — JupyterHub rejects the ?token= query form for its servers (403).
+				fmt.Fprintln(out, connectURLForClient(hub, slot, tokenValue, project, clientType))
+				return nil
+
+			case usesHubProvider(clientType):
+				// VS Code / Positron connect via the "Existing JupyterHub Server"
+				// provider: hub-root URL + username + token-as-password. This is the
+				// ONLY form that works — the token is sent as a header throughout.
+				fmt.Fprintf(out, "JupyterHub server: %s\n", hubRoot)
+				fmt.Fprintf(out, "Username:          %s\n", slot)
+				fmt.Fprintf(out, "Token:             %s\n", tokenValue)
+				fmt.Fprintln(out)
+				for _, line := range hubProviderGuidance(hubRoot, slot) {
+					fmt.Fprintln(out, "  "+line)
+				}
+
+			default:
+				// jupyter-desktop and other non-raw clients: the user-server URL.
+				fmt.Fprintln(out, connectURLForClient(hub, slot, tokenValue, project, clientType))
 				fmt.Fprintln(out)
 				for _, line := range clientInstructions(clientType) {
 					fmt.Fprintln(out, "  "+line)
 				}
-				fmt.Fprintln(out)
-				if expiresStr != "" {
-					fmt.Fprintf(out, "  Token: %s (id %s) — expires %s\n", name, truncate(tokenID, 10), expiresStr)
-				} else {
-					fmt.Fprintf(out, "  Token: %s (id %s) — expires in %s\n", name, truncate(tokenID, 10), dur)
-				}
-				fmt.Fprintf(out, "  Revoke later: abc workbench token revoke %s\n", name)
 			}
 
+			fmt.Fprintln(out)
+			if expiresStr != "" {
+				fmt.Fprintf(out, "  Token: %s (id %s) — expires %s\n", name, truncate(tokenID, 10), expiresStr)
+			} else {
+				fmt.Fprintf(out, "  Token: %s (id %s) — expires in %s\n", name, truncate(tokenID, 10), dur)
+			}
+			fmt.Fprintf(out, "  Revoke later: abc workbench token revoke %s\n", name)
+
 			// Note: we deliberately do NOT print the forward_auth caveat on the
-			// happy path — the Caddy @jupyter_token bypass is live on seedling.
-			// Use --check-proxy to actively verify reachability (it prints a
-			// specific, actionable warning only when the proxy is misconfigured).
+			// happy path — the Caddy bypass for token traffic + /hub/api* is live on
+			// seedling. Use --check-proxy to actively verify reachability.
 			return nil
 		},
 	}
@@ -463,24 +490,41 @@ func connectURLForClient(hub, slot, token, project, clientType string) string {
 	return base + "?token=" + token
 }
 
-// clientInstructions returns the per-client paste instructions.
+// usesHubProvider reports whether the client connects via the "Existing
+// JupyterHub Server" provider (hub-root URL + username + API-token-as-password).
+//
+// This matters because a JupyterHub user token authenticates ONLY as an
+// `Authorization: token <T>` header. The plain "Existing Jupyter Server"
+// provider puts the token in the URL query string (?token=), which JupyterHub's
+// single-user server rejects with 403. The JupyterHub provider sends the token
+// as a header throughout — version probe, auth, spawn, and kernel connection —
+// so it is the only path that works for a JupyterHub-fronted workbench.
+func usesHubProvider(clientType string) bool {
+	return clientType == "vscode" || clientType == "positron"
+}
+
+// hubProviderGuidance returns the paste instructions for the "Existing
+// JupyterHub Server" provider in VS Code / Positron.
+func hubProviderGuidance(hubRoot, username string) []string {
+	return []string{
+		"In VS Code / Positron — Command Palette →",
+		"  'Jupyter: Specify Jupyter Server for Connections' → 'Existing JupyterHub Server'",
+		"Then enter:",
+		"  Server URL: " + hubRoot + "   (the hub root — NOT a /user/... URL)",
+		"  Username:   " + username,
+		"  Password:   the token above (an API token is accepted in the password field)",
+	}
+}
+
+// clientInstructions returns the per-client paste instructions for clients that
+// take a single-user-server URL (i.e. not the JupyterHub provider).
 func clientInstructions(clientType string) []string {
 	switch clientType {
-	case "vscode":
-		return []string{
-			"Paste the URL above into VS Code:",
-			"  Command Palette → 'Jupyter: Specify Jupyter Server for Connections' → Existing",
-		}
-	case "positron":
-		return []string{
-			"Paste the URL above into Positron:",
-			"  Connections pane → New Connection → 'Existing Jupyter Server' → paste URL",
-			"  (or Command Palette → 'Jupyter: Specify Jupyter Server')",
-		}
 	case "jupyter-desktop":
 		return []string{
 			"Open with JupyterLab Desktop:",
 			"  File → New Connection → paste the URL",
+			"  (send the token as an Authorization header if prompted; ?token= is rejected)",
 		}
 	}
 	return nil
