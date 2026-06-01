@@ -101,12 +101,31 @@ func MintHubToken(
 	return &out, nil
 }
 
-// DeriveAuthEndpoint converts a cluster endpoint URL into its auth-svc sibling
-// by swapping the first DNS label. Mirrors deriveAuthEndpoint() in cmd/auth/config.go;
-// duplicated here to avoid an import cycle (cmd/auth imports internal/workbench
-// transitively when token.go uses this package).
+// knownServiceLabels are first-DNS-label values that indicate the endpoint is a
+// per-service host (<svc>.<tier>.<base>). For these we replace the label with
+// "auth"; for anything else we treat the host as the bare tier gateway
+// (<tier>.<base>) and prepend "auth.".
+var knownServiceLabels = map[string]bool{
+	"nomad": true, "workbench": true, "api": true, "auth": true,
+	"grafana": true, "upload": true, "minio": true, "vault": true,
+}
+
+// DeriveAuthEndpoint converts a cluster endpoint URL into its auth-svc sibling.
 //
-//	https://nomad.seedling.abc-cluster.cloud → https://auth.seedling.abc-cluster.cloud
+// Two endpoint shapes occur in the wild:
+//
+//	<svc>.<tier>.<base>   e.g. https://nomad.seedling.abc-cluster.cloud
+//	<tier>.<base>         e.g. https://seedling.abc-cluster.cloud   (the API gateway)
+//
+// Both must map to the SAME auth host: https://auth.seedling.abc-cluster.cloud.
+// We distinguish by the first DNS label: a known service label is replaced
+// with "auth"; otherwise the whole host is treated as the tier gateway and
+// "auth." is prepended.
+//
+// An earlier version always replaced the first label, which turned the gateway
+// form (seedling.abc-cluster.cloud) into auth.abc-cluster.cloud — a host that
+// does not exist. If the heuristic is wrong for a deployment, callers should
+// pass --auth-endpoint explicitly.
 func DeriveAuthEndpoint(clusterEndpoint string) (string, error) {
 	clusterEndpoint = strings.TrimSpace(clusterEndpoint)
 	if clusterEndpoint == "" {
@@ -119,9 +138,14 @@ func DeriveAuthEndpoint(clusterEndpoint string) (string, error) {
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("not an absolute URL: %q", clusterEndpoint)
 	}
-	parts := strings.SplitN(u.Host, ".", 2)
-	if len(parts) != 2 || parts[1] == "" {
-		return "", fmt.Errorf("host %q does not have a <subdomain>.<rest> shape", u.Host)
+	first, rest, found := strings.Cut(u.Host, ".")
+	if !found || rest == "" {
+		return "", fmt.Errorf("host %q has no domain part", u.Host)
 	}
-	return fmt.Sprintf("%s://auth.%s", u.Scheme, parts[1]), nil
+	if knownServiceLabels[strings.ToLower(first)] {
+		// <svc>.<tier>.<base> → auth.<tier>.<base>
+		return fmt.Sprintf("%s://auth.%s", u.Scheme, rest), nil
+	}
+	// <tier>.<base> (bare gateway) → auth.<tier>.<base>
+	return fmt.Sprintf("%s://auth.%s", u.Scheme, u.Host), nil
 }

@@ -52,6 +52,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("look up session: %w", err)
 	}
 
+	// local.db sessions are only created by the Docker/VM (Multipass) backend.
+	// A non-running session is a stale leftover (e.g. a pre-TLJH code-server
+	// session) — it is NOT the live status. On seedling/TLJH the authoritative
+	// status lives in JupyterHub, so fall through to the hub view rather than
+	// printing a misleading stopped record from months ago.
+	if !strings.EqualFold(sess.Status, "running") {
+		printHubStatus(cmd, ctx, "check")
+		return nil
+	}
+
 	started := "(unknown)"
 	if sess.StartedAt > 0 {
 		started = time.Unix(sess.StartedAt, 0).Format("2006-01-02 15:04:05")
