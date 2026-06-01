@@ -65,7 +65,7 @@ func openPortal(name string, ctx config.Context, urls PortalURLs) error {
 	case "upload":
 		return openMagicLink(urls.Upload, urls, ctx.NomadToken())
 	case "minio":
-		return openMinIO(ctx, urls)
+		return openMinIOSSO(ctx, urls)
 	default:
 		return fmt.Errorf("unknown portal %q — valid: nomad, grafana, workbench, upload, minio", name)
 	}
@@ -105,10 +105,15 @@ type cliTokenRequest struct {
 }
 
 type cliTokenResponse struct {
-	URL string `json:"url"`
+	Code string `json:"code"`
+	TTL  int    `json:"ttl"`
 }
 
 func openMagicLink(targetURL string, urls PortalURLs, nomadToken string) error {
+	return openMagicLinkPortal(targetURL, "workbench", urls, nomadToken)
+}
+
+func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomadToken string) error {
 	if nomadToken == "" {
 		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
 	}
@@ -139,15 +144,25 @@ func openMagicLink(targetURL string, urls PortalURLs, nomadToken string) error {
 	}
 
 	var tok cliTokenResponse
-	if err := json.Unmarshal(body, &tok); err != nil || tok.URL == "" {
+	if err := json.Unmarshal(body, &tok); err != nil || tok.Code == "" {
 		return fmt.Errorf("unexpected auth service response: %s", string(body))
 	}
 
-	// Parse the portal name from the target URL for display
+	// Construct the redeem URL from the known authBase — do NOT use a URL
+	// returned by the server which would reflect the internal Tailscale host.
+	var redeemURL string
+	if portal == "minio" {
+		// MinIO SSO uses a dedicated endpoint served from the minio subdomain
+		// so the session cookie is set for minio.seedling.abc-cluster.cloud
+		redeemURL = urls.MinIO + "/auth/minio-login?code=" + tok.Code
+	} else {
+		redeemURL = authBase + "/auth/redeem?code=" + tok.Code
+	}
+
 	portalName := portalLabelFromURL(targetURL)
 	fmt.Fprintf(os.Stderr, "[abc] opening %s (magic link, 60s TTL)\n", portalName)
 	fmt.Fprintf(os.Stderr, "  %s\n", targetURL)
-	return openBrowser(tok.URL)
+	return openBrowser(redeemURL)
 }
 
 func portalLabelFromURL(rawURL string) string {
@@ -163,24 +178,46 @@ func portalLabelFromURL(rawURL string) string {
 	return host
 }
 
-// ── minio: open URL + print credentials ──────────────────────────────────────
+// ── minio: SSO via abc-auth-svc MinIO login proxy ────────────────────────────
+//
+// abc-auth-svc's /auth/cli-token validates the Nomad token, calls MinIO's
+// /api/v1/login internally, and stores the resulting MinIO JWT in a one-time
+// code. The browser visits minio.seedling.*/auth/minio-login?code=<code> which
+// is routed to abc-auth-svc; it redeems the code and sets the MinIO token cookie
+// for the minio.* domain, then redirects to the MinIO console root.
 
-func openMinIO(ctx config.Context, urls PortalURLs) error {
-	s3 := ctx.Admin.Services.Nomad // reuse nomad block fields
-	_ = s3
+func openMinIOSSO(ctx config.Context, urls PortalURLs) error {
+	tok := ctx.NomadToken()
+	if tok == "" {
+		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
+	}
 
-	// MinIO access key = Nomad token username (same credential)
-	// For pool users this is their slot name (e.g. slot-bold_hornbill)
-	accessKey := ctx.NomadToken() // SecretID used as both Nomad token AND MinIO password
-	// The MinIO access key (username) comes from the context name or whoami
-	// Best effort: show both and let the user choose
-	fmt.Fprintf(os.Stderr, "[abc] opening MinIO console\n")
-	fmt.Fprintf(os.Stderr, "  %s\n\n", urls.MinIO)
-	fmt.Fprintf(os.Stderr, "MinIO credentials (from active context):\n")
-	fmt.Fprintf(os.Stderr, "  Username: (see config.yaml — admin.services.nomad.token is your MinIO password)\n")
-	fmt.Fprintf(os.Stderr, "  Password: %s\n", accessKey)
-	fmt.Fprintf(os.Stderr, "\nThe password has been printed above — paste it into the MinIO login form.\n")
-	return openBrowser(urls.MinIO)
+	// Show human-readable context: access key from the MinIO cred_source if available
+	minioUser := minioAccessKey(ctx)
+	fmt.Fprintf(os.Stderr, "[abc] opening MinIO console for %s (SSO via abc-auth-svc)\n", minioUser)
+	fmt.Fprintf(os.Stderr, "  %s\n", urls.MinIO)
+
+	return openMagicLinkPortal(urls.MinIO, "minio", urls, tok)
+}
+
+// minioAccessKey returns the MinIO access key (username) from the active context.
+// For pool users: stored in admin.services.minio.cred_source.local["user"].
+// Falls back to the Nomad token name if not explicitly configured.
+func minioAccessKey(ctx config.Context) string {
+	if ctx.Admin.Services.MinIO != nil {
+		svc := ctx.Admin.Services.MinIO
+		// Prefer cred_source.local["user"]
+		if svc.CredSource != nil && len(svc.CredSource.Local) > 0 {
+			if u := svc.CredSource.Local["user"]; u != "" {
+				return u
+			}
+		}
+		// Fallback: top-level User field
+		if svc.User != "" {
+			return svc.User
+		}
+	}
+	return "(unknown — check admin.services.minio in config.yaml)"
 }
 
 // ── browser open ─────────────────────────────────────────────────────────────
