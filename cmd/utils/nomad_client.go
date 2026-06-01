@@ -14,13 +14,36 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/credsource"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
+
+// resolveActiveCreds is the Phase 1.5b pinch-point. It returns the active
+// context's effective credentials, going through the credential-source
+// resolver — so contexts with cred_source=seedling/v1 (opaque-shape config)
+// get a fresh broker exchange, while cred_source=""/"local" returns today's
+// field-read values unchanged.
+//
+// On broker error this prints to stderr (the user almost certainly wants to
+// know their broker call failed) and returns false so the caller falls
+// through to the legacy field-read path, which for a seedling/v1 slot
+// produces the existing "no Nomad addr" downstream message.
+func resolveActiveCreds(active config.Context) (*credsource.Creds, bool) {
+	creds, err := credsource.ResolveFromContext(context.Background(), active)
+	if err != nil {
+		if credsource.IsBroker(active.CredSource) {
+			fmt.Fprintf(os.Stderr, "abc: cred_source=%q broker resolve failed: %v\n", active.CredSource, err)
+		}
+		return nil, false
+	}
+	return creds, true
+}
 
 // NomadClient is a thin wrapper around Nomad's HTTP API.
 type NomadClient struct {
@@ -79,12 +102,24 @@ func NewNomadClient(addr, token, region string) *NomadClient {
 
 // NomadDefaultsFromConfig returns node-specific Nomad defaults stored in the
 // active abc config context.
+//
+// Phase 1.5b: if the active context has `cred_source` set to a broker tier
+// (seedling/v1 / grove/v1 / cloud/v1), the values are obtained via the
+// credential broker rather than read from the context's `admin.services.nomad`
+// fields (which are empty for opaque-shape configs by design). Local /
+// unset cred_source returns today's field-read values unchanged.
 func NomadDefaultsFromConfig() (addr, token, region string) {
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
 		return "", "", ""
 	}
 	active := cfg.ActiveCtx()
+	if creds, ok := resolveActiveCreds(active); ok && creds.Source != "local" {
+		// Region isn't currently part of the broker bundle — fall back to
+		// the context's own region setting for now. (If a future broker
+		// version carries region, this is where it'd plug in.)
+		return creds.Nomad.Addr, creds.Nomad.Token, active.NomadRegion()
+	}
 	return active.NomadAddr(), active.NomadToken(), active.NomadRegion()
 }
 
@@ -92,12 +127,23 @@ func NomadDefaultsFromConfig() (addr, token, region string) {
 // abc context — addr, token, region, and the default namespace from
 // admin.services.nomad.namespace. All job operations on this client will use
 // the context namespace unless an explicit namespace is passed per-call.
+//
+// Phase 1.5b: broker-routed when cred_source is a broker tier (see
+// NomadDefaultsFromConfig for details).
 func NomadClientFromConfig() *NomadClient {
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
 		return NewNomadClient("", "", "")
 	}
 	ctx := cfg.ActiveCtx()
+	if creds, ok := resolveActiveCreds(ctx); ok && creds.Source != "local" {
+		ns := creds.Nomad.Namespace
+		if ns == "" {
+			ns = ctx.NomadNamespace()
+		}
+		return NewNomadClient(creds.Nomad.Addr, creds.Nomad.Token, ctx.NomadRegion()).
+			WithNamespace(ns)
+	}
 	return NewNomadClient(ctx.NomadAddr(), ctx.NomadToken(), ctx.NomadRegion()).
 		WithNamespace(ctx.NomadNamespace())
 }

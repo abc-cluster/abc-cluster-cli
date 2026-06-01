@@ -100,6 +100,25 @@ type Context struct {
 	UploadEndpoint string `yaml:"upload_endpoint,omitempty"`
 	UploadToken    string `yaml:"upload_token,omitempty"`
 	AccessToken    string `yaml:"access_token"`
+	// CredSource names the credential-resolution mode for this context.
+	// Empty or "local" → read real Nomad/MinIO creds from the fields below
+	// (today's behaviour). "seedling/v1" / "grove/v1" / "cloud/v1" → resolve
+	// real creds on demand via the named tier's broker (Pattern A; see
+	// brainstorms/abc-seedling-onboarding/2026-06-01-opaque-tokens-credential-broker.md).
+	//
+	// Note: this is the CONTEXT-level cred_source. There is a separate, nested
+	// `admin.services.<svc>.cred_source` on AdminFloorService that selects
+	// per-service credential backends (local/nomad/vault) — different position,
+	// different scope, shared name. The CONTEXT-level value is the higher-level
+	// lever ("how does this whole context resolve credentials at all").
+	CredSource     string `yaml:"cred_source,omitempty"`
+	// AuthEndpoint is the explicit broker URL for this context. When non-empty,
+	// the credsource resolver POSTs to <AuthEndpoint>/auth/exchange (or just
+	// AuthEndpoint if it already ends with /auth/exchange) instead of deriving
+	// from Endpoint. Stamped by the renderer at claim time for tiers where the
+	// broker is published under a different DNS prefix than Nomad (e.g. the
+	// seedling deployment publishes at workbench.<rest>, not auth.<rest>).
+	AuthEndpoint   string `yaml:"auth_endpoint,omitempty"`
 	OrgID          string `yaml:"organization_id,omitempty"`
 	WorkspaceID    string `yaml:"workspace_id,omitempty"`
 	Region         string `yaml:"region,omitempty"`
@@ -243,9 +262,29 @@ func LoadFrom(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
 
-	cfg, err := parseConfigYAML(data)
+	cfg, err := ParseBytes(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
+	}
+	if err := applyActiveContextEnvOverride(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// ParseBytes parses a config.yaml from in-memory bytes, applying the same
+// normalisation pipeline as LoadFrom. Used by `abc auth config refresh` when
+// pulling a blob from the cluster auth service (so the refresh path goes
+// through the exact same normalisation as a fresh on-disk load).
+//
+// Note: this intentionally does NOT apply the ABC_CLI_CONTEXT env override —
+// env-driven active-context selection is a load-time concern, not a parse-
+// time one. Callers that want the env override should use LoadFrom (or apply
+// the override themselves after parsing).
+func ParseBytes(data []byte) (*Config, error) {
+	cfg, err := parseConfigYAML(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
 	}
 	if cfg.Version == "" {
 		cfg.Version = CurrentVersion
@@ -259,9 +298,6 @@ func LoadFrom(path string) (*Config, error) {
 		cfg.Contexts[name] = ctx
 	}
 	migrateLegacySecretsAndCrypt(data, cfg)
-	if err := applyActiveContextEnvOverride(cfg); err != nil {
-		return nil, err
-	}
 	return cfg, nil
 }
 

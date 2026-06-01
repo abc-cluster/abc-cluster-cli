@@ -5,6 +5,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/credsource"
 	"github.com/spf13/cobra"
 )
 
@@ -102,8 +103,10 @@ func sleepCh(n int) <-chan struct{} { return utils.SleepCh(n) }
 
 // namespaceFromCmd returns the Nomad namespace to use for a command:
 //  1. --namespace flag (explicit, highest priority)
-//  2. ctx.NomadNamespace() — covers both abc-nodes (derived from whoami/config)
-//     and abc-cluster (flat namespace field stamped into config.yaml at claim time)
+//  2. credsource resolver (broker-routed when cred_source=seedling/v1, falls
+//     through to ctx.NomadNamespace() for local) — covers both abc-nodes
+//     (derived from whoami/config) and abc-cluster (flat namespace field
+//     stamped into config.yaml at claim time, or returned by the broker)
 //  3. Empty string — let Nomad use its server default
 func namespaceFromCmd(cmd *cobra.Command) string {
 	ns, _ := cmd.Flags().GetString("namespace")
@@ -114,5 +117,11 @@ func namespaceFromCmd(cmd *cobra.Command) string {
 	if err != nil || cfg == nil {
 		return ""
 	}
-	return cfg.ActiveCtx().NomadNamespace()
+	active := cfg.ActiveCtx()
+	if creds, err := credsource.ResolveFromContext(cmd.Context(), active); err == nil && creds.Source != "local" {
+		if creds.Nomad.Namespace != "" {
+			return creds.Nomad.Namespace
+		}
+	}
+	return active.NomadNamespace()
 }

@@ -82,6 +82,7 @@ func newClaimCmd() *cobra.Command {
 		// noSync     bool // Stage-1 deferred; capabilities sync not yet integrated.
 		codeStdin  bool
 		writePath  string
+		credSource string // Phase 1.4: opt-in to a non-default credential-resolution mode
 	)
 
 	cmd := &cobra.Command{
@@ -209,13 +210,21 @@ Endpoint resolution (rarely needed):
 			}
 
 			// ── 5. POST /claim ────────────────────────────────────────────
-			body, err := json.Marshal(map[string]interface{}{
+			// Phase 1.4: if the user explicitly asked for a non-default
+			// credential-resolution mode, send it in the body. Empty value
+			// is omitted so the server falls back to the group's default
+			// (or "local" if the group has none).
+			payload := map[string]interface{}{
 				"claim_code":    claimCode,
 				"group_name":    groupName,
 				"name":          name,
 				"email":         email,
 				"popia_consent": consent,
-			})
+			}
+			if cs := strings.TrimSpace(credSource); cs != "" {
+				payload["cred_source"] = cs
+			}
+			body, err := json.Marshal(payload)
 			if err != nil {
 				return fmt.Errorf("marshal claim request: %w", err)
 			}
@@ -349,6 +358,10 @@ Endpoint resolution (rarely needed):
 		"Read the claim code from stdin (keeps it out of shell history)")
 	cmd.Flags().StringVar(&writePath, "write-path", "",
 		"Write the config to this path (default: ABC_CLI_CONFIG_FILE or ~/.abc/config.yaml)")
+	cmd.Flags().StringVar(&credSource, "cred-source", "",
+		"Credential-resolution mode for this claim: \"\" (server default), \"local\", or \"seedling/v1\". "+
+			"\"seedling/v1\" mints an opaque token and routes the CLI through the auth-svc broker; "+
+			"real Nomad/MinIO secrets never land on the laptop.")
 
 	return cmd
 }

@@ -21,7 +21,9 @@ package workbench
 // See brainstorms/abc-workbench/2026-06-01-workbench-token-cli.md.
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -264,71 +266,253 @@ Useful when you saved a token value previously and want the URL again.`,
 }
 
 // newConnectCmd returns `abc workbench connect` — the porcelain.
+//
+// Two modes, auto-detected:
+//   - Laptop (Context B, the common case): no JUPYTERHUB_* env vars present.
+//     Mints a hub token via abc-auth-svc /workbench/token using the active
+//     context's access token as the bearer.
+//   - In-slot (Context A): JUPYTERHUB_* env vars present (running in a
+//     JupyterLab terminal). Mints directly via the hub admin API.
+//
+// `--cred-source mint` forces the broker path even when in-slot.
 func newConnectCmd() *cobra.Command {
 	var clientType string
 	var name string
 	var expires string
+	var credSource string
+	var project string
+	var authEndpointOverride string
+	var checkProxy bool
 
 	cmd := &cobra.Command{
 		Use:          "connect",
-		Short:        "Generate a token + emit a ready-to-paste URL for an external Jupyter client",
+		Short:        "Mint a workbench token + print a ready-to-paste URL for VS Code / Positron / etc.",
 		SilenceUsage: true,
-		Long: `One-shot: create a JupyterHub user token + print the connect URL formatted
-for the chosen external client. The token value is printed exactly once.
+		Long: `One command to attach an external Jupyter client (VS Code, Positron,
+JupyterLab Desktop) to your remote workbench session — from your own machine.
 
-Default --client is vscode; --client raw emits the bare URL only.
+It mints a JupyterHub user token (via abc-auth-svc, authenticated by your
+active context's access token), then prints the connection URL formatted for
+the chosen client. The token value is printed exactly once.
 
-Run this from inside a JupyterLab terminal in your active workbench session.`,
+Run it from your laptop after 'abc auth login'. (If run inside a JupyterLab
+terminal it uses the in-session admin token instead — same result.)
+
+Clients:
+  vscode          (default) VS Code Jupyter extension — "Existing Jupyter Server"
+  positron        Positron — New Connection → Existing Jupyter Server
+  jupyter-desktop JupyterLab Desktop — File → New Connection → URL
+  raw             print the bare URL only (for scripts)
+
+Examples:
+  abc workbench connect
+  abc workbench connect --client positron
+  abc workbench connect --project my-analysis --client positron
+  abc workbench connect --check-proxy        # verify the URL actually reaches the hub`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := resolveHubClient()
-			if err != nil {
-				return err
+			clientType = strings.ToLower(strings.TrimSpace(clientType))
+			if !isKnownClient(clientType) {
+				return fmt.Errorf("unknown --client %q (use vscode, positron, jupyter-desktop, or raw)", clientType)
 			}
 
 			dur, err := time.ParseDuration(expires)
 			if err != nil {
 				return fmt.Errorf("--expires %q: %w", expires, err)
 			}
-
 			if name == "" {
 				name = defaultTokenName()
 			}
-			tok, err := client.CreateToken(name, dur, nil)
+
+			cfg, err := abccfg.Load()
 			if err != nil {
-				return fmt.Errorf("create token: %w", err)
+				return fmt.Errorf("load config: %w", err)
+			}
+			actx := cfg.ActiveCtx()
+
+			inSlot := os.Getenv("JUPYTERHUB_API_TOKEN") != "" &&
+				os.Getenv("JUPYTERHUB_API_URL") != "" &&
+				os.Getenv("JUPYTERHUB_USER") != ""
+
+			useBroker := credSource == "mint" || !inSlot
+
+			var tokenValue, slot, hub, tokenID, expiresStr string
+
+			if useBroker {
+				// ── Laptop path: mint via abc-auth-svc ──────────────────────
+				bearer := strings.TrimSpace(actx.AccessToken)
+				if bearer == "" && actx.Admin.Services.Nomad != nil {
+					bearer = strings.TrimSpace(actx.Admin.Services.Nomad.Token)
+				}
+				if bearer == "" {
+					return fmt.Errorf("no access token in the active context — run `abc auth login` first")
+				}
+
+				authEndpoint := strings.TrimSpace(authEndpointOverride)
+				if authEndpoint == "" {
+					authEndpoint, err = wbinternal.DeriveAuthEndpoint(actx.Endpoint)
+					if err != nil {
+						return fmt.Errorf("derive auth-svc endpoint from %q: %w (use --auth-endpoint to override)",
+							actx.Endpoint, err)
+					}
+				}
+
+				resp, err := wbinternal.MintHubToken(cmd.Context(), authEndpoint, bearer,
+					wbinternal.MintHubTokenRequest{Note: name, ExpiresIn: int64(dur.Seconds())})
+				if err != nil {
+					return fmt.Errorf("mint workbench token: %w", err)
+				}
+				tokenValue = resp.Token
+				slot = resp.Slot
+				hub = resp.HubURL
+				if hub == "" {
+					hub = hubURL(actx)
+				}
+				tokenID = resp.ID
+				expiresStr = resp.ExpiresAt
+			} else {
+				// ── In-slot path: mint via the hub admin token in the env ───
+				client, err := resolveHubClient()
+				if err != nil {
+					return err
+				}
+				tok, err := client.CreateToken(name, dur, nil)
+				if err != nil {
+					return fmt.Errorf("create token: %w", err)
+				}
+				tokenValue = tok.Token
+				slot = client.User
+				hub = hubURL(actx)
+				tokenID = tok.ID
+				if tok.Expires != nil {
+					expiresStr = *tok.Expires
+				}
 			}
 
-			cfg, _ := abccfg.Load()
-			hub := hubURL(cfg.ActiveCtx())
-			url := connectURL(hub, client.User, tok.Token)
+			url := connectURLForClient(hub, slot, tokenValue, project, clientType)
+
+			// Optional: probe the URL to detect forward_auth blocking.
+			if checkProxy {
+				if msg := probeWorkbench(cmd.Context(), hub, slot, tokenValue); msg != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), msg)
+				}
+			}
 
 			out := cmd.OutOrStdout()
-			switch clientType {
-			case "vscode":
-				fmt.Fprintln(out, url)
+			fmt.Fprintln(out, url)
+			if clientType != "raw" {
 				fmt.Fprintln(out)
-				fmt.Fprintln(out, "  Paste the URL above into VS Code:")
-				fmt.Fprintln(out, "    Command Palette → 'Jupyter: Specify Jupyter Server for Connections' → Existing")
+				for _, line := range clientInstructions(clientType) {
+					fmt.Fprintln(out, "  "+line)
+				}
 				fmt.Fprintln(out)
-				fmt.Fprintf(out, "  Token name: %s   ID: %s   Expires in: %s\n", name, truncate(tok.ID, 10), dur)
-				fmt.Fprintln(out, "  Revoke later: abc workbench token revoke "+name)
-			case "raw":
-				fmt.Fprintln(out, url)
-			case "jupyter-desktop":
-				fmt.Fprintln(out, url)
-				fmt.Fprintln(out, "  Open with JupyterLab Desktop (File → New Connection → URL).")
-			default:
-				return fmt.Errorf("unknown --client %q", clientType)
+				if expiresStr != "" {
+					fmt.Fprintf(out, "  Token: %s (id %s) — expires %s\n", name, truncate(tokenID, 10), expiresStr)
+				} else {
+					fmt.Fprintf(out, "  Token: %s (id %s) — expires in %s\n", name, truncate(tokenID, 10), dur)
+				}
+				fmt.Fprintf(out, "  Revoke later: abc workbench token revoke %s\n", name)
 			}
-			fmt.Fprintln(cmd.ErrOrStderr())
-			fmt.Fprintln(cmd.ErrOrStderr(), forwardAuthCaveat())
+
+			// Note: we deliberately do NOT print the forward_auth caveat on the
+			// happy path — the Caddy @jupyter_token bypass is live on seedling.
+			// Use --check-proxy to actively verify reachability (it prints a
+			// specific, actionable warning only when the proxy is misconfigured).
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&clientType, "client", "vscode", "target client: vscode | jupyter-desktop | raw")
+	cmd.Flags().StringVar(&clientType, "client", "vscode", "target client: vscode | positron | jupyter-desktop | raw")
 	cmd.Flags().StringVar(&name, "name", "", "label for the generated token (default: derived from context)")
 	cmd.Flags().StringVar(&expires, "expires", "168h", "Go duration before the token expires (default 168h = 7d)")
+	cmd.Flags().StringVar(&credSource, "cred-source", "auto", "auto | mint (force minting via auth-svc even when in-slot)")
+	cmd.Flags().StringVar(&project, "project", "", "open the workbench at this project under ~/projects/ (browser clients only)")
+	cmd.Flags().StringVar(&authEndpointOverride, "auth-endpoint", "", "override the auth-svc URL (default: derived from the active context endpoint)")
+	cmd.Flags().BoolVar(&checkProxy, "check-proxy", false, "probe the URL to detect forward_auth blocking before printing")
 	return cmd
+}
+
+// isKnownClient reports whether c is a recognised --client value.
+func isKnownClient(c string) bool {
+	switch c {
+	case "vscode", "positron", "jupyter-desktop", "raw":
+		return true
+	}
+	return false
+}
+
+// connectURLForClient composes the connect URL. API clients (VS Code,
+// Positron, JupyterLab Desktop) connect to the server root; the browser
+// form (project path) is only meaningful for human browsers, so for
+// API clients we keep the root URL even when --project is set.
+func connectURLForClient(hub, slot, token, project, clientType string) string {
+	base := strings.TrimRight(hub, "/") + "/user/" + slot + "/"
+	// API clients ignore the lab tree path; only a browser benefits from it.
+	if project != "" && clientType == "raw" {
+		// raw is the scriptable form; respect the project path for a browser open.
+		return base + "lab/tree/projects/" + project + "/?token=" + token
+	}
+	return base + "?token=" + token
+}
+
+// clientInstructions returns the per-client paste instructions.
+func clientInstructions(clientType string) []string {
+	switch clientType {
+	case "vscode":
+		return []string{
+			"Paste the URL above into VS Code:",
+			"  Command Palette → 'Jupyter: Specify Jupyter Server for Connections' → Existing",
+		}
+	case "positron":
+		return []string{
+			"Paste the URL above into Positron:",
+			"  Connections pane → New Connection → 'Existing Jupyter Server' → paste URL",
+			"  (or Command Palette → 'Jupyter: Specify Jupyter Server')",
+		}
+	case "jupyter-desktop":
+		return []string{
+			"Open with JupyterLab Desktop:",
+			"  File → New Connection → paste the URL",
+		}
+	}
+	return nil
+}
+
+// probeWorkbench does a quick GET against the hub's /user/<slot>/api endpoint
+// with the token, returning a human-readable warning if forward_auth is
+// blocking (302 to a login page) or the token is rejected. Empty string on
+// success.
+func probeWorkbench(ctx context.Context, hub, slot, token string) string {
+	endpoint := strings.TrimRight(hub, "/") + "/user/" + slot + "/api"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "token "+token)
+	// Don't follow redirects — a 302 is the signal we want to catch.
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Sprintf("[abc] could not probe %s: %v (URL may still work)", endpoint, err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		return "" // good — the token reaches the hub
+	case resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther:
+		loc := resp.Header.Get("Location")
+		return "[abc] WARNING: forward_auth is redirecting token requests (302 → " + loc + ").\n" +
+			"       Your URL is correct but VS Code / Positron will likely fail.\n" +
+			"       Operator fix needed: Caddy @auth_token bypass for Authorization: token requests.\n" +
+			"       Workaround: open the workbench in your browser first on this machine."
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Sprintf("[abc] WARNING: hub rejected the token (HTTP %d). It may be expired or scoped wrong.", resp.StatusCode)
+	default:
+		return fmt.Sprintf("[abc] note: probe returned HTTP %d (URL may still work).", resp.StatusCode)
+	}
 }
 
 // resolveHubClient builds a HubClient from JUPYTERHUB_* env vars (Context A:
@@ -391,14 +575,14 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// forwardAuthCaveat is the one-paragraph note we print to stderr after
-// create / connect, so the user isn't surprised when VS Code can't reach
-// the URL because of the forward_auth proxy.
+// forwardAuthCaveat is a short tip printed by the in-slot `token create`
+// path (which can't actively probe). On seedling the Caddy @jupyter_token
+// bypass lets token requests through; if an external client still fails with
+// a 302/401 the proxy on that cluster may lack the bypass.
 func forwardAuthCaveat() string {
 	return strings.TrimSpace(`
-Note: the URL goes through Caddy's forward_auth proxy. If VS Code fails with
-a 302/401, the proxy may be rejecting token-only requests (no MinIO session
-cookie). Operator fix: add a Caddy @auth_token bypass mirroring the existing
-@websocket pattern. See brainstorms/abc-workbench/2026-06-01-workbench-token-cli.md.
+Tip: if an external client fails with 302/401, the cluster's workbench proxy
+may not allow token-authenticated requests. Run 'abc workbench connect
+--check-proxy' to diagnose.
 `)
 }

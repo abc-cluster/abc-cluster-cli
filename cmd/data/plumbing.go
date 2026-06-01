@@ -22,6 +22,7 @@ package data
 // (not GNU Midnight Commander, which has the same name on Ubuntu).
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/credsource"
 	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
@@ -150,11 +152,35 @@ func isMinioClient(binary string) bool {
 
 // resolveS3Creds reads S3 credentials and endpoint from the active context
 // using a universal resolution that works for all cluster types (abc-nodes,
-// abc-seedling, abc-cloud). Resolution order within each service:
+// abc-seedling, abc-cloud).
+//
+// Phase 1.5b: when the context has cred_source set to a broker tier
+// (seedling/v1 etc.), credentials are obtained from the credential broker
+// rather than from the on-disk fields — those are deliberately empty for
+// opaque-shape configs. The broker's returned MinIO bundle wins; if the
+// broker fails we fall through to the legacy local-fields path.
+//
+// Resolution order within each service (when not broker-routed):
 //   admin.services.minio.{endpoint,access_key,secret_key}  (preferred)
 //   admin.services.rustfs.{endpoint,access_key,secret_key} (fallback)
 //   admin.abc_nodes.{s3_endpoint,s3_access_key,s3_secret_key} (legacy)
 func resolveS3Creds(ctx abccfg.Context) (endpoint, accessKey, secretKey string) {
+	if credsource.IsBroker(ctx.CredSource) {
+		if creds, err := credsource.ResolveFromContext(context.Background(), ctx); err == nil {
+			ep := strings.TrimRight(strings.TrimSpace(creds.Minio.Endpoint), "/")
+			ak := strings.TrimSpace(creds.Minio.AccessKey)
+			sk := strings.TrimSpace(creds.Minio.SecretKey)
+			if ep != "" && ak != "" && sk != "" {
+				return ep, ak, sk
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "abc data: cred_source=%q broker resolve failed: %v\n", ctx.CredSource, err)
+			// Fall through to local — for a true seedling/v1 slot the
+			// admin.services.minio fields are empty by design, so the
+			// downstream "minio not configured" message will follow,
+			// which is the correct visible failure mode.
+		}
+	}
 	for _, svc := range []string{"minio", "rustfs"} {
 		ep, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, svc, "endpoint")
 		if ep == "" {

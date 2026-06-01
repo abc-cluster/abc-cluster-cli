@@ -50,6 +50,7 @@ workspace and region settings.
 	cmd.AddCommand(newTokenCmd())
 	cmd.AddCommand(newRefreshCmd())
 	cmd.AddCommand(newClaimCmd())
+	cmd.AddCommand(newConfigCmd())
 	cmd.AddCommand(contextcmd.NewCmd())
 
 	return cmd
