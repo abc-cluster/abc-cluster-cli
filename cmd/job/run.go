@@ -298,7 +298,33 @@ EXAMPLES
 	cmd.Flags().Bool("no-project", false, "Skip project auto-attach")
 	cmd.Flags().Bool("no-investigation", false, "Skip investigation auto-attach")
 
+	// Run tags (MLflow-style key=value) for compare-by-tag within an
+	// investigation. The run is also auto-tagged notebook=<script-stem>.
+	cmd.Flags().StringArray("tag", nil, "Run tag in key=value form (repeatable). Example: --tag model=rf. The run is also auto-tagged notebook=<script-stem>.")
+
 	return cmd
+}
+
+// jobRunTags builds the run tags from --tag plus an auto notebook=<stem> tag
+// derived from the script filename (so runs are groupable by source notebook
+// even when `abc job run` is called directly). An explicit --tag notebook=...
+// wins over the auto value.
+func jobRunTags(cmd *cobra.Command, scriptPath string) []string {
+	tags, _ := cmd.Flags().GetStringArray("tag")
+	hasNotebook := false
+	for _, t := range tags {
+		if strings.HasPrefix(t, "notebook=") {
+			hasNotebook = true
+			break
+		}
+	}
+	if !hasNotebook && scriptPath != "" {
+		stem := strings.TrimSuffix(filepath.Base(scriptPath), filepath.Ext(scriptPath))
+		if stem != "" && stem != "." {
+			tags = append(tags, "notebook="+stem)
+		}
+	}
+	return tags
 }
 
 // resolveJobSubmissionSource picks the submission_source value for an
@@ -362,6 +388,7 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) string {
 		CPURequest:        cpuReqCores,
 		MemRequestGB:      memReqGB,
 		SubmissionSource:  resolveJobSubmissionSource(cmd),
+		Tags:              jobRunTags(cmd, scriptPath),
 	}
 	res, err := state.AutoAttachAndInsertRun(cmd.Context(), db, cmd.ErrOrStderr(), req)
 	if err != nil {

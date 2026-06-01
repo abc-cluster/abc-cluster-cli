@@ -102,6 +102,11 @@ type Run struct {
 	// were not completed by the background goroutine (e.g. CLI exited early).
 	// NULL on rows predating migration 0011.
 	NomadJobID sql.NullString
+	// Tags are MLflow-style key=value run tags (e.g. "model=rf",
+	// "notebook=rf.ipynb"), serialized as the tags_json JSON array.
+	// Enable compare-by-tag within an investigation. NULL on rows
+	// predating migration 0015.
+	Tags []string
 }
 
 // Citation mirrors the citations row.
@@ -843,14 +848,18 @@ func InsertRun(ctx context.Context, db *sql.DB, r Run) error {
 	if r.SubmissionSource.Valid {
 		subSrcArg = r.SubmissionSource.String
 	}
+	var tagsArg any
+	if t := tagsToJSON(r.Tags); t != "" {
+		tagsArg = t
+	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO runs (run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, status, freeze_id, gpu_count, scratch_gb, cpu_request, mem_request_gb, submission_source, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO runs (run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, status, freeze_id, gpu_count, scratch_gb, cpu_request, mem_request_gb, submission_source, tags_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.RunID, r.ContextName, nullableString(r.ProjectID), nullableString(r.InvestigationID),
 		r.Verb, r.WorkloadRef, nullableString(r.WorkloadVersion), nullableString(r.ParamsJSON),
 		nullableString(r.Namespace), nullableString(r.Workspace), r.SubmittedAt, r.Status,
 		nullableString(r.FreezeID), gpuArg, scratchArg,
-		cpuReqArg, memReqArg, subSrcArg,
+		cpuReqArg, memReqArg, subSrcArg, tagsArg,
 		time.Now().Unix())
 	return err
 }
@@ -888,7 +897,7 @@ func UpdateRunWorkdirRoot(ctx context.Context, db *sql.DB, runID, workdirRoot st
 // ListRunsForInvestigation returns runs attached to an investigation.
 func ListRunsForInvestigation(ctx context.Context, db *sql.DB, investigationID string) ([]Run, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, completed_at, status, exit_reason, cpu_hours, memory_gb_hours, walltime_seconds, gpu_count, scratch_gb, freeze_id
+		SELECT run_id, context_name, project_id, investigation_id, verb, workload_ref, workload_version, params_json, namespace, workspace, submitted_at, completed_at, status, exit_reason, cpu_hours, memory_gb_hours, walltime_seconds, gpu_count, scratch_gb, freeze_id, COALESCE(tags_json,'')
 		FROM runs WHERE investigation_id = ? ORDER BY submitted_at`, investigationID)
 	if err != nil {
 		return nil, err
@@ -897,12 +906,14 @@ func ListRunsForInvestigation(ctx context.Context, db *sql.DB, investigationID s
 	out := []Run{}
 	for rows.Next() {
 		var r Run
+		var tagsJSON string
 		if err := rows.Scan(&r.RunID, &r.ContextName, &r.ProjectID, &r.InvestigationID, &r.Verb,
 			&r.WorkloadRef, &r.WorkloadVersion, &r.ParamsJSON, &r.Namespace, &r.Workspace,
 			&r.SubmittedAt, &r.CompletedAt, &r.Status, &r.ExitReason, &r.CPUHours,
-			&r.MemoryGBHours, &r.WalltimeSeconds, &r.GpuCount, &r.ScratchGB, &r.FreezeID); err != nil {
+			&r.MemoryGBHours, &r.WalltimeSeconds, &r.GpuCount, &r.ScratchGB, &r.FreezeID, &tagsJSON); err != nil {
 			return nil, err
 		}
+		r.Tags = jsonToTags(tagsJSON)
 		out = append(out, r)
 	}
 	return out, rows.Err()

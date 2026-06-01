@@ -37,6 +37,9 @@ type AutoAttachRequest struct {
 	// "template:<id>" / "handwritten" / "rerun" / "automation".
 	// Empty == NULL on insert. Spec abc-report.md §A migration 0010.
 	SubmissionSource   string
+	// Tags are MLflow-style key=value run tags (e.g. "model=rf",
+	// "notebook=rf.ipynb") for compare-by-tag within an investigation.
+	Tags               []string
 }
 
 // AutoAttachResult is the resolved row that gets inserted into runs.
@@ -124,6 +127,7 @@ func AutoAttachAndInsertRun(ctx context.Context, db *sql.DB, banner io.Writer, r
 		CPURequest:      sql.NullFloat64{Float64: req.CPURequest, Valid: req.CPURequest > 0},
 		MemRequestGB:    sql.NullFloat64{Float64: req.MemRequestGB, Valid: req.MemRequestGB > 0},
 		SubmissionSource: sql.NullString{String: req.SubmissionSource, Valid: req.SubmissionSource != ""},
+		Tags:            req.Tags,
 		Status:          "running",
 	}
 	if err := InsertRun(ctx, db, run); err != nil {

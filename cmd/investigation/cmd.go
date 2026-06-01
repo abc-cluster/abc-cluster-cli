@@ -41,17 +41,24 @@ func buildCmd(use, short string) *cobra.Command {
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newShowCmd())
 	cmd.AddCommand(newUseCmd())
-	cmd.AddCommand(newBranchCmd())
+	cmd.AddCommand(newRunsCmd())
 	cmd.AddCommand(newAnnotateCmd())
-	cmd.AddCommand(newDeadEndCmd())
-	cmd.AddCommand(newMergeCmd())
-	cmd.AddCommand(newTreeCmd())
 	cmd.AddCommand(newRenameCmd())
 	cmd.AddCommand(newTagCmd())
 	cmd.AddCommand(newVisualizeCmd())
 	cmd.AddCommand(newExportCmd())
 	cmd.AddCommand(newDiffCmd())
 	cmd.AddCommand(newAnnotationCmd())
+	// The git-like branch/merge/tree/dead-end workflow stays fully functional
+	// but is hidden from seedling-facing help — the student tier uses the
+	// MLflow-style "tag runs, compare by tag" model (`runs --by`), not a
+	// branch/merge graph (spec abc-job-data-staging-and-run-tags B6).
+	for _, sub := range []*cobra.Command{
+		newBranchCmd(), newDeadEndCmd(), newMergeCmd(), newTreeCmd(),
+	} {
+		sub.Hidden = true
+		cmd.AddCommand(sub)
+	}
 	return cmd
 }
 
