@@ -11,7 +11,54 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	retry "github.com/avast/retry-go/v4"
 )
+
+// Broker retry tunables. Tight defaults — the broker is a user-facing dep
+// on the hot path of every CLI command for a seedling/v1 slot, so we'd
+// rather fail loud than mask a real outage with long backoff. The total
+// worst-case wall-time is roughly:
+//
+//     BrokerRetryMaxAttempts × (BrokerRetryMaxBackoff + per-call timeout)
+//     = 3 × (2s + 15s) ~= 51s upper bound, typical < 5s
+//
+// Override with the constants below for tests.
+var (
+	BrokerRetryMaxAttempts uint          = 3
+	BrokerRetryMinBackoff  time.Duration = 200 * time.Millisecond
+	BrokerRetryMaxBackoff  time.Duration = 2 * time.Second
+)
+
+// brokerRetryableStatusError signals fetch() that a status code is worth
+// retrying. Non-retryable HTTP failures (e.g. 401, 403, 404, 409) are
+// returned as plain errors which retry-go won't re-invoke. We use a sentinel
+// error type so retry.RetryIf can distinguish.
+type brokerRetryableStatusError struct {
+	status int
+	body   string
+	url    string
+}
+
+func (e *brokerRetryableStatusError) Error() string {
+	return fmt.Sprintf("broker %s returned retryable status %d: %s", e.url, e.status, strings.TrimSpace(e.body))
+}
+
+// isRetryableHTTPStatus reports whether an HTTP status code from the broker
+// should trigger a retry. We retry transient server failures (500/502/503/504)
+// + 429 (Too Many Requests). 4xx other than 429 are deliberate refusals from
+// the broker (auth/permission/shape) and must surface immediately.
+func isRetryableHTTPStatus(code int) bool {
+	switch code {
+	case http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+		http.StatusTooManyRequests:
+		return true
+	}
+	return false
+}
 
 // BrokerCredSource is shared infrastructure for resolvers that exchange an
 // opaque user token for real credentials at a tier-specific broker URL.
@@ -127,31 +174,71 @@ func (b *BrokerCredSource) InvalidateCache() {
 }
 
 // fetch is the HTTP exchange itself, separated for unit-testability.
+// Retries transient failures (network + 5xx + 429) with exponential backoff
+// via avast/retry-go; never retries 4xx (a 401 from a revoked opaque must
+// surface immediately so admin revocations are visible to the user).
 func (b *BrokerCredSource) fetch(ctx context.Context) (*Creds, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.ExchangeURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("%s: build request: %w", b.source, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+b.OpaqueToken)
-	req.Header.Set("Accept", "application/json")
+	var body []byte
 
-	resp, err := b.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%s: POST %s: %w", b.source, b.ExchangeURL, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, brokerErrorBodyLimit+1<<20)) // 1MB cap on success body
-	if err != nil {
-		return nil, fmt.Errorf("%s: read response: %w", b.source, err)
-	}
+	// once is one attempt of the HTTP exchange. It returns:
+	//   - nil on success (body is populated for the caller below)
+	//   - *brokerRetryableStatusError on transient HTTP failure (retry-go will retry)
+	//   - any other error on non-retryable HTTP failure or transport error
+	// Transport errors from HTTPClient.Do (DNS, TCP RST, TLS handshake) are
+	// returned as-is — retry-go retries them by default since they have no
+	// retry.Unrecoverable wrapper.
+	once := func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.ExchangeURL, nil)
+		if err != nil {
+			// Bad request-construction is not a transient condition.
+			return retry.Unrecoverable(fmt.Errorf("%s: build request: %w", b.source, err))
+		}
+		req.Header.Set("Authorization", "Bearer "+b.OpaqueToken)
+		req.Header.Set("Accept", "application/json")
 
-	if resp.StatusCode != http.StatusOK {
-		preview := string(body)
+		resp, err := b.HTTPClient.Do(req)
+		if err != nil {
+			// Network-level failure (DNS, dial, TLS, read). Retryable by default.
+			return fmt.Errorf("%s: POST %s: %w", b.source, b.ExchangeURL, err)
+		}
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, brokerErrorBodyLimit+1<<20)) // 1MB cap on success body
+		if err != nil {
+			// Mid-response failure — usually transient (connection reset).
+			return fmt.Errorf("%s: read response: %w", b.source, err)
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			body = raw
+			return nil
+		}
+
+		preview := string(raw)
 		if len(preview) > brokerErrorBodyLimit {
 			preview = preview[:brokerErrorBodyLimit] + "…(truncated)"
 		}
-		return nil, fmt.Errorf("%s: broker %s returned %d: %s",
-			b.source, b.ExchangeURL, resp.StatusCode, strings.TrimSpace(preview))
+		if isRetryableHTTPStatus(resp.StatusCode) {
+			return &brokerRetryableStatusError{
+				status: resp.StatusCode,
+				body:   preview,
+				url:    b.ExchangeURL,
+			}
+		}
+		// 4xx (except 429): the broker is deliberately refusing. Don't retry.
+		return retry.Unrecoverable(fmt.Errorf("%s: broker %s returned %d: %s",
+			b.source, b.ExchangeURL, resp.StatusCode, strings.TrimSpace(preview)))
+	}
+
+	err := retry.Do(once,
+		retry.Context(ctx),
+		retry.Attempts(BrokerRetryMaxAttempts),
+		retry.Delay(BrokerRetryMinBackoff),
+		retry.MaxDelay(BrokerRetryMaxBackoff),
+		retry.DelayType(retry.BackOffDelay),
+		retry.LastErrorOnly(true),
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	var wire wireCreds

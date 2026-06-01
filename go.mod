@@ -3,6 +3,7 @@ module github.com/abc-cluster/abc-cluster-cli
 go 1.25.0
 
 require (
+	github.com/avast/retry-go/v4 v4.7.0
 	github.com/bdragon300/tusgo v0.1.2
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.2.4
