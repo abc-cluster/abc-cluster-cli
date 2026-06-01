@@ -23,6 +23,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
+	portalcmd "github.com/abc-cluster/abc-cluster-cli/cmd/portal"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/project"
 	reportcmd "github.com/abc-cluster/abc-cluster-cli/cmd/report"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
@@ -250,6 +251,7 @@ func init() {
 	rootCmd.AddCommand(cluster.NewCmd())
 	rootCmd.AddCommand(doctor.NewCmd())
 	rootCmd.AddCommand(workbench.NewCmd())
+	rootCmd.AddCommand(portalcmd.NewCmd())
 	rootCmd.AddCommand(accounting.NewCmd())
 	rootCmd.AddCommand(auth.NewCmd())
 	rootCmd.AddCommand(cfgcmd.NewCmd())
