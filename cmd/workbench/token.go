@@ -70,8 +70,8 @@ The token value is shown ONCE — JupyterHub does not return it later. Use
 'abc workbench token list' to see what's active (metadata only), and
 'abc workbench token revoke' to clean up.
 
-Default expiry: 7d (matches abc data presign maximum). Pass --expires for
-other durations using Go duration syntax (e.g. 24h, 168h).`,
+Default expiry: 30d. Pass --expires for other durations using Go duration
+syntax (e.g. 24h, 168h for 7 days, 720h for 30 days).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := resolveHubClient()
 			if err != nil {
@@ -80,7 +80,7 @@ other durations using Go duration syntax (e.g. 24h, 168h).`,
 
 			dur, err := time.ParseDuration(expires)
 			if err != nil {
-				return fmt.Errorf("--expires %q: %w (use Go duration: 24h, 7d-equivalent 168h, …)", expires, err)
+				return fmt.Errorf("--expires %q: %w (use Go duration: 24h, 168h for 7d, 720h for 30d)", expires, err)
 			}
 			if dur <= 0 {
 				return fmt.Errorf("--expires must be positive")
@@ -122,7 +122,7 @@ other durations using Go duration syntax (e.g. 24h, 168h).`,
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "human-readable label (default: derived from invocation context)")
-	cmd.Flags().StringVar(&expires, "expires", "168h", "Go duration before token expires (e.g. 24h, 168h for 7 days)")
+	cmd.Flags().StringVar(&expires, "expires", "720h", "Go duration before token expires (default 720h = 30d; e.g. 24h, 168h for 7d)")
 	cmd.Flags().StringSliceVar(&scope, "scope", nil, "JupyterHub token scope(s); empty = default 'self'")
 	return cmd
 }
@@ -327,7 +327,7 @@ Run this from inside a JupyterLab terminal in your active workbench session.`,
 	}
 	cmd.Flags().StringVar(&clientType, "client", "vscode", "target client: vscode | jupyter-desktop | raw")
 	cmd.Flags().StringVar(&name, "name", "", "label for the generated token (default: derived from context)")
-	cmd.Flags().StringVar(&expires, "expires", "168h", "Go duration before the token expires (default 168h = 7d)")
+	cmd.Flags().StringVar(&expires, "expires", "720h", "Go duration before the token expires (default 720h = 30d)")
 	return cmd
 }
 
