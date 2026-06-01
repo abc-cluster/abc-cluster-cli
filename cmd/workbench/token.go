@@ -347,13 +347,23 @@ Examples:
 					return fmt.Errorf("no access token in the active context — run `abc auth login` first")
 				}
 
+				// Resolve the auth-svc base URL. Order:
+				//   1. --auth-endpoint flag (explicit override)
+				//   2. the context's stamped auth_endpoint (seedling/v1 slots
+				//      carry it; see abc-auth-svc CLUSTER_AUTH_ENDPOINT)
+				//   3. the hub host — abc-auth-svc is co-located behind the same
+				//      Caddy under /auth/*, so the workbench host IS the auth base.
+				// We deliberately do NOT derive an `auth.<rest>` sibling host:
+				// on seedling no such host exists (it lives at workbench.<rest>).
 				authEndpoint := strings.TrimSpace(authEndpointOverride)
 				if authEndpoint == "" {
-					authEndpoint, err = wbinternal.DeriveAuthEndpoint(actx.Endpoint)
-					if err != nil {
-						return fmt.Errorf("derive auth-svc endpoint from %q: %w (use --auth-endpoint to override)",
-							actx.Endpoint, err)
-					}
+					authEndpoint = strings.TrimSpace(actx.AuthEndpoint)
+				}
+				if authEndpoint == "" {
+					authEndpoint = hubURL(actx)
+				}
+				if authEndpoint == "" {
+					return fmt.Errorf("cannot determine auth-svc endpoint — set admin.services.workbench.hub_url or pass --auth-endpoint")
 				}
 
 				resp, err := wbinternal.MintHubToken(cmd.Context(), authEndpoint, bearer,

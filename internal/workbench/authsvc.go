@@ -53,7 +53,15 @@ func MintHubToken(
 	bearer string,
 	req MintHubTokenRequest,
 ) (*MintHubTokenResponse, error) {
-	endpoint := strings.TrimRight(authEndpoint, "/") + "/workbench/token"
+	// authEndpoint is the auth-svc base (e.g. https://workbench.<tier>.<base>).
+	// A stamped seedling/v1 endpoint may already carry the /auth/exchange path;
+	// strip it back to the base before composing the token path.
+	base := strings.TrimRight(authEndpoint, "/")
+	base = strings.TrimSuffix(base, "/auth/exchange")
+	// The endpoint is served under Caddy's /auth/* route (same host as the
+	// workbench), so the path is /auth/workbench/token — NOT /workbench/token,
+	// which would fall through to forward_auth and 302 to the login page.
+	endpoint := base + "/auth/workbench/token"
 	if _, err := url.Parse(endpoint); err != nil {
 		return nil, fmt.Errorf("invalid auth endpoint %q: %w", authEndpoint, err)
 	}
@@ -101,51 +109,9 @@ func MintHubToken(
 	return &out, nil
 }
 
-// knownServiceLabels are first-DNS-label values that indicate the endpoint is a
-// per-service host (<svc>.<tier>.<base>). For these we replace the label with
-// "auth"; for anything else we treat the host as the bare tier gateway
-// (<tier>.<base>) and prepend "auth.".
-var knownServiceLabels = map[string]bool{
-	"nomad": true, "workbench": true, "api": true, "auth": true,
-	"grafana": true, "upload": true, "minio": true, "vault": true,
-}
-
-// DeriveAuthEndpoint converts a cluster endpoint URL into its auth-svc sibling.
-//
-// Two endpoint shapes occur in the wild:
-//
-//	<svc>.<tier>.<base>   e.g. https://nomad.seedling.abc-cluster.cloud
-//	<tier>.<base>         e.g. https://seedling.abc-cluster.cloud   (the API gateway)
-//
-// Both must map to the SAME auth host: https://auth.seedling.abc-cluster.cloud.
-// We distinguish by the first DNS label: a known service label is replaced
-// with "auth"; otherwise the whole host is treated as the tier gateway and
-// "auth." is prepended.
-//
-// An earlier version always replaced the first label, which turned the gateway
-// form (seedling.abc-cluster.cloud) into auth.abc-cluster.cloud — a host that
-// does not exist. If the heuristic is wrong for a deployment, callers should
-// pass --auth-endpoint explicitly.
-func DeriveAuthEndpoint(clusterEndpoint string) (string, error) {
-	clusterEndpoint = strings.TrimSpace(clusterEndpoint)
-	if clusterEndpoint == "" {
-		return "", fmt.Errorf("active context has no endpoint")
-	}
-	u, err := url.Parse(clusterEndpoint)
-	if err != nil {
-		return "", err
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("not an absolute URL: %q", clusterEndpoint)
-	}
-	first, rest, found := strings.Cut(u.Host, ".")
-	if !found || rest == "" {
-		return "", fmt.Errorf("host %q has no domain part", u.Host)
-	}
-	if knownServiceLabels[strings.ToLower(first)] {
-		// <svc>.<tier>.<base> → auth.<tier>.<base>
-		return fmt.Sprintf("%s://auth.%s", u.Scheme, rest), nil
-	}
-	// <tier>.<base> (bare gateway) → auth.<tier>.<base>
-	return fmt.Sprintf("%s://auth.%s", u.Scheme, u.Host), nil
-}
+// NOTE: there is deliberately no DeriveAuthEndpoint here. abc-auth-svc is not a
+// sibling `auth.<rest>` host — on seedling no such DNS record exists. It is
+// co-located behind the same Caddy as the workbench, served under /auth/*. The
+// connect command therefore uses the context's stamped auth_endpoint, or falls
+// back to the hub host (see cmd/workbench/token.go). Callers needing a
+// different host pass --auth-endpoint explicitly.
