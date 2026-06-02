@@ -234,6 +234,13 @@ EXAMPLES
 		"    micromamba-exec: environment.yml (conda environment file)\n"+
 		"  Aligns with --from-file on abc auth context add (the canonical name across the CLI).")
 	cmd.Flags().String("from", "", "Deprecated alias for --from-file; will be removed.")
+
+	// Notebook execution: `abc job run <name>.ipynb` runs the notebook headless
+	// via papermill in the pixi-exec runtime (auto-staged in, executed copy
+	// staged out). See spec abc-job-data-staging-and-run-tags.
+	cmd.Flags().String("kernel", "python3", "papermill kernel name for .ipynb jobs (default the pixi env's python3)")
+	cmd.Flags().StringArray("param", nil, "papermill parameter key=value for .ipynb jobs (repeatable) → papermill -p key value")
+	cmd.Flags().String("executed", "", "output path for the executed notebook (.ipynb jobs; default <stem>.executed.ipynb)")
 	_ = cmd.Flags().MarkDeprecated("from", "use --from-file instead (same semantics; --from will be removed in a future release)")
 	cmd.Flags().Bool("pixi-cleanup", false, "Remove the pixi env from the task directory on job exit (pixi-exec)")
 	cmd.Flags().Bool("mamba-cleanup", false, "Remove the micromamba env from the task directory on job exit (micromamba-exec)")
@@ -732,6 +739,89 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 	return plan, nil
 }
 
+// buildNotebookJob handles `abc job run <name>.ipynb` (spec abc-job-data-staging
+// Part A): it generates a papermill wrapper that executes the notebook headless
+// in the pixi-exec runtime, and wires the notebook in + the executed copy out
+// through the staging flags (--in/--out). It mutates runtime/from-file/in/out so
+// the rest of runJob treats it as a staged pixi-exec shell job. Returns the
+// generated script body + a script base name (a .papermill.sh, not the .ipynb).
+//
+// The project's pixi env MUST contain papermill + ipykernel (the notebook-
+// execution floor); papermill runs inside `pixi run`.
+func buildNotebookJob(cmd *cobra.Command, scriptPath string) (string, string, error) {
+	root, rerr := jobstage.FindProjectRoot(filepath.Dir(scriptPath))
+	if rerr != nil {
+		// Loose notebook (no project sentinel): use its own directory as root.
+		root, _ = filepath.Abs(filepath.Dir(scriptPath))
+	}
+	abs, _ := filepath.Abs(scriptPath)
+	nbRel, err := filepath.Rel(root, abs)
+	if err != nil || strings.HasPrefix(nbRel, "..") {
+		return "", "", fmt.Errorf("notebook %q is outside the project root %s", scriptPath, root)
+	}
+
+	outRel := strings.TrimSuffix(nbRel, filepath.Ext(nbRel)) + ".executed.ipynb"
+	if ex, _ := cmd.Flags().GetString("executed"); ex != "" {
+		outRel = ex
+	}
+
+	// Resolve the pixi env: explicit --from-file/--from, else auto-detect a
+	// pixi manifest at the project root.
+	fromFile, _ := cmd.Flags().GetString("from-file")
+	if fromFile == "" {
+		fromFile, _ = cmd.Flags().GetString("from")
+	}
+	if fromFile == "" {
+		for _, cand := range []string{"pixi.lock", "pixi.toml"} {
+			if _, e := os.Stat(filepath.Join(root, cand)); e == nil {
+				fromFile = filepath.Join(root, cand)
+				break
+			}
+		}
+	}
+	if fromFile == "" {
+		return "", "", fmt.Errorf("running a notebook needs a pixi env (with papermill + ipykernel): "+
+			"pass --from-file=<pixi.toml|pixi.lock>, or add a pixi.toml at the project root %s", root)
+	}
+	runtime, _ := cmd.Flags().GetString("runtime")
+	if runtime == "" {
+		runtime = "pixi-exec"
+	}
+	switch runtime {
+	case "pixi-exec", "pixi", "micromamba-exec", "micromamba", "mamba":
+	default:
+		return "", "", fmt.Errorf("notebook jobs require an env runtime (--runtime=pixi-exec); got %q", runtime)
+	}
+
+	kernel, _ := cmd.Flags().GetString("kernel")
+	params, _ := cmd.Flags().GetStringArray("param")
+	var pflags strings.Builder
+	for _, p := range params {
+		k, v, ok := strings.Cut(p, "=")
+		if !ok {
+			return "", "", fmt.Errorf("--param %q must be key=value", p)
+		}
+		fmt.Fprintf(&pflags, " -p %s %s", shellSingleQuote(k), shellSingleQuote(v))
+	}
+	kflag := ""
+	if kernel != "" {
+		kflag = " -k " + shellSingleQuote(kernel)
+	}
+
+	// Wire runtime + staging flags for the downstream applyCLIFlags + resolveStaging.
+	_ = cmd.Flags().Set("runtime", runtime)
+	_ = cmd.Flags().Set("from-file", fromFile)
+	_ = cmd.Flags().Set("in", nbRel)
+	_ = cmd.Flags().Set("out", outRel)
+
+	body := fmt.Sprintf("set -euo pipefail\n"+
+		"echo \"[abc] executing notebook %s via papermill\"\n"+
+		"papermill %s %s%s%s\n",
+		nbRel, shellSingleQuote(nbRel), shellSingleQuote(outRel), kflag, pflags.String())
+	stem := strings.TrimSuffix(filepath.Base(scriptPath), filepath.Ext(scriptPath))
+	return body, stem + ".papermill.sh", nil
+}
+
 func runJob(cmd *cobra.Command, args []string) error {
 	scriptPath := args[0]
 	runID := autoAttachJobRun(cmd, scriptPath)
@@ -768,6 +858,17 @@ func runJob(cmd *cobra.Command, args []string) error {
 		scriptBase = helloClusterScriptBase
 		defaultName = "hello-cluster"
 		scriptBytes = []byte(helloClusterScriptBody)
+	} else if strings.EqualFold(filepath.Ext(scriptPath), ".ipynb") {
+		// Notebook job: generate a papermill wrapper + wire pixi-exec runtime +
+		// staging (spec abc-job-data-staging Part A). Does NOT read the .ipynb
+		// as a shell script (that is what tripped the bash parser).
+		body, base, nbErr := buildNotebookJob(cmd, scriptPath)
+		if nbErr != nil {
+			return nbErr
+		}
+		scriptBytes = []byte(body)
+		scriptBase = base
+		defaultName = strings.TrimSuffix(filepath.Base(scriptPath), filepath.Ext(scriptPath))
 	} else {
 		f, openErr := os.Open(scriptPath)
 		if openErr != nil {
