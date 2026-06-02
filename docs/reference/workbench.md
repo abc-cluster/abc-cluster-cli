@@ -128,12 +128,16 @@ session are available in the next.
 Admins provision per-user MinIO credentials on aither before the user can access
 MinIO from inside JupyterLab:
 
-```bash
-# On aither (as root or with sudo):
-cat > /etc/jupyterhub/minio-creds/<username> <<EOF
+On aither (as root or with sudo), create `/etc/jupyterhub/minio-creds/<username>` with:
+
+```ini title="/etc/jupyterhub/minio-creds/<username>"
 AWS_ACCESS_KEY_ID=<access_key>
 AWS_SECRET_ACCESS_KEY=<secret_key>
-EOF
+```
+
+Then lock it down:
+
+```bash
 chmod 600 /etc/jupyterhub/minio-creds/<username>
 ```
 

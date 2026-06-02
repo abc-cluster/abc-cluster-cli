@@ -154,18 +154,20 @@ abc job run hello-cluster --sleep=2m
 
 ### 1.4 Submit a custom script
 
-Replace `Your Name` below and submit a personalised job:
+Create a file called `hello-me.sh` with this content (hover the box and click the copy icon, then paste it into your editor and replace `Your Name`):
 
-```bash
-cat > hello-me.sh << 'EOF'
+```bash title="hello-me.sh"
 #!/bin/bash
 #ABC --cores=1
 #ABC --mem=256M
 echo "Hello, Your Name!"
 echo "Running on: $(hostname)"
 echo "Alloc: ${NOMAD_ALLOC_ID}"
-EOF
+```
 
+Then submit it:
+
+```bash
 abc job run hello-me.sh
 ```
 
@@ -189,7 +191,11 @@ pixi init
 pixi add --feature bio --platform linux-64 samtools fastqc
 pixi install --locked --feature bio          # writes pixi.lock
 
-cat > bio-pixi.sh << 'EOF'
+```
+
+Create `bio-pixi.sh`:
+
+```bash title="bio-pixi.sh"
 #!/bin/bash
 #ABC --name=bio-pixi-demo
 #ABC --runtime=pixi-exec
@@ -201,8 +207,11 @@ cat > bio-pixi.sh << 'EOF'
 set -euo pipefail
 samtools --version | head -1
 fastqc --version
-EOF
+```
 
+Then submit it:
+
+```bash
 abc job run bio-pixi.sh
 ```
 
@@ -212,8 +221,9 @@ abc job run bio-pixi.sh
 
 Best if you have an `environment.yml` from a colleague or a bioconda recipe and don't want to add a new tool to your workflow.
 
-```bash
-cat > environment.yml << 'EOF'
+Create `environment.yml`:
+
+```yaml title="environment.yml"
 name: bio
 channels:
   - conda-forge
@@ -221,9 +231,11 @@ channels:
 dependencies:
   - samtools=1.20
   - fastqc=0.12.1
-EOF
+```
 
-cat > bio-mamba.sh << 'EOF'
+Create `bio-mamba.sh`:
+
+```bash title="bio-mamba.sh"
 #!/bin/bash
 #ABC --name=bio-mamba-demo
 #ABC --runtime=micromamba-exec
@@ -236,8 +248,11 @@ cat > bio-mamba.sh << 'EOF'
 set -euo pipefail
 samtools --version | head -1
 fastqc --version
-EOF
+```
 
+Then submit it:
+
+```bash
 abc job run bio-mamba.sh
 ```
 
