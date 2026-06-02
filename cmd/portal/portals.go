@@ -25,7 +25,7 @@ type Portal struct {
 // allPortals defines the fixed ordered list of portals.
 var allPortals = []Portal{
 	{
-		Name:    "job_dashboard",
+		Name:    "job-dashboard",
 		Service: "Nomad",
 		Label:   "Job dashboard",
 		Desc:    "Job scheduler UI — submit, watch, drain workloads",
@@ -33,7 +33,7 @@ var allPortals = []Portal{
 		Aliases: []string{"nomad"},
 	},
 	{
-		Name:    "cluster_dashboard",
+		Name:    "cluster-dashboard",
 		Service: "Grafana",
 		Label:   "Cluster dashboard",
 		Desc:    "Live cluster + per-user resource and job activity dashboards",
@@ -49,7 +49,7 @@ var allPortals = []Portal{
 		Aliases: []string{"jupyter", "jupyterlab", "lab"},
 	},
 	{
-		Name:    "data_upload",
+		Name:    "data-upload",
 		Service: "tusd",
 		Label:   "Data upload",
 		Desc:    "Resumable browser upload — or use abc data upload from the CLI",
@@ -57,7 +57,7 @@ var allPortals = []Portal{
 		Aliases: []string{"upload"},
 	},
 	{
-		Name:    "data_browser",
+		Name:    "data-browser",
 		Service: "MinIO",
 		Label:   "Data browser",
 		Desc:    "Object storage console — buckets, prefixes, access keys",
@@ -76,15 +76,20 @@ func portalNames() []string {
 }
 
 // canonicalPortal resolves any accepted name (neutral or legacy alias) to the
-// canonical neutral portal name, or "" if unknown. Case-insensitive.
+// canonical neutral portal name, or "" if unknown. Case-insensitive and
+// separator-insensitive: underscores are treated as hyphens, so both
+// "data-browser" and "data_browser" resolve.
 func canonicalPortal(name string) string {
-	n := strings.ToLower(strings.TrimSpace(name))
+	norm := func(s string) string {
+		return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "_", "-")
+	}
+	n := norm(name)
 	for _, p := range allPortals {
-		if strings.EqualFold(p.Name, n) {
+		if norm(p.Name) == n {
 			return p.Name
 		}
 		for _, a := range p.Aliases {
-			if strings.EqualFold(a, n) {
+			if norm(a) == n {
 				return p.Name
 			}
 		}
@@ -184,15 +189,15 @@ func (p PortalURLs) AuthSvcBase() string {
 // legacy aliases.
 func (p PortalURLs) URL(name string) (string, error) {
 	switch canonicalPortal(name) {
-	case "job_dashboard":
+	case "job-dashboard":
 		return p.Nomad, nil
-	case "cluster_dashboard":
+	case "cluster-dashboard":
 		return p.Grafana, nil
 	case "workbench":
 		return p.Workbench, nil
-	case "data_upload":
+	case "data-upload":
 		return p.Upload, nil
-	case "data_browser":
+	case "data-browser":
 		return p.MinIO, nil
 	}
 	return "", fmt.Errorf("unknown portal %q — valid: %s", name, strings.Join(portalNames(), ", "))

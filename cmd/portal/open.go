@@ -28,10 +28,10 @@ active context. No manual token copy-paste required.
 
 Portals (neutral names; the underlying service is shown for reference):
 
-  job_dashboard      (Nomad)      Job scheduler UI — submit, watch, drain
-  data_browser       (MinIO)      Object storage console — buckets, keys
-  data_upload        (tusd)       Resumable browser upload
-  cluster_dashboard  (Grafana)    Cluster + per-user activity dashboards
+  job-dashboard      (Nomad)      Job scheduler UI — submit, watch, drain
+  data-browser       (MinIO)      Object storage console — buckets, keys
+  data-upload        (tusd)       Resumable browser upload
+  cluster-dashboard  (Grafana)    Cluster + per-user activity dashboards
   workbench          (JupyterLab) Browser-based interactive analysis
 
 Legacy names (nomad, minio, s3, grafana, upload) still work as aliases.
@@ -50,7 +50,7 @@ Useful for SSH sessions, sharing, or scripting.`,
 			}
 			return nil
 		},
-		ValidArgs: []string{"job_dashboard", "data_browser", "data_upload", "cluster_dashboard", "workbench"},
+		ValidArgs: []string{"job-dashboard", "data-browser", "data-upload", "cluster-dashboard", "workbench"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.ToLower(args[0])
 			cfg, err := config.Load()
@@ -74,15 +74,15 @@ Useful for SSH sessions, sharing, or scripting.`,
 // neutral names and legacy aliases (resolved via canonicalPortal).
 func openPortal(name string, ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	switch canonicalPortal(name) {
-	case "job_dashboard":
+	case "job-dashboard":
 		return openNomad(ctx, urls, linkOnly)
-	case "cluster_dashboard":
+	case "cluster-dashboard":
 		return openMagicLinkPortal(urls.Grafana, "grafana", urls, ctx.NomadToken(), linkOnly)
 	case "workbench":
 		return openMagicLink(urls.Workbench, urls, ctx.NomadToken(), linkOnly)
-	case "data_upload":
+	case "data-upload":
 		return openUpload(ctx, urls, linkOnly)
-	case "data_browser":
+	case "data-browser":
 		return openMinIOSSO(ctx, urls, linkOnly)
 	default:
 		return fmt.Errorf("unknown portal %q — valid: %s", name, strings.Join(portalNames(), ", "))
