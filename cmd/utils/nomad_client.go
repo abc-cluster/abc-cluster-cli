@@ -169,15 +169,33 @@ func (c *NomadClient) nsOrDefault(ns string) string {
 // ── Wire types ────────────────────────────────────────────────────────────────
 
 type NomadJobStub struct {
-	ID          string   `json:"ID"`
-	Name        string   `json:"Name"`
-	Type        string   `json:"Type"`
-	Status      string   `json:"Status"`
-	Namespace   string   `json:"Namespace"`
-	Region      string   `json:"Region"`
-	Datacenters []string `json:"Datacenters"`
-	SubmitTime  int64    `json:"SubmitTime"`
-	ModifyTime  int64    `json:"ModifyTime"`
+	ID          string          `json:"ID"`
+	Name        string          `json:"Name"`
+	Type        string          `json:"Type"`
+	Status      string          `json:"Status"`
+	Namespace   string          `json:"Namespace"`
+	Region      string          `json:"Region"`
+	Datacenters []string        `json:"Datacenters"`
+	SubmitTime  int64           `json:"SubmitTime"`
+	ModifyTime  int64           `json:"ModifyTime"`
+	JobSummary  NomadJobSummary `json:"JobSummary"`
+}
+
+// NomadJobSummary carries per-task-group allocation counts from the Nomad job
+// list endpoint. Used to distinguish a successfully-completed batch job from a
+// failed one — both report Status "dead", which is confusing on its own.
+type NomadJobSummary struct {
+	Summary map[string]NomadTaskGroupSummary `json:"Summary"`
+}
+
+// NomadTaskGroupSummary is the per-group alloc count breakdown.
+type NomadTaskGroupSummary struct {
+	Queued   int `json:"Queued"`
+	Complete int `json:"Complete"`
+	Failed   int `json:"Failed"`
+	Running  int `json:"Running"`
+	Starting int `json:"Starting"`
+	Lost     int `json:"Lost"`
 }
 
 type NomadJob struct {

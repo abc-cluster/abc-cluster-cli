@@ -61,6 +61,24 @@ type PortalURLs struct {
 	authSvc string
 }
 
+// knownServiceLabels are the per-service DNS labels the cluster publishes as
+// subdomains of the base cluster domain. When the context endpoint carries one
+// of these as its first label (e.g. the Nomad URL), it is stripped to recover
+// the bare cluster base domain before portal subdomains are prepended.
+var knownServiceLabels = []string{"nomad", "s3", "minio", "workbench", "upload", "grafana", "api"}
+
+// stripServiceLabel returns host with a known leading service label removed:
+// "nomad.seedling.abc-cluster.cloud" → "seedling.abc-cluster.cloud".
+// A bare base domain ("seedling.abc-cluster.cloud") is returned unchanged.
+func stripServiceLabel(host string) string {
+	for _, svc := range knownServiceLabels {
+		if strings.HasPrefix(host, svc+".") {
+			return host[len(svc)+1:]
+		}
+	}
+	return host
+}
+
 // DeriveURLs derives all portal URLs from the active context.
 // The context endpoint (e.g. https://seedling.abc-cluster.cloud) is the
 // canonical base; subdomains are prepended for each portal. NomadAddr()
@@ -75,11 +93,18 @@ func DeriveURLs(ctx config.Context) (PortalURLs, error) {
 	if err != nil {
 		return PortalURLs{}, fmt.Errorf("invalid context endpoint %q: %w", ep, err)
 	}
-	host := u.Host // e.g. "seedling.abc-cluster.cloud"
+	host := u.Host // e.g. "seedling.abc-cluster.cloud" OR "nomad.seedling.abc-cluster.cloud"
 	scheme := u.Scheme
 
+	// The context endpoint is frequently a service-prefixed URL — the Nomad
+	// endpoint (nomad.seedling.abc-cluster.cloud), not the bare cluster base.
+	// Strip a known leading service label so portal subdomains resolve to the
+	// real hosts (workbench.seedling.abc-cluster.cloud), NOT a doubled-up
+	// workbench.nomad.seedling.abc-cluster.cloud that has no DNS record.
+	baseHost := stripServiceLabel(host)
+
 	base := func(sub string) string {
-		return fmt.Sprintf("%s://%s.%s", scheme, sub, host)
+		return fmt.Sprintf("%s://%s.%s", scheme, sub, baseHost)
 	}
 
 	// Nomad: use NomadAddr() directly — it IS the public nomad URL.

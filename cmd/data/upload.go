@@ -316,8 +316,12 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 	// fires with missing auth headers the routing info is already present.
 	if _, exists := extraMeta["uploadedBy"]; !exists {
 		if cfg, cfgErr := abccfg.Load(); cfgErr == nil {
-			if whoami := strings.TrimSpace(cfg.ActiveCtx().Auth.Whoami); whoami != "" {
-				extraMeta["uploadedBy"] = whoami
+			// Auth is a *ContextAuth and is nil when the context has no auth
+			// block (or no active context) — guard before dereferencing.
+			if auth := cfg.ActiveCtx().Auth; auth != nil {
+				if whoami := strings.TrimSpace(auth.Whoami); whoami != "" {
+					extraMeta["uploadedBy"] = whoami
+				}
 			}
 		}
 	}
@@ -664,7 +668,13 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	}
 	metadata["filename"] = filepath.Base(filePath)
 	if name != "" {
+		// --name renames the stored file. The tusd mover names the destination
+		// object from `filename`, so set BOTH: `name` (display/registry) and
+		// `filename` (the field the mover actually uses) — otherwise the rename
+		// is silently ignored because the original filename takes precedence.
+		// The user supplies the full name including any extension.
 		metadata["name"] = name
+		metadata["filename"] = name
 	}
 	if !checksumEnabled {
 		metadata["checksum"] = ""

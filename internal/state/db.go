@@ -1,4 +1,4 @@
-// Package state owns the local SQLite database at ~/.abc/local.db.
+// Package state owns the local SQLite database at ~/.abc/db/local.db.
 //
 // Renamed 2026-05-08 from ~/.abc/state.db to align with the `abc localdb`
 // verb naming. Existing users with ~/.abc/state.db get a one-shot
@@ -22,8 +22,14 @@ import (
 )
 
 const (
-	// DefaultDBFilename is the canonical filename under ~/.abc.
+	// DefaultDBFilename is the canonical DB filename.
 	DefaultDBFilename = "local.db"
+
+	// DefaultDBDir is the subdirectory under ~/.abc that holds the database
+	// (since 2026-06-02). The DB now lives at ~/.abc/db/local.db so the home
+	// stays tidy (config.yaml, db/, .secrets, …) rather than scattering DB
+	// files at the top level.
+	DefaultDBDir = "db"
 
 	// LegacyDBFilename is the pre-2026-05-08 filename. Migrated to
 	// DefaultDBFilename automatically on first Open() if present and the
@@ -36,24 +42,79 @@ var (
 	cache  = map[string]*sql.DB{}
 )
 
-// DefaultPath returns ~/.abc/local.db, creating the parent dir if needed.
-// If a legacy ~/.abc/state.db exists and the canonical file does not,
-// the legacy file is renamed in place (along with its WAL/SHM sidecars
-// and any matching backup files) so old installs upgrade transparently.
+// DefaultPath returns ~/.abc/db/local.db, creating the db/ dir if needed.
+// Transparent migrations on first call (each runs only if the canonical file
+// is absent):
+//   1. flat ~/.abc/state.db  → ~/.abc/local.db   (pre-2026-05-08 rename)
+//   2. flat ~/.abc/local.db  → ~/.abc/db/local.db (2026-06-02 move into db/)
+// Both carry WAL/SHM sidecars and matching backup files along.
 func DefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home: %w", err)
 	}
-	dir := filepath.Join(home, ".abc")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", dir, err)
+	abcDir := filepath.Join(home, ".abc")
+	dbDir := filepath.Join(abcDir, DefaultDBDir)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", dbDir, err)
 	}
-	canonical := filepath.Join(dir, DefaultDBFilename)
-	if err := migrateLegacyFilename(dir, canonical); err != nil {
+	canonical := filepath.Join(dbDir, DefaultDBFilename)
+
+	// Step 1: legacy state.db → local.db, still at the flat ~/.abc level.
+	flatLocal := filepath.Join(abcDir, DefaultDBFilename)
+	if err := migrateLegacyFilename(abcDir, flatLocal); err != nil {
 		return "", fmt.Errorf("migrate legacy %s → %s: %w", LegacyDBFilename, DefaultDBFilename, err)
 	}
+	// Step 2: flat ~/.abc/local.db → ~/.abc/db/local.db.
+	if err := migrateIntoDBDir(abcDir, dbDir, canonical); err != nil {
+		return "", fmt.Errorf("migrate %s → db/: %w", DefaultDBFilename, err)
+	}
 	return canonical, nil
+}
+
+// migrateIntoDBDir moves a flat ~/.abc/local.db (+ WAL/SHM + backups) into
+// ~/.abc/db/local.db. No-op if the canonical file already exists or no flat
+// file is present.
+func migrateIntoDBDir(abcDir, dbDir, canonical string) error {
+	if _, err := os.Stat(canonical); err == nil {
+		return nil // already in db/ — nothing to do
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", canonical, err)
+	}
+	flat := filepath.Join(abcDir, DefaultDBFilename)
+	if _, err := os.Stat(flat); err != nil {
+		if os.IsNotExist(err) {
+			return nil // fresh install — nothing to move
+		}
+		return fmt.Errorf("stat %s: %w", flat, err)
+	}
+	// Move main DB + WAL + SHM as a set.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		from := flat + suffix
+		to := canonical + suffix
+		if _, err := os.Stat(from); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("stat %s: %w", from, err)
+		}
+		if err := os.Rename(from, to); err != nil {
+			return fmt.Errorf("rename %s → %s: %w", from, to, err)
+		}
+	}
+	// Best-effort: move local.db.backup-pre-* backups into db/.
+	if entries, err := os.ReadDir(abcDir); err == nil {
+		const prefix = DefaultDBFilename + ".backup-pre-"
+		for _, e := range entries {
+			name := e.Name()
+			if len(name) > len(prefix) && name[:len(prefix)] == prefix {
+				_ = os.Rename(filepath.Join(abcDir, name), filepath.Join(dbDir, name)) // best-effort
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[abc] note: moved ~/.abc/%s → ~/.abc/%s/%s (one-shot; keeps the home tidy).\n",
+		DefaultDBFilename, DefaultDBDir, DefaultDBFilename)
+	return nil
 }
 
 // migrateLegacyFilename renames ~/.abc/state.db → ~/.abc/local.db (and the
@@ -112,7 +173,7 @@ func migrateLegacyFilename(dir, canonical string) error {
 	return nil
 }
 
-// Open opens (or creates) ~/.abc/local.db, applies PRAGMAs, runs pending
+// Open opens (or creates) ~/.abc/db/local.db, applies PRAGMAs, runs pending
 // migrations, and returns a *sql.DB. Subsequent calls with the same path
 // return the cached handle. The path also auto-migrates from the
 // legacy ~/.abc/state.db filename if needed (see DefaultPath).

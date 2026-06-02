@@ -36,7 +36,15 @@ Portals and their auth methods:
 
 Use --link to print the pre-authenticated URL instead of opening the browser.
 Useful for SSH sessions, sharing, or scripting.`,
-		Args:      cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("which portal? one of: nomad, grafana, workbench, upload, minio\n  e.g. abc portal open workbench")
+			}
+			if len(args) > 1 {
+				return fmt.Errorf("open one portal at a time (got %d args)", len(args))
+			}
+			return nil
+		},
 		ValidArgs: []string{"nomad", "grafana", "workbench", "upload", "minio"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.ToLower(args[0])
@@ -324,7 +332,12 @@ func minioAccessKey(ctx config.Context) string {
 				return u
 			}
 		}
-		// Fallback: top-level User field
+		// access_key is the canonical S3 identity field (set by claim /
+		// provision-admins.sh); check it before the web-UI User field.
+		if svc.AccessKey != "" {
+			return svc.AccessKey
+		}
+		// Fallback: top-level User field (web-UI services)
 		if svc.User != "" {
 			return svc.User
 		}

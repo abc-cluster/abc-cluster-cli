@@ -15,7 +15,7 @@ func newListCmd() *cobra.Command {
 		Short: "List Nomad batch jobs",
 		RunE:  runList,
 	}
-	cmd.Flags().String("status", "", "Filter by status: running, complete, dead, pending")
+	cmd.Flags().String("status", "", "Filter by status: running, pending, completed, failed, dead")
 	cmd.Flags().String("region", "", "Filter by Nomad region")
 	cmd.Flags().String("namespace", "", "Filter by namespace")
 	cmd.Flags().Int("limit", 20, "Maximum results to show")
@@ -43,8 +43,19 @@ func runList(cmd *cobra.Command, args []string) error {
 	// Filter and limit.
 	var filtered []NomadJobStub
 	for _, j := range jobs {
-		if statusFilter != "" && !strings.EqualFold(j.Status, statusFilter) {
-			continue
+		// Match against both the raw Nomad status and the friendly display
+		// status, so `--status completed`/`failed` (display) and
+		// `--status dead`/`running` (raw) all work. Accept "complete" as an
+		// alias for "completed".
+		if statusFilter != "" {
+			ds := displayStatus(j)
+			sf := statusFilter
+			if strings.EqualFold(sf, "complete") {
+				sf = "completed"
+			}
+			if !strings.EqualFold(j.Status, statusFilter) && !strings.EqualFold(ds, sf) {
+				continue
+			}
 		}
 		if regionFilter != "" && !strings.EqualFold(j.Region, regionFilter) {
 			continue
@@ -81,7 +92,7 @@ func runList(cmd *cobra.Command, args []string) error {
 				ns = "default"
 			}
 			fmt.Fprintf(out, "  %-30s %-16s %-10s %-20s %-18s %-10s\n",
-				j.ID, ns, j.Status, dcs, submitted, jobDuration(j, now))
+				j.ID, ns, displayStatus(j), dcs, submitted, jobDuration(j, now))
 		}
 	} else {
 		fmt.Fprintf(out, "  %-30s %-10s %-12s %-20s %-18s %-10s\n",
@@ -101,10 +112,41 @@ func runList(cmd *cobra.Command, args []string) error {
 				region = "—"
 			}
 			fmt.Fprintf(out, "  %-30s %-10s %-12s %-20s %-18s %-10s\n",
-				j.ID, j.Status, region, dcs, submitted, jobDuration(j, now))
+				j.ID, displayStatus(j), region, dcs, submitted, jobDuration(j, now))
 		}
 	}
 	return nil
+}
+
+// displayStatus maps Nomad's raw job status to a label that reads correctly
+// for end users. Nomad reports "dead" for any finished job, so a batch job
+// that exited 0 looks identical to one that crashed. We disambiguate using the
+// per-group allocation summary:
+//
+//	batch/sysbatch + dead + any Failed/Lost   → "failed"
+//	batch/sysbatch + dead + Complete>0        → "completed"
+//	otherwise (service stopped, no allocs)    → "dead"
+//
+// running / pending pass through unchanged.
+func displayStatus(j NomadJobStub) string {
+	if !strings.EqualFold(j.Status, "dead") {
+		return j.Status
+	}
+	if strings.EqualFold(j.Type, "batch") || strings.EqualFold(j.Type, "sysbatch") {
+		var complete, failed, lost int
+		for _, tg := range j.JobSummary.Summary {
+			complete += tg.Complete
+			failed += tg.Failed
+			lost += tg.Lost
+		}
+		switch {
+		case failed > 0 || lost > 0:
+			return "failed"
+		case complete > 0:
+			return "completed"
+		}
+	}
+	return "dead"
 }
 
 // jobDuration returns a human-readable elapsed time for a job.
