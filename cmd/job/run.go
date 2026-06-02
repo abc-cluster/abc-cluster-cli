@@ -236,9 +236,10 @@ EXAMPLES
 	cmd.Flags().String("from", "", "Deprecated alias for --from-file; will be removed.")
 
 	// Notebook execution: `abc job run <name>.ipynb` runs the notebook headless
-	// via papermill in the pixi-exec runtime (auto-staged in, executed copy
-	// staged out). See spec abc-job-data-staging-and-run-tags.
-	cmd.Flags().String("kernel", "python3", "papermill kernel name for .ipynb jobs (default the pixi env's python3)")
+	// via papermill in a pixi-exec OR micromamba-exec runtime (auto-detected from
+	// the env file: pixi.toml/.lock or environment.yml/.yaml). Auto-staged in,
+	// executed copy staged out. See spec abc-job-data-staging-and-run-tags.
+	cmd.Flags().String("kernel", "python3", "papermill kernel name for .ipynb jobs (default the env's python3)")
 	cmd.Flags().StringArray("param", nil, "papermill parameter key=value for .ipynb jobs (repeatable) → papermill -p key value")
 	cmd.Flags().String("executed", "", "output path for the executed notebook (.ipynb jobs; default <stem>.executed.ipynb)")
 	_ = cmd.Flags().MarkDeprecated("from", "use --from-file instead (same semantics; --from will be removed in a future release)")
@@ -739,12 +740,30 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 	return plan, nil
 }
 
+// inferNotebookRuntime picks the env runtime from the env-file name when
+// --runtime is omitted: a pixi manifest → pixi-exec; a conda/micromamba
+// environment file (environment.yml/.yaml, conda.yml/.yaml, or any .yml/.yaml)
+// → micromamba-exec. Defaults to pixi-exec.
+func inferNotebookRuntime(fromFile string) string {
+	base := strings.ToLower(filepath.Base(fromFile))
+	switch base {
+	case "pixi.toml", "pixi.lock":
+		return "pixi-exec"
+	}
+	if strings.HasSuffix(base, ".yml") || strings.HasSuffix(base, ".yaml") {
+		return "micromamba-exec"
+	}
+	return "pixi-exec"
+}
+
 // buildNotebookJob handles `abc job run <name>.ipynb` (spec abc-job-data-staging
 // Part A): it generates a papermill wrapper that executes the notebook headless
-// in the pixi-exec runtime, and wires the notebook in + the executed copy out
-// through the staging flags (--in/--out). It mutates runtime/from-file/in/out so
-// the rest of runJob treats it as a staged pixi-exec shell job. Returns the
-// generated script body + a script base name (a .papermill.sh, not the .ipynb).
+// in a pixi-exec OR micromamba-exec runtime (auto-detected from the env file —
+// pixi.toml/.lock → pixi, environment.yml/.yaml → micromamba), and wires the
+// notebook in + the executed copy out through the staging flags (--in/--out). It
+// mutates runtime/from-file/in/out so the rest of runJob treats it as a staged
+// env-exec shell job. Returns the generated script body + a script base name
+// (a .papermill.sh, not the .ipynb).
 //
 // The project's pixi env MUST contain papermill + ipykernel (the notebook-
 // execution floor); papermill runs inside `pixi run`.
@@ -765,14 +784,15 @@ func buildNotebookJob(cmd *cobra.Command, scriptPath string) (string, string, er
 		outRel = ex
 	}
 
-	// Resolve the pixi env: explicit --from-file/--from, else auto-detect a
-	// pixi manifest at the project root.
+	// Resolve the env: explicit --from-file/--from, else auto-detect a pixi
+	// manifest OR a conda/micromamba environment file at the project root.
+	// Detection order favours pixi (lock > toml) then conda env files.
 	fromFile, _ := cmd.Flags().GetString("from-file")
 	if fromFile == "" {
 		fromFile, _ = cmd.Flags().GetString("from")
 	}
 	if fromFile == "" {
-		for _, cand := range []string{"pixi.lock", "pixi.toml"} {
+		for _, cand := range []string{"pixi.lock", "pixi.toml", "environment.yml", "environment.yaml", "conda.yml", "conda.yaml"} {
 			if _, e := os.Stat(filepath.Join(root, cand)); e == nil {
 				fromFile = filepath.Join(root, cand)
 				break
@@ -780,17 +800,19 @@ func buildNotebookJob(cmd *cobra.Command, scriptPath string) (string, string, er
 		}
 	}
 	if fromFile == "" {
-		return "", "", fmt.Errorf("running a notebook needs a pixi env (with papermill + ipykernel): "+
-			"pass --from-file=<pixi.toml|pixi.lock>, or add a pixi.toml at the project root %s", root)
+		return "", "", fmt.Errorf("running a notebook needs an env (with papermill + ipykernel): pass "+
+			"--from-file=<pixi.toml|pixi.lock|environment.yml>, or add one at the project root %s", root)
 	}
+	// Infer the runtime from the env file when --runtime is not given:
+	// pixi.toml/.lock → pixi-exec; an environment/conda .yml/.yaml → micromamba-exec.
 	runtime, _ := cmd.Flags().GetString("runtime")
 	if runtime == "" {
-		runtime = "pixi-exec"
+		runtime = inferNotebookRuntime(fromFile)
 	}
 	switch runtime {
 	case "pixi-exec", "pixi", "micromamba-exec", "micromamba", "mamba":
 	default:
-		return "", "", fmt.Errorf("notebook jobs require an env runtime (--runtime=pixi-exec); got %q", runtime)
+		return "", "", fmt.Errorf("notebook jobs require an env runtime (--runtime=pixi-exec or micromamba-exec); got %q", runtime)
 	}
 
 	kernel, _ := cmd.Flags().GetString("kernel")
