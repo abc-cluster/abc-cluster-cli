@@ -9,45 +9,87 @@ import (
 )
 
 // Portal describes a cluster service portal.
+//
+// Name is the neutral, product-agnostic identifier users type (e.g.
+// "job_dashboard"); Service is the underlying technology shown for context
+// (e.g. "Nomad"); Aliases keeps the legacy/technical names working.
 type Portal struct {
-	Name    string // "nomad", "grafana", etc.
-	Label   string // human-readable
-	Desc    string // one-line description
-	AuthHow string // "token-url", "magic-link", "creds", "public"
+	Name    string   // neutral id: "job_dashboard", "data_browser", …
+	Service string   // underlying tech, shown in listings: "Nomad", "MinIO", …
+	Label   string   // human-readable label
+	Desc    string   // one-line description
+	AuthHow string   // "token-url", "magic-link", "creds", "public"
+	Aliases []string // legacy/technical names that still resolve (nomad, minio, …)
 }
 
 // allPortals defines the fixed ordered list of portals.
 var allPortals = []Portal{
 	{
-		Name:    "nomad",
-		Label:   "Nomad",
+		Name:    "job_dashboard",
+		Service: "Nomad",
+		Label:   "Job dashboard",
 		Desc:    "Job scheduler UI — submit, watch, drain workloads",
 		AuthHow: "token-url",
+		Aliases: []string{"nomad"},
 	},
 	{
-		Name:    "grafana",
-		Label:   "Grafana",
+		Name:    "cluster_dashboard",
+		Service: "Grafana",
+		Label:   "Cluster dashboard",
 		Desc:    "Live cluster + per-user resource and job activity dashboards",
 		AuthHow: "magic-link",
+		Aliases: []string{"grafana"},
 	},
 	{
 		Name:    "workbench",
+		Service: "JupyterLab",
 		Label:   "Workbench",
 		Desc:    "Browser-based JupyterLab for interactive data analysis",
 		AuthHow: "magic-link",
+		Aliases: []string{"jupyter", "jupyterlab", "lab"},
 	},
 	{
-		Name:    "upload",
-		Label:   "Upload",
+		Name:    "data_upload",
+		Service: "tusd",
+		Label:   "Data upload",
 		Desc:    "Resumable browser upload — or use abc data upload from the CLI",
 		AuthHow: "token-url",
+		Aliases: []string{"upload"},
 	},
 	{
-		Name:    "minio",
-		Label:   "MinIO",
+		Name:    "data_browser",
+		Service: "MinIO",
+		Label:   "Data browser",
 		Desc:    "Object storage console — buckets, prefixes, access keys",
 		AuthHow: "creds",
+		Aliases: []string{"minio", "s3"},
 	},
+}
+
+// portalNames returns the canonical neutral names, in order.
+func portalNames() []string {
+	out := make([]string, len(allPortals))
+	for i, p := range allPortals {
+		out[i] = p.Name
+	}
+	return out
+}
+
+// canonicalPortal resolves any accepted name (neutral or legacy alias) to the
+// canonical neutral portal name, or "" if unknown. Case-insensitive.
+func canonicalPortal(name string) string {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, p := range allPortals {
+		if strings.EqualFold(p.Name, n) {
+			return p.Name
+		}
+		for _, a := range p.Aliases {
+			if strings.EqualFold(a, n) {
+				return p.Name
+			}
+		}
+	}
+	return ""
 }
 
 // PortalURLs holds all portal URLs derived from the active context.
@@ -138,19 +180,20 @@ func (p PortalURLs) AuthSvcBase() string {
 	return p.authSvc
 }
 
-// URL returns the base URL for the named portal.
+// URL returns the base URL for the named portal. Accepts neutral names and
+// legacy aliases.
 func (p PortalURLs) URL(name string) (string, error) {
-	switch name {
-	case "nomad":
+	switch canonicalPortal(name) {
+	case "job_dashboard":
 		return p.Nomad, nil
-	case "grafana":
+	case "cluster_dashboard":
 		return p.Grafana, nil
 	case "workbench":
 		return p.Workbench, nil
-	case "upload":
+	case "data_upload":
 		return p.Upload, nil
-	case "minio":
+	case "data_browser":
 		return p.MinIO, nil
 	}
-	return "", fmt.Errorf("unknown portal %q — valid: nomad, grafana, workbench, upload, minio", name)
+	return "", fmt.Errorf("unknown portal %q — valid: %s", name, strings.Join(portalNames(), ", "))
 }

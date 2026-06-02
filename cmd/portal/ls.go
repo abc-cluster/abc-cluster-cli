@@ -32,10 +32,10 @@ func newLsCmd() *cobra.Command {
 
 func printPortalTable(urls PortalURLs) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "PORTAL\tURL\tAUTH")
+	fmt.Fprintln(w, "PORTAL\tSERVICE\tURL\tAUTH")
 	for _, p := range allPortals {
 		u, _ := urls.URL(p.Name)
-		fmt.Fprintf(w, "%s\t%s\t%s\n", p.Name, u, p.AuthHow)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.Service, u, p.AuthHow)
 	}
 	w.Flush()
 	fmt.Fprintf(os.Stderr, "\nOpen any portal with: abc portal open <name>\n")

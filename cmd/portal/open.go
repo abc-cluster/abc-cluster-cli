@@ -26,26 +26,31 @@ func newOpenCmd() *cobra.Command {
 		Long: `Open a cluster portal in the default browser using credentials from the
 active context. No manual token copy-paste required.
 
-Portals and their auth methods:
+Portals (neutral names; the underlying service is shown for reference):
 
-  nomad      Token injected as ?token= URL param (Nomad native)
-  grafana    Magic link: abc-auth-svc issues a one-time code → sets session
-  workbench  Magic link (same as grafana)
-  upload     Token injected as ?token= URL param (stored in localStorage)
-  minio      MinIO SSO via abc-auth-svc; logs into console directly
+  job_dashboard      (Nomad)      Job scheduler UI — submit, watch, drain
+  data_browser       (MinIO)      Object storage console — buckets, keys
+  data_upload        (tusd)       Resumable browser upload
+  cluster_dashboard  (Grafana)    Cluster + per-user activity dashboards
+  workbench          (JupyterLab) Browser-based interactive analysis
+
+Legacy names (nomad, minio, s3, grafana, upload) still work as aliases.
 
 Use --link to print the pre-authenticated URL instead of opening the browser.
 Useful for SSH sessions, sharing, or scripting.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return fmt.Errorf("which portal? one of: nomad, grafana, workbench, upload, minio\n  e.g. abc portal open workbench")
+				return fmt.Errorf("which portal? one of: %s\n  e.g. abc portal open workbench", strings.Join(portalNames(), ", "))
 			}
 			if len(args) > 1 {
 				return fmt.Errorf("open one portal at a time (got %d args)", len(args))
 			}
+			if canonicalPortal(args[0]) == "" {
+				return fmt.Errorf("unknown portal %q — valid: %s", args[0], strings.Join(portalNames(), ", "))
+			}
 			return nil
 		},
-		ValidArgs: []string{"nomad", "grafana", "workbench", "upload", "minio"},
+		ValidArgs: []string{"job_dashboard", "data_browser", "data_upload", "cluster_dashboard", "workbench"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.ToLower(args[0])
 			cfg, err := config.Load()
@@ -65,21 +70,22 @@ Useful for SSH sessions, sharing, or scripting.`,
 	return cmd
 }
 
-// openPortal dispatches to the correct auth mechanism per portal.
+// openPortal dispatches to the correct auth mechanism per portal. Accepts
+// neutral names and legacy aliases (resolved via canonicalPortal).
 func openPortal(name string, ctx config.Context, urls PortalURLs, linkOnly bool) error {
-	switch name {
-	case "nomad":
+	switch canonicalPortal(name) {
+	case "job_dashboard":
 		return openNomad(ctx, urls, linkOnly)
-	case "grafana":
+	case "cluster_dashboard":
 		return openMagicLinkPortal(urls.Grafana, "grafana", urls, ctx.NomadToken(), linkOnly)
 	case "workbench":
 		return openMagicLink(urls.Workbench, urls, ctx.NomadToken(), linkOnly)
-	case "upload":
+	case "data_upload":
 		return openUpload(ctx, urls, linkOnly)
-	case "minio":
+	case "data_browser":
 		return openMinIOSSO(ctx, urls, linkOnly)
 	default:
-		return fmt.Errorf("unknown portal %q — valid: nomad, grafana, workbench, upload, minio", name)
+		return fmt.Errorf("unknown portal %q — valid: %s", name, strings.Join(portalNames(), ", "))
 	}
 }
 

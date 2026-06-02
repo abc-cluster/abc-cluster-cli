@@ -42,7 +42,8 @@ const (
 )
 
 type uploadOptions struct {
-	filePath      string
+	filePath      string   // first path; used by status/clear and single-path messages
+	filePaths     []string // all paths to upload (varargs + glob-expanded)
 	name          string
 	endpoint      string
 	cryptPassword string
@@ -74,6 +75,43 @@ type uploadOptions struct {
 }
 
 type uploadProgressContextKey struct{}
+
+// expandUploadArgs turns the upload command's positional args into a concrete,
+// de-duplicated, order-preserving list of paths. Each arg is expanded as a
+// glob; an arg that contains glob metacharacters but matches nothing is an
+// error, while a plain path (no metacharacters) is passed through literally so
+// a genuinely-missing file produces the clearer "does not exist" error later.
+func expandUploadArgs(args []string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, a := range args {
+		if !strings.ContainsAny(a, "*?[") {
+			add(a) // plain path — let the per-path stat report missing files clearly
+			continue
+		}
+		matches, err := filepath.Glob(a)
+		if err != nil {
+			return nil, inputError("bad glob %q: %v", a, err)
+		}
+		if len(matches) == 0 {
+			return nil, inputError("glob %q matched no files", a)
+		}
+		sort.Strings(matches)
+		for _, m := range matches {
+			add(m)
+		}
+	}
+	if len(out) == 0 {
+		return nil, inputError("no files to upload")
+	}
+	return out, nil
+}
 
 func inputError(format string, args ...interface{}) error {
 	return fmt.Errorf("input error: "+format, args...)
@@ -155,22 +193,37 @@ func newUploadCmd(serverURL, accessToken, workspace *string, factory ClientFacto
 	opts := &uploadOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "upload <path>",
-		Short: "Upload a file using tus",
-		Long: `Upload a file or folder to the abc-cluster data service using the tus resumable upload protocol.
+		Use:   "upload <path>...",
+		Short: "Upload one or more files (or folders) using tus",
+		Long: `Upload files or folders to the abc-cluster data service using the tus resumable upload protocol.
+
+Accepts multiple paths and shell globs. Your shell normally expands globs, but
+quoted globs (or globs that match nothing) are also expanded by abc.
 
 Examples:
-  # Upload a local file
+  # One file
   abc data upload ./data.csv
 
-  # Upload with a display name
-  abc data upload ./data.csv --name sample-data
+  # Several files at once
+  abc data upload reads_1.fastq.gz reads_2.fastq.gz samplesheet.csv
 
-  # Upload all files from a folder
+  # A glob (shell-expanded, or pass quoted to let abc expand it)
+  abc data upload ./fastq/*.fastq.gz
+  abc data upload "./fastq/*.fastq.gz"
+
+  # Rename a SINGLE file on upload
+  abc data upload ./data.csv --name cohort-A.csv
+
+  # A whole folder
   abc data upload ./dataset`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.filePath = args[0]
+			paths, err := expandUploadArgs(args)
+			if err != nil {
+				return err
+			}
+			opts.filePaths = paths
+			opts.filePath = paths[0] // status/clear and single-path messages use this
 			return runUpload(cmd, opts, *serverURL, *accessToken, factory)
 		},
 	}
@@ -238,30 +291,34 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 		return nil
 	}
 
-	info, err := os.Stat(opts.filePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return inputError("path %q does not exist; verify the path and try again", opts.filePath)
-		}
-		if errors.Is(err, os.ErrPermission) {
-			return inputError("permission denied while accessing %q; check file permissions", opts.filePath)
-		}
-		return localIOError("failed to access path %q: %w", opts.filePath, err)
+	// --name renames a single uploaded file; reject it for multi-file uploads.
+	// (A directory or glob that resolves to >1 file is also rejected per-path.)
+	if opts.name != "" && len(opts.filePaths) > 1 {
+		return inputError("--name can only be used when uploading a single file")
 	}
-	if !info.IsDir() && !info.Mode().IsRegular() {
-		return inputError("path %q is not a regular file; only files and directories are supported", opts.filePath)
+	if opts.parallelJobs < 1 {
+		return inputError("--parallel-jobs must be >= 1")
 	}
-	isDir := info.IsDir()
-	if isDir {
-		if opts.name != "" {
+
+	// Pre-validate every path BEFORE any network / uploader-factory setup, so
+	// input errors (missing file, non-regular file, --name on a directory) fail
+	// fast and predictably without touching the wire.
+	for _, p := range opts.filePaths {
+		info, statErr := os.Stat(p)
+		if statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				return inputError("path %q does not exist; verify the path and try again", p)
+			}
+			if errors.Is(statErr, os.ErrPermission) {
+				return inputError("permission denied while accessing %q; check file permissions", p)
+			}
+			return localIOError("failed to access path %q: %w", p, statErr)
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return inputError("path %q is not a regular file; only files and directories are supported", p)
+		}
+		if info.IsDir() && opts.name != "" {
 			return inputError("--name can only be used when uploading a single file")
-		}
-		jobs := opts.parallelJobs
-		if !opts.parallel {
-			jobs = 1
-		}
-		if jobs < 1 {
-			return inputError("--parallel-jobs must be >= 1")
 		}
 	}
 
@@ -345,7 +402,60 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 	// Resolve upload-registry context once; best-effort (never fatal).
 	registryFn := buildRegistryFn(cmd)
 
-	if isDir {
+	// Upload each path with the shared uploader. On a multi-path upload a
+	// per-file error is reported and the rest continue; the first error is
+	// returned so the command still exits non-zero.
+	multi := len(opts.filePaths) > 1
+	var firstErr error
+	okCount := 0
+	for _, p := range opts.filePaths {
+		if multi {
+			fmt.Fprintf(cmd.ErrOrStderr(), "→ %s\n", p)
+		}
+		if err := uploadOnePath(cmd, uploader, p, cryptor, registryFn, opts, extraMeta); err != nil {
+			if multi {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ✗ %s: %v\n", p, err)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			return err
+		}
+		okCount++
+	}
+	if multi {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Uploaded %d/%d path(s).\n", okCount, len(opts.filePaths))
+	}
+	return firstErr
+}
+
+// uploadOnePath stats and uploads a single path (file or directory), recording
+// it in the registry and optionally staging it to the workbench. The shared
+// uploader / cryptor / registryFn are created once by runUpload and passed in,
+// so this is safe to call in a loop over many paths.
+func uploadOnePath(cmd *cobra.Command, uploader Uploader, path string, cryptor *cryptConfig,
+	registryFn func(filename, originalPath, checksum string, sizeBytes int64),
+	opts *uploadOptions, extraMeta map[string]string) error {
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return inputError("path %q does not exist; verify the path and try again", path)
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return inputError("permission denied while accessing %q; check file permissions", path)
+		}
+		return localIOError("failed to access path %q: %w", path, err)
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return inputError("path %q is not a regular file; only files and directories are supported", path)
+	}
+
+	if info.IsDir() {
+		if opts.name != "" {
+			return inputError("--name can only be used when uploading a single file")
+		}
 		jobs := opts.parallelJobs
 		if !opts.parallel {
 			jobs = 1
@@ -377,19 +487,19 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 				}
 			}
 		}
-		return uploadDirectory(cmd, uploader, opts.filePath, cryptor, opts.checksum, opts.progress, jobs, extraMeta, onSuccess)
+		return uploadDirectory(cmd, uploader, path, cryptor, opts.checksum, opts.progress, jobs, extraMeta, onSuccess)
 	}
 
 	uploadedName := opts.name
 	if uploadedName == "" {
-		uploadedName = filepath.Base(opts.filePath)
+		uploadedName = filepath.Base(path)
 	}
-	checksum, uploadErr := uploadSingleFile(cmd, uploader, opts.filePath, opts.name, info.Size(), cryptor, opts.checksum, opts.progress, extraMeta)
+	checksum, uploadErr := uploadSingleFile(cmd, uploader, path, opts.name, info.Size(), cryptor, opts.checksum, opts.progress, extraMeta)
 	if uploadErr != nil {
 		return uploadErr
 	}
 	if registryFn != nil {
-		registryFn(uploadedName, opts.filePath, checksum, info.Size())
+		registryFn(uploadedName, path, checksum, info.Size())
 	}
 	if opts.workbench {
 		cfg, cfgErr := abccfg.Load()
