@@ -9,18 +9,19 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/accounting"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/auth"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/accounting"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/cluster"
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/doctor"
 	emissionscmd "github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
-	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
+	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/module"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/pipeline"
 	portalcmd "github.com/abc-cluster/abc-cluster-cli/cmd/portal"
@@ -48,8 +49,15 @@ var (
 
 // activeDebugCfg holds the current run's debug config so Execute() can close
 // the log file and print the footer after the command completes (or errors).
-// Safe as a package-level var because cobra commands run sequentially.
-var activeDebugCfg *debuglog.Config
+// Safe as package-level vars because cobra commands run sequentially.
+// activeDebugCtx carries the logger so Execute() can log the command outcome;
+// cmdStartTime / cmdPath are captured in PersistentPreRunE for that event.
+var (
+	activeDebugCfg *debuglog.Config
+	activeDebugCtx context.Context
+	cmdStartTime   time.Time
+	cmdPath        string
+)
 
 // rootCmd is the base command for the abc CLI.
 var rootCmd = &cobra.Command{
@@ -82,6 +90,11 @@ from your terminal.`,
 			cfg.PrintHeader(os.Stderr)
 		}
 		cmd.SetContext(ctx)
+		// Stash for the command.outcome event logged in Execute() (PostRunE is
+		// skipped on error, so the outcome must be logged from Execute).
+		activeDebugCtx = ctx
+		cmdStartTime = time.Now()
+		cmdPath = cmd.CommandPath()
 
 		// First structured event: full CLI invocation with argv (secrets redacted).
 		log := debuglog.FromContext(ctx)
@@ -122,6 +135,15 @@ func Execute() {
 	defer stop()
 
 	runErr := rootCmd.ExecuteContext(ctx)
+
+	// Universal command.outcome event — every command, success or failure, gets
+	// a closing record (command path + duration + ok/error) paired with its
+	// cli.invocation. Logged from here because PersistentPostRunE is skipped on
+	// error. Uses the logger captured in PersistentPreRunE.
+	if activeDebugCtx != nil {
+		debuglog.FromContext(activeDebugCtx).LogAttrs(activeDebugCtx, debuglog.L1, "command.outcome",
+			debuglog.AttrsCommandOutcome(cmdPath, time.Since(cmdStartTime).Milliseconds(), runErr)...)
+	}
 
 	// Print the debug log footer (path + failure hint) after the command
 	// completes — whether it succeeded or failed. This runs even when

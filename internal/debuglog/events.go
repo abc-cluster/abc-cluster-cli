@@ -153,6 +153,22 @@ func AttrsError(op string, err error) []slog.Attr {
 	}
 }
 
+// AttrsCommandOutcome returns attrs logged once per CLI run, after the command
+// finishes (success or failure). Paired with the cli.invocation event, this
+// gives every command a start+end record in the log — the universal baseline
+// for support, even for purely-local commands that make no network calls.
+func AttrsCommandOutcome(command string, durationMS int64, err error) []slog.Attr {
+	attrs := []slog.Attr{
+		slog.String("command", command),
+		slog.Int64("duration_ms", durationMS),
+		slog.Bool("ok", err == nil),
+	}
+	if err != nil {
+		attrs = append(attrs, slog.String("error", err.Error()))
+	}
+	return attrs
+}
+
 // AttrsHTTPRequest returns attrs logged when an outbound HTTP request is sent.
 // The URL's query string is stripped (tokens live there).
 func AttrsHTTPRequest(method, rawURL string, bodyBytes int64) []slog.Attr {

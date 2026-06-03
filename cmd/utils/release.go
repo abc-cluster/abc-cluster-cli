@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
 const (
@@ -27,10 +29,14 @@ const (
 	MaxRequestAttempts = 3
 )
 
+// defaultHTTPClient wraps its transport in a debuglog.LoggingTransport so every
+// GitHub API / release-asset request (self-update, managed binaries) records
+// http.request/response to the debug log. Requests created via
+// *WithContext carry the command logger; background-context calls log to noop.
 var defaultHTTPClient = &http.Client{
 	Timeout: RequestTimeout,
-	Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+	Transport: &debuglog.LoggingTransport{
+		Base: &http.Transport{Proxy: http.ProxyFromEnvironment},
 	},
 }
 

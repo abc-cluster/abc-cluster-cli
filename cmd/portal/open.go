@@ -2,6 +2,7 @@ package portal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +64,7 @@ Useful for SSH sessions, sharing, or scripting.`,
 			if err != nil {
 				return err
 			}
-			return openPortal(name, ctx, urls, linkOnly)
+			return openPortal(cmd.Context(), name, ctx, urls, linkOnly)
 		},
 	}
 
@@ -72,18 +74,18 @@ Useful for SSH sessions, sharing, or scripting.`,
 
 // openPortal dispatches to the correct auth mechanism per portal. Accepts
 // neutral names and legacy aliases (resolved via canonicalPortal).
-func openPortal(name string, ctx config.Context, urls PortalURLs, linkOnly bool) error {
+func openPortal(reqCtx context.Context, name string, ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	switch canonicalPortal(name) {
 	case "job-dashboard":
 		return openNomad(ctx, urls, linkOnly)
 	case "cluster-dashboard":
-		return openMagicLinkPortal(urls.Grafana, "grafana", urls, ctx.NomadToken(), linkOnly)
+		return openMagicLinkPortal(reqCtx, urls.Grafana, "grafana", urls, ctx.NomadToken(), linkOnly)
 	case "workbench":
-		return openMagicLink(urls.Workbench, urls, ctx.NomadToken(), linkOnly)
+		return openMagicLink(reqCtx, urls.Workbench, urls, ctx.NomadToken(), linkOnly)
 	case "data-upload":
 		return openUpload(ctx, urls, linkOnly)
 	case "data-browser":
-		return openMinIOSSO(ctx, urls, linkOnly)
+		return openMinIOSSO(reqCtx, ctx, urls, linkOnly)
 	default:
 		return fmt.Errorf("unknown portal %q — valid: %s", name, strings.Join(portalNames(), ", "))
 	}
@@ -163,11 +165,11 @@ type cliTokenResponse struct {
 	TTL  int    `json:"ttl"`
 }
 
-func openMagicLink(targetURL string, urls PortalURLs, nomadToken string, linkOnly bool) error {
-	return openMagicLinkPortal(targetURL, "workbench", urls, nomadToken, linkOnly)
+func openMagicLink(reqCtx context.Context, targetURL string, urls PortalURLs, nomadToken string, linkOnly bool) error {
+	return openMagicLinkPortal(reqCtx, targetURL, "workbench", urls, nomadToken, linkOnly)
 }
 
-func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomadToken string, linkOnly bool) error {
+func openMagicLinkPortal(reqCtx context.Context, targetURL string, portal string, urls PortalURLs, nomadToken string, linkOnly bool) error {
 	if nomadToken == "" {
 		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
 	}
@@ -182,8 +184,10 @@ func openMagicLinkPortal(targetURL string, portal string, urls PortalURLs, nomad
 	}
 	reqBody, _ := json.Marshal(req)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(reqBody))
+	client := debuglog.NewLoggingClient(&http.Client{Timeout: 10 * time.Second})
+	httpReq, _ := http.NewRequestWithContext(reqCtx, "POST", endpoint, bytes.NewReader(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("could not reach auth service at %s: %w\n"+
 			"  Is the cluster reachable? Try: abc doctor", endpoint, err)
@@ -251,7 +255,7 @@ func portalLabelFromURL(rawURL string) string {
 // is routed to abc-auth-svc; it redeems the code and sets the MinIO token cookie
 // for the minio.* domain, then redirects to the MinIO console root.
 
-func openMinIOSSO(ctx config.Context, urls PortalURLs, linkOnly bool) error {
+func openMinIOSSO(reqCtx context.Context, ctx config.Context, urls PortalURLs, linkOnly bool) error {
 	tok := ctx.NomadToken()
 	if tok == "" {
 		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
@@ -263,12 +267,12 @@ func openMinIOSSO(ctx config.Context, urls PortalURLs, linkOnly bool) error {
 		fmt.Fprintf(os.Stderr, "[abc] opening MinIO console for %s (SSO via abc-auth-svc)\n", minioUser)
 		fmt.Fprintf(os.Stderr, "  %s\n", urls.MinIO)
 	}
-	return openMagicLinkPortalWithMinio(urls.MinIO, urls, tok, minioPw, linkOnly)
+	return openMagicLinkPortalWithMinio(reqCtx, urls.MinIO, urls, tok, minioPw, linkOnly)
 }
 
 // openMagicLinkPortalWithMinio is like openMagicLinkPortal but sends the
 // MinIO password explicitly for portal=minio SSO.
-func openMagicLinkPortalWithMinio(targetURL string, urls PortalURLs, nomadToken, minioPw string, linkOnly bool) error {
+func openMagicLinkPortalWithMinio(reqCtx context.Context, targetURL string, urls PortalURLs, nomadToken, minioPw string, linkOnly bool) error {
 	if nomadToken == "" {
 		return fmt.Errorf("no Nomad token in active context — run 'abc auth login' first")
 	}
@@ -283,8 +287,10 @@ func openMagicLinkPortalWithMinio(targetURL string, urls PortalURLs, nomadToken,
 	}
 	reqBody, _ := json.Marshal(req)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(reqBody))
+	client := debuglog.NewLoggingClient(&http.Client{Timeout: 10 * time.Second})
+	httpReq, _ := http.NewRequestWithContext(reqCtx, "POST", endpoint, bytes.NewReader(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("could not reach auth service: %w", err)
 	}

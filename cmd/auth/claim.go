@@ -12,17 +12,17 @@
 //
 // Stage-1 surface (this file):
 //
-//   abc auth claim <claim-code>
-//     --tier seedling        # → https://signup.<tier>.abc-cluster.cloud/claim
-//     --endpoint URL         # overrides --tier
-//     --email EMAIL          # interactive prompt if omitted
-//     --name NAME            # interactive prompt if omitted
-//     --consent              # skip the interactive y/N consent prompt
-//     --group-name GROUP     # blind-pool draw (no claim-code required)
-//     --as NAME              # rename the context on import
-//     --force                # overwrite existing context of the same name
-//     --print-only           # don't write to disk; emit YAML to stdout
-//     --no-sync              # skip the post-claim capabilities sync (TBD)
+//	abc auth claim <claim-code>
+//	  --tier seedling        # → https://signup.<tier>.abc-cluster.cloud/claim
+//	  --endpoint URL         # overrides --tier
+//	  --email EMAIL          # interactive prompt if omitted
+//	  --name NAME            # interactive prompt if omitted
+//	  --consent              # skip the interactive y/N consent prompt
+//	  --group-name GROUP     # blind-pool draw (no claim-code required)
+//	  --as NAME              # rename the context on import
+//	  --force                # overwrite existing context of the same name
+//	  --print-only           # don't write to disk; emit YAML to stdout
+//	  --no-sync              # skip the post-claim capabilities sync (TBD)
 //
 // Exit codes are mapped from the server's error vocabulary so callers
 // can branch (see ClaimExitCode below).
@@ -41,6 +41,7 @@ import (
 	"time"
 
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/spf13/cobra"
 )
 
@@ -70,15 +71,15 @@ func (e *claimErrorExit) Error() string { return e.msg }
 
 func newClaimCmd() *cobra.Command {
 	var (
-		tier       string
-		endpoint   string
-		email      string
-		name       string
-		consent    bool
-		groupName  string
-		asName     string
-		force      bool
-		printOnly  bool
+		tier      string
+		endpoint  string
+		email     string
+		name      string
+		consent   bool
+		groupName string
+		asName    string
+		force     bool
+		printOnly bool
 		// noSync     bool // Stage-1 deferred; capabilities sync not yet integrated.
 		codeStdin  bool
 		writePath  string
@@ -235,7 +236,9 @@ Endpoint resolution (rarely needed):
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("User-Agent", fmt.Sprintf("abc-cluster-cli/%s", versionForUA()))
 
-			client := &http.Client{Timeout: 15 * time.Second}
+			// Logging transport records http.request/response to the debug log
+			// (request already carries cmd.Context() with the logger).
+			client := debuglog.NewLoggingClient(&http.Client{Timeout: 15 * time.Second})
 			resp, err := client.Do(req)
 			if err != nil {
 				return &claimErrorExit{exitCodeNetwork,
