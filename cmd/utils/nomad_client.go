@@ -223,6 +223,21 @@ type NomadTask struct {
 	Name   string            `json:"Name"`
 	Driver string            `json:"Driver"`
 	Env    map[string]string `json:"Env,omitempty"`
+	// Config is the driver-specific task config (command, args, image, …).
+	// Decoded as a generic map because its shape varies per driver.
+	Config map[string]interface{} `json:"Config,omitempty"`
+	// Templates carries the task's consul-template stanzas. For abc-submitted
+	// jobs the entrypoint shell script is embedded here as one template whose
+	// DestPath matches the script path in Config.args. Powers `abc job inspect`.
+	Templates []NomadTemplate `json:"Templates,omitempty"`
+}
+
+// NomadTemplate is one `template { … }` stanza on a task. EmbeddedTmpl holds
+// the inline body (the `data = <<-EOT … EOT` block); DestPath is where it
+// renders inside the alloc (e.g. "local/hello-cluster.sh").
+type NomadTemplate struct {
+	EmbeddedTmpl string `json:"EmbeddedTmpl"`
+	DestPath     string `json:"DestPath"`
 }
 
 type NomadAllocStub struct {

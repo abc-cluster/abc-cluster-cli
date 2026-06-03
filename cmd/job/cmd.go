@@ -28,6 +28,7 @@ func NewCmd() *cobra.Command {
 		newTranslateCmd(),
 		newListCmd(),
 		newShowCmd(),
+		newInspectCmd(),
 		newStopCmd(),
 		newDispatchCmd(),
 		newLogsCmd(),
