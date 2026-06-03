@@ -14,14 +14,23 @@ import (
 
 func newLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "logs <job-id>",
+		Use:   "logs <job-id-or-nomad-ui-url>",
 		Short: "Stream or print logs for a Nomad batch job",
 		Long: `Stream or print logs for a Nomad batch job.
 
 By default logs are streamed from the Nomad alloc API (live only).
 With --source=loki, logs are fetched from Loki using the task/alloc labels
 written by Grafana Alloy — this works even after the allocation is GC'd and
-supports --since, --grep, and --limit for historical queries.`,
+supports --since, --grep, and --limit for historical queries.
+
+The positional accepts either a bare job ID or a full Nomad Web UI URL.
+When a URL is given, --namespace / --alloc / --task are seeded from the
+URL unless explicitly overridden by the corresponding flag. The hostname
+in the URL is ignored (it varies by tier — nomad.seedling.<…>, nomad.grove.<…>,
+nomad.cloud.<…> — but the path-and-query schema is identical), so URLs
+pasted from any tier's Nomad UI work the same way:
+
+    abc job logs https://nomad.seedling.abc-cluster.cloud/ui/jobs/<job>@<ns>/allocations?activeTask=<alloc-uuid>-<task>`,
 		Args: cobra.ExactArgs(1),
 		RunE: runLogs,
 	}
@@ -41,7 +50,14 @@ supports --since, --grep, and --limit for historical queries.`,
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
-	jobID := args[0]
+	// Accept either a bare job ID or a Nomad Web UI URL. When a URL is
+	// given, --namespace / --alloc / --task are seeded from it unless the
+	// user passed those flags explicitly. See resolveJobArg in url.go.
+	jobID, err := resolveJobArg(cmd, args[0])
+	if err != nil {
+		return err
+	}
+
 	source, _ := cmd.Flags().GetString("source")
 
 	if source == "loki" {

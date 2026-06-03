@@ -61,9 +61,9 @@ func TestJobHelloClusterCommandDoesNotExist(t *testing.T) {
 }
 
 func TestNewLogsCmd_TypeFlag(t *testing.T) {
-	cmd := NewLogsCmd()
+	cmd := newLogsCmd()
 	if cmd == nil {
-		t.Fatalf("expected NewLogsCmd() to return a command")
+		t.Fatalf("expected newLogsCmd() to return a command")
 	}
 	flag := cmd.Flags().Lookup("type")
 	if flag == nil {

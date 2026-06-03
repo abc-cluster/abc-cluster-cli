@@ -11,10 +11,14 @@ import (
 
 func newStopCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "stop <job-id>",
+		Use:   "stop <job-id-or-nomad-ui-url>",
 		Short: "Stop a running Nomad batch job",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runStop,
+		Long: `Stop a running Nomad batch job.
+
+The positional accepts either a bare job ID or a full Nomad Web UI URL
+(--namespace is auto-seeded from <job>@<ns> in the URL when present).`,
+		Args: cobra.ExactArgs(1),
+		RunE: runStop,
 	}
 	cmd.Flags().Bool("purge", false, "Remove job definition from Nomad after stopping")
 	cmd.Flags().Bool("detach", false, "Return immediately without waiting")
@@ -24,7 +28,10 @@ func newStopCmd() *cobra.Command {
 }
 
 func runStop(cmd *cobra.Command, args []string) error {
-	jobID := args[0]
+	jobID, err := resolveJobArg(cmd, args[0])
+	if err != nil {
+		return err
+	}
 	purge, _ := cmd.Flags().GetBool("purge")
 	yes, _ := cmd.Flags().GetBool("yes")
 	ns := namespaceFromCmd(cmd)

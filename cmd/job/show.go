@@ -11,17 +11,25 @@ import (
 
 func newShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "show <job-id>",
+		Use:   "show <job-id-or-nomad-ui-url>",
 		Short: "Show details of a Nomad batch job",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runShow,
+		Long: `Show details of a Nomad batch job.
+
+The positional accepts either a bare job ID or a full Nomad Web UI URL.
+When a URL is given, --namespace is auto-seeded from <job>@<ns> in the
+URL unless the flag is explicitly set.`,
+		Args: cobra.ExactArgs(1),
+		RunE: runShow,
 	}
 	cmd.Flags().String("namespace", "", "Nomad namespace")
 	return cmd
 }
 
 func runShow(cmd *cobra.Command, args []string) error {
-	jobID := args[0]
+	jobID, err := resolveJobArg(cmd, args[0])
+	if err != nil {
+		return err
+	}
 	nc := nomadClientFromCmd(cmd)
 	ns := namespaceFromCmd(cmd)
 

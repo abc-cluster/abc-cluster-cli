@@ -18,9 +18,12 @@ import (
 
 func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status <job-id>",
+		Use:   "status <job-id-or-nomad-ui-url>",
 		Short: "Print a compact status summary for a Nomad batch job",
 		Long: `Print a one-line status summary and exit with a code reflecting the job outcome.
+
+The positional accepts either a bare job ID or a full Nomad Web UI URL
+(--namespace is auto-seeded from <job>@<ns> in the URL when present).
 
 Exit codes:
   0  Job complete with no failures
@@ -37,7 +40,10 @@ Exit codes:
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	jobID := args[0]
+	jobID, err := resolveJobArg(cmd, args[0])
+	if err != nil {
+		return err
+	}
 	ns := namespaceFromCmd(cmd)
 	nc := nomadClientFromCmd(cmd)
 
