@@ -3,6 +3,7 @@ package job
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,7 +95,24 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(allocs) == 0 {
-		return fmt.Errorf("no allocations found for job %q", jobID)
+		// Nomad has no allocs for this job — the alloc dirs may have been
+		// GC'd from the client, OR the user typo'd. Auto-fall through to
+		// VictoriaLogs (historical archive, 90d retention) if it's
+		// configured for this context; that still works because the
+		// Nomad SERVER retains the job's metadata for `job_gc_threshold`
+		// (set to 8760h on seedling). When the loki path can't reach
+		// VictoriaLogs either, both errors are surfaced.
+		cfg, cfgErr := config.Load()
+		if cfgErr == nil && cfg != nil {
+			ctxCfg := cfg.ActiveCtx()
+			if v, ok := config.GetAdminFloorField(&ctxCfg.Admin.Services, "loki", "http"); ok && v != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"  No live allocations in Nomad for job %q — falling back to VictoriaLogs (historical archive).\n",
+					jobID)
+				return runLogsLoki(cmd, jobID)
+			}
+		}
+		return fmt.Errorf("no allocations found for job %q (and no loki/victorialogs endpoint configured for fallback — set admin.services.loki.http or run `abc cluster capabilities sync`)", jobID)
 	}
 
 	// Filter by prefix if provided.
@@ -170,8 +188,26 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	return err
 }
 
-// runLogsLoki queries Grafana Loki for historical logs of a job using the
-// alloc labels written by Grafana Alloy (task=, alloc_id=, stream=).
+// runLogsLoki queries the cluster's log archive (VictoriaLogs today; Loki-API-
+// compatible) for historical logs of a job. The Alloy ship-side labels are
+// `{alloc_id, task, stream}` so we need to know the job's alloc IDs to filter
+// precisely — otherwise a query like `{task="nf-task"}` would match every
+// nf-nomad task across every job in history.
+//
+// Resolution order for the alloc list:
+//  1. Nomad's /v1/job/<id>/allocations (server-side, retained for
+//     job_gc_threshold = 1 year on seedling). This is the source of truth
+//     for jobs whose server records are still live.
+//  2. If the caller passed --alloc <prefix> explicitly, use it as a regex
+//     prefix and skip the Nomad lookup (useful when the job itself has been
+//     server-side GC'd but the user knows an alloc ID).
+//  3. If neither yields any allocs, return a clear error.
+//
+// Future (see brainstorms/abc-seedling-prod/2026-06-03-persistent-job-logs.md
+// — "Stage 2"): once Alloy is enriched with `job_id` / `namespace` labels via
+// discovery.nomad, this function will be able to skip the Nomad lookup
+// entirely and query VictoriaLogs by job_id directly. The current alloc-list
+// path stays as a fallback for older logs that pre-date the label addition.
 func runLogsLoki(cmd *cobra.Command, jobID string) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -196,15 +232,43 @@ func runLogsLoki(cmd *cobra.Command, jobID string) error {
 	grep, _ := cmd.Flags().GetString("grep")
 	limit, _ := cmd.Flags().GetInt("limit")
 	allocPrefix, _ := cmd.Flags().GetString("alloc")
+	ns := namespaceFromCmd(cmd)
 
-	// Build LogQL selector.
-	// Use job-level task filter when task is set; fall back to alloc prefix.
+	// ── Discover alloc IDs for this job ─────────────────────────────────
+	// Look up the alloc list from Nomad first; if --alloc was explicitly
+	// passed, fall back to a regex-prefix filter (no Nomad lookup).
+	var allocIDs []string
+	if allocPrefix == "" {
+		nc := nomadClientFromCmd(cmd)
+		allocs, err := nc.GetJobAllocs(cmd.Context(), jobID, ns, false)
+		if err != nil {
+			// Don't abort: Nomad may have GC'd the job entirely (post
+			// 1-year retention). Surface the error as a hint and let the
+			// query proceed without an alloc filter — once Stage 2 lands,
+			// the job_id label will carry us; until then we surface 0
+			// results cleanly.
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"  Note: Nomad lookup for job %q failed (%v) — querying VictoriaLogs without alloc_id filter.\n",
+				jobID, err)
+		}
+		for i := range allocs {
+			allocIDs = append(allocIDs, allocs[i].ID)
+		}
+	}
+
+	// ── Build the LogQL selector ────────────────────────────────────────
 	var selectors []string
+	switch {
+	case len(allocIDs) > 0:
+		// Precise: one alloc_id regex spanning every alloc this job had.
+		// Use anchors so a partial prefix can't drag in unrelated allocs.
+		selectors = append(selectors,
+			fmt.Sprintf(`alloc_id=~"^(%s)$"`, strings.Join(allocIDs, "|")))
+	case allocPrefix != "":
+		selectors = append(selectors, fmt.Sprintf(`alloc_id=~"^%s.*"`, allocPrefix))
+	}
 	if task != "" && task != "main" {
 		selectors = append(selectors, fmt.Sprintf(`task="%s"`, task))
-	}
-	if allocPrefix != "" {
-		selectors = append(selectors, fmt.Sprintf(`alloc_id=~"%s.*"`, allocPrefix))
 	}
 	if logType == "stderr" {
 		selectors = append(selectors, `stream="stderr"`)
@@ -212,41 +276,83 @@ func runLogsLoki(cmd *cobra.Command, jobID string) error {
 		selectors = append(selectors, `stream="stdout"`)
 	}
 
-	// The job label written by Alloy is the Nomad job name under the "exported_job" label
-	// on metrics. For logs, the filename path contains the job alloc dir.
-	// We filter via task (most selective); for jobs with task="main" we fall back
-	// to a filename filter.
-	logql := "{" + strings.Join(selectors, ",") + "}"
-	if task == "main" {
-		// When using the default task name "main", the filter is too broad —
-		// any job with a task named "main" would match. Add a grep for the job ID.
-		grep = jobID + " " + grep
-	}
-	if grep != "" {
-		logql += fmt.Sprintf(` |= %q`, strings.TrimSpace(grep))
+	// Defensive: refuse a query that would match every alloc on the cluster.
+	if len(allocIDs) == 0 && allocPrefix == "" {
+		return fmt.Errorf(
+			"could not resolve any allocations for job %q (namespace=%q).\n"+
+				"  • If the job is older than Nomad's 1-year retention, pass --alloc <id-prefix>.\n"+
+				"  • Once `job_id` labels are wired up via Alloy (Stage 2 — see brainstorms/abc-seedling-prod/2026-06-03-persistent-job-logs.md), this lookup becomes unnecessary.",
+			jobID, ns)
 	}
 
-	lc := floor.NewLokiClient(lokiHTTP)
-	entries, err := lc.QueryRange(cmd.Context(), logql, sinceStr, untilStr, limit)
-	if err != nil {
-		return fmt.Errorf("loki query: %w", err)
+	// Default `task=main` is the abc job-run convention and far too broad
+	// for a label match alone — narrow it with a substring grep on the
+	// job ID, same as before.
+	if task == "main" {
+		grep = jobID + " " + grep
 	}
+
+	// Dispatch to the right backend. abc-nodes deployments use Grafana
+	// Loki at `:3100` (LogQL); abc-seedling uses VictoriaLogs at `:9428`
+	// (LogSQL — Loki INSERT is supported, but query is LogSQL only).
+	var entries []floor.LokiEntry
+	var logqlForMsg string
+	backend := floor.DetectLogsBackend(lokiHTTP)
+	switch backend {
+	case floor.BackendVictoriaLogs:
+		// LogSQL form: `_stream:{label=…} <extra> _time:[…]`. The selectors
+		// we already built use the same `key="value"` / `key=~"regex"` shape
+		// LogSQL accepts inside `_stream:{…}` — so we can pass them through
+		// after stripping the trailing alloc/task/stream → already there.
+		streamSel := "{" + strings.Join(selectors, ",") + "}"
+		var extra string
+		if grep != "" {
+			// LogSQL: free-text words filter — un-anchored substring.
+			extra = strconv.Quote(strings.TrimSpace(grep))
+		}
+		logqlForMsg = "_stream:" + streamSel
+		if extra != "" {
+			logqlForMsg += " " + extra
+		}
+		vc := floor.NewVictoriaLogsClient(lokiHTTP)
+		entries, err = vc.QueryStream(cmd.Context(), streamSel, extra, sinceStr, untilStr, limit)
+		if err != nil {
+			return fmt.Errorf("victorialogs query: %w", err)
+		}
+	default:
+		// LogQL form (Grafana Loki).
+		logql := "{" + strings.Join(selectors, ",") + "}"
+		if grep != "" {
+			logql += fmt.Sprintf(` |= %q`, strings.TrimSpace(grep))
+		}
+		logqlForMsg = logql
+		lc := floor.NewLokiClient(lokiHTTP)
+		entries, err = lc.QueryRange(cmd.Context(), logql, sinceStr, untilStr, limit)
+		if err != nil {
+			return fmt.Errorf("loki query: %w", err)
+		}
+	}
+	logql := logqlForMsg
 
 	if len(entries) == 0 {
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"  No Loki logs found for job %q (query: %s)\n"+
-				"  Labels indexed so far can be browsed at %s\n",
+			"  No archived logs found for job %q.\n"+
+				"  • LogQL: %s\n"+
+				"  • Endpoint: %s\n"+
+				"  • Hint: VictoriaLogs retention is 90d by default — older logs may have aged out.\n",
 			jobID, logql, lokiHTTP)
 		return nil
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(cmd.ErrOrStderr(), "  %d log lines from Loki (query: %s)\n\n", len(entries), logql)
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"  %d log lines from VictoriaLogs archive (job %q, %d alloc(s))\n  Query: %s\n\n",
+		len(entries), jobID, len(allocIDs), logql)
 	for _, e := range entries {
 		ts := e.Timestamp.Format("2006-01-02 15:04:05.000")
-		task := e.Labels["task"]
+		t := e.Labels["task"]
 		stream := e.Labels["stream"]
-		prefix := fmt.Sprintf("[%s %s/%s] ", ts, task, stream)
+		prefix := fmt.Sprintf("[%s %s/%s] ", ts, t, stream)
 		fmt.Fprintf(out, "%s%s\n", prefix, e.Line)
 	}
 	return nil
