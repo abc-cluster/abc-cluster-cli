@@ -41,6 +41,7 @@ repository URL directly for ad-hoc runs.
 	cmd.AddCommand(
 		newRunCmd(),
 		newRunsCmd(),
+		newLogsCmd(),
 		newAddCmd(),
 		newListCmd(),
 		newInfoCmd(),
