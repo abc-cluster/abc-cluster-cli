@@ -366,7 +366,7 @@ func autoAttachJobRun(cmd *cobra.Command, scriptPath string) string {
 	pflag, _ := cmd.Flags().GetString("project")
 	iflag, _ := cmd.Flags().GetString("investigation")
 	ns, _ := cmd.Flags().GetString("namespace")
-	gpus, _ := cmd.Flags().GetInt("gpus")              // best-effort: CLI flag only; #ABC --gpus directive is parsed downstream
+	gpus, _ := cmd.Flags().GetInt("gpus")                // best-effort: CLI flag only; #ABC --gpus directive is parsed downstream
 	scratchGB, _ := cmd.Flags().GetFloat64("scratch-gb") // best-effort: CLI flag; run-watcher will overwrite walltime/cpu fields from Nomad alloc
 	// Resource requests for the abc-report `resource_fit` metric. Best-
 	// effort from --cores / --mem; in-script #ABC directives that get
@@ -993,7 +993,7 @@ func runJob(cmd *cobra.Command, args []string) error {
 	if err := resolveMicromambaLocalMode(spec); err != nil {
 		return err
 	}
-	if err := resolveWaveInjectMode(spec); err != nil {
+	if err := resolveWaveInjectMode(cmd.Context(), spec); err != nil {
 		return err
 	}
 	if err := resolveWaveLocalMode(spec); err != nil {
@@ -1610,7 +1610,6 @@ func printNtfySubscriptionHint(w io.Writer) {
 	fmt.Fprintf(w, "    Subscribe: %s/%s\n", strings.TrimRight(ntfyHTTP, "/"), topic)
 	fmt.Fprintf(w, "    App:       ntfy.sh  (iOS / Android / Desktop)\n")
 }
-
 
 // maybeNudgeExecToExec2 emits a friendly stderr note when the user has
 // resolved to --driver=exec on a cluster that also advertises exec2.

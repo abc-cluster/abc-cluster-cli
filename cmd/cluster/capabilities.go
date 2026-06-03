@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -238,7 +241,7 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 	caps.Proxy = svcSet["abc-nodes-traefik"]
 
 	if svcSet["abc-nodes-vault"] {
-		caps.Secrets = detectVaultSecretsMode(nc, &ctx)
+		caps.Secrets = detectVaultSecretsMode(cmd.Context(), nc, &ctx)
 	} else {
 		caps.Secrets = "nomad"
 	}
@@ -563,7 +566,7 @@ func nodeIP(ctx context.Context, nc *utils.NomadClient, nodeID string) string {
 
 // detectVaultSecretsMode probes the Vault health endpoint to distinguish
 // initialized+unsealed ("vault") from sealed ("vault+sealed").
-func detectVaultSecretsMode(nc *utils.NomadClient, ctx *config.Context) string {
+func detectVaultSecretsMode(reqCtx context.Context, nc *utils.NomadClient, ctx *config.Context) string {
 	vaultHTTP, ok := config.GetAdminFloorField(&ctx.Admin.Services, "vault", "http")
 	if !ok || vaultHTTP == "" {
 		instances, err := nc.GetServiceInstances(context.Background(), "abc-nodes-vault", "")
@@ -573,7 +576,11 @@ func detectVaultSecretsMode(nc *utils.NomadClient, ctx *config.Context) string {
 		inst := instances[0]
 		vaultHTTP = fmt.Sprintf("http://%s:%d", inst.Address, inst.Port)
 	}
-	resp, err := http.Get(vaultHTTP + "/v1/sys/health") //nolint:gosec,noctx
+	healthReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, vaultHTTP+"/v1/sys/health", nil)
+	if err != nil {
+		return "vault"
+	}
+	resp, err := debuglog.NewLoggingClient(nil).Do(healthReq) //nolint:gosec
 	if err != nil {
 		return "vault"
 	}

@@ -12,12 +12,16 @@ package workbench
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
 // HubTokenClient is a thin wrapper over JupyterHub's user-tokens REST endpoints.
@@ -37,16 +41,16 @@ type HubTokenClient struct {
 // — list/get/revoke never return it. Treat Token as the only field with
 // "show once and forget" semantics; everything else is metadata.
 type HubToken struct {
-	ID         string   `json:"id"`
-	Kind       string   `json:"kind,omitempty"`
-	User       string   `json:"user,omitempty"`
-	Note       string   `json:"note,omitempty"`
-	Token      string   `json:"token,omitempty"`         // populated by Create only
-	Created    string   `json:"created,omitempty"`       // RFC3339
-	LastActivity *string `json:"last_activity,omitempty"` // RFC3339 or null
-	Expires    *string  `json:"expires_at,omitempty"`    // RFC3339 or null
-	Scopes     []string `json:"scopes,omitempty"`
-	ExpiresIn  int64    `json:"expires_in,omitempty"`    // request-only (Create)
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind,omitempty"`
+	User         string   `json:"user,omitempty"`
+	Note         string   `json:"note,omitempty"`
+	Token        string   `json:"token,omitempty"`         // populated by Create only
+	Created      string   `json:"created,omitempty"`       // RFC3339
+	LastActivity *string  `json:"last_activity,omitempty"` // RFC3339 or null
+	Expires      *string  `json:"expires_at,omitempty"`    // RFC3339 or null
+	Scopes       []string `json:"scopes,omitempty"`
+	ExpiresIn    int64    `json:"expires_in,omitempty"` // request-only (Create)
 }
 
 // NewHubTokenClient builds a client from explicit values. Caller is responsible
@@ -69,7 +73,7 @@ func NewHubTokenClient(apiBase, token, user string) *HubTokenClient {
 //
 // Returns the HubToken with Token populated. Callers must surface the
 // Token to the user exactly once — it is not retrievable later.
-func (c *HubTokenClient) CreateToken(note string, expiresIn time.Duration, scopes []string) (*HubToken, error) {
+func (c *HubTokenClient) CreateToken(ctx context.Context, note string, expiresIn time.Duration, scopes []string) (*HubToken, error) {
 	body := map[string]any{}
 	if note != "" {
 		body["note"] = note
@@ -81,7 +85,7 @@ func (c *HubTokenClient) CreateToken(note string, expiresIn time.Duration, scope
 		body["scopes"] = scopes
 	}
 	var out HubToken
-	if err := c.do("POST", c.userPath()+"/tokens", body, &out); err != nil {
+	if err := c.do(ctx, "POST", c.userPath()+"/tokens", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -90,13 +94,13 @@ func (c *HubTokenClient) CreateToken(note string, expiresIn time.Duration, scope
 // ListTokens returns all active user tokens (metadata only; no plaintext
 // values). JupyterHub returns both OAuth client tokens and API tokens; the
 // caller may filter by kind if desired.
-func (c *HubTokenClient) ListTokens() ([]HubToken, error) {
+func (c *HubTokenClient) ListTokens(ctx context.Context) ([]HubToken, error) {
 	// JupyterHub returns the tokens collection under the user resource.
 	// GET /hub/api/users/<user> returns an object whose `tokens` field
 	// contains the list; the dedicated /tokens endpoint exists on newer
 	// hubs (5.x). Use the dedicated path for clarity.
 	var raw json.RawMessage
-	if err := c.do("GET", c.userPath()+"/tokens", nil, &raw); err != nil {
+	if err := c.do(ctx, "GET", c.userPath()+"/tokens", nil, &raw); err != nil {
 		return nil, err
 	}
 	// JupyterHub may return either an array or an object with a tokens field.
@@ -136,8 +140,8 @@ func (c *HubTokenClient) ListTokens() ([]HubToken, error) {
 }
 
 // RevokeToken deletes a specific token by its ID.
-func (c *HubTokenClient) RevokeToken(id string) error {
-	return c.do("DELETE", c.userPath()+"/tokens/"+id, nil, nil)
+func (c *HubTokenClient) RevokeToken(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", c.userPath()+"/tokens/"+id, nil, nil)
 }
 
 // userPath returns "/users/<user>" — the segment under APIBase.
@@ -148,7 +152,7 @@ func (c *HubTokenClient) userPath() string {
 // do issues an authenticated request and decodes the response.
 // in is JSON-marshalled (skipped if nil); out is JSON-decoded (skipped if nil).
 // Non-2xx responses return a structured error including the body.
-func (c *HubTokenClient) do(method, path string, in any, out any) error {
+func (c *HubTokenClient) do(ctx context.Context, method, path string, in any, out any) error {
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
@@ -158,7 +162,7 @@ func (c *HubTokenClient) do(method, path string, in any, out any) error {
 		body = bytes.NewReader(buf)
 	}
 	url := c.APIBase + path
-	req, err := http.NewRequest(method, url, body)
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -172,7 +176,7 @@ func (c *HubTokenClient) do(method, path string, in any, out any) error {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	resp, err := client.Do(req)
+	resp, err := debuglog.NewLoggingClient(client).Do(req)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, url, err)
 	}

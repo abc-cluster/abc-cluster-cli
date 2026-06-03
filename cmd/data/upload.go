@@ -21,10 +21,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
-	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/bdragon300/tusgo"
 	"github.com/spf13/cobra"
 )
@@ -911,7 +911,8 @@ type tusUploader struct {
 	opts          UploaderOptions
 	endpoint      string
 	accessToken   string
-	serverMaxSize int64 // populated by PreflightNetwork from Tus-Max-Size header; 0 = unknown
+	serverMaxSize int64           // populated by PreflightNetwork from Tus-Max-Size header; 0 = unknown
+	reqCtx        context.Context // set per-operation so tusgo requests carry the command context (debug logging + cancellation)
 }
 
 func newTusUploader(endpoint, accessToken string, opts UploaderOptions) (Uploader, error) {
@@ -920,10 +921,23 @@ func newTusUploader(endpoint, accessToken string, opts UploaderOptions) (Uploade
 		return nil, fmt.Errorf("invalid upload endpoint %q: %w", endpoint, err)
 	}
 
-	client := tusgo.NewClient(http.DefaultClient, parsed)
+	// Wrap the transport so every tus HTTP call (POST create, PATCH chunk, HEAD
+	// resume) is captured by the debug logger at L2. Logging only fires when the
+	// request carries the command context — see the GetRequest override below.
+	client := tusgo.NewClient(debuglog.NewLoggingClient(http.DefaultClient), parsed)
+	u := &tusUploader{
+		client:      client,
+		opts:        opts,
+		endpoint:    parsed.String(),
+		accessToken: accessToken,
+	}
 	if accessToken != "" {
 		client.GetRequest = func(method, requestURL string, body io.Reader, _ *tusgo.Client, _ *http.Client) (*http.Request, error) {
-			req, err := http.NewRequest(method, requestURL, body)
+			ctx := u.reqCtx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
 			if err != nil {
 				return nil, err
 			}
@@ -931,15 +945,11 @@ func newTusUploader(endpoint, accessToken string, opts UploaderOptions) (Uploade
 			return req, nil
 		}
 	}
-	return &tusUploader{
-		client:      client,
-		opts:        opts,
-		endpoint:    parsed.String(),
-		accessToken: accessToken,
-	}, nil
+	return u, nil
 }
 
 func (u *tusUploader) PreflightNetwork(ctx context.Context) error {
+	u.reqCtx = ctx
 	endpoint := strings.TrimSpace(u.endpoint)
 	if endpoint == "" {
 		return fmt.Errorf("upload endpoint is empty; provide --endpoint or ABC_UPLOAD_ENDPOINT")
@@ -993,7 +1003,7 @@ func (u *tusUploader) PreflightNetwork(ctx context.Context) error {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := debuglog.NewLoggingClient(nil).Do(req)
 	if err != nil {
 		return explainPreflightNetworkError("OPTIONS request", endpoint, endpoint, err)
 	}
@@ -1066,6 +1076,7 @@ func explainPreflightNetworkError(operation, endpoint, target string, err error)
 }
 
 func (u *tusUploader) Upload(ctx context.Context, filePath string, metadata map[string]string) (string, error) {
+	u.reqCtx = ctx
 	const maxResumeAttempts = 3
 
 	file, err := os.Open(filePath)

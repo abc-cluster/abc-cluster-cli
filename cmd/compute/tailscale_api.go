@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
 const tailscaleCreateKeyURL = "https://api.tailscale.com/api/v2/tailnet/-/keys"
 
-var tailscaleAPIHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var tailscaleAPIHTTPClient = &http.Client{Timeout: 30 * time.Second, Transport: &debuglog.LoggingTransport{}}
 
 type TailscaleAuthKeyCreateRequest struct {
 	APIKey        string

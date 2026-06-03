@@ -20,9 +20,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/spf13/cobra"
 
@@ -107,7 +110,7 @@ Examples:
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Accept", "text/yaml, application/yaml")
 
-			client := &http.Client{Timeout: 15 * time.Second}
+			client := debuglog.NewLoggingClient(&http.Client{Timeout: 15 * time.Second})
 			resp, err := client.Do(req)
 			if err != nil {
 				return fmt.Errorf("GET %s: %w", endpoint, err)

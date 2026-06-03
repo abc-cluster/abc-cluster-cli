@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
@@ -25,21 +28,21 @@ const controllerProbeTimeout = 10 * time.Second
 // Mirrors the proposed schema in the brainstorm's "Capability map schema"
 // section. All fields optional — abc-controller-svc may omit any when unknown.
 type controllerCapabilityResponse struct {
-	SchemaVersion int                                       `json:"schema_version"`
-	ProbeSource   string                                    `json:"probe_source,omitempty"`
-	Services      map[string]controllerCapabilityResponseService  `json:"services,omitempty"`
-	Warnings      []string                                  `json:"probe_warnings,omitempty"`
+	SchemaVersion int                                            `json:"schema_version"`
+	ProbeSource   string                                         `json:"probe_source,omitempty"`
+	Services      map[string]controllerCapabilityResponseService `json:"services,omitempty"`
+	Warnings      []string                                       `json:"probe_warnings,omitempty"`
 }
 
 type controllerCapabilityResponseService struct {
-	Codename           string                              `json:"codename,omitempty"`
-	Available          bool                                `json:"available"`
-	Version            string                              `json:"version,omitempty"`
-	Features           []string                            `json:"features,omitempty"`
-	DeprecatedFeatures map[string]controllerDeprecationInfo      `json:"deprecated_features,omitempty"`
-	Endpoints          map[string]string                   `json:"endpoints,omitempty"`
-	Reason             string                              `json:"reason,omitempty"`
-	Fallback           string                              `json:"fallback,omitempty"`
+	Codename           string                               `json:"codename,omitempty"`
+	Available          bool                                 `json:"available"`
+	Version            string                               `json:"version,omitempty"`
+	Features           []string                             `json:"features,omitempty"`
+	DeprecatedFeatures map[string]controllerDeprecationInfo `json:"deprecated_features,omitempty"`
+	Endpoints          map[string]string                    `json:"endpoints,omitempty"`
+	Reason             string                               `json:"reason,omitempty"`
+	Fallback           string                               `json:"fallback,omitempty"`
 }
 
 type controllerDeprecationInfo struct {
@@ -69,7 +72,7 @@ func probeController(ctx context.Context, controllerURL, accessToken, cliVersion
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
 
-	cli := &http.Client{Timeout: controllerProbeTimeout}
+	cli := debuglog.NewLoggingClient(&http.Client{Timeout: controllerProbeTimeout})
 	resp, err := cli.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("abc-controller-svc probe %s: %w", url, err)

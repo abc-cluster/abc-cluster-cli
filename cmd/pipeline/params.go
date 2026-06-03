@@ -1,13 +1,17 @@
 package pipeline
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/spf13/cobra"
 )
@@ -61,7 +65,7 @@ func runParams(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Fetching %s\n", schemaURL)
-	schema, rawBytes, err := fetchSchema(schemaURL)
+	schema, rawBytes, err := fetchSchema(ctx, schemaURL)
 	if err != nil {
 		return fmt.Errorf("fetch schema: %w", err)
 	}
@@ -97,15 +101,15 @@ func buildSchemaURL(repo, revision string) string {
 
 // nfSchema is a partial representation of nextflow_schema.json (JSON Schema draft-07).
 type nfSchema struct {
-	Title       string                     `json:"title"`
-	Description string                     `json:"description"`
-	Definitions map[string]nfSchemaDef     `json:"definitions"`
-	Properties  map[string]nfSchemaParam   `json:"properties"`
+	Title       string                   `json:"title"`
+	Description string                   `json:"description"`
+	Definitions map[string]nfSchemaDef   `json:"definitions"`
+	Properties  map[string]nfSchemaParam `json:"properties"`
 }
 
 type nfSchemaDef struct {
-	Title       string                   `json:"title"`
-	Properties  map[string]nfSchemaParam `json:"properties"`
+	Title      string                   `json:"title"`
+	Properties map[string]nfSchemaParam `json:"properties"`
 }
 
 type nfSchemaParam struct {
@@ -116,9 +120,9 @@ type nfSchemaParam struct {
 	Enum        []any  `json:"enum"`
 }
 
-func fetchSchema(schemaURL string) (*nfSchema, []byte, error) {
-	cl := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, schemaURL, nil)
+func fetchSchema(ctx context.Context, schemaURL string) (*nfSchema, []byte, error) {
+	cl := debuglog.NewLoggingClient(&http.Client{Timeout: 15 * time.Second})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, schemaURL, nil)
 	if err != nil {
 		return nil, nil, err
 	}

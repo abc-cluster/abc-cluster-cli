@@ -1,13 +1,17 @@
 package secrets
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+
 	"os"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -44,9 +48,9 @@ func vaultToken(cmd *cobra.Command) string {
 }
 
 // vaultDo executes a simple Vault HTTP request and returns the response body.
-func vaultDo(method, url, token string, body io.Reader) (int, []byte, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest(method, url, body) //nolint:noctx
+func vaultDo(ctx context.Context, method, url, token string, body io.Reader) (int, []byte, error) {
+	client := debuglog.NewLoggingClient(&http.Client{Timeout: 15 * time.Second})
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -74,7 +78,7 @@ func runVaultSet(cmd *cobra.Command, cfg *config.Config, name, value string) err
 	apiURL := fmt.Sprintf("%s/v1/%s/data/%s", base, vaultSecretsMount, kvPath)
 
 	payload := fmt.Sprintf(`{"data":{"value":%q}}`, value)
-	code, body, err := vaultDo(http.MethodPost, apiURL, tok, strings.NewReader(payload))
+	code, body, err := vaultDo(cmd.Context(), http.MethodPost, apiURL, tok, strings.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("vault request: %w", err)
 	}
@@ -98,7 +102,7 @@ func runVaultGet(cmd *cobra.Command, cfg *config.Config, name string) error {
 	kvPath := vaultSecretPath(ns, name)
 	apiURL := fmt.Sprintf("%s/v1/%s/data/%s", base, vaultSecretsMount, kvPath)
 
-	code, body, err := vaultDo(http.MethodGet, apiURL, tok, nil)
+	code, body, err := vaultDo(cmd.Context(), http.MethodGet, apiURL, tok, nil)
 	if err != nil {
 		return fmt.Errorf("vault request: %w", err)
 	}
@@ -142,7 +146,7 @@ func runVaultList(cmd *cobra.Command, cfg *config.Config) error {
 	listPath := vaultSecretsPrefix + "/" + ns
 	apiURL := fmt.Sprintf("%s/v1/%s/metadata/%s?list=true", base, vaultSecretsMount, listPath)
 
-	code, body, err := vaultDo(http.MethodGet, apiURL, tok, nil)
+	code, body, err := vaultDo(cmd.Context(), http.MethodGet, apiURL, tok, nil)
 	if err != nil {
 		return fmt.Errorf("vault request: %w", err)
 	}
@@ -186,7 +190,7 @@ func runVaultDelete(cmd *cobra.Command, cfg *config.Config, name string) error {
 	kvPath := vaultSecretPath(ns, name)
 	apiURL := fmt.Sprintf("%s/v1/%s/metadata/%s", base, vaultSecretsMount, kvPath)
 
-	code, body, err := vaultDo(http.MethodDelete, apiURL, tok, nil)
+	code, body, err := vaultDo(cmd.Context(), http.MethodDelete, apiURL, tok, nil)
 	if err != nil {
 		return fmt.Errorf("vault request: %w", err)
 	}

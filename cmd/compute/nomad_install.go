@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
 const (
@@ -444,7 +447,7 @@ const (
 	artifactFetchMaxRetryBackoff = 8 * time.Second
 )
 
-var nomadHTTPClient = &http.Client{Timeout: 10 * time.Minute}
+var nomadHTTPClient = &http.Client{Timeout: 10 * time.Minute, Transport: &debuglog.LoggingTransport{}}
 
 func fetchBytes(ctx context.Context, url string) ([]byte, error) {
 	var lastErr error

@@ -24,10 +24,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
 	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/spf13/cobra"
 
@@ -92,7 +95,7 @@ duration syntax (e.g. 24h, 720h for 30 days).`,
 				name = defaultTokenName()
 			}
 
-			tok, err := client.CreateToken(name, dur, scope)
+			tok, err := client.CreateToken(cmd.Context(), name, dur, scope)
 			if err != nil {
 				return fmt.Errorf("create token: %w", err)
 			}
@@ -138,7 +141,7 @@ token values after creation — the listing shows only metadata.`,
 			if err != nil {
 				return err
 			}
-			toks, err := client.ListTokens()
+			toks, err := client.ListTokens(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("list tokens: %w", err)
 			}
@@ -184,7 +187,7 @@ disambiguate.`,
 			if err != nil {
 				return err
 			}
-			toks, err := client.ListTokens()
+			toks, err := client.ListTokens(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("list tokens: %w", err)
 			}
@@ -196,7 +199,7 @@ disambiguate.`,
 				return fmt.Errorf("no token matches %q (try `abc workbench token list`)", arg)
 			case 1:
 				t := matches[0]
-				if err := client.RevokeToken(t.ID); err != nil {
+				if err := client.RevokeToken(cmd.Context(), t.ID); err != nil {
 					return fmt.Errorf("revoke %s: %w", t.ID, err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Revoked: %s (id %s)\n", t.Note, truncate(t.ID, 10))
@@ -411,7 +414,7 @@ Examples:
 				if err != nil {
 					return err
 				}
-				tok, err := client.CreateToken(name, dur, nil)
+				tok, err := client.CreateToken(cmd.Context(), name, dur, nil)
 				if err != nil {
 					return fmt.Errorf("create token: %w", err)
 				}
@@ -586,12 +589,12 @@ func probeWorkbench(ctx context.Context, hub, slot, token string) string {
 	}
 	req.Header.Set("Authorization", "token "+token)
 	// Don't follow redirects — a 302 is the signal we want to catch.
-	client := &http.Client{
+	client := debuglog.NewLoggingClient(&http.Client{
 		Timeout: 8 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}
+	})
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Sprintf("[abc] could not probe %s: %v (URL may still work)", endpoint, err)

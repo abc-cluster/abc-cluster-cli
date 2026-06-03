@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"os"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 )
 
 const preflightTimeout = 5 * time.Second
@@ -48,7 +51,7 @@ func preflightNomad(ctx context.Context, stderr io.Writer, addr, token string) e
 	if token != "" {
 		req.Header.Set("X-Nomad-Token", token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := debuglog.NewLoggingClient(nil).Do(req)
 	if err != nil {
 		return fmt.Errorf("preflight: cannot reach Nomad at %s: %w (is the agent running?)", addr, err)
 	}
@@ -77,7 +80,7 @@ func preflightGitHub(ctx context.Context, stderr io.Writer, repo, token string) 
 	}
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := debuglog.NewLoggingClient(nil).Do(req)
 	if err != nil {
 		fmt.Fprintf(stderr, "  Preflight  GitHub       skipped (network: %v)\n", err)
 		return nil

@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/admin/tools"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -99,8 +102,8 @@ func invokeWaveCLI(condaFile, platform string) (string, error) {
 	waveBin, err := exec.LookPath("wave")
 	if err != nil {
 		return "", fmt.Errorf(
-			"wave CLI not found in PATH\n"+
-				"  Install from: https://github.com/seqeralabs/wave-cli/releases\n"+
+			"wave CLI not found in PATH\n" +
+				"  Install from: https://github.com/seqeralabs/wave-cli/releases\n" +
 				"  Required for: --runtime=wave-exec",
 		)
 	}
@@ -138,7 +141,7 @@ func invokeWaveCLI(condaFile, platform string) (string, error) {
 //
 // No prestart task is emitted — the image swap happens at submit time and the
 // augmented image is pulled by the main task like any other Docker image.
-func resolveWaveInjectMode(spec *jobSpec) error {
+func resolveWaveInjectMode(ctx context.Context, spec *jobSpec) error {
 	if len(spec.WaveInjectTools) == 0 {
 		return nil
 	}
@@ -222,7 +225,7 @@ func resolveWaveInjectMode(spec *jobSpec) error {
 	if wantAll {
 		url := fmt.Sprintf("%s/%s/%s/wave-layer-linux-%s.tar.gz",
 			ep, tcfg.Push.Bucket, tcfg.Push.Prefix, arch)
-		d, err := fetchLayerDigests(url)
+		d, err := fetchLayerDigests(ctx, url)
 		if err != nil {
 			return fmt.Errorf("wave-inject-tools: %w", err)
 		}
@@ -231,7 +234,7 @@ func resolveWaveInjectMode(spec *jobSpec) error {
 		for _, t := range injectTools {
 			url := fmt.Sprintf("%s/%s/%s/wave-layer-linux-%s-%s.tar.gz",
 				ep, tcfg.Push.Bucket, tcfg.Push.Prefix, arch, t.Name)
-			d, err := fetchLayerDigests(url)
+			d, err := fetchLayerDigests(ctx, url)
 			if err != nil {
 				return fmt.Errorf("wave-inject-tools: tool %s: %w", t.Name, err)
 			}
@@ -240,7 +243,7 @@ func resolveWaveInjectMode(spec *jobSpec) error {
 	}
 
 	// Call Wave REST API — passes all layer URLs; Wave fetches them server-side.
-	targetImage, err := callWaveAPI(context.Background(), waveAPIURL, baseImage, layerInputs)
+	targetImage, err := callWaveAPI(ctx, waveAPIURL, baseImage, layerInputs)
 	if err != nil {
 		return fmt.Errorf("wave-inject-tools: %w", err)
 	}
@@ -279,8 +282,12 @@ type waveLayerInput struct {
 
 // fetchLayerDigests downloads the layer at url and returns its sha256 digests.
 // The download is needed to compute the gzip and tar digests required by the Wave API.
-func fetchLayerDigests(url string) (wave.LayerDigests, error) {
-	resp, err := http.Get(url) //nolint:noctx
+func fetchLayerDigests(ctx context.Context, url string) (wave.LayerDigests, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return wave.LayerDigests{}, fmt.Errorf("build request for %s: %w", url, err)
+	}
+	resp, err := debuglog.NewLoggingClient(nil).Do(req)
 	if err != nil {
 		return wave.LayerDigests{}, fmt.Errorf("download layer from %s: %w", url, err)
 	}
@@ -325,7 +332,7 @@ func callWaveAPI(ctx context.Context, waveURL, baseImage string, layers []waveLa
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	httpResp, err := http.DefaultClient.Do(req)
+	httpResp, err := debuglog.NewLoggingClient(nil).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("wave API: POST %s: %w", apiURL, err)
 	}

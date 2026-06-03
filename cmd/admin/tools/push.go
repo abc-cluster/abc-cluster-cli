@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
@@ -478,7 +481,7 @@ func isEndpointReachable(ctx context.Context, endpoint string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := debuglog.NewLoggingClient(nil).Do(req)
 	if err != nil {
 		return false
 	}
@@ -660,4 +663,3 @@ func findS5cmdBin() (string, bool) {
 	}
 	return "", false
 }
-

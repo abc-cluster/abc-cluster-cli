@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"os"
 	"strings"
 	"time"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
@@ -208,7 +211,7 @@ func resolveNomadVariableRef(ctx context.Context, c config.Context, ref string) 
 	return valueFromStringMap(variable.Items, key)
 }
 
-func resolveVaultKV2Ref(_ context.Context, c config.Context, ref string) (string, error) {
+func resolveVaultKV2Ref(ctx context.Context, c config.Context, ref string) (string, error) {
 	const prefix = "vault+kv2@"
 	if !strings.HasPrefix(ref, prefix) {
 		return "", fmt.Errorf("invalid Vault ref %q (expected vault+kv2@<mount>/data/<path>#<key>)", ref)
@@ -230,7 +233,7 @@ func resolveVaultKV2Ref(_ context.Context, c config.Context, ref string) (string
 	}
 	u := strings.TrimRight(base, "/") + "/v1/" + strings.TrimLeft(raw, "/")
 
-	code, body, err := vaultDoRaw(http.MethodGet, u, tok)
+	code, body, err := vaultDoRaw(ctx, http.MethodGet, u, tok)
 	if err != nil {
 		return "", err
 	}
@@ -317,9 +320,9 @@ func vaultTokenFromEnvOrContext(c config.Context) string {
 	return ""
 }
 
-func vaultDoRaw(method, url, token string) (int, []byte, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest(method, url, nil) //nolint:noctx
+func vaultDoRaw(ctx context.Context, method, url, token string) (int, []byte, error) {
+	client := debuglog.NewLoggingClient(&http.Client{Timeout: 15 * time.Second})
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
 		return 0, nil, err
 	}

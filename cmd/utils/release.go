@@ -93,7 +93,7 @@ func FetchLatestReleaseAllowPrereleases(owner, repo string) (*GitHubRelease, err
 func FetchLatestReleaseWithContext(ctx context.Context, owner, repo string) (*GitHubRelease, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", GitHubAPIURL, owner, repo)
 
-	req, err := newGETRequest(url)
+	req, err := newGETRequest(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("building release request: %w", err)
 	}
@@ -121,7 +121,7 @@ func FetchLatestReleaseWithContext(ctx context.Context, owner, repo string) (*Gi
 // FetchReleaseByTagWithContext fetches a specific GitHub release by tag name.
 func FetchReleaseByTagWithContext(ctx context.Context, owner, repo, tag string) (*GitHubRelease, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", GitHubAPIURL, owner, repo, tag)
-	req, err := newGETRequest(url)
+	req, err := newGETRequest(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("building release request: %w", err)
 	}
@@ -148,7 +148,7 @@ func FetchReleaseByTagWithContext(ctx context.Context, owner, repo, tag string) 
 func FetchLatestReleaseAllowPrereleasesWithContext(ctx context.Context, owner, repo string) (*GitHubRelease, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=1", GitHubAPIURL, owner, repo)
 
-	req, err := newGETRequest(url)
+	req, err := newGETRequest(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("building release list request: %w", err)
 	}
@@ -292,7 +292,7 @@ func DownloadReleaseAsset(owner, repo, binaryBase string) (string, error) {
 	}
 
 	// Download the asset
-	req, err := newGETRequest(asset.DownloadURL)
+	req, err := newGETRequest(context.Background(), asset.DownloadURL)
 	if err != nil {
 		return "", fmt.Errorf("building download request: %w", err)
 	}
@@ -436,7 +436,7 @@ func FindReleaseAssetURL(release *GitHubRelease, binaryBase, goos, goarch string
 // Returns the temp path written; the caller renames it into place (so the
 // caller controls the final atomic swap and any privilege handling).
 func DownloadAssetToFile(ctx context.Context, url, destDir string, expectedSize int) (string, error) {
-	req, err := newGETRequest(url)
+	req, err := newGETRequest(ctx, url)
 	if err != nil {
 		return "", fmt.Errorf("building download request: %w", err)
 	}
@@ -504,8 +504,8 @@ func normalizeGOARCH(goarch string) string {
 	}
 }
 
-func newGETRequest(url string) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func newGETRequest(ctx context.Context, url string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}

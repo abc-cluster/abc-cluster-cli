@@ -902,7 +902,11 @@ func waitForNomadAgent(ctx context.Context, ex Executor, w io.Writer, bindAddr s
 		// Fallback for local: try direct HTTP
 		if _, ok := ex.(*localExec); ok {
 			for _, probeURL := range probeURLs {
-				resp, herr := http.Get(probeURL) //nolint:noctx
+				probeReq, herr := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+				if herr != nil {
+					continue
+				}
+				resp, herr := debuglog.NewLoggingClient(nil).Do(probeReq)
 				if herr == nil {
 					_ = resp.Body.Close()
 				}

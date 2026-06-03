@@ -568,7 +568,7 @@ func findHashiUpAssetForPlatform(release *GitHubRelease) (*GitHubReleaseAsset, e
 }
 
 func downloadAndCopyAsset(downloadURL, assetName, dest string) error {
-	req, err := newGETRequest(downloadURL)
+	req, err := newGETRequest(context.Background(), downloadURL)
 	if err != nil {
 		return fmt.Errorf("build download request: %w", err)
 	}
@@ -688,7 +688,7 @@ func DownloadExtractBinary(_ context.Context, downloadURL, assetName, binaryName
 }
 
 func downloadAndExtractAsset(downloadURL, assetName, extractMode, binaryName, dest string) error {
-	req, err := newGETRequest(downloadURL)
+	req, err := newGETRequest(context.Background(), downloadURL)
 	if err != nil {
 		return fmt.Errorf("build download request: %w", err)
 	}
