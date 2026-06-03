@@ -73,6 +73,17 @@ func redactValue(s string) string {
 	return s
 }
 
+// RedactText applies the value-pattern catch-all rules (PEM blocks,
+// tskey-auth-…, Bearer …, scheme://user:pass@…) across an arbitrary block of
+// text. It is the exported form of the internal value-pattern redactor, used as
+// the final catch-all pass (Layer 3) when assembling a support bundle — a net
+// for *unknown* secrets whose exact value we did not have. It does NOT do
+// field-name or exact-value redaction; combine with caller-side known-secret
+// scrubbing for full coverage.
+func RedactText(s string) string {
+	return redactValue(s)
+}
+
 // ─── Attr scrubbing ───────────────────────────────────────────────────────────
 
 // scrubAttr returns a sanitised copy of attr:
@@ -188,7 +199,7 @@ func EnvSnapshot() map[string]string {
 }
 
 // RedactCommand strips the sudo -S password-injection syntax from a command
-// string so it is safe to log. Specifically it removes " -S -p '' " from
+// string so it is safe to log. Specifically it removes " -S -p ” " from
 // sudo invocations (the password itself is fed via stdin, not in the command
 // string, so this is mostly cosmetic).
 func RedactCommand(cmd string) string {

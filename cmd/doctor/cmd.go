@@ -63,6 +63,10 @@ Use 'abc doctor' when you need to prove the full client→cluster path works.`,
 	cmd.Flags().String("context", "", "Run checks against this named context instead of the active one")
 	cmd.Flags().Duration("job-timeout", 60*time.Second, "Maximum time to wait for the probe job to complete")
 
+	cmd.Flags().Bool("bundle", false, "Write a redacted, shareable support bundle to a file (instead of printing checks)")
+	cmd.Flags().String("rerun", "", "With --bundle: re-run a failing command under debug capture and include its trace, e.g. --rerun \"data upload reads.fastq.gz\"")
+	cmd.Flags().String("out", "", "With --bundle: write the bundle to this path (default: ./abc-support-<user>-<ts>.txt)")
+
 	return cmd
 }
 
@@ -137,6 +141,10 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	asJSON, _ := cmd.Flags().GetBool("json")
 	ctxName, _ := cmd.Flags().GetString("context")
 	jobTimeout, _ := cmd.Flags().GetDuration("job-timeout")
+
+	if bundle, _ := cmd.Flags().GetBool("bundle"); bundle {
+		return runBundle(cmd, ctxName, skipJob, jobTimeout)
+	}
 
 	quiet, _ := cmd.Root().PersistentFlags().GetBool("quiet")
 
@@ -606,7 +614,7 @@ func buildProbeJobJSON(jobID, namespace string) (json.RawMessage, error) {
 		Name:        jobID,
 		Type:        "batch",
 		Namespace:   namespace,
-		NodePool:    "all",  // target nodes across all pools (platform, compute, etc.)
+		NodePool:    "all", // target nodes across all pools (platform, compute, etc.)
 		Datacenters: []string{"*"},
 		TaskGroups: []taskGroup{
 			{

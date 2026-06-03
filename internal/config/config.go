@@ -111,17 +111,17 @@ type Context struct {
 	// per-service credential backends (local/nomad/vault) — different position,
 	// different scope, shared name. The CONTEXT-level value is the higher-level
 	// lever ("how does this whole context resolve credentials at all").
-	CredSource     string `yaml:"cred_source,omitempty"`
+	CredSource string `yaml:"cred_source,omitempty"`
 	// AuthEndpoint is the explicit broker URL for this context. When non-empty,
 	// the credsource resolver POSTs to <AuthEndpoint>/auth/exchange (or just
 	// AuthEndpoint if it already ends with /auth/exchange) instead of deriving
 	// from Endpoint. Stamped by the renderer at claim time for tiers where the
 	// broker is published under a different DNS prefix than Nomad (e.g. the
 	// seedling deployment publishes at workbench.<rest>, not auth.<rest>).
-	AuthEndpoint   string `yaml:"auth_endpoint,omitempty"`
-	OrgID          string `yaml:"organization_id,omitempty"`
-	WorkspaceID    string `yaml:"workspace_id,omitempty"`
-	Region         string `yaml:"region,omitempty"`
+	AuthEndpoint string `yaml:"auth_endpoint,omitempty"`
+	OrgID        string `yaml:"organization_id,omitempty"`
+	WorkspaceID  string `yaml:"workspace_id,omitempty"`
+	Region       string `yaml:"region,omitempty"`
 	// Namespace is the Nomad namespace for this context. For abc-cluster tier
 	// (seedling / grove) this is stamped into config.yaml at claim time by
 	// provision-pool.sh (e.g. "su-mbhg-bioinformatics") and is the primary
@@ -129,7 +129,7 @@ type Context struct {
 	// ctx.NomadNamespace() reads this field as its final fallback, after the
 	// abc-nodes derivation path. For abc-nodes contexts, prefer
 	// admin.abc_nodes.nomad_namespace over this field.
-	Namespace      string `yaml:"namespace,omitempty"`
+	Namespace string `yaml:"namespace,omitempty"`
 	// OutputFormat is the per-context default for `abc <verb>` output:
 	// "table" | "json" | "yaml". Overridable per-invocation by --output
 	// or ABC_CLI_OUTPUT_FORMAT. Empty falls back to defaults.output and
@@ -1111,4 +1111,84 @@ func maskToken(tok string) string {
 		return strings.Repeat("•", len(tok))
 	}
 	return tok[:8] + strings.Repeat("•", 12)
+}
+
+// SecretValues returns the raw (unmasked) credential strings held by this
+// context: access/upload tokens, the Nomad ACL token, abc-nodes S3 secret key
+// and MinIO root password, crypt password/salt, every stored `secrets.*` value,
+// and each admin-floor service's secret_key/password.
+//
+// It deliberately EXCLUDES usernames / access-keys (e.g. minio.access_key,
+// minio.user, S3 access key, MinIO root user) — for the unified-credential
+// deployment the access_key is the username (devon), which is non-secret and
+// useful in a support bundle, and must NOT be scrubbed (see OQ-5 of the
+// support-bundle design).
+//
+// This is the source for the support bundle's Layer-2 exact-value scrub: every
+// returned string is find-replaced out of the assembled bundle, so the user's
+// own secret never appears even if some section echoes it — while UUID-shaped
+// non-secrets (alloc/eval/job IDs) survive because they don't equal a secret.
+func (c *Context) SecretValues() []string {
+	if c == nil {
+		return nil
+	}
+	var out []string
+	add := func(v string) {
+		if s := strings.TrimSpace(v); s != "" {
+			out = append(out, s)
+		}
+	}
+
+	add(c.AccessToken)
+	add(c.UploadToken)
+	add(c.Crypt.Password)
+	add(c.Crypt.Salt)
+	add(c.FlatCryptPassword)
+	add(c.FlatCryptSalt)
+	add(c.LegacyNomadToken)
+
+	if n := c.Admin.Services.Nomad; n != nil {
+		add(n.Token)
+	}
+	if n := c.Admin.ABCNodes; n != nil {
+		add(n.S3SecretKey)
+		add(n.MinioRootPassword)
+	}
+	for _, v := range c.Secrets {
+		add(v)
+	}
+	out = append(out, floorServiceSecrets(c.Admin.Services)...)
+	return out
+}
+
+// floorServiceSecrets returns the secret_key and password values for every
+// configured admin-floor service. Usernames / access keys are intentionally
+// omitted (see Context.SecretValues).
+func floorServiceSecrets(s AdminServices) []string {
+	var out []string
+	add := func(fs *AdminFloorService) {
+		if fs == nil {
+			return
+		}
+		if v := strings.TrimSpace(fs.SecretKey); v != "" {
+			out = append(out, v)
+		}
+		if v := strings.TrimSpace(fs.Password); v != "" {
+			out = append(out, v)
+		}
+	}
+	add(s.MinIO)
+	add(s.Tusd)
+	add(s.Faasd)
+	add(s.Grafana)
+	add(s.GrafanaAlloy)
+	add(s.Prometheus)
+	add(s.Loki)
+	add(s.Ntfy)
+	add(s.Rustfs)
+	add(s.Vault)
+	add(s.Traefik)
+	add(s.Uppy)
+	add(s.Wave)
+	return out
 }
