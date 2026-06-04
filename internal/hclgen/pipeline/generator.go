@@ -40,6 +40,11 @@ type Spec struct {
 	// single-prefix Nomad correlation. Emitted on the head task as
 	// `NF_NOMAD_RUN_TAG`. Combined with PipelineSlug below.
 	RunTag string
+	// NextflowRunName, when set, is passed verbatim as `nextflow run -name`.
+	// Used for resume lineages (`<base>_1`, `<base>_2`, …) so successive
+	// resumes of the same work-dir get distinct, traceable run names. When
+	// empty the generator falls back to RunTag (the fresh-run default).
+	NextflowRunName string
 	// PipelineSlug is the sanitized slug derived from the pipeline URL
 	// (e.g. `nf-core-demo` from `nf-core/demo`). Used as the trailing
 	// segment of the head Nomad job-id (`<runtag>-nf-head-<slug>`) for
@@ -987,6 +992,19 @@ func buildEntrypoint(spec Spec) string {
 
 	fmt.Fprintf(&sb, "nextflow run %s \\\n", spec.Repository)
 	sb.WriteString("  -c /local/nextflow.headjob.config")
+	// Explicit Nextflow run name. Required because the head sets
+	// NXF_IGNORE_RESUME_HISTORY=true for S3-cloudcache work dirs (so
+	// cross-container `-resume` works on a fresh head container). With the
+	// history file disabled, Nextflow refuses to auto-generate a run name and
+	// aborts with "Missing workflow run name" (CmdRun.checkRunName). The name
+	// is a valid run name (^[a-z][a-z0-9_-]* …) and correlates the Nextflow
+	// run with the Nomad job id. For resume lineages NextflowRunName carries
+	// `<base>_<n>`; otherwise we fall back to the run tag.
+	if runName := spec.NextflowRunName; runName != "" {
+		fmt.Fprintf(&sb, " \\\n  -name %s", runName)
+	} else if spec.RunTag != "" {
+		fmt.Fprintf(&sb, " \\\n  -name %s", spec.RunTag)
+	}
 	if spec.Revision != "" {
 		fmt.Fprintf(&sb, " \\\n  -revision %s", spec.Revision)
 	}
@@ -994,9 +1012,12 @@ func buildEntrypoint(spec Spec) string {
 		fmt.Fprintf(&sb, " \\\n  -profile %s", spec.Profile)
 	}
 	// `-resume` is reserved for genuine Nextflow resume operations. SessionID
-	// is the prior session the user wants to resume from; not an abc-cluster
-	// orchestration concern. abc-cluster-cli's run-tag (used for Nomad job-id
-	// correlation) is unrelated and stays out of the Nextflow CLI.
+	// is the prior session the user wants to resume from (the resumed run's
+	// UUID) — distinct from the run-tag emitted above as `-name`, which names
+	// THIS (new) run. On a fresh head container resume also relies on
+	// NXF_IGNORE_RESUME_HISTORY=true (set in hcl_adapter) to skip the local
+	// run-history existence check; restore itself reads the per-task blobs
+	// from the S3 cloudcache keyed by SessionID.
 	if spec.Resume && spec.SessionID != "" {
 		fmt.Fprintf(&sb, " \\\n  -resume %s", spec.SessionID)
 	} else if spec.Resume {
