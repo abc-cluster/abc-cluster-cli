@@ -36,6 +36,16 @@ type Spec struct {
 	// when Resume is true). Distinct from RunTag below — Nextflow's session
 	// UUID is data-plane (cache locality); the run tag is orchestration.
 	SessionID string
+	// PinnedSessionUUID, when set, is the Nextflow session UUID the head
+	// pins and always resumes (`-resume <uuid>`). Set for S3-cloudcache runs
+	// regardless of whether the user asked to resume: a fresh run pins a new
+	// UUID, a user resume pins SessionID. Because the head entrypoint is a
+	// static script, a Nomad task restart OR reschedule re-runs the SAME
+	// `-resume <uuid>` — so the head transparently picks up completed tasks
+	// from the cloudcache instead of redoing them. On the first run the cache
+	// is empty so it behaves exactly like a fresh run (verified). Requires
+	// NXF_IGNORE_RESUME_HISTORY=true (set alongside NXF_CLOUDCACHE_PATH).
+	PinnedSessionUUID string
 	// RunTag is a short alphanumeric prefix that the harness pre-chose for
 	// single-prefix Nomad correlation. Emitted on the head task as
 	// `NF_NOMAD_RUN_TAG`. Combined with PipelineSlug below.
@@ -1018,7 +1028,14 @@ func buildEntrypoint(spec Spec) string {
 	// NXF_IGNORE_RESUME_HISTORY=true (set in hcl_adapter) to skip the local
 	// run-history existence check; restore itself reads the per-task blobs
 	// from the S3 cloudcache keyed by SessionID.
-	if spec.Resume && spec.SessionID != "" {
+	if spec.PinnedSessionUUID != "" {
+		// Always-resume a pinned session UUID (cloudcache runs). Makes the head
+		// restart/reschedule-resilient: the static entrypoint re-runs the same
+		// `-resume <uuid>` and reuses completed tasks. For a user resume the
+		// UUID is the requested SessionID; for a fresh run it's a new UUID
+		// (empty cache → behaves like a fresh run).
+		fmt.Fprintf(&sb, " \\\n  -resume %s", spec.PinnedSessionUUID)
+	} else if spec.Resume && spec.SessionID != "" {
 		fmt.Fprintf(&sb, " \\\n  -resume %s", spec.SessionID)
 	} else if spec.Resume {
 		sb.WriteString(" \\\n  -resume")
