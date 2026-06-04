@@ -28,6 +28,10 @@ type PipelineSpec struct {
 	// resume lineages (`<base>_<n>`); empty means the generator falls back to
 	// RunTag. Set per-submission by run.go; not user-configurable.
 	NextflowRunName string `json:"-" yaml:"-"`
+	// PinnedSessionUUID, when set, is the Nextflow session UUID the head always
+	// resumes (`-resume <uuid>`) — for restart/reschedule resilience on
+	// cloudcache runs. Set per-submission by run.go; not user-configurable.
+	PinnedSessionUUID string `json:"-" yaml:"-"`
 	// PipelineSlug is the sanitized pipeline identifier (e.g. `nf-core-demo`)
 	// that leads the head Nomad job-id and every child Nomad job-id. Set
 	// per-submission by run.go from --name (if provided) or pipelineSlug()

@@ -597,6 +597,22 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Pin a Nextflow session UUID for cloudcache runs so the head is restart/
+	// reschedule-resilient: the static entrypoint always re-runs `-resume
+	// <uuid>` and reuses completed tasks from the cloudcache instead of redoing
+	// them. A user resume pins the requested SessionID; a fresh run pins a new
+	// UUID (empty cache → behaves exactly like a fresh run, verified). Gated on
+	// a canonical S3 work-dir because `-resume` on a fresh head container needs
+	// NXF_IGNORE_RESUME_HISTORY, which is only set when NXF_CLOUDCACHE_PATH
+	// applies (same gate as deriveCloudCachePath).
+	if deriveCloudCachePath(spec.WorkDir) != "" {
+		if spec.Resume && spec.SessionID != "" {
+			spec.PinnedSessionUUID = spec.SessionID
+		} else {
+			spec.PinnedSessionUUID = newSessionUUID()
+		}
+	}
+
 	hcl := generateHeadJobHCL(spec, nomadAddr, nomadToken, runUUID)
 
 	if dryRun {
@@ -948,6 +964,18 @@ func newRunUUID() string {
 		return fmt.Sprintf("run-%d", os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+// newSessionUUID returns a random RFC-4122-shaped UUID string (8-4-4-4-12),
+// the form Nextflow's `-resume <uuid>` requires (java.util.UUID.fromString).
+// Used to pin a fresh run's session so the head can resume itself on a Nomad
+// restart/reschedule.
+func newSessionUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("00000000-0000-0000-0000-%012x", os.Getpid()&0xffffffffffff)
+	}
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // newRunTag returns a fresh run tag — the shared prefix on the head Nomad
