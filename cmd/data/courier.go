@@ -213,6 +213,9 @@ func courierUpload(ctx context.Context, endpoint, bearer, filePath string, size 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return courierResult{}, fmt.Errorf("upload rejected (%s) — token not accepted by forward_auth at %s", resp.Status, endpoint)
 	}
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		return courierResult{}, fmt.Errorf("file too large for the transfer service — for larger objects, put them in a bucket and use `abc data presign` instead")
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return courierResult{}, fmt.Errorf("upload failed (%s): %s", resp.Status, strings.TrimSpace(string(body)))
 	}
