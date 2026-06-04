@@ -1,6 +1,6 @@
 package data
 
-// courier.go — `abc data courier`
+// send.go — `abc data send`
 //
 // Limited-time, self-destructing OUTBOUND transfer. Uploads a local file to the
 // seedling self-hosted transfer.sh endpoint (behind Caddy forward_auth) and
@@ -39,20 +39,20 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 )
 
-// maxCourierExpiry caps --expires. The bucket lifecycle expires objects at 8
+// maxSendExpiry caps --expires. The bucket lifecycle expires objects at 8
 // days and transfer.sh purges at 7; anything longer is meaningless. 7d also
 // matches `abc data presign`, keeping the duration vocabulary consistent.
-const maxCourierExpiry = 7 * 24 * time.Hour
+const maxSendExpiry = 7 * 24 * time.Hour
 
-// courierTransferLabel is the DNS label for the transfer service subdomain.
-const courierTransferLabel = "transfer"
+// sendTransferLabel is the DNS label for the transfer service subdomain.
+const sendTransferLabel = "transfer"
 
-// courierServiceLabels mirrors cmd/portal's knownServiceLabels: leading
+// sendServiceLabels mirrors cmd/portal's knownServiceLabels: leading
 // per-service DNS labels stripped from the context endpoint before the
 // transfer subdomain is prepended (so we never build transfer.nomad.<base>).
-var courierServiceLabels = []string{"nomad", "s3", "minio", "workbench", "upload", "grafana", "api", "transfer"}
+var sendServiceLabels = []string{"nomad", "s3", "minio", "workbench", "upload", "grafana", "api", "transfer"}
 
-func newCourierCmd() *cobra.Command {
+func newSendCmd() *cobra.Command {
 	var (
 		expires      string
 		maxDownloads int
@@ -61,7 +61,7 @@ func newCourierCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:          "courier <file>",
+		Use:          "send <file>",
 		Short:        "Send a file as a limited-time, self-destructing download link",
 		SilenceUsage: true,
 		Long: `Upload a local file to the seedling transfer service and print an expiring,
@@ -69,23 +69,23 @@ self-destructing share URL. The payload auto-deletes at the earlier of --expires
 or --max-downloads.
 
 Unlike 'abc data presign' (which makes an expiring link to an object that STAYS
-in a bucket), courier UPLOADS the file and the payload itself is deleted when the
+in a bucket), send UPLOADS the file and the payload itself is deleted when the
 link expires or its download budget is spent.
 
-SENSITIVITY: courier links are for NON-SENSITIVE artifacts only — figures,
+SENSITIVITY: send links are for NON-SENSITIVE artifacts only — figures,
 reports, small derived/aggregate results. Never PHI or raw/identifiable genomic
 data: the link leaves the in-region storage boundary when a recipient fetches it.
 
 Examples:
 
   # 7-day link (default):
-  abc data courier ./results-summary.csv
+  abc data send ./results-summary.csv
 
   # One-shot, 24-hour link:
-  abc data courier ./figure.png --max-downloads 1 --expires 24h
+  abc data send ./figure.png --max-downloads 1 --expires 24h
 
   # Pipe-friendly (the URL is the only thing on stdout):
-  URL="$(abc data courier ./report.pdf)"`,
+  URL="$(abc data send ./report.pdf)"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dur, err := time.ParseDuration(expires)
@@ -95,8 +95,8 @@ Examples:
 			if dur <= 0 {
 				return fmt.Errorf("--expires must be positive")
 			}
-			if dur > maxCourierExpiry {
-				return fmt.Errorf("--expires cannot exceed 7 days (the courier bucket auto-expires objects at 8d)")
+			if dur > maxSendExpiry {
+				return fmt.Errorf("--expires cannot exceed 7 days (the send bucket auto-expires objects at 8d)")
 			}
 			if maxDownloads < 0 {
 				return fmt.Errorf("--max-downloads cannot be negative")
@@ -108,7 +108,7 @@ Examples:
 				return fmt.Errorf("cannot read %q: %w", filePath, err)
 			}
 			if info.IsDir() {
-				return fmt.Errorf("%q is a directory; courier takes a single file (tar it first)", filePath)
+				return fmt.Errorf("%q is a directory; send takes a single file (tar it first)", filePath)
 			}
 
 			cfg, err := abccfg.Load()
@@ -117,7 +117,7 @@ Examples:
 			}
 			actx := cfg.ActiveCtx()
 
-			ep, err := resolveCourierEndpoint(cmd, endpoint, actx)
+			ep, err := resolveSendEndpoint(cmd, endpoint, actx)
 			if err != nil {
 				return err
 			}
@@ -127,9 +127,9 @@ Examples:
 				return fmt.Errorf("no auth token available — set a context with a Nomad token, or pass --token")
 			}
 
-			maxDays := courierMaxDays(dur)
+			maxDays := sendMaxDays(dur)
 
-			res, err := courierUpload(cmd.Context(), ep, bearer, filePath, info.Size(), maxDays, maxDownloads)
+			res, err := sendUpload(cmd.Context(), ep, bearer, filePath, info.Size(), maxDays, maxDownloads)
 			if err != nil {
 				return err
 			}
@@ -161,9 +161,9 @@ Examples:
 	return cmd
 }
 
-// courierMaxDays converts an expiry duration to transfer.sh's integer
+// sendMaxDays converts an expiry duration to transfer.sh's integer
 // `Max-Days` header: ceil to whole days, floored at 1.
-func courierMaxDays(d time.Duration) int {
+func sendMaxDays(d time.Duration) int {
 	days := int(math.Ceil(d.Hours() / 24))
 	if days < 1 {
 		days = 1
@@ -171,20 +171,20 @@ func courierMaxDays(d time.Duration) int {
 	return days
 }
 
-type courierResult struct {
+type sendResult struct {
 	url       string
 	deleteURL string
 }
 
-// courierUpload PUTs the file to <endpoint>/<basename> and returns the share URL.
-func courierUpload(ctx context.Context, endpoint, bearer, filePath string, size int64, maxDays, maxDownloads int) (courierResult, error) {
+// sendUpload PUTs the file to <endpoint>/<basename> and returns the share URL.
+func sendUpload(ctx context.Context, endpoint, bearer, filePath string, size int64, maxDays, maxDownloads int) (sendResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		return courierResult{}, fmt.Errorf("open %q: %w", filePath, err)
+		return sendResult{}, fmt.Errorf("open %q: %w", filePath, err)
 	}
 	defer f.Close()
 
@@ -193,7 +193,7 @@ func courierUpload(ctx context.Context, endpoint, bearer, filePath string, size 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, putURL, f)
 	if err != nil {
-		return courierResult{}, err
+		return sendResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.ContentLength = size // let transfer.sh enforce its max-upload-size accurately
@@ -205,34 +205,34 @@ func courierUpload(ctx context.Context, endpoint, bearer, filePath string, size 
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		return courierResult{}, fmt.Errorf("upload to %s: %w", endpoint, err)
+		return sendResult{}, fmt.Errorf("upload to %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return courierResult{}, fmt.Errorf("upload rejected (%s) — token not accepted by forward_auth at %s", resp.Status, endpoint)
+		return sendResult{}, fmt.Errorf("upload rejected (%s) — token not accepted by forward_auth at %s", resp.Status, endpoint)
 	}
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
-		return courierResult{}, fmt.Errorf("file too large for the transfer service — for larger objects, put them in a bucket and use `abc data presign` instead")
+		return sendResult{}, fmt.Errorf("file too large for the transfer service — for larger objects, put them in a bucket and use `abc data presign` instead")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return courierResult{}, fmt.Errorf("upload failed (%s): %s", resp.Status, strings.TrimSpace(string(body)))
+		return sendResult{}, fmt.Errorf("upload failed (%s): %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	shareURL := strings.TrimSpace(string(body))
 	if shareURL == "" || !strings.HasPrefix(shareURL, "http") {
-		return courierResult{}, fmt.Errorf("upload succeeded but no share URL returned (body: %q)", string(body))
+		return sendResult{}, fmt.Errorf("upload succeeded but no share URL returned (body: %q)", string(body))
 	}
-	return courierResult{url: shareURL, deleteURL: strings.TrimSpace(resp.Header.Get("X-Url-Delete"))}, nil
+	return sendResult{url: shareURL, deleteURL: strings.TrimSpace(resp.Header.Get("X-Url-Delete"))}, nil
 }
 
-// resolveCourierEndpoint picks the transfer endpoint in priority order:
+// resolveSendEndpoint picks the transfer endpoint in priority order:
 // 1) --endpoint flag
 // 2) ABC_TRANSFER_ENDPOINT
 // 3) derived from the active context (AuthEndpoint, then Endpoint): strip a
 //    leading service label and prepend "transfer." → https://transfer.<base>.
-func resolveCourierEndpoint(cmd *cobra.Command, flagEndpoint string, actx abccfg.Context) (string, error) {
+func resolveSendEndpoint(cmd *cobra.Command, flagEndpoint string, actx abccfg.Context) (string, error) {
 	if v := strings.TrimSpace(flagEndpoint); v != "" {
 		return strings.TrimRight(v, "/"), nil
 	}
@@ -269,7 +269,7 @@ func deriveTransferFromBase(base string) string {
 		return ""
 	}
 	// If the first label is already "transfer", reuse as-is.
-	for _, svc := range courierServiceLabels {
+	for _, svc := range sendServiceLabels {
 		if strings.HasPrefix(host, svc+".") {
 			host = host[len(svc)+1:]
 			break
@@ -279,5 +279,5 @@ func deriveTransferFromBase(base string) string {
 	if scheme == "" {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s.%s", scheme, courierTransferLabel, host)
+	return fmt.Sprintf("%s://%s.%s", scheme, sendTransferLabel, host)
 }

@@ -7,7 +7,7 @@ import (
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
-func TestCourierMaxDays(t *testing.T) {
+func TestSendMaxDays(t *testing.T) {
 	cases := []struct {
 		in   string
 		want int
@@ -25,8 +25,8 @@ func TestCourierMaxDays(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %q: %v", c.in, err)
 		}
-		if got := courierMaxDays(d); got != c.want {
-			t.Errorf("courierMaxDays(%s) = %d, want %d", c.in, got, c.want)
+		if got := sendMaxDays(d); got != c.want {
+			t.Errorf("sendMaxDays(%s) = %d, want %d", c.in, got, c.want)
 		}
 	}
 }
@@ -54,15 +54,15 @@ func TestDeriveTransferFromBase(t *testing.T) {
 	}
 }
 
-func TestResolveCourierEndpoint_Precedence(t *testing.T) {
+func TestResolveSendEndpoint_Precedence(t *testing.T) {
 	actx := abccfg.Context{
 		AuthEndpoint: "https://workbench.seedling.abc-cluster.cloud",
 		Endpoint:     "https://nomad.seedling.abc-cluster.cloud",
 	}
 
 	// 1) explicit flag wins (trailing slash trimmed)
-	cmd := newCourierCmd()
-	got, err := resolveCourierEndpoint(cmd, "https://transfer.example.test/", actx)
+	cmd := newSendCmd()
+	got, err := resolveSendEndpoint(cmd, "https://transfer.example.test/", actx)
 	if err != nil {
 		t.Fatalf("flag: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestResolveCourierEndpoint_Precedence(t *testing.T) {
 
 	// 2) env var (when no flag)
 	t.Setenv("ABC_TRANSFER_ENDPOINT", "https://transfer.env.test")
-	got, err = resolveCourierEndpoint(cmd, "", actx)
+	got, err = resolveSendEndpoint(cmd, "", actx)
 	if err != nil {
 		t.Fatalf("env: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestResolveCourierEndpoint_Precedence(t *testing.T) {
 	t.Setenv("ABC_TRANSFER_ENDPOINT", "")
 
 	// 3) derived from AuthEndpoint (preferred over Endpoint)
-	got, err = resolveCourierEndpoint(cmd, "", actx)
+	got, err = resolveSendEndpoint(cmd, "", actx)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestResolveCourierEndpoint_Precedence(t *testing.T) {
 	}
 
 	// 4) no context, no flag, no env → error
-	_, err = resolveCourierEndpoint(cmd, "", abccfg.Context{})
+	_, err = resolveSendEndpoint(cmd, "", abccfg.Context{})
 	if err == nil {
 		t.Errorf("expected error when no endpoint resolvable")
 	}
