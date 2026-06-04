@@ -135,22 +135,34 @@ Examples:
 				return err
 			}
 
-			// The URL is the only thing on stdout (pipe-friendly).
-			fmt.Fprintln(cmd.OutOrStdout(), res.url)
-
-			// Everything else is decoration on stderr.
+			outW := cmd.OutOrStdout()
 			errW := cmd.ErrOrStderr()
-			fmt.Fprintf(errW, "\n  expires:       %d day(s)\n", maxDays)
+
+			downloads := "unlimited (within the expiry window)"
 			if maxDownloads > 0 {
-				fmt.Fprintf(errW, "  max downloads: %d\n", maxDownloads)
+				downloads = fmt.Sprintf("%d", maxDownloads)
+			}
+
+			// The share link is the headline. Interactive: a bold label + the URL
+			// on stdout. Piped/captured (stdout not a TTY): bare URL only, so
+			// `URL="$(abc data send …)"` still gets a clean URL.
+			if supportsInteractiveProgress(outW) {
+				fmt.Fprintf(outW, "\n  %s\n  %s\n", styleBold("Share link:", true), res.url)
 			} else {
-				fmt.Fprintf(errW, "  max downloads: unlimited (within the expiry window)\n")
+				fmt.Fprintln(outW, res.url)
 			}
-			if res.deleteURL != "" {
-				fmt.Fprintf(errW, "  delete now:    %s\n", res.deleteURL)
-			}
+
+			// Metadata + the (important) sovereignty warning on stderr.
+			styleOn := supportsInteractiveProgress(errW)
+			fmt.Fprintf(errW, "  expires in %d day(s)  ·  downloads: %s\n", maxDays, downloads)
 			fmt.Fprintf(errW, "\n  ⚠ NON-SENSITIVE artifacts only — the link leaves the in-region\n")
 			fmt.Fprintf(errW, "    storage boundary when fetched. Never PHI or genomic data.\n")
+
+			// Delete link is secondary: dimmed + last so it never competes with
+			// the share link above.
+			if res.deleteURL != "" {
+				fmt.Fprintf(errW, "\n%s\n", styleDim("  revoke this link early: "+res.deleteURL, styleOn))
+			}
 			return nil
 		},
 	}
@@ -161,6 +173,23 @@ Examples:
 	cmd.Flags().StringVar(&token, "token", "", "bearer token override (default: the active context's Nomad token)")
 	cmd.Flags().BoolVar(&progress, "progress", true, "show a live upload progress bar (rendered on stderr)")
 	return cmd
+}
+
+// styleBold / styleDim wrap text in ANSI SGR codes when styling is on (the
+// target stream is a TTY). No-ops otherwise, so piped/captured output stays
+// clean. Kept dependency-free (raw ANSI) rather than pulling in lipgloss.
+func styleBold(s string, on bool) string {
+	if !on {
+		return s
+	}
+	return "\x1b[1m" + s + "\x1b[0m"
+}
+
+func styleDim(s string, on bool) string {
+	if !on {
+		return s
+	}
+	return "\x1b[2m" + s + "\x1b[0m"
 }
 
 // progressReadCloser wraps a file reader, reporting bytes read to a
