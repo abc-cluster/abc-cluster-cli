@@ -810,9 +810,13 @@ process {
 	}
 
 	// Build the plugins { ... } block. Default (no spec.Plugins) keeps the
-	// historical single nf-nomad line so non-dev runs are byte-identical to
-	// pre-bundle behaviour.
-	pluginsBody := fmt.Sprintf(`  id "nf-nomad@%s"`, spec.NfPluginVersion)
+	// historical single nf-nomad line. An empty NfPluginVersion renders the
+	// bare `id "nf-nomad"` form (Nextflow resolves it to the newest published
+	// release); a literal `@` suffix would be rejected by the plugin index.
+	pluginsBody := `  id "nf-nomad"`
+	if spec.NfPluginVersion != "" {
+		pluginsBody = fmt.Sprintf(`  id "nf-nomad@%s"`, spec.NfPluginVersion)
+	}
 	if len(spec.Plugins) > 0 {
 		var lines []string
 		for _, p := range spec.Plugins {

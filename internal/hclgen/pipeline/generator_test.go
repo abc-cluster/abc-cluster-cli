@@ -46,6 +46,74 @@ func TestGenerate_NoStaticEnv_NoMonitoringMeta(t *testing.T) {
 	}
 }
 
+// TestGenerate_PluginsBlock_VersionForms locks the plugins{} rendering:
+//   - empty NfPluginVersion + no Plugins → bare `id "nf-nomad"` (Nextflow
+//     resolves to newest; a literal `@latest` is rejected by the plugin index).
+//   - empty-version PluginRef → bare `id "<name>"`.
+//   - pinned version → `id "<name>@<version>"`.
+// The bare-id path was previously untested, which let an `@latest` regression
+// (rejected live with "Unknown plugin id: nf-nomad") ship undetected.
+func TestGenerate_PluginsBlock_VersionForms(t *testing.T) {
+	t.Run("empty NfPluginVersion, no Plugins → bare id nf-nomad", func(t *testing.T) {
+		spec := Spec{
+			Datacenters: []string{"dc1"},
+			WorkDir:     "/work/nextflow-work",
+			CPU:         1000,
+			MemoryMB:    2048,
+			NfVersion:   "26.04.2",
+			Repository:  "nextflow-io/hello",
+		}
+		hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "uuid-bare")
+		if !strings.Contains(hcl, `id "nf-nomad"`) {
+			t.Fatalf("expected bare `id \"nf-nomad\"` for empty NfPluginVersion:\n%s", hcl)
+		}
+		if strings.Contains(hcl, `id "nf-nomad@"`) || strings.Contains(hcl, `nf-nomad@latest`) {
+			t.Fatalf("must not emit `nf-nomad@` / `@latest` when version is empty:\n%s", hcl)
+		}
+	})
+
+	t.Run("empty-version PluginRefs → bare ids", func(t *testing.T) {
+		spec := Spec{
+			Datacenters: []string{"dc1"},
+			WorkDir:     "/work/nextflow-work",
+			CPU:         1000,
+			MemoryMB:    2048,
+			NfVersion:   "26.04.2",
+			Repository:  "nextflow-io/hello",
+			Plugins: []PluginRef{
+				{ID: "nf-nomad", Version: ""},
+				{ID: "nf-nomad-s5cmd", Version: ""},
+			},
+		}
+		hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "uuid-bare2")
+		if !strings.Contains(hcl, `id "nf-nomad"`) || !strings.Contains(hcl, `id "nf-nomad-s5cmd"`) {
+			t.Fatalf("expected bare ids for empty-version PluginRefs:\n%s", hcl)
+		}
+		if strings.Contains(hcl, `@latest`) || strings.Contains(hcl, `id "nf-nomad-s5cmd@"`) {
+			t.Fatalf("empty-version PluginRef must render without `@`:\n%s", hcl)
+		}
+	})
+
+	t.Run("pinned version → id name@version", func(t *testing.T) {
+		spec := Spec{
+			Datacenters: []string{"dc1"},
+			WorkDir:     "/work/nextflow-work",
+			CPU:         1000,
+			MemoryMB:    2048,
+			NfVersion:   "26.04.2",
+			Repository:  "nextflow-io/hello",
+			Plugins: []PluginRef{
+				{ID: "nf-nomad", Version: "0.4.0-edge8"},
+				{ID: "nf-nomad-s5cmd", Version: "0.1.2"},
+			},
+		}
+		hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "uuid-pin")
+		if !strings.Contains(hcl, `id "nf-nomad@0.4.0-edge8"`) || !strings.Contains(hcl, `id "nf-nomad-s5cmd@0.1.2"`) {
+			t.Fatalf("expected pinned `id name@version`:\n%s", hcl)
+		}
+	})
+}
+
 // TestGenerate_S5cmdBlock_SkipTLS checks that:
 //   - When an S3 work dir + nf-nomad-s5cmd plugin + S5cmdSkipTLS=true are
 //     combined, the generated nextflow config contains `useTLS = false`.

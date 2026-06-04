@@ -63,7 +63,11 @@ func runInfo(cmd *cobra.Command, args []string) error {
 		row("Memory (MB):", fmt.Sprintf("%d", spec.MemoryMB))
 	}
 	row("NF version:", spec.NfVersion)
-	row("NF plugin:", spec.NfPluginVersion)
+	nfPlugin := spec.NfPluginVersion
+	if nfPlugin == "" {
+		nfPlugin = "latest (newest published)"
+	}
+	row("NF plugin:", nfPlugin)
 	if len(spec.Params) > 0 {
 		row("Params:", fmt.Sprintf("%d key(s)", len(spec.Params)))
 	}

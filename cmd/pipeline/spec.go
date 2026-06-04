@@ -268,9 +268,11 @@ func (s *PipelineSpec) defaults() {
 	if s.NfVersion == "" {
 		s.NfVersion = "26.04.2"
 	}
-	if s.NfPluginVersion == "" {
-		s.NfPluginVersion = "0.4.0-edge5"
-	}
+	// NfPluginVersion is intentionally left empty by default. An empty version
+	// renders the bare `id "nf-nomad"` line, which Nextflow resolves to the
+	// newest published release. A pinned value (from --nf-plugin-version or a
+	// saved spec) overrides. Do NOT default to "latest" — that literal token is
+	// rejected by the plugin index ("Unknown plugin id: nf-nomad").
 	if s.Namespace == "" {
 		s.Namespace = "default"
 	}
