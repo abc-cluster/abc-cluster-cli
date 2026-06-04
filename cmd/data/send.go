@@ -58,6 +58,7 @@ func newSendCmd() *cobra.Command {
 		maxDownloads int
 		endpoint     string
 		token        string
+		progress     bool
 	)
 
 	cmd := &cobra.Command{
@@ -129,27 +130,39 @@ Examples:
 
 			maxDays := sendMaxDays(dur)
 
-			res, err := sendUpload(cmd.Context(), ep, bearer, filePath, info.Size(), maxDays, maxDownloads)
+			res, err := sendUpload(cmd.Context(), ep, bearer, filePath, info.Size(), maxDays, maxDownloads, cmd.ErrOrStderr(), progress)
 			if err != nil {
 				return err
 			}
 
-			// The URL is the only thing on stdout (pipe-friendly).
-			fmt.Fprintln(cmd.OutOrStdout(), res.url)
-
-			// Everything else is decoration on stderr.
+			outW := cmd.OutOrStdout()
 			errW := cmd.ErrOrStderr()
-			fmt.Fprintf(errW, "\n  expires:       %d day(s)\n", maxDays)
+
+			downloads := "unlimited (within the expiry window)"
 			if maxDownloads > 0 {
-				fmt.Fprintf(errW, "  max downloads: %d\n", maxDownloads)
+				downloads = fmt.Sprintf("%d", maxDownloads)
+			}
+
+			// The share link is the headline. Interactive: a bold label + the URL
+			// on stdout. Piped/captured (stdout not a TTY): bare URL only, so
+			// `URL="$(abc data send …)"` still gets a clean URL.
+			if supportsInteractiveProgress(outW) {
+				fmt.Fprintf(outW, "\n  %s\n  %s\n", styleBold("Share link:", true), res.url)
 			} else {
-				fmt.Fprintf(errW, "  max downloads: unlimited (within the expiry window)\n")
+				fmt.Fprintln(outW, res.url)
 			}
-			if res.deleteURL != "" {
-				fmt.Fprintf(errW, "  delete now:    %s\n", res.deleteURL)
-			}
+
+			// Metadata + the (important) sovereignty warning on stderr.
+			styleOn := supportsInteractiveProgress(errW)
+			fmt.Fprintf(errW, "  expires in %d day(s)  ·  downloads: %s\n", maxDays, downloads)
 			fmt.Fprintf(errW, "\n  ⚠ NON-SENSITIVE artifacts only — the link leaves the in-region\n")
 			fmt.Fprintf(errW, "    storage boundary when fetched. Never PHI or genomic data.\n")
+
+			// Delete link is secondary: dimmed + last so it never competes with
+			// the share link above.
+			if res.deleteURL != "" {
+				fmt.Fprintf(errW, "\n%s\n", styleDim("  revoke this link early: "+res.deleteURL, styleOn))
+			}
 			return nil
 		},
 	}
@@ -158,7 +171,40 @@ Examples:
 	cmd.Flags().IntVar(&maxDownloads, "max-downloads", 0, "delete after N downloads (0 = unlimited within the expiry window)")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "transfer endpoint URL (or set ABC_TRANSFER_ENDPOINT; default derived from the active context)")
 	cmd.Flags().StringVar(&token, "token", "", "bearer token override (default: the active context's Nomad token)")
+	cmd.Flags().BoolVar(&progress, "progress", true, "show a live upload progress bar (rendered on stderr)")
 	return cmd
+}
+
+// styleBold / styleDim wrap text in ANSI SGR codes when styling is on (the
+// target stream is a TTY). No-ops otherwise, so piped/captured output stays
+// clean. Kept dependency-free (raw ANSI) rather than pulling in lipgloss.
+func styleBold(s string, on bool) string {
+	if !on {
+		return s
+	}
+	return "\x1b[1m" + s + "\x1b[0m"
+}
+
+func styleDim(s string, on bool) string {
+	if !on {
+		return s
+	}
+	return "\x1b[2m" + s + "\x1b[0m"
+}
+
+// progressReadCloser wraps a file reader, reporting bytes read to a
+// progressReporter as the HTTP client streams the request body.
+type progressReadCloser struct {
+	r  io.Reader
+	pr *progressReporter
+}
+
+func (p *progressReadCloser) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 && p.pr != nil {
+		p.pr.Add(int64(n))
+	}
+	return n, err
 }
 
 // sendMaxDays converts an expiry duration to transfer.sh's integer
@@ -177,7 +223,7 @@ type sendResult struct {
 }
 
 // sendUpload PUTs the file to <endpoint>/<basename> and returns the share URL.
-func sendUpload(ctx context.Context, endpoint, bearer, filePath string, size int64, maxDays, maxDownloads int) (sendResult, error) {
+func sendUpload(ctx context.Context, endpoint, bearer, filePath string, size int64, maxDays, maxDownloads int, out io.Writer, progressEnabled bool) (sendResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -191,8 +237,17 @@ func sendUpload(ctx context.Context, endpoint, bearer, filePath string, size int
 	name := filepath.Base(filePath)
 	putURL := strings.TrimRight(endpoint, "/") + "/" + url.PathEscape(name)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, putURL, f)
+	// Live progress bar (stderr) as the request body streams. Disabled
+	// automatically when out is not a TTY (e.g. piped) so stdout stays clean.
+	pr := newProgressReporter(out, progressEnabled, "Sending "+name, size)
+	var body io.Reader = f
+	if pr.enabled {
+		body = &progressReadCloser{r: f, pr: pr}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, putURL, body)
 	if err != nil {
+		pr.Complete()
 		return sendResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+bearer)
@@ -204,12 +259,13 @@ func sendUpload(ctx context.Context, endpoint, bearer, filePath string, size int
 
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
+	pr.Complete() // tear down the bar before returning or printing anything else
 	if err != nil {
 		return sendResult{}, fmt.Errorf("upload to %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return sendResult{}, fmt.Errorf("upload rejected (%s) — token not accepted by forward_auth at %s", resp.Status, endpoint)
 	}
@@ -217,12 +273,12 @@ func sendUpload(ctx context.Context, endpoint, bearer, filePath string, size int
 		return sendResult{}, fmt.Errorf("file too large for the transfer service — for larger objects, put them in a bucket and use `abc data presign` instead")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return sendResult{}, fmt.Errorf("upload failed (%s): %s", resp.Status, strings.TrimSpace(string(body)))
+		return sendResult{}, fmt.Errorf("upload failed (%s): %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 
-	shareURL := strings.TrimSpace(string(body))
+	shareURL := strings.TrimSpace(string(respBody))
 	if shareURL == "" || !strings.HasPrefix(shareURL, "http") {
-		return sendResult{}, fmt.Errorf("upload succeeded but no share URL returned (body: %q)", string(body))
+		return sendResult{}, fmt.Errorf("upload succeeded but no share URL returned (body: %q)", string(respBody))
 	}
 	return sendResult{url: shareURL, deleteURL: strings.TrimSpace(resp.Header.Get("X-Url-Delete"))}, nil
 }
