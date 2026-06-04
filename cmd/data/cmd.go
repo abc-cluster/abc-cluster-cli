@@ -111,6 +111,7 @@ Plumbing commands (short aliases accepted):
 	cmd.AddCommand(newStageCmd())                                  // MinIO → workbench
 	cmd.AddCommand(newPresignCmd())                                // generate presigned URL
 	cmd.AddCommand(newShareCmd())                                  // intra-group: server-side copy → shared/ or common/
+	cmd.AddCommand(newCourierCmd())                                // limited-time self-destructing outbound link (transfer.sh)
 
 	// ── Porcelain: accession-based acquisition ───────────────────────────────
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
