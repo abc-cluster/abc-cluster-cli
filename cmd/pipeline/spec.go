@@ -24,6 +24,10 @@ type PipelineSpec struct {
 	// and every child Nomad job-id (single-prefix correlation). Set per-
 	// submission by run.go (newRunTag); not user-configurable.
 	RunTag string `json:"-" yaml:"-"`
+	// NextflowRunName, when set, is passed as `nextflow run -name`. Used for
+	// resume lineages (`<base>_<n>`); empty means the generator falls back to
+	// RunTag. Set per-submission by run.go; not user-configurable.
+	NextflowRunName string `json:"-" yaml:"-"`
 	// PipelineSlug is the sanitized pipeline identifier (e.g. `nf-core-demo`)
 	// that leads the head Nomad job-id and every child Nomad job-id. Set
 	// per-submission by run.go from --name (if provided) or pipelineSlug()

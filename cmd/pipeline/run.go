@@ -577,6 +577,26 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	//   nomad job status -prefix <run-tag>-      → head + every worker
 	spec.Name = headJobName(runTag, slug)
 
+	// Resume lineage run-name: name a resumed run `<base>_<n>` where <base> is
+	// the original run's tag (parsed from the reused --work-dir) and <n> is its
+	// position in the lineage (count of prior runs recorded against the same
+	// workdir_root). Nextflow reuses the session UUID on resume, so the cache
+	// can't self-count — local run records are the counter. Best-effort: any
+	// failure (no db, non-canonical workdir) leaves NextflowRunName empty and
+	// the generator falls back to the fresh run tag, which is always valid.
+	if spec.Resume {
+		if base := workDirRunTag(spec.WorkDir); base != "" {
+			n := 1
+			if db, err := state.Open(); err == nil {
+				if c, e := state.CountRunsForWorkdirRoot(cmd.Context(), db, pipelineWorkdirRoot(spec.WorkDir)); e == nil && c >= 1 {
+					n = c
+				}
+				db.Close()
+			}
+			spec.NextflowRunName = fmt.Sprintf("%s_%d", base, n)
+		}
+	}
+
 	hcl := generateHeadJobHCL(spec, nomadAddr, nomadToken, runUUID)
 
 	if dryRun {
@@ -699,6 +719,29 @@ func pipelineWorkdirRoot(workdir string) string {
 		return ""
 	}
 	return strings.TrimRight(workdir, "/") + "/"
+}
+
+// workDirRunTag extracts the original run tag from a canonical CLI-derived
+// S3 work-dir — the segment after ".../workdir/". It is the base name a
+// resume lineage numbers from. Returns "" for non-canonical / non-S3 paths
+// (operator-supplied work dirs don't carry a resume lineage).
+//
+//	s3://su-demo/user/slate-sunbird/workdir/slate-sunbird-1779.../  → slate-sunbird-1779...
+//	s3://b/x/workdir/                                               → ""
+//	/scratch/nf-work/foo/                                          → ""
+func workDirRunTag(workdir string) string {
+	if !strings.HasPrefix(workdir, "s3://") {
+		return ""
+	}
+	parts := strings.Split(strings.TrimRight(strings.TrimPrefix(workdir, "s3://"), "/"), "/")
+	// Canonical shape: <bucket>/<scope>/<user>/workdir/<run-tag> (≥5 parts);
+	// the run tag is the segment immediately after the literal "workdir".
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == "workdir" && parts[i+1] != "" {
+			return parts[i+1]
+		}
+	}
+	return ""
 }
 
 func nomadConnFromCmd(cmd *cobra.Command) (string, string) {

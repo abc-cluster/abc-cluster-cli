@@ -932,3 +932,13 @@ func CountRunsForProject(ctx context.Context, db *sql.DB, projectID string) (int
 	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE project_id = ?`, projectID).Scan(&n)
 	return n, err
 }
+
+// CountRunsForWorkdirRoot returns how many recorded runs share the given
+// workdir_root. Used to number resume lineages: a pipeline resumed against
+// the same --work-dir reuses this root, so the count is the position in the
+// lineage (the original run is 1, the first resume sees 1, etc.).
+func CountRunsForWorkdirRoot(ctx context.Context, db *sql.DB, workdirRoot string) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE workdir_root = ?`, workdirRoot).Scan(&n)
+	return n, err
+}

@@ -116,6 +116,17 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 					staticEnv = map[string]string{}
 				}
 				staticEnv["NXF_CLOUDCACHE_PATH"] = cp
+				// The head always runs in a FRESH container, so Nextflow's
+				// local run-history file (/local/.nextflow/history) is empty.
+				// `-resume <uuid>` first calls HistoryFile.checkExistsById and
+				// aborts with "Can't find a run with the specified id" BEFORE
+				// it ever consults the cache — so cross-container resume can
+				// never work without this. Resume restore itself reads only
+				// the per-task hash blobs (keyed by the session UUID) from the
+				// cloudcache, not the run index, so skipping the history check
+				// is safe: the per-task cache lookup still validates each task.
+				// Set whenever a cloudcache path exists (no effect off -resume).
+				staticEnv["NXF_IGNORE_RESUME_HISTORY"] = "true"
 			}
 		}
 	}
@@ -195,6 +206,7 @@ func generateHeadJobHCLWithStaticEnvAndFlagsEx(spec *PipelineSpec, nomadAddr, no
 		Resume:          spec.Resume,
 		SessionID:       spec.SessionID,
 		RunTag:          spec.RunTag,
+		NextflowRunName: spec.NextflowRunName,
 		PipelineSlug:    spec.PipelineSlug,
 		HostVolume:      spec.HostVolume,
 		NodeConstraint:    spec.NodeConstraint,
