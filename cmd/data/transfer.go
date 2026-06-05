@@ -37,8 +37,8 @@ func newCopyCmd(serverURL, accessToken, workspace *string) *cobra.Command {
 	opts := &transferOptions{}
 	cmd := &cobra.Command{
 		Use:   "copy <from> <to>",
-		Short: "Copy objects/paths with rclone (Nomad job)",
-		Long: `Submit a Nomad batch job that runs rclone copy between two locations.
+		Short: "Copy objects/paths (server-side job)",
+		Long: `Submit a server-side batch job that copies between two locations.
 
 Without --local, rclone.conf is fetched from the ABC API (abc-khan-svc) for the
 active workspace and embedded in the generated task script so credentials reach
@@ -68,7 +68,7 @@ func newMoveCmd(serverURL, accessToken, workspace *string) *cobra.Command {
 	opts := &transferOptions{}
 	cmd := &cobra.Command{
 		Use:   "move <from> <to>",
-		Short: "Move objects/paths with rclone (Nomad job)",
+		Short: "Move objects/paths (server-side job)",
 		Long: `Same as "abc data copy" but runs rclone move (delete source after successful transfer).
 
 Use --dry-run first to preview.`,
@@ -85,9 +85,9 @@ Use --dry-run first to preview.`,
 }
 
 func addTransferFlags(cmd *cobra.Command, opts *transferOptions) {
-	cmd.Flags().StringVar(&opts.driver, "driver", "docker", "nomad task driver: exec, raw_exec, docker, or containerd")
-	cmd.Flags().StringVar(&opts.runName, "name", "", "custom Nomad job name")
-	cmd.Flags().StringVar(&opts.placementNode, "node", "", "Nomad node placement (UUID or name)")
+	cmd.Flags().StringVar(&opts.driver, "driver", "docker", "task driver: exec, raw_exec, docker, or containerd")
+	cmd.Flags().StringVar(&opts.runName, "name", "", "custom job name")
+	cmd.Flags().StringVar(&opts.placementNode, "node", "", "node placement (UUID or name)")
 	cmd.Flags().IntVar(&opts.parallel, "parallel", 4, "rclone --transfers parallelism")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "pass --dry-run to rclone")
 	cmd.Flags().BoolVar(&opts.local, "local", false, "embed local --rclone-config in the job script instead of fetching from abc-khan-svc")

@@ -25,7 +25,7 @@ func newListCmd() *cobra.Command {
 Wraps s5cmd ls (default) or mcli ls (--tool mcli). Credentials and endpoint
 are resolved from the active context — no manual configuration needed.
 
-All flags after the S3 URI are forwarded to the underlying tool verbatim.
+All flags after the storage path are forwarded to the underlying tool verbatim.
 To see the full flag list of the underlying tool:
   abc data list -- --help
 

@@ -32,10 +32,10 @@ type downloadOptions struct {
 	placementNode string
 
 	// legacy fields kept for backwards compatibility with buildToolScript
-	tool    string
-	driver  string
-	source  string
-	urlFile string
+	tool     string
+	driver   string
+	source   string
+	urlFile  string
 	parallel int
 	toolArgs string
 }
@@ -57,7 +57,7 @@ func newDownloadCmd(serverURL, accessToken, workspace *string, factory PipelineC
 		Use:   "download <accession> [accession...]",
 		Short: "Download data from a scientific database by accession",
 		Long: `Fetch data from a scientific repository by accession ID and store it in your
-cluster MinIO bucket. The source database is auto-detected from the accession
+cluster storage. The source database is auto-detected from the accession
 format, or you can specify it explicitly with --from.
 
 Supported databases:
@@ -119,7 +119,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.storagePath, "storage-path", "",
 		"override the S3 path when --destination storage; accepts full s3://bucket/prefix/ "+
 			"or a relative path appended to the default downloads/<user>/ base")
-	cmd.Flags().StringVar(&opts.runName, "name", "", "custom Nomad job / pipeline run name")
+	cmd.Flags().StringVar(&opts.runName, "name", "", "custom pipeline run name")
 	cmd.Flags().StringVar(&opts.profile, "profile", "", "Nextflow profile (e.g. singularity, docker)")
 	cmd.Flags().StringVar(&opts.workDir, "work-dir", "", "Nextflow work directory")
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "Nextflow pipeline revision (tag or commit)")

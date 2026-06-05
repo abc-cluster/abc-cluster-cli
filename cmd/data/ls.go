@@ -35,7 +35,7 @@ func parseBucketPath(arg string) (bucket, rest string) {
 func newLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls [bucket[/prefix]]",
-		Short: "List S3 buckets or objects (MinIO / RustFS)",
+		Short: "List buckets or objects in cluster storage",
 		Long: `List objects stored in the abc-nodes S3-compatible store.
 
 Without arguments: list all buckets.
@@ -43,15 +43,15 @@ With a bucket name: list objects at the bucket root.
 With a bucket/prefix: list objects under that prefix.
 
   abc data ls
-  abc data ls tusd
-  abc data ls tusd/uploads/
+  abc data ls su-mbhg-hostgen
+  abc data ls su-mbhg-hostgen/user/calm-dassie/
 
 Credentials and endpoint are resolved from the active context
-(admin.services.minio or admin.services.rustfs after 'abc cluster capabilities sync').`,
+(configured automatically by 'abc cluster capabilities sync').`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runLs,
 	}
-	cmd.Flags().String("storage", "", "Storage backend: minio or rustfs (default: whichever is configured)")
+	cmd.Flags().String("storage", "", "Storage backend override (default: auto-detected)")
 	cmd.Flags().Int("max", 1000, "Maximum number of objects to list")
 	cmd.Flags().Bool("long", false, "Long format: show size and last-modified")
 	return cmd
@@ -60,14 +60,14 @@ Credentials and endpoint are resolved from the active context
 func newStatCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stat <bucket/key>",
-		Short: "Show metadata for an S3 object (MinIO / RustFS)",
+		Short: "Show metadata for a stored object",
 		Long: `Print size, ETag, last-modified date, and user metadata for a single object.
 
-  abc data stat tusd/my-upload-id`,
+  abc data stat su-mbhg-hostgen/user/calm-dassie/genome.fa`,
 		Args: cobra.ExactArgs(1),
 		RunE: runStat,
 	}
-	cmd.Flags().String("storage", "", "Storage backend: minio or rustfs (default: whichever is configured)")
+	cmd.Flags().String("storage", "", "Storage backend override (default: auto-detected)")
 	return cmd
 }
 

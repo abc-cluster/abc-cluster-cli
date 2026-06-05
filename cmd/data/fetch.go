@@ -40,18 +40,18 @@ func newFetchCmd(serverURL, accessToken, workspace *string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "fetch <source>",
-		Short: "Fetch data from a URL or S3 URI into cluster storage (Nomad job)",
-		Long: `Download data from an external URL or S3 URI directly into your cluster MinIO
-bucket. The download runs as a Nomad job on the cluster — nothing is transferred
+		Short: "Fetch data from a URL or storage path into cluster storage",
+		Long: `Download data from an external URL or storage path directly into your cluster
+storage. The download runs as a server-side job on the cluster — nothing is transferred
 to your local machine.
 
 Default behaviour:
   - Tool: aria2 (resumable HTTP; good for large files and mirrors)
-  - Destination: your MinIO bucket under downloads/<user>/
+  - Destination: your cluster storage under downloads/<user>/
 
 Examples:
 
-  # Fetch a file from the internet into your MinIO downloads folder:
+  # Fetch a file from the internet into your downloads folder:
   abc data fetch https://example.com/genome.fa.gz
 
   # Fetch from a public S3 bucket:
@@ -61,11 +61,11 @@ Examples:
   # Fetch a URL list:
   abc data fetch --url-file urls.txt
 
-  # Store at a specific MinIO path instead of the default downloads/ prefix:
+  # Store at a specific path instead of the default downloads/ prefix:
   abc data fetch https://example.com/data.tar.gz \
     --destination s3://su-mbhg-hostgen/user/calm-dassie/raw/data.tar.gz
 
-  # Fetch to a node-local directory (scratch, not persisted to MinIO):
+  # Fetch to a node-local directory (scratch, not persisted to storage):
   abc data fetch https://example.com/ref.fa --destination /tmp/ref/
 
   # Pin the job to a specific node:

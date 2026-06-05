@@ -11,9 +11,9 @@ import (
 func newCatCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "cat <s3-uri>",
-		Short:        "Stream an S3 object to stdout",
+		Short:        "Stream a stored object to stdout",
 		SilenceUsage: true,
-		Long: `Print the contents of an S3 object to stdout without saving a local file.
+		Long: `Print the contents of a stored object to stdout without saving a local file.
 
 Useful for inspecting headers, manifests, or small text files without
 downloading them. Pipe the output through head, grep, jq, etc.

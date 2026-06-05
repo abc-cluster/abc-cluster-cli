@@ -29,6 +29,7 @@ func NewCmd() *cobra.Command {
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newMigrateCmd())
 	cmd.AddCommand(newVacuumCmd())
+	cmd.AddCommand(newUploadsCmd()) // browse files recorded by `abc data upload`
 	return cmd
 }
 

@@ -14,7 +14,7 @@ func newSyncCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "sync <src> <dst>",
-		Short:        "Sync objects between two S3 prefixes or local directories",
+		Short:        "Sync objects between two storage prefixes or local directories",
 		SilenceUsage: true,
 		Long: `Sync objects from source to destination using s5cmd sync.
 
@@ -23,10 +23,10 @@ are forwarded to s5cmd verbatim.
 
 Examples:
 
-  # Sync a local directory to MinIO:
+  # Sync a local directory to storage:
   abc data sync ./results/ s3://su-mbhg-hostgen/user/calm-dassie/results/
 
-  # Sync between two MinIO prefixes:
+  # Sync between two storage prefixes:
   abc data sync s3://su-mbhg-hostgen/user/calm-dassie/ s3://su-mbhg-hostgen/backup/
 
   # Sync and delete objects in dst not present in src:

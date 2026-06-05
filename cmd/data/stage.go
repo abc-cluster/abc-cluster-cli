@@ -26,10 +26,10 @@ func newStageCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "stage <s3-uri>",
-		Short: "Copy a MinIO object into the workbench home or another cluster location",
+		Short: "Copy a stored object into the workbench home or another cluster location",
 		Long: `Copy data between cluster storage locations without downloading to your machine.
 
-The most common use: copy a MinIO object into your workbench (JupyterLab) home
+The most common use: copy a stored object into your workbench (JupyterLab) home
 directory so you can browse or process it interactively.
 
 A Nomad job is submitted and runs on the platform node (aither). The copy uses
@@ -42,7 +42,7 @@ The workbench home directory layout after staging:
 
 Examples:
 
-  # Stage a file from MinIO into your JupyterLab session:
+  # Stage a file from storage into your JupyterLab session:
   abc data stage s3://su-mbhg-hostgen/user/calm-dassie/data/genome.fa
 
   # Stage an entire prefix (trailing / = all objects under the prefix):

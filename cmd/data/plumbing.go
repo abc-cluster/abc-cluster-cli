@@ -161,9 +161,10 @@ func isMinioClient(binary string) bool {
 // broker fails we fall through to the legacy local-fields path.
 //
 // Resolution order within each service (when not broker-routed):
-//   admin.services.minio.{endpoint,access_key,secret_key}  (preferred)
-//   admin.services.rustfs.{endpoint,access_key,secret_key} (fallback)
-//   admin.abc_nodes.{s3_endpoint,s3_access_key,s3_secret_key} (legacy)
+//
+//	admin.services.minio.{endpoint,access_key,secret_key}  (preferred)
+//	admin.services.rustfs.{endpoint,access_key,secret_key} (fallback)
+//	admin.abc_nodes.{s3_endpoint,s3_access_key,s3_secret_key} (legacy)
 func resolveS3Creds(ctx abccfg.Context) (endpoint, accessKey, secretKey string) {
 	if credsource.IsBroker(ctx.CredSource) {
 		if creds, err := credsource.ResolveFromContext(context.Background(), ctx); err == nil {
