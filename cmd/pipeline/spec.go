@@ -115,8 +115,9 @@ type PipelineSpec struct {
 	S5cmdSkipTLS bool `json:"s5cmdSkipTLS,omitempty" yaml:"s5cmdSkipTLS,omitempty"`
 
 	// Head job resource overrides
-	CPU      int    `json:"cpu,omitempty" yaml:"cpu,omitempty"`           // MHz
-	MemoryMB int    `json:"memoryMB,omitempty" yaml:"memoryMB,omitempty"` // MB
+	CPU        int `json:"cpu,omitempty" yaml:"cpu,omitempty"`               // MHz
+	MemoryMB   int `json:"memoryMB,omitempty" yaml:"memoryMB,omitempty"`     // MB
+	HeadDiskMB int `json:"headDiskMB,omitempty" yaml:"headDiskMB,omitempty"` // ephemeral_disk MB
 	NfVersion       string `json:"nfVersion,omitempty" yaml:"nfVersion,omitempty"`
 	NfPluginVersion string `json:"nfPluginVersion,omitempty" yaml:"nfPluginVersion,omitempty"`
 
@@ -178,6 +179,9 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	}
 	if override.MemoryMB != 0 {
 		base.MemoryMB = override.MemoryMB
+	}
+	if override.HeadDiskMB != 0 {
+		base.HeadDiskMB = override.HeadDiskMB
 	}
 	if override.NfVersion != "" {
 		base.NfVersion = override.NfVersion
@@ -264,6 +268,18 @@ func (s *PipelineSpec) defaults() {
 	}
 	if s.MemoryMB == 0 {
 		s.MemoryMB = 2048
+	}
+	// Head ephemeral disk: this is a Nomad *scheduling reservation* (bin-packing
+	// feasibility), NOT an enforced cap — the docker/exec drivers don't quota the
+	// alloc dir. Real head scratch capacity comes from the host partition under
+	// /opt/nomad/data (469GB on aither). We set a modest 4GB floor: comfortably
+	// above the measured head footprint (~200MB–2GB incl. transient foreign-file
+	// staging buffer) yet far below any node's free disk, so it never blocks
+	// placement. Do NOT scale this to data volume — bump via --disk only for a
+	// genuinely constrained head node. See abc-universe
+	// brainstorms/abc-seedling-prod/2026-06-05-nextflow-ephemeral-disk-analysis.md.
+	if s.HeadDiskMB == 0 {
+		s.HeadDiskMB = 4096
 	}
 	if s.NfVersion == "" {
 		s.NfVersion = "26.04.2"

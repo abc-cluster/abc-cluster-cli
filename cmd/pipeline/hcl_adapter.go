@@ -195,6 +195,7 @@ func generateHeadJobHCLWithStaticEnvAndFlagsEx(spec *PipelineSpec, nomadAddr, no
 		Params:          spec.Params,
 		CPU:             spec.CPU,
 		MemoryMB:        spec.MemoryMB,
+		HeadDiskMB:      spec.HeadDiskMB,
 		NfVersion:       spec.NfVersion,
 		NfPluginVersion: spec.NfPluginVersion,
 		Namespace:       spec.Namespace,

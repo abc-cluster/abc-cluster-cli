@@ -108,6 +108,7 @@ EXAMPLES
 	// dedicated --nf-plugin-version on `run` — --plugin / --dev-plugins cover it.
 	cmd.Flags().Int("cpu", 0, "Head job CPU in MHz (default: 1000)")
 	cmd.Flags().Int("memory", 0, "Head job memory in MB (default: 2048)")
+	cmd.Flags().Int("disk", 0, "Head job ephemeral disk in MB for foreign-input staging (default: 4096)")
 	cmd.Flags().Float64("scratch-gb", 0, "Scratch storage reservation (GB) for accounting/emissions reporting")
 
 	// Job identity
@@ -258,6 +259,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetInt("memory"); v != 0 {
 		override.MemoryMB = v
+	}
+	if v, _ := cmd.Flags().GetInt("disk"); v != 0 {
+		override.HeadDiskMB = v
 	}
 	if configPath, _ := cmd.Flags().GetString("config"); configPath != "" {
 		data, err := readFile(configPath)

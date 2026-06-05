@@ -19,6 +19,11 @@ type Spec struct {
 
 	CPU             int
 	MemoryMB        int
+	// HeadDiskMB is the head group's ephemeral_disk size in MB. The head needs
+	// real scratch when Nextflow stages foreign input files (e.g. ftp:// FASTQs
+	// pulled into the workdir at workflow init) — Nomad's 300MB default is far
+	// too small and the head crash-loops mid-staging. Default applied in run.go.
+	HeadDiskMB      int
 	NfVersion       string
 	NfPluginVersion string
 
@@ -532,6 +537,15 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	}
 
 	groupBody := jobBody.AppendNewBlock("group", []string{"head"}).Body()
+
+	// Ephemeral disk for the head group. Nomad defaults to 300MB, which is far
+	// too small once Nextflow stages foreign input files (ftp:// / https:// /
+	// s3:// inputs copied into the workdir at workflow init). Set a real size so
+	// the head doesn't crash-loop mid-staging. Omitted when zero (legacy default).
+	if spec.HeadDiskMB > 0 {
+		edBody := groupBody.AppendNewBlock("ephemeral_disk", nil).Body()
+		edBody.SetAttributeValue("size", cty.NumberIntVal(int64(spec.HeadDiskMB)))
+	}
 
 	// Node hostname constraint — pins the head job to a specific Nomad client.
 	if spec.NodeConstraint != "" {
