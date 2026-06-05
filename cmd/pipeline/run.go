@@ -600,18 +600,26 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	// Pin a Nextflow session UUID for cloudcache runs so the head is restart/
-	// reschedule-resilient: the static entrypoint always re-runs `-resume
-	// <uuid>` and reuses completed tasks from the cloudcache instead of redoing
-	// them. A user resume pins the requested SessionID; a fresh run pins a new
-	// UUID (empty cache → behaves exactly like a fresh run, verified). Gated on
-	// a canonical S3 work-dir because `-resume` on a fresh head container needs
-	// NXF_IGNORE_RESUME_HISTORY, which is only set when NXF_CLOUDCACHE_PATH
-	// applies (same gate as deriveCloudCachePath).
+	// reschedule-resilient AND so `--work-dir` resumes actually reuse the cache:
+	// the static entrypoint always re-runs `-resume <uuid>`, and the cloudcache
+	// is keyed `cache/<run-tag>/<session-uuid>/`.
+	//
+	//   - explicit --session-id  → pin exactly that (caller knows the session).
+	//   - everything else (fresh run OR `--resume` without --session-id) → pin a
+	//     UUID DERIVED from the work-dir. A fresh run and every resume of it
+	//     share the same canonical work-dir, hence the same UUID and the same
+	//     cache namespace — so resume picks up completed tasks. (Previously this
+	//     branch minted a fresh RANDOM UUID, so a resume always hit an empty
+	//     namespace and re-ran every task.)
+	//
+	// Gated on a canonical S3 work-dir because `-resume` on a fresh head
+	// container needs NXF_IGNORE_RESUME_HISTORY, which is only set when
+	// NXF_CLOUDCACHE_PATH applies (same gate as deriveCloudCachePath).
 	if deriveCloudCachePath(spec.WorkDir) != "" {
 		if spec.Resume && spec.SessionID != "" {
 			spec.PinnedSessionUUID = spec.SessionID
 		} else {
-			spec.PinnedSessionUUID = newSessionUUID()
+			spec.PinnedSessionUUID = deterministicSessionUUID(spec.WorkDir)
 		}
 	}
 
@@ -977,6 +985,30 @@ func newSessionUUID() string {
 	if _, err := rand.Read(b); err != nil {
 		return fmt.Sprintf("00000000-0000-0000-0000-%012x", os.Getpid()&0xffffffffffff)
 	}
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// deterministicSessionUUID derives a STABLE RFC-4122-shaped UUID (8-4-4-4-12,
+// the form `-resume <uuid>` requires) from the run's canonical cloudcache path.
+//
+// Why this exists: nf-cloudcache keys the cache by session UUID —
+// `cache/<run-tag>/<session-uuid>/`. A fresh run and every later `--work-dir`
+// resume of it resolve to the SAME cloudcache path (deriveCloudCachePath is a
+// pure function of the work-dir), so deriving the session UUID from that path
+// makes them pin the SAME session and share one cache namespace. `-resume`
+// then actually reuses completed tasks. Previously a resume without an explicit
+// --session-id minted a fresh RANDOM UUID, landed on an empty namespace, and
+// re-ran every task — defeating resume entirely.
+//
+// Falls back to a random UUID for non-canonical work dirs (deriveCloudCachePath
+// == ""), where no cloudcache applies and the value is unused for resume.
+func deterministicSessionUUID(workDir string) string {
+	key := deriveCloudCachePath(workDir)
+	if key == "" {
+		return newSessionUUID()
+	}
+	h := sha1.Sum([]byte("abc-nf-session:v1:" + key))
+	b := h[:16]
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
