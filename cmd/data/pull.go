@@ -24,7 +24,7 @@ func newPullCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "pull <s3-uri>",
-		Short: "Download a file or prefix from cluster MinIO to your local machine",
+		Short: "Download a file or prefix from cluster storage to your local machine",
 		Long: `Download data from your cluster MinIO bucket to the local machine using s5cmd.
 
 Downloads are resumable and checksum-verified: files whose local checksum

@@ -467,7 +467,7 @@ var Registry = []Entry{
 	{
 		Name:    "ABC_TRANSFER_ENDPOINT",
 		Bucket:  BucketABCComponent,
-		Purpose: "transfer.sh endpoint override for `abc data send`",
+		Purpose: "transfer.sh endpoint override for `abc data drop`",
 	},
 	{
 		Name:    "ABC_CRYPT_PASSWORD",

@@ -29,8 +29,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
 func newShareCmd() *cobra.Command {

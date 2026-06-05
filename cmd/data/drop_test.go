@@ -7,26 +7,26 @@ import (
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
-func TestSendMaxDays(t *testing.T) {
+func TestDropMaxDays(t *testing.T) {
 	cases := []struct {
 		in   string
 		want int
 	}{
-		{"1h", 1},     // sub-day rounds up to 1
-		{"23h", 1},    // still under a day
-		{"24h", 1},    // exactly one day
-		{"25h", 2},    // just over → ceil to 2
-		{"168h", 7},   // 7 days
-		{"200h", 9},   // 8.33d → ceil 9
-		{"30m", 1},    // floor at 1
+		{"1h", 1},   // sub-day rounds up to 1
+		{"23h", 1},  // still under a day
+		{"24h", 1},  // exactly one day
+		{"25h", 2},  // just over → ceil to 2
+		{"168h", 7}, // 7 days
+		{"200h", 9}, // 8.33d → ceil 9
+		{"30m", 1},  // floor at 1
 	}
 	for _, c := range cases {
 		d, err := time.ParseDuration(c.in)
 		if err != nil {
 			t.Fatalf("parse %q: %v", c.in, err)
 		}
-		if got := sendMaxDays(d); got != c.want {
-			t.Errorf("sendMaxDays(%s) = %d, want %d", c.in, got, c.want)
+		if got := dropMaxDays(d); got != c.want {
+			t.Errorf("dropMaxDays(%s) = %d, want %d", c.in, got, c.want)
 		}
 	}
 }
@@ -54,15 +54,15 @@ func TestDeriveTransferFromBase(t *testing.T) {
 	}
 }
 
-func TestResolveSendEndpoint_Precedence(t *testing.T) {
+func TestResolveDropEndpoint_Precedence(t *testing.T) {
 	actx := abccfg.Context{
 		AuthEndpoint: "https://workbench.seedling.abc-cluster.cloud",
 		Endpoint:     "https://nomad.seedling.abc-cluster.cloud",
 	}
 
 	// 1) explicit flag wins (trailing slash trimmed)
-	cmd := newSendCmd()
-	got, err := resolveSendEndpoint(cmd, "https://transfer.example.test/", actx)
+	cmd := newDropCmd()
+	got, err := resolveDropEndpoint(cmd, "https://transfer.example.test/", actx)
 	if err != nil {
 		t.Fatalf("flag: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestResolveSendEndpoint_Precedence(t *testing.T) {
 
 	// 2) env var (when no flag)
 	t.Setenv("ABC_TRANSFER_ENDPOINT", "https://transfer.env.test")
-	got, err = resolveSendEndpoint(cmd, "", actx)
+	got, err = resolveDropEndpoint(cmd, "", actx)
 	if err != nil {
 		t.Fatalf("env: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestResolveSendEndpoint_Precedence(t *testing.T) {
 	t.Setenv("ABC_TRANSFER_ENDPOINT", "")
 
 	// 3) derived from AuthEndpoint (preferred over Endpoint)
-	got, err = resolveSendEndpoint(cmd, "", actx)
+	got, err = resolveDropEndpoint(cmd, "", actx)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestResolveSendEndpoint_Precedence(t *testing.T) {
 	}
 
 	// 4) no context, no flag, no env → error
-	_, err = resolveSendEndpoint(cmd, "", abccfg.Context{})
+	_, err = resolveDropEndpoint(cmd, "", abccfg.Context{})
 	if err == nil {
 		t.Errorf("expected error when no endpoint resolvable")
 	}

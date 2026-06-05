@@ -61,31 +61,31 @@ type Database struct {
 var accessionPatterns = map[string][]string{
 	// ── Sequence data (SRA/ENA/DDBJ insdc) ──────────────────────────────
 	"sra": {
-		`^SRR\d+$`,    // run
-		`^SRX\d+$`,    // experiment
-		`^SRS\d+$`,    // sample
-		`^SRA\d+$`,    // submission
-		`^SRP\d+$`,    // study
-		`^PRJNA\d+$`,  // bioproject (NCBI)
-		`^SAMN\d+$`,   // biosample
+		`^SRR\d+$`,   // run
+		`^SRX\d+$`,   // experiment
+		`^SRS\d+$`,   // sample
+		`^SRA\d+$`,   // submission
+		`^SRP\d+$`,   // study
+		`^PRJNA\d+$`, // bioproject (NCBI)
+		`^SAMN\d+$`,  // biosample
 	},
 	"ena": {
-		`^ERR\d+$`,    // run
-		`^ERX\d+$`,    // experiment
-		`^ERS\d+$`,    // sample
-		`^ERA\d+$`,    // submission
-		`^ERP\d+$`,    // study
-		`^PRJEB\d+$`,  // bioproject (EBI)
-		`^SAMEA\d+$`,  // biosample
+		`^ERR\d+$`,   // run
+		`^ERX\d+$`,   // experiment
+		`^ERS\d+$`,   // sample
+		`^ERA\d+$`,   // submission
+		`^ERP\d+$`,   // study
+		`^PRJEB\d+$`, // bioproject (EBI)
+		`^SAMEA\d+$`, // biosample
 	},
 	"ddbj": {
-		`^DRR\d+$`,    // run
-		`^DRX\d+$`,    // experiment
-		`^DRS\d+$`,    // sample
-		`^DRA\d+$`,    // submission
-		`^DRP\d+$`,    // study
-		`^PRJDB\d+$`,  // bioproject (DDBJ)
-		`^SAMD\d+$`,   // biosample
+		`^DRR\d+$`,   // run
+		`^DRX\d+$`,   // experiment
+		`^DRS\d+$`,   // sample
+		`^DRA\d+$`,   // submission
+		`^DRP\d+$`,   // study
+		`^PRJDB\d+$`, // bioproject (DDBJ)
+		`^SAMD\d+$`,  // biosample
 	},
 	// ── Controlled-access sequence ───────────────────────────────────────
 	"ega": {
@@ -97,8 +97,8 @@ var accessionPatterns = map[string][]string{
 	},
 	"dbgap": {
 		`^phs\d+\.v\d+\.p\d+$`, // full versioned accession
-		`^phs\d+$`,              // bare study accession
-		`^phd\d+$`,              // document
+		`^phs\d+$`,             // bare study accession
+		`^phd\d+$`,             // document
 	},
 	// ── Gene expression ──────────────────────────────────────────────────
 	"geo": {
@@ -122,8 +122,8 @@ var accessionPatterns = map[string][]string{
 	},
 	// ── Structure ────────────────────────────────────────────────────────
 	"pdb": {
-		`^[0-9][A-Za-z0-9]{3}$`,             // classic 4-char PDB ID (e.g. 1ABC)
-		`^pdb_\d{5}[A-Za-z0-9]{3}$`,         // extended PDB ID (e.g. pdb_00001abc)
+		`^[0-9][A-Za-z0-9]{3}$`,     // classic 4-char PDB ID (e.g. 1ABC)
+		`^pdb_\d{5}[A-Za-z0-9]{3}$`, // extended PDB ID (e.g. pdb_00001abc)
 	},
 	// ── Protein sequence ─────────────────────────────────────────────────
 	"uniprot": {

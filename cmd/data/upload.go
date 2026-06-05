@@ -194,8 +194,8 @@ func newUploadCmd(serverURL, accessToken, workspace *string, factory ClientFacto
 
 	cmd := &cobra.Command{
 		Use:   "upload <path>...",
-		Short: "Upload one or more files (or folders) using tus",
-		Long: `Upload files or folders to the abc-cluster data service using the tus resumable upload protocol.
+		Short: "Upload one or more files (or folders) — resumable + tracked",
+		Long: `Upload files or folders to the abc-cluster data service — resumable and tracked.
 
 Accepts multiple paths and shell globs. Your shell normally expands globs, but
 quoted globs (or globs that match nothing) are also expanded by abc.
@@ -229,11 +229,11 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&opts.name, "name", "", "display name for the uploaded file")
-	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "tus upload endpoint URL (or set ABC_UPLOAD_ENDPOINT / context upload_endpoint; defaults to <url>/files/ from API --url or context endpoint)")
+	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "upload endpoint URL (or set ABC_UPLOAD_ENDPOINT / context upload_endpoint; defaults to <url>/files/ from API --url or context endpoint)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
-	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for tus uploads (or set ABC_UPLOAD_TOKEN / context upload_token; then ABC_TOKEN/NOMAD_TOKEN / context nomad_token; falls back to --access-token)")
-	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in tus upload metadata")
+	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for uploads (or set ABC_UPLOAD_TOKEN / context upload_token; then ABC_TOKEN / context token; falls back to --access-token)")
+	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in upload metadata")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
 	cmd.Flags().BoolVar(&opts.parallel, "parallel", true, "upload directory files in parallel")
 	cmd.Flags().IntVar(&opts.parallelJobs, "parallel-jobs", runtime.NumCPU(), "number of parallel upload workers when --parallel=true")
@@ -242,8 +242,8 @@ Examples:
 	cmd.Flags().StringArrayVar(&opts.meta, "meta", nil, `additional tus upload metadata as key=value (repeatable, e.g. --meta project=abc)`)
 	cmd.Flags().BoolVar(&opts.noResume, "no-resume", false, "ignore stored resume state and always start a fresh upload")
 	cmd.Flags().StringVar(&opts.group, "group", "", "destination group bucket for the upload (multi-group users only; e.g. --group mbhg-hostgen uploads to su-mbhg-hostgen). Defaults to the primary group derived from your token. The mover validates that your token policies include the requested group.")
-	cmd.Flags().BoolVar(&opts.status, "status", false, "show stored tus resume state for the file (does not upload)")
-	cmd.Flags().BoolVar(&opts.clear, "clear", false, "clear stored tus resume state for the file (does not upload)")
+	cmd.Flags().BoolVar(&opts.status, "status", false, "show stored resume state for the file (does not upload)")
+	cmd.Flags().BoolVar(&opts.clear, "clear", false, "clear stored resume state for the file (does not upload)")
 	cmd.Flags().BoolVar(&opts.workbench, "workbench", false,
 		"after a successful upload, stage the file from MinIO into the active pool slot's workbench home (~/data/)")
 

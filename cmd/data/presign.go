@@ -30,9 +30,9 @@ func newPresignCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "presign <s3-uri>",
-		Short:        "Generate a presigned URL for an S3 object",
+		Short:        "Generate an expiring URL for a stored object",
 		SilenceUsage: true,
-		Long: `Generate a time-limited presigned URL for any accessible S3 object.
+		Long: `Generate a time-limited expiring URL for any accessible stored object.
 
 The URL is printed to stdout (bare, no decoration) so it can be piped to
 curl or shared with collaborators who have no cluster credentials.
@@ -66,7 +66,7 @@ Examples:
 				return fmt.Errorf("--expires must be positive")
 			}
 			if dur > 7*24*time.Hour {
-				return fmt.Errorf("--expires cannot exceed 7 days (MinIO maximum for presigned URLs)")
+				return fmt.Errorf("--expires cannot exceed 7 days (maximum for expiring URLs)")
 			}
 
 			method = strings.ToUpper(strings.TrimSpace(method))

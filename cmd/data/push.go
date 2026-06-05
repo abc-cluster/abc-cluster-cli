@@ -24,17 +24,17 @@ func newPushCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "push <local-path> <s3-uri>",
-		Short:        "Upload a local file or directory to MinIO (s5cmd, fast)",
+		Short:        "Upload a local file or directory to storage (fast, no tracking)",
 		SilenceUsage: true,
 		Long: `Upload a local file or directory to cluster MinIO storage using s5cmd.
 
 push is the fast, S3-native upload path — it uses s5cmd cp with parallel
 multipart transfers. No upload tracking is maintained (use 'abc data upload'
-if you need resumable tus-tracked uploads over unreliable networks).
+if you need resumable tracked uploads over unreliable networks).
 
 push and pull are symmetric:
-  push  local → MinIO   (this command)
-  pull  MinIO → local   (abc data pull)
+  push  local → storage   (this command)
+  pull  storage → local   (abc data pull)
 
 Examples:
 
@@ -65,7 +65,7 @@ Examples:
 
 			bin, err := findTool("s5cmd")
 			if err != nil {
-				return fmt.Errorf("%w\n\nAlternative: use 'abc data upload' for tus-tracked uploads", err)
+				return fmt.Errorf("%w\n\nAlternative: use 'abc data upload' for tracked uploads", err)
 			}
 
 			// Build s5cmd invocation.

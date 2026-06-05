@@ -57,31 +57,34 @@ func NewCmd(serverURL, accessToken, workspace *string, dataFactory ...ClientFact
 
 Common workflows:
 
-  Upload a file to cluster MinIO (tus, resumable):
+  Upload a file (resumable, tracked):
     abc data upload ./genome.fa
 
-  Push a file to MinIO fast (s5cmd, no tracking):
+  Push a file to storage quickly (no tracking):
     abc data push ./genome.fa s3://su-mbhg-hostgen/user/calm-dassie/genome.fa
 
-  Fetch data from the internet into MinIO (server-side Nomad job):
+  Fetch data from the internet into cluster storage:
     abc data fetch https://example.com/data.tar.gz
 
   Fetch a public sequence dataset by accession:
     abc data fetch SRR000001
 
-  Download from MinIO to your local machine (resumable, aria2c):
+  Download from storage to your local machine (resumable):
     abc data pull s3://su-mbhg-hostgen/user/calm-dassie/results.csv
 
-  Stage a MinIO file into your workbench ~/data/:
+  Stage a stored file into your workbench ~/data/:
     abc data stage s3://su-mbhg-hostgen/user/calm-dassie/genome.fa
 
   Share a file with your group:
     abc data share s3://su-mbhg-hostgen/user/calm-dassie/results.vcf --to shared
 
-  Generate a presigned link for external collaborators:
+  Generate an expiring link for external collaborators:
     abc data presign s3://su-mbhg-hostgen/user/calm-dassie/report.pdf --expires 48h
 
-  Browse your MinIO bucket:
+  Drop a file as a limited-time, self-destructing link:
+    abc data drop ./figure.png --max-downloads 1
+
+  Browse your storage:
     abc data list s3://su-mbhg-hostgen/user/calm-dassie/
 
   Show disk usage:
@@ -94,13 +97,11 @@ Deletion (three tiers, increasing finality):
   trash         list / restore / empty your soft-deleted objects
 
 Plumbing commands (short aliases accepted):
-  list (ls)  sync  cat  pipe  disk-usage (du)
-  make-bucket (mb)  remove-bucket (rb)  stat`,
+  list (ls)  sync  cat  pipe  disk-usage (du)  stat`,
 	}
 
 	// ── Porcelain: tus upload ────────────────────────────────────────────────
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
-	cmd.AddCommand(newUploadsCmd())
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
 
@@ -111,7 +112,7 @@ Plumbing commands (short aliases accepted):
 	cmd.AddCommand(newStageCmd())                                  // MinIO → workbench
 	cmd.AddCommand(newPresignCmd())                                // generate presigned URL
 	cmd.AddCommand(newShareCmd())                                  // intra-group: server-side copy → shared/ or common/
-	cmd.AddCommand(newSendCmd())                                   // limited-time self-destructing outbound link (transfer.sh)
+	cmd.AddCommand(newDropCmd())                                   // limited-time self-destructing outbound link (transfer.sh)
 
 	// ── Porcelain: accession-based acquisition ───────────────────────────────
 	cmd.AddCommand(newDownloadCmd(serverURL, accessToken, workspace, PipelineFactory))
@@ -129,14 +130,12 @@ Plumbing commands (short aliases accepted):
 
 	// ── Plumbing: s5cmd / mcli wrappers ─────────────────────────────────────
 	// Canonical names are full English words; unix short forms are registered aliases.
-	cmd.AddCommand(newListCmd())         // list         alias: ls
-	cmd.AddCommand(newSyncCmd())         // sync
-	cmd.AddCommand(newCatCmd())          // cat
-	cmd.AddCommand(newPipeCmd())         // pipe
-	cmd.AddCommand(newDiskUsageCmd())    // disk-usage   alias: du
-	cmd.AddCommand(newMakeBucketCmd())   // make-bucket  alias: mb
-	cmd.AddCommand(newRemoveBucketCmd()) // remove-bucket alias: rb
-	cmd.AddCommand(newStatCmd())         // stat
+	cmd.AddCommand(newListCmd())      // list         alias: ls
+	cmd.AddCommand(newSyncCmd())      // sync
+	cmd.AddCommand(newCatCmd())       // cat
+	cmd.AddCommand(newPipeCmd())      // pipe
+	cmd.AddCommand(newDiskUsageCmd()) // disk-usage   alias: du
+	cmd.AddCommand(newStatCmd())      // stat
 
 	return cmd
 }

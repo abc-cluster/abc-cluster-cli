@@ -11,16 +11,16 @@ import (
 func newPipeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "pipe <s3-uri>",
-		Short:        "Upload stdin to an S3 object",
+		Short:        "Upload stdin to a stored object",
 		SilenceUsage: true,
-		Long: `Read from stdin and upload the bytes to the given S3 URI.
+		Long: `Read from stdin and upload the bytes to the given storage path.
 
-Enables capturing pipeline stdout directly into MinIO without a temporary
+Enables capturing pipeline stdout directly into storage without a temporary
 local file. Useful for streaming large outputs from Nextflow or custom scripts.
 
 Examples:
 
-  # Capture a command's output directly into MinIO:
+  # Capture a command's output directly into storage:
   samtools view -bS input.sam | abc data pipe s3://su-mbhg-hostgen/user/calm-dassie/output.bam
 
   # Store a generated manifest:

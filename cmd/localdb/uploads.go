@@ -1,4 +1,9 @@
-package data
+package localdb
+
+// uploads.go — `abc localdb uploads`: browse the local registry of files
+// recorded by `abc data upload`. Relocated from `abc data uploads` (it reads
+// the local SQLite, so it belongs with the other localdb inspectors, not under
+// the user-facing data verbs).
 
 import (
 	"errors"
@@ -10,22 +15,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newUploadsCmd returns the "uploads" subcommand group under "abc data".
+// newUploadsCmd returns the "uploads" subcommand group under "abc localdb".
 // It groups three read-only registry commands: list, show, path.
 func newUploadsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "uploads",
-		Short: "Browse the local upload registry",
-		Long: `Commands for browsing the upload registry — files recorded by
-'abc data upload' on successful completion. The registry lives in
-~/.abc/local.db and tracks filename, canonical S3 path, size, checksum,
-upload time, and the active context at upload time.
+		Short: "Browse files recorded by 'abc data upload'",
+		Long: `Browse the upload registry — files recorded by 'abc data upload' on
+successful completion. The registry lives in the local database and tracks
+filename, storage path, size, checksum, upload time, and the active context.
 
-Use 'abc data uploads path <filename>' to retrieve the S3 URI for use
+Use 'abc localdb uploads path <filename>' to retrieve the storage path for use
 in pipeline --input parameters or job scripts:
 
   abc pipeline run nf-core/rnaseq \
-    --input "$(abc data uploads path samples.csv)" \
+    --input "$(abc localdb uploads path samples.csv)" \
     --genome GRCh38`,
 	}
 	cmd.AddCommand(newUploadsListCmd())
@@ -40,9 +44,9 @@ func newUploadsListCmd() *cobra.Command {
 		Short: "List uploaded files",
 		Long: `Print a table of files uploaded via 'abc data upload', newest first.
 
-  abc data uploads list
-  abc data uploads list --context seedling
-  abc data uploads list --limit 100`,
+  abc localdb uploads list
+  abc localdb uploads list --context seedling
+  abc localdb uploads list --limit 100`,
 		RunE: runUploadsList,
 	}
 	cmd.Flags().String("context", "", "Filter to a specific context name (default: all contexts)")
@@ -54,10 +58,10 @@ func newUploadsShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <filename>",
 		Short: "Show details for an uploaded file",
-		Long: `Print the S3 path, size, checksum, and upload time for the most
+		Long: `Print the storage path, size, checksum, and upload time for the most
 recent upload matching <filename>.
 
-  abc data uploads show samples.csv`,
+  abc localdb uploads show samples.csv`,
 		Args: cobra.ExactArgs(1),
 		RunE: runUploadsShow,
 	}
@@ -66,15 +70,14 @@ recent upload matching <filename>.
 func newUploadsPathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "path <filename>",
-		Short: "Print the S3 URI for an uploaded file",
-		Long: `Print the canonical S3 path for the most recent upload matching <filename>.
-Designed for scripting — outputs a bare URI with no decoration.
+		Short: "Print the storage path for an uploaded file",
+		Long: `Print the canonical storage path for the most recent upload matching
+<filename>. Designed for scripting — outputs a bare path with no decoration.
 
-  abc data uploads path samples.csv
-  # s3://su-genomics-lab/user/keen-sunbird/data/samples.csv
+  abc localdb uploads path samples.csv
 
   abc pipeline run nf-core/rnaseq \
-    --input "$(abc data uploads path samples.csv)"`,
+    --input "$(abc localdb uploads path samples.csv)"`,
 		Args: cobra.ExactArgs(1),
 		RunE: runUploadsPath,
 	}
@@ -107,19 +110,19 @@ func runUploadsList(cmd *cobra.Command, _ []string) error {
 
 	out := cmd.OutOrStdout()
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  FILENAME\tSIZE\tUPLOADED\tCONTEXT\tS3 PATH")
+	fmt.Fprintln(w, "  FILENAME\tSIZE\tUPLOADED\tCONTEXT\tSTORAGE PATH")
 	fmt.Fprintln(w, "  ────────────────────\t────────\t─────────────────────\t─────────────\t────────────────────────────────────────────────")
 	for _, u := range shown {
-		s3 := u.S3Path
-		if s3 == "" {
-			s3 = "(unknown)"
+		path := u.S3Path
+		if path == "" {
+			path = "(unknown)"
 		}
 		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n",
 			u.Filename,
-			formatSize(u.SizeBytes),
+			formatBytes(u.SizeBytes),
 			u.UploadedAt.Format("2006-01-02 15:04:05"),
 			u.ContextName,
-			s3,
+			path,
 		)
 	}
 	w.Flush()
@@ -140,7 +143,7 @@ func runUploadsShow(cmd *cobra.Command, args []string) error {
 	u, err := state.FindUploadByFilename(db, filename, "")
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return fmt.Errorf("no upload recorded for %q\n  Run 'abc data upload %s' first, or 'abc data uploads list' to browse all uploads", filename, filename)
+			return fmt.Errorf("no upload recorded for %q\n  Run 'abc data upload %s' first, or 'abc localdb uploads list' to browse all uploads", filename, filename)
 		}
 		return fmt.Errorf("find upload: %w", err)
 	}
@@ -148,11 +151,11 @@ func runUploadsShow(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "\n  File:         %s\n", u.Filename)
 	if u.S3Path != "" {
-		fmt.Fprintf(out, "  S3 path:      %s\n", u.S3Path)
+		fmt.Fprintf(out, "  Storage path: %s\n", u.S3Path)
 	} else {
-		fmt.Fprintf(out, "  S3 path:      (unknown — context lacked bucket info at upload time)\n")
+		fmt.Fprintf(out, "  Storage path: (unknown — context lacked storage info at upload time)\n")
 	}
-	fmt.Fprintf(out, "  Size:         %s\n", formatSize(u.SizeBytes))
+	fmt.Fprintf(out, "  Size:         %s\n", formatBytes(u.SizeBytes))
 	if u.Checksum != "" {
 		fmt.Fprintf(out, "  Checksum:     %s\n", u.Checksum)
 	}
@@ -175,15 +178,34 @@ func runUploadsPath(cmd *cobra.Command, args []string) error {
 	u, err := state.FindUploadByFilename(db, filename, "")
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return fmt.Errorf("no upload recorded for %q\n  Run 'abc data upload %s' first, or 'abc data uploads list' to browse all uploads", filename, filename)
+			return fmt.Errorf("no upload recorded for %q\n  Run 'abc data upload %s' first, or 'abc localdb uploads list' to browse all uploads", filename, filename)
 		}
 		return fmt.Errorf("find upload: %w", err)
 	}
 
 	if u.S3Path == "" {
-		return fmt.Errorf("S3 path unknown for %q\n  The active context lacked bucket info when this file was uploaded.\n  Run 'abc data ls' to browse the bucket directly.", filename)
+		return fmt.Errorf("storage path unknown for %q\n  The active context lacked storage info when this file was uploaded.\n  Run 'abc data ls' to browse the store directly.", filename)
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), u.S3Path)
 	return nil
+}
+
+// formatBytes renders a byte count as a human-readable size.
+func formatBytes(bytes int64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }
