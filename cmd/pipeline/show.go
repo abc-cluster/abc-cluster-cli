@@ -8,18 +8,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newInfoCmd() *cobra.Command {
+func newShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "info <name>",
-		Short: "Show details of a saved pipeline",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runInfo,
+		Use:     "show <name>",
+		Aliases: []string{"info"},
+		Short:   "Show details of a saved pipeline",
+		Args:    cobra.ExactArgs(1),
+		RunE:    runShow,
 	}
 	cmd.Flags().Bool("json", false, "Output as JSON")
 	return cmd
 }
 
-func runInfo(cmd *cobra.Command, args []string) error {
+func runShow(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	ns := namespaceFromCmd(cmd)
 	nc := nomadClientFromCmd(cmd)
@@ -63,7 +64,11 @@ func runInfo(cmd *cobra.Command, args []string) error {
 		row("Memory (MB):", fmt.Sprintf("%d", spec.MemoryMB))
 	}
 	row("NF version:", spec.NfVersion)
-	row("NF plugin:", spec.NfPluginVersion)
+	nfPlugin := spec.NfPluginVersion
+	if nfPlugin == "" {
+		nfPlugin = "latest (newest published)"
+	}
+	row("NF plugin:", nfPlugin)
 	if len(spec.Params) > 0 {
 		row("Params:", fmt.Sprintf("%d key(s)", len(spec.Params)))
 	}

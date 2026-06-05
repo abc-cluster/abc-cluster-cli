@@ -88,8 +88,8 @@ Common workflows:
     abc data disk-usage s3://su-mbhg-hostgen/user/calm-dassie/
 
 Deletion (three tiers, increasing finality):
-  remove (rm)   soft delete to trash/ — reversible (abc data trash restore)
-  delete (del)  permanent, current version — with confirmation
+  delete (del)  soft delete to trash/ — reversible (abc data trash restore)
+  remove (rm)   permanent, current version — with confirmation (Unix rm)
   purge         permanent, ALL versions — type 'purge' to confirm
   trash         list / restore / empty your soft-deleted objects
 
@@ -121,9 +121,9 @@ Plumbing commands (short aliases accepted):
 	cmd.AddCommand(newMoveCmd(serverURL, accessToken, workspace))
 
 	// ── Deletion: three-tier model ─────────────────────────────────────────
-	// remove → trash (reversible); delete → permanent; purge → all versions.
-	cmd.AddCommand(newRemoveCmd()) // remove  alias: rm   (soft delete to trash)
-	cmd.AddCommand(newDeleteCmd()) // delete  alias: del  (permanent, current version)
+	// delete → trash (reversible); remove → permanent (Unix rm); purge → all versions.
+	cmd.AddCommand(newDeleteCmd()) // delete  alias: del  (soft delete to trash, reversible)
+	cmd.AddCommand(newRemoveCmd()) // remove  alias: rm   (permanent, current version — Unix rm)
 	cmd.AddCommand(newPurgeCmd())  // purge               (permanent, all versions)
 	cmd.AddCommand(newTrashCmd())  // trash list/restore/empty
 

@@ -18,7 +18,6 @@ import (
 	cfgcmd "github.com/abc-cluster/abc-cluster-cli/cmd/config"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/doctor"
-	emissionscmd "github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/infra"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/job"
 	localdbcmd "github.com/abc-cluster/abc-cluster-cli/cmd/localdb"
@@ -30,7 +29,6 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/cmd/secrets"
 	selfupdatecmd "github.com/abc-cluster/abc-cluster-cli/cmd/selfupdate"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
-	watercmd "github.com/abc-cluster/abc-cluster-cli/cmd/water"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/workbench"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
@@ -288,9 +286,7 @@ func init() {
 	rootCmd.AddCommand(cfgcmd.NewCmd())
 	rootCmd.AddCommand(secrets.NewCmd())
 	rootCmd.AddCommand(project.NewCmd())
-	rootCmd.AddCommand(reportcmd.NewCmd())
-	rootCmd.AddCommand(emissionscmd.NewCmd())
-	rootCmd.AddCommand(watercmd.NewCmd())
+	rootCmd.AddCommand(reportcmd.NewCmd()) // includes `report emissions` + `report water` (folded 2026-06-05)
 	rootCmd.AddCommand(selfupdatecmd.NewCmd())
 	rootCmd.AddCommand(localdbcmd.NewCmd())
 	// `abc capability` typo redirect — users learning the codename surface

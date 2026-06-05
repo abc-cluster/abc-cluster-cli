@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	emissionscmd "github.com/abc-cluster/abc-cluster-cli/cmd/emissions"
+	watercmd "github.com/abc-cluster/abc-cluster-cli/cmd/water"
 	"github.com/abc-cluster/abc-cluster-cli/internal/capability"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	rep "github.com/abc-cluster/abc-cluster-cli/internal/report"
@@ -53,9 +55,16 @@ mapping table and JSON schema.`,
 	cmd.Flags().Bool("technical", false, "use metric IDs instead of human titles in text output")
 	cmd.Flags().Bool("show-rate-card", false, "include the detailed per-rate provenance block + override hints (default hidden)")
 	cmd.Flags().Bool("all-contexts", false, "(Phase 2 — currently rejects with a clear error)")
-	// Subverbs.
+	// Subverbs. emissions + water are the environmental-footprint reports,
+	// folded in here from former top-level `abc emissions` / `abc water`
+	// (2026-06-05) — same local-state source and rate-card chain as `report`.
+	// NOTE: accounting (namespace budget management) stays a TOP-LEVEL verb —
+	// it's a --cloud write surface (spend caps), not a read-only report, so it
+	// does not belong under `report`. See brainstorm 2026-06-05-command-surface-review.
 	cmd.AddCommand(newRunsCmd())
 	cmd.AddCommand(newComplianceCmd())
+	cmd.AddCommand(emissionscmd.NewCmd())
+	cmd.AddCommand(watercmd.NewCmd())
 	return cmd
 }
 

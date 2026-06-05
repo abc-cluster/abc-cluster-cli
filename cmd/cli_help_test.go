@@ -55,25 +55,25 @@ func runAbc(t *testing.T, args ...string) (string, error) {
 	return string(out), err
 }
 
-// TestAccountingHelpShowsOnlyBudget: `abc accounting --help` must list
-// `budget` as a child command and must NOT list `report`, `list`,
-// `set`, or `show` as direct children (those moved under `budget` per
-// §A; report deleted entirely).
-func TestAccountingHelpShowsOnlyBudget(t *testing.T) {
+// TestAccountingHelpShowsListSetShow: after the 2026-05-27 budget-noun
+// flatten (brainstorms/cli-ux-harmonization/2026-05-27-drop-budget-noun-from-accounting.md),
+// `abc accounting --help` lists list/set/show directly. It must NOT
+// reintroduce a `budget` subnoun or a `report` child.
+func TestAccountingHelpShowsListSetShow(t *testing.T) {
 	out, err := runAbc(t, "accounting", "--help")
 	if err != nil {
 		t.Fatalf("accounting --help failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "budget") {
-		t.Errorf("accounting --help missing 'budget' subcommand:\n%s", out)
+	// Cobra formats child commands as "  <name>  <short>" in the
+	// Available Commands block.
+	for _, want := range []string{"list", "set", "show"} {
+		if !strings.Contains(out, "\n  "+want+" ") {
+			t.Errorf("accounting --help missing direct child %q:\n%s", want, out)
+		}
 	}
-	// The removed verbs must not appear as direct children of
-	// accounting. Cobra formats child commands as "  <name>  <short>"
-	// in the Available Commands block.
-	for _, removed := range []string{"report", "list", "set", "show"} {
-		marker := "\n  " + removed + " "
-		if strings.Contains(out, marker) {
-			t.Errorf("accounting --help still lists removed direct child %q:\n%s", removed, out)
+	for _, gone := range []string{"budget", "report"} {
+		if strings.Contains(out, "\n  "+gone+" ") {
+			t.Errorf("accounting --help still lists removed child %q:\n%s", gone, out)
 		}
 	}
 }
@@ -120,5 +120,32 @@ func TestEmissionsReportIsUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(out, "unknown command") {
 		t.Errorf("expected 'unknown command' error, got:\n%s", out)
+	}
+}
+
+// TestWaterIsUnknownCommand: top-level `abc water` was folded into
+// `abc report water` (2026-06-05); the top-level verb must be gone.
+func TestWaterIsUnknownCommand(t *testing.T) {
+	out, err := runAbc(t, "water")
+	if err == nil {
+		t.Fatalf("expected non-zero exit; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "unknown command") {
+		t.Errorf("expected 'unknown command' error, got:\n%s", out)
+	}
+}
+
+// TestReportEmissionsAndWaterExist: emissions + water now live under
+// `abc report` (folded 2026-06-05 from former top-level verbs). Their
+// --help must succeed as report subcommands.
+func TestReportEmissionsAndWaterExist(t *testing.T) {
+	for _, sub := range []string{"emissions", "water"} {
+		out, err := runAbc(t, "report", sub, "--help")
+		if err != nil {
+			t.Errorf("`abc report %s --help` failed: %v\n%s", sub, err, out)
+		}
+		if !strings.Contains(out, sub) {
+			t.Errorf("`abc report %s --help` output doesn't mention %q:\n%s", sub, sub, out)
+		}
 	}
 }

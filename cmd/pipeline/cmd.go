@@ -44,7 +44,7 @@ repository URL directly for ad-hoc runs.
 		newLogsCmd(),
 		newAddCmd(),
 		newListCmd(),
-		newInfoCmd(),
+		newShowCmd(),
 		newUpdateCmd(),
 		newDeleteCmd(),
 		newExportCmd(),

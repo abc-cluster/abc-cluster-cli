@@ -103,7 +103,9 @@ EXAMPLES
 
 	// Head job resource overrides
 	cmd.Flags().String("nf-version", "", "Nextflow Docker image tag (default: 25.10.4)")
-	cmd.Flags().String("nf-plugin-version", "", "nf-nomad plugin version (default: 0.4.0-edge3)")
+	// nf-nomad defaults to the newest published release. To pin it, use the
+	// general --plugin flag (e.g. --plugin nf-nomad@0.4.0-edge8); there is no
+	// dedicated --nf-plugin-version on `run` — --plugin / --dev-plugins cover it.
 	cmd.Flags().Int("cpu", 0, "Head job CPU in MHz (default: 1000)")
 	cmd.Flags().Int("memory", 0, "Head job memory in MB (default: 2048)")
 	cmd.Flags().Float64("scratch-gb", 0, "Scratch storage reservation (GB) for accounting/emissions reporting")
@@ -177,7 +179,6 @@ EXAMPLES
 		"host-volume",
 		"datacenter",
 		"nf-version",
-		"nf-plugin-version",
 		"cpu",
 		"memory",
 		"session-id",
@@ -251,9 +252,6 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("nf-version"); v != "" {
 		override.NfVersion = v
-	}
-	if v, _ := cmd.Flags().GetString("nf-plugin-version"); v != "" {
-		override.NfPluginVersion = v
 	}
 	if v, _ := cmd.Flags().GetInt("cpu"); v != 0 {
 		override.CPU = v
@@ -497,7 +495,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		for _, p := range spec.Plugins {
 			pinned[p.ID] = true
 		}
-		for _, p := range defaultClusterPlugins() {
+		for _, p := range defaultClusterPlugins(spec.NfPluginVersion) {
 			if !pinned[p.ID] {
 				spec.Plugins = append(spec.Plugins, p)
 			}

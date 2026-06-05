@@ -1,5 +1,6 @@
-// Package emissions implements the top-level `abc emissions` verb — carbon
-// footprint reporting over the local runs table (~/.abc/local.db).
+// Package emissions implements `abc report emissions` — carbon footprint
+// reporting over the local runs table (~/.abc/local.db). Folded under
+// `abc report` on 2026-06-05 (was top-level `abc emissions`).
 //
 // This is the reporting counterpart to `abc config emissions set/show/unset`.
 // Rate-card resolution uses the same three-layer chain (Layer 0 SA defaults →
@@ -20,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the `abc emissions` top-level command.
+// NewCmd returns the emissions-report command, mounted as `abc report emissions`.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "emissions",
@@ -40,10 +41,10 @@ were used, their source, and the citation so the figure is defensible in
 methods sections and grant reports.
 
 Examples:
-  abc emissions
-  abc emissions --by=project --since=2026-01-01 --unit=t
-  abc emissions --by=namespace --output=csv > q1-2026-co2.csv
-  abc emissions --pue=1.27 --grid-factor=950
+  abc report emissions
+  abc report emissions --by=project --since=2026-01-01 --unit=t
+  abc report emissions --by=namespace --output=csv > q1-2026-co2.csv
+  abc report emissions --pue=1.27 --grid-factor=950
 
 Override rate card for your facility:
   abc config emissions set pue=1.27 grid_factor_gco2_per_kwh=950`,

@@ -54,7 +54,7 @@ abc pipeline run <pipeline> [flags]
 | `--worker-exclude-host HOSTNAME` | *(none)* | Force every process off this hostname (use with `--node` for a true head≠worker distributed test) |
 | `--datacenter LIST` | `dc1` | Nomad datacenter(s) |
 | `--nf-version TAG` | `25.10.4` | Nextflow Docker image tag |
-| `--nf-plugin-version V` | `0.4.0-edge3` | nf-nomad plugin version |
+| `--plugin id@version` | _(repeatable)_ | Pin a Nextflow plugin to a specific version. By default `nf-nomad` and `nf-nomad-s5cmd` resolve to the newest published release (bare `id "<name>"`); use this to pin one, e.g. `--plugin nf-nomad@0.4.0-edge8`. |
 | `--cpu MHz` | `1000` | Head job CPU allocation |
 | `--memory MB` | `2048` | Head job memory allocation |
 | `--name NAME` | `nextflow-head` | Override Nomad job name |

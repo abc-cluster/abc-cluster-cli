@@ -35,9 +35,7 @@ func NewCmd() *cobra.Command {
 	cmd.AddCommand(newTagCmd())
 	cmd.AddCommand(newDeleteCmd())
 	// Investigation lives under project: `abc project investigation ...`
-	// `inv` is a sibling alias with the same implementation.
 	cmd.AddCommand(investigation.NewCmd())
-	cmd.AddCommand(investigation.NewInvAlias())
 	return cmd
 }
 

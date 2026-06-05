@@ -90,34 +90,39 @@ abc data presign s3://su-mbhg-hostgen/user/calm-dassie/report.pdf --expires 48h
 
 Deletion has three tiers with increasing finality. Choose by intent:
 
+> **Naming (changed 2026-06-05):** `delete`/`del` is now the *safe, recoverable*
+> verb (→ trash, like a desktop "move to Trash"), and `remove`/`rm` is the
+> *permanent* one (like Unix `rm`). This inverts the earlier mapping — see
+> `abc-universe` brainstorm `abc-data-platform/2026-06-05-invert-remove-delete.md`.
+
 | Command | Alias | Tier | Reversible? | Confirmation |
 |---|---|---|---|---|
-| `abc data remove <s3-uri>` | `rm` | soft delete to trash | **Yes** (until trash expiry) | none |
-| `abc data delete <s3-uri>` | `del` | permanent, current version | No | prompts (`--yes` to skip) |
+| `abc data delete <s3-uri>` | `del` | soft delete to trash | **Yes** (until trash expiry) | none |
+| `abc data remove <s3-uri>` | `rm` | permanent, current version | No | prompts (`--yes` to skip) |
 | `abc data purge <s3-uri>` | — | permanent, **all** versions | No | must type `purge` (`--yes` to skip) |
 
-### remove (rm) — the safe default
+### delete (del) — the safe default
 
 Moves the object to `s3://<bucket>/trash/<your-slot>/<original-key>`. Recoverable
 with `abc data trash restore` until the trash lifecycle rule expires it (default 30
 days).
 
 ```bash
-abc data remove s3://su-mbhg-hostgen/user/calm-dassie/old.vcf
+abc data delete s3://su-mbhg-hostgen/user/calm-dassie/old.vcf
 # → trashed: …/old.vcf → s3://su-mbhg-hostgen/trash/calm-dassie/user/calm-dassie/old.vcf
 ```
 
 `--overwrite` replaces an object of the same name already in trash (relevant on
 unversioned buckets).
 
-### delete (del) — permanent, current version
+### remove (rm) — permanent, current version
 
-Permanently removes the current version. Does **not** go through trash. Prompts for
-confirmation unless `--yes`.
+Permanently removes the current version (Unix `rm` convention). Does **not** go
+through trash. Prompts for confirmation unless `--yes`.
 
 ```bash
-abc data delete s3://su-mbhg-hostgen/user/calm-dassie/scratch.bam
-abc data delete s3://su-mbhg-hostgen/user/calm-dassie/tmp/ --recursive --yes
+abc data remove s3://su-mbhg-hostgen/user/calm-dassie/scratch.bam
+abc data remove s3://su-mbhg-hostgen/user/calm-dassie/tmp/ --recursive --yes
 ```
 
 Flags: `--yes` (skip prompt), `--recursive`, `--dry-run`.
@@ -126,7 +131,7 @@ Flags: `--yes` (skip prompt), `--recursive`, `--dry-run`.
 
 Removes **all** versions of an object (or prefix), including delete markers — the
 operation that satisfies a GDPR/POPIA right-to-erasure request. Requires typing the
-word `purge` to confirm. On an unversioned bucket this is equivalent to `delete`
+word `purge` to confirm. On an unversioned bucket this is equivalent to `remove`
 (the CLI says so explicitly).
 
 ```bash

@@ -2,7 +2,7 @@ package data
 
 // trash.go — `abc data trash {list,restore,empty}` — manage soft-deleted objects.
 //
-// `abc data remove` moves objects to s3://<bucket>/trash/<slot>/<original-key>.
+// `abc data delete` moves objects to s3://<bucket>/trash/<slot>/<original-key>.
 // These commands list, restore, and permanently empty that trash area.
 //
 //   abc data trash list                 list your trashed objects
@@ -21,10 +21,10 @@ import (
 func newTrashCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trash",
-		Short: "List, restore, or empty soft-deleted objects (from 'abc data remove')",
-		Long: `Manage objects soft-deleted with 'abc data remove'.
+		Short: "List, restore, or empty soft-deleted objects (from 'abc data delete')",
+		Long: `Manage objects soft-deleted with 'abc data delete'.
 
-Removed objects live in s3://<your-group-bucket>/trash/<your-slot>/<original-key>
+Deleted objects live in s3://<your-group-bucket>/trash/<your-slot>/<original-key>
 until the trash lifecycle rule expires them (default 30 days).`,
 	}
 	cmd.AddCommand(newTrashListCmd())
