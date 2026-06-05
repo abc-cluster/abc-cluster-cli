@@ -105,6 +105,23 @@ per-investigation rollups. For namespace-budget management (the
 write-side, admission-gate surface), see
 [`abc accounting`](./abc-accounting.md).
 
+### Subcommands
+
+`abc report` also hosts the dedicated environmental-footprint reports,
+folded in from former top-level verbs on 2026-06-05:
+
+| Command | Was | Purpose |
+|---|---|---|
+| `abc report emissions` | `abc emissions` | CO₂e report (Cloud Carbon Footprint v3 coefficients) |
+| `abc report water` | `abc water` | freshwater report (Green Grid Program-WUE formula) |
+| `abc report runs` | — | per-run cost + emissions ledger |
+| `abc report compliance` | — | compliance status from the ABC API |
+
+All share the same Layer-0/1/2 rate-card resolver, so energy/cost/CO₂e/water
+figures stay consistent. Rate-card inputs are configured under
+[`abc config emissions`](./abc-accounting.md) (coefficients) and
+`abc config accounting` (cost rates) — distinct from the read-side reports here.
+
 ## Sample output
 
 Default — cost + emissions headline only:

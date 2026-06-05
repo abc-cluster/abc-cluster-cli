@@ -16,22 +16,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the canonical `investigation` Cobra tree. Registered as a
-// subcommand of `abc project` (also as the `inv` alias via NewInvAlias).
+// NewCmd returns the canonical `investigation` Cobra tree, registered as a
+// subcommand of `abc project`.
+//
+// The former `inv` short form was a second full registration (NewInvAlias),
+// which duplicated the entire subtree in help output. It was dropped
+// 2026-06-05; a short alias can be re-added later as a proper cobra
+// `Aliases: []string{"inv"}` entry (no subtree duplication) if wanted.
 func NewCmd() *cobra.Command {
 	return buildCmd("investigation",
 		"Manage research investigations (branchable, mergeable explorations)")
 }
 
-// NewInvAlias returns the same Cobra tree under the short name `inv`. Wired
-// as a sibling of `investigation` under `abc project`.
-func NewInvAlias() *cobra.Command {
-	return buildCmd("inv", "Alias for `abc project investigation`")
-}
-
-// buildCmd constructs the investigation Cobra tree. Re-invoked per
-// registration so each parent gets its own subtree (Cobra does not allow
-// command sharing across multiple parents).
+// buildCmd constructs the investigation Cobra tree.
 func buildCmd(use, short string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   use,

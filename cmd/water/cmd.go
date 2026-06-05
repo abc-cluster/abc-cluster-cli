@@ -1,19 +1,17 @@
-// Package water implements the top-level `abc water` verb — freshwater
-// consumption reporting using the Program WUE formula from The Green Grid.
+// Package water implements `abc report water` — freshwater consumption
+// reporting using the Program WUE formula from The Green Grid.
 //
-// # Future consolidation
+// # Consolidation (done 2026-06-05)
 //
-// This command, abc emissions (cmd/emissions), and abc accounting (cmd/accounting)
-// are intentionally separate top-level verbs while the rate-card machinery and
-// water formula stabilise. The planned end state is:
+// water and emissions (cmd/emissions) were folded from top-level verbs under
+// `abc report` on 2026-06-05:
 //
-//	abc report emissions   (abc emissions → deprecated alias)
-//	abc report water       (abc water     → deprecated alias)
-//	abc report cost        (abc accounting → deprecated alias)
+//	abc report water       (was: abc water)
+//	abc report emissions   (was: abc emissions)
 //
-// Tracked in planning/deferred.md §"abc-cluster-cli repository".
-// Do not merge until abc report (cmd/report) has a unified renderer and the
-// researcher-productivity report subverbs are restructured to coexist.
+// abc accounting stayed a top-level verb — it is --cloud budget management,
+// not a read-only report. See brainstorm
+// cli-ux-harmonization/2026-06-05-command-surface-review.md.
 //
 // Formula:
 //
@@ -52,7 +50,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmd returns the `abc water` top-level command.
+// NewCmd returns the water-report command, mounted as `abc report water`.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "water",
@@ -76,9 +74,9 @@ Rate-card override chain (Layer 2 wins):
   Layer 2 — per-invocation flags (--wue-site=, --grid-water-intensity=)
 
 Cross-node comparison examples:
-  abc water --wue-site=0.2 --grid-water-intensity=0.9   # Belgium / KU Leuven
-  abc water --wue-site=0.5 --grid-water-intensity=15    # Kenya hydro estimate
-  abc water --wue-site=1.8 --grid-water-intensity=3.0   # SA summer peak
+  abc report water --wue-site=0.2 --grid-water-intensity=0.9   # Belgium / KU Leuven
+  abc report water --wue-site=0.5 --grid-water-intensity=15    # Kenya hydro estimate
+  abc report water --wue-site=1.8 --grid-water-intensity=3.0   # SA summer peak
 
 Setting permanent overrides for your facility:
   abc config emissions set wue_site=1.27 grid_water_intensity=2.3
@@ -87,9 +85,9 @@ Full per-node estimates:
   brainstorms/water-carbon-scheduling/2026-05-29-cue-wue-aware-scheduling.md
 
 Examples:
-  abc water
-  abc water --by=project --since=2026-01-01 --unit=m3
-  abc water --by=namespace --output=csv > q1-2026-water.csv`,
+  abc report water
+  abc report water --by=project --since=2026-01-01 --unit=m3
+  abc report water --by=namespace --output=csv > q1-2026-water.csv`,
 		Args: cobra.NoArgs, // flag-only; reject stray verbs like `water report`
 		RunE: runWater,
 	}

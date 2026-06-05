@@ -32,7 +32,7 @@ same token the abc CLI uses. No manual copy-paste required.
   abc portal open minio      Open MinIO console (credentials printed to terminal)`,
 	}
 
-	cmd.AddCommand(newLsCmd())
+	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newOpenCmd())
 	return cmd
 }

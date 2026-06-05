@@ -1,13 +1,23 @@
 package data
 
-// delete.go — `abc data delete` (alias: del) — TIER 2 permanent deletion.
+// delete.go — `abc data delete` (alias: del) — TIER 1 soft delete to trash.
 //
-// delete permanently removes the current version of the object(s). It does NOT
-// go through trash. On a versioned bucket it removes the current version-id
-// (not just a delete marker) — users who type `delete` expect permanent removal.
+// delete is the recoverable, safe-by-default deletion: objects move to the
+// group bucket's trash/ prefix instead of being permanently removed, and can be
+// restored with `abc data trash restore` for as long as the trash lifecycle
+// rule retains them (default 30 days). This matches the desktop-GUI
+// "move to Trash" convention. For permanent removal use `abc data remove`
+// (Unix rm), or `abc data purge` for all versions.
 //
-// Requires confirmation unless --yes. See the three-tier model in
-// brainstorms/abc-data-platform/2026-05-30-deletion-semantics.md.
+// See brainstorms/abc-data-platform/2026-06-05-invert-remove-delete.md, which
+// supersedes the 2026-05-30 naming by swapping remove/delete.
+//
+// Trash key layout (preserves the original key so restore is unambiguous):
+//   s3://<bucket>/trash/<slot>/<original-key>
+//
+// Collision (unversioned bucket): if the trash target already exists, fail
+// unless --overwrite. (On a versioned bucket each write is a new version, so
+// collision is handled for free — but versioning is off at seedling today.)
 
 import (
 	"bufio"
@@ -21,32 +31,34 @@ import (
 )
 
 func newDeleteCmd() *cobra.Command {
-	var yes bool
-	var recursive bool
-	var dryRun bool
+	var overwrite bool
 
 	cmd := &cobra.Command{
 		Use:          "delete <s3-uri>...",
 		Aliases:      []string{"del"},
-		Short:        "Permanently delete object(s) — current version (with confirmation)",
+		Short:        "Recoverable delete — move object(s) to your group's trash/ (reversible)",
 		SilenceUsage: true,
-		Long: `Permanently delete one or more objects. This does NOT go through trash.
+		Long: `Move one or more objects to your group bucket's trash/ prefix.
 
-For a recoverable delete, use 'abc data remove' (soft delete to trash).
-To remove ALL versions of an object, use 'abc data purge'.
+delete is reversible: objects land in trash/<your-slot>/<original-key> and can
+be restored with 'abc data trash restore' until the trash lifecycle rule expires
+them (default 30 days). This is the safe default deletion.
 
-A confirmation prompt is shown unless --yes is passed.
+For permanent removal, use:
+  abc data remove <s3-uri>   permanent, current version (with confirmation)
+  abc data purge  <s3-uri>   permanent, ALL versions (typed confirmation)
 
 Examples:
 
-  # Delete an object permanently (prompts for confirmation):
-  abc data delete s3://su-mbhg-hostgen/user/calm-dassie/scratch.bam
+  # Move a file to trash (recoverable):
+  abc data delete s3://su-mbhg-hostgen/user/calm-dassie/old.vcf
 
-  # Delete a whole prefix without prompting:
-  abc data delete s3://su-mbhg-hostgen/user/calm-dassie/tmp/ --recursive --yes
+  # del alias:
+  abc data del s3://su-mbhg-hostgen/user/calm-dassie/old.vcf
 
-  # Preview what would be deleted:
-  abc data delete s3://su-mbhg-hostgen/user/calm-dassie/tmp/ --recursive --dry-run`,
+  # See what's in your trash, then restore:
+  abc data trash list
+  abc data trash restore s3://su-mbhg-hostgen/trash/calm-dassie/user/calm-dassie/old.vcf`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := abccfg.Load()
@@ -55,32 +67,59 @@ Examples:
 			}
 			actx := cfg.ActiveCtx()
 
+			slot, err := slotFromCtx(actx)
+			if err != nil {
+				return err
+			}
+
 			s5, err := findTool("s5cmd")
 			if err != nil {
 				return err
 			}
 
-			rmArgs := make([]string, 0, len(args)+1)
-			if dryRun {
-				rmArgs = append(rmArgs, "--dry-run")
-			}
-			rmArgs = append(rmArgs, args...)
-
-			if !yes && !dryRun {
-				fmt.Fprintf(cmd.ErrOrStderr(),
-					"Permanently delete %d target(s)? This cannot be undone (use 'abc data remove' for a recoverable delete).\n",
-					len(args))
-				if !confirmYesNo(cmd.ErrOrStderr(), "Type 'y' to confirm: ") {
-					return fmt.Errorf("aborted")
+			out := cmd.OutOrStdout()
+			for _, srcURI := range args {
+				srcURI = strings.TrimSpace(srcURI)
+				bucket, key, err := parseS3URI(srcURI)
+				if err != nil {
+					return err
 				}
-			}
+				if key == "" {
+					return fmt.Errorf("source must include an object key: %q", srcURI)
+				}
+				if strings.HasPrefix(key, trashPrefix+"/") {
+					return fmt.Errorf("%q is already in trash; use 'abc data trash restore' or 'abc data purge' instead", srcURI)
+				}
 
-			return execTool(s5, s5cmdArgs(actx, "rm", rmArgs), s3Env(actx))
+				trashKey := fmt.Sprintf("%s/%s/%s", trashPrefix, slot, key)
+				trashURI := fmt.Sprintf("s3://%s/%s", bucket, trashKey)
+
+				// Collision guard (unversioned bucket).
+				if !overwrite {
+					exists, err := s3ObjectExists(actx, bucket, trashKey)
+					if err != nil {
+						return fmt.Errorf("check trash target: %w", err)
+					}
+					if exists {
+						return fmt.Errorf(
+							"%s already exists in trash (use --overwrite, or restore the existing copy first)",
+							trashURI)
+					}
+				}
+
+				// Move = server-side copy to trash, then remove the original.
+				if err := execTool(s5, s5cmdArgs(actx, "cp", []string{srcURI, trashURI}), s3Env(actx)); err != nil {
+					return fmt.Errorf("copy to trash failed (original left intact): %w", err)
+				}
+				if err := execTool(s5, s5cmdArgs(actx, "rm", []string{srcURI}), s3Env(actx)); err != nil {
+					return fmt.Errorf("deleted-to-trash but could not remove original %s: %w", srcURI, err)
+				}
+				fmt.Fprintf(out, "trashed: %s → %s\n", srcURI, trashURI)
+			}
+			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
-	cmd.Flags().BoolVar(&recursive, "recursive", false, "delete all objects under a prefix (use a trailing /* with s5cmd globbing)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be deleted without deleting")
+	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing object of the same name already in trash")
 	return cmd
 }
 

@@ -9,11 +9,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newLsCmd() *cobra.Command {
+func newListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "ls",
+		Use:     "list",
 		Short:   "List all portals with their URLs",
-		Aliases: []string{"list"},
+		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
