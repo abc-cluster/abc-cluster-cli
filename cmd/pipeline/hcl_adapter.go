@@ -127,6 +127,19 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 				// is safe: the per-task cache lookup still validates each task.
 				// Set whenever a cloudcache path exists (no effect off -resume).
 				staticEnv["NXF_IGNORE_RESUME_HISTORY"] = "true"
+				// Pin Nextflow's session UUID to the same deterministic value
+				// used in `-resume <uuid>`. Without this, Nextflow generates a
+				// fresh random UUID for each run and uses THAT to scope its
+				// cache WRITES, even while reading from the pinned resume UUID.
+				// Result: each run lands in a different cache namespace and
+				// resume never accumulates — you always get a partial hit (only
+				// the tasks whose hash happened to be written in a prior session
+				// under a matching UUID). With NXF_UUID pinned to the same
+				// deterministic value, every run in the work-dir lineage reads
+				// AND writes under the same namespace → clean resume.
+				if spec.PinnedSessionUUID != "" {
+					staticEnv["NXF_UUID"] = spec.PinnedSessionUUID
+				}
 			}
 		}
 	}
