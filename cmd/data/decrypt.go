@@ -16,6 +16,7 @@ type decryptOptions struct {
 	cryptPassword string
 	cryptSalt     string
 	unsafeLocal   bool
+	force         bool
 }
 
 func newDecryptCmd() *cobra.Command {
@@ -54,6 +55,8 @@ stored in ~/.abc/config.yaml for reuse in future encryption/decryption operation
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (optional; only used with --crypt-password)")
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
+	cmd.Flags().BoolVarP(&opts.force, "force", "f", false,
+		"overwrite the output file if it already exists (default: refuse and exit non-zero)")
 
 	return cmd
 }
@@ -84,8 +87,10 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		if storedPW != "" {
 			if storedPW != opts.cryptPassword {
 				return fmt.Errorf(
-					"crypt password already exists in config file.\n" +
-						"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
+					"a different crypt password is already stored in the config file.\n" +
+						"  - to use the stored one: rerun without --crypt-password\n" +
+						"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.password,\n" +
+						"    then rerun with the new --crypt-password.")
 			}
 		} else {
 			if ctxErr != nil {
@@ -101,8 +106,10 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		if storedSalt != "" {
 			if storedSalt != opts.cryptSalt {
 				return fmt.Errorf(
-					"crypt salt already exists in config file.\n" +
-						"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
+					"a different crypt salt is already stored in the config file.\n" +
+						"  - to use the stored one: rerun without --crypt-salt\n" +
+						"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.salt,\n" +
+						"    then rerun with the new --crypt-salt.")
 			}
 		} else {
 			if ctxErr != nil {
@@ -156,17 +163,36 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 	}
 
 	if info.IsDir() {
-		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor)
+		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.force)
 	}
-	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor)
+	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.force)
 }
 
-func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig) error {
-	if outputPath == "" {
-		outputPath = defaultDecryptedPath(sourcePath)
-		if _, err := os.Stat(outputPath); err == nil {
-			outputPath += ".dec"
-		}
+// resolveDecryptOutput chooses the output path for a decrypt:
+//   - if outputPath was passed explicitly → use it verbatim
+//   - else strip the .encrypted suffix from sourcePath → the clean restored name
+//   - else error (no silent ".dec" fallback; devon B1)
+func resolveDecryptOutput(sourcePath, outputPath string) (string, error) {
+	if outputPath != "" {
+		return outputPath, nil
+	}
+	clean, ok := defaultDecryptedPath(sourcePath)
+	if !ok {
+		return "", fmt.Errorf(
+			"cannot determine output path: %q has no recognised crypt suffix (expected %q)\n"+
+				"  pass --output <path> to specify where to write the decrypted file",
+			sourcePath, rcloneDefaultSuffix)
+	}
+	return clean, nil
+}
+
+func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, force bool) error {
+	outputPath, err := resolveDecryptOutput(sourcePath, outputPath)
+	if err != nil {
+		return err
+	}
+	if err := refuseClobber(outputPath, force); err != nil {
+		return err
 	}
 	if err := cryptor.decryptToPath(sourcePath, outputPath); err != nil {
 		return fmt.Errorf("failed to decrypt %q: %w", sourcePath, err)
@@ -176,7 +202,7 @@ func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	return nil
 }
 
-func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig) error {
+func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, force bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -197,9 +223,18 @@ func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 		if err != nil {
 			return fmt.Errorf("failed to resolve path for %q: %w", file.path, err)
 		}
-		destPath := filepath.Join(outputDir, defaultDecryptedPath(relPath))
+		// Strip the suffix per-file; if a file in the tree lacks the suffix,
+		// keep its name (no ".dec" — we do not invent a destination).
+		baseName := relPath
+		if clean, ok := defaultDecryptedPath(relPath); ok {
+			baseName = clean
+		}
+		destPath := filepath.Join(outputDir, baseName)
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
+		}
+		if err := refuseClobber(destPath, force); err != nil {
+			return err
 		}
 		if err := cryptor.decryptToPath(file.path, destPath); err != nil {
 			return fmt.Errorf("failed to decrypt %q: %w", relPath, err)
@@ -210,12 +245,39 @@ func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 	return nil
 }
 
-func defaultDecryptedPath(path string) string {
-	if strings.HasSuffix(path, rcloneDefaultSuffix) {
-		trimmed := strings.TrimSuffix(path, rcloneDefaultSuffix)
-		if trimmed != "" {
-			return trimmed
+// refuseClobber prepares path for an O_EXCL write:
+//   - if path exists and !force → error (devon B1/B2: never silently overwrite
+//     or rename around an existing file)
+//   - if path exists and force → remove it so the underlying cryptor's
+//     O_EXCL|O_CREATE open succeeds
+//   - if path doesn't exist → no-op
+func refuseClobber(path string, force bool) error {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
+		return err
 	}
-	return path + ".dec"
+	if !force {
+		return fmt.Errorf(
+			"refusing to overwrite existing file: %s\n"+
+				"  pass --output <other-path> to write somewhere else, or --force to overwrite",
+			path)
+	}
+	return os.Remove(path)
+}
+
+// defaultDecryptedPath strips the rclone-crypt default suffix to restore the
+// original name. Returns ("", false) when the input has no recognisable
+// suffix — callers must require an explicit --output in that case rather than
+// invent one (no silent ".dec" fallback; devon B1).
+func defaultDecryptedPath(path string) (string, bool) {
+	if !strings.HasSuffix(path, rcloneDefaultSuffix) {
+		return "", false
+	}
+	trimmed := strings.TrimSuffix(path, rcloneDefaultSuffix)
+	if trimmed == "" {
+		return "", false
+	}
+	return trimmed, true
 }
