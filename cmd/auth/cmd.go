@@ -219,12 +219,11 @@ func newWhoamiCmd() *cobra.Command {
 		Short: "Show the current authenticated identity",
 		Long: `Display the current user identity and active context details.
 
-Contacts the Nomad API to resolve the token identity (name, type, accessor ID)
-and saves the result to auth.whoami in the active context so it appears in
-'abc config show' and other identity-aware commands.
+Resolves your identity from the cluster and caches it in the active context so
+it appears in 'abc config show' and other identity-aware commands.
 
-If the Nomad endpoint is unreachable, the cached auth.whoami value is shown
-instead (with a warning).`,
+If the cluster is unreachable, the cached identity is shown instead (with a
+warning).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -250,7 +249,7 @@ instead (with a warning).`,
 				nc := utils.NewNomadClient(addr, tok, region)
 				nomadTok, err = nc.GetACLTokenSelf(context.Background())
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "[abc] Warning: could not reach Nomad to resolve identity: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[abc] Warning: could not reach the cluster to resolve identity: %v\n", err)
 					fmt.Fprintf(os.Stderr, "[abc] Showing cached identity (if any).\n")
 				}
 			}
@@ -312,16 +311,15 @@ instead (with a warning).`,
 			}
 			persona := strings.TrimPrefix(identity, "slot-") // friendly headline
 
-			// Role from the Nomad token type.
-			role := "(unknown — Nomad unreachable)"
+			// Role derived from the token's privilege level (the underlying
+			// mechanism is not surfaced to the user).
+			role := "(unknown — cluster unreachable)"
 			if nomadTok != nil {
 				switch nomadTok.Type {
 				case "management":
-					role = "operator / admin (management token)"
-				case "client":
-					role = "user / member (client token)"
+					role = "operator / admin"
 				default:
-					role = nomadTok.Type
+					role = "user / member"
 				}
 			}
 
@@ -332,12 +330,12 @@ instead (with a warning).`,
 
 			fmt.Printf("You are   %s", persona)
 			if cached {
-				fmt.Printf("   (cached — Nomad unreachable)")
+				fmt.Printf("   (cached — cluster unreachable)")
 			}
 			fmt.Printf("\n")
 			fmt.Printf("  role      %s\n", role)
 			fmt.Printf("  group     %s\n", group)
-			fmt.Printf("  cluster   %s · %s\n", cfg.ActiveContext, activeCtx.Endpoint)
+			fmt.Printf("  cluster   %s\n", cfg.ActiveContext)
 
 			// --- Details (secondary) ---
 			fmt.Printf("\nDetails\n")
@@ -345,6 +343,9 @@ instead (with a warning).`,
 				fmt.Printf("  context     %s  (canonical: %s)\n", cfg.ActiveContext, canon)
 			} else {
 				fmt.Printf("  context     %s\n", cfg.ActiveContext)
+			}
+			if activeCtx.Endpoint != "" {
+				fmt.Printf("  endpoint    %s\n", activeCtx.Endpoint)
 			}
 			if als := config.AliasesResolvingToCanon(cfg, canon); len(als) > 0 {
 				fmt.Printf("  aliases     %s\n", strings.Join(als, ", "))
@@ -359,11 +360,8 @@ instead (with a warning).`,
 				fmt.Printf("  region      %s\n", activeCtx.Region)
 			}
 			fmt.Printf("  token       %s\n", maskToken(activeCtx.AccessToken))
-			if nomadTok != nil {
-				fmt.Printf("  accessor    %s\n", nomadTok.AccessorID)
-				if len(nomadTok.Policies) > 0 {
-					fmt.Printf("  policies    %s\n", strings.Join(nomadTok.Policies, ", "))
-				}
+			if nomadTok != nil && len(nomadTok.Policies) > 0 {
+				fmt.Printf("  access      %s\n", strings.Join(nomadTok.Policies, ", "))
 			}
 			if activeCtx.Admin.ID != "" {
 				marker := ""
