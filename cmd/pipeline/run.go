@@ -592,6 +592,27 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	//   nomad job status -prefix <run-tag>-      → head + every worker
 	spec.Name = headJobName(runTag, slug)
 
+	// Resume revision auto-discovery: on `--resume` against a reused --work-dir,
+	// when the user did NOT explicitly pass --revision, reuse the revision the
+	// prior run of that work-dir used. A resume only hits the cloudcache if it
+	// runs byte-identical pipeline code, so it must use the same revision — and
+	// making the user look that up (and pass the full SHA) was the sharpest edge
+	// of the resume UX. Best-effort: any failure leaves spec.Revision untouched.
+	if spec.Resume && !cmd.Flags().Changed("revision") {
+		if root := pipelineWorkdirRoot(spec.WorkDir); root != "" {
+			if db, err := state.Open(); err == nil {
+				prior, ok, e := state.LatestRunForWorkdirRoot(cmd.Context(), db, root)
+				db.Close()
+				if e == nil && ok && prior.WorkloadVersion.Valid && prior.WorkloadVersion.String != "" {
+					spec.Revision = prior.WorkloadVersion.String
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"↻ resume: reusing revision %s from prior run %s (pass --revision to override)\n",
+						spec.Revision, prior.RunID)
+				}
+			}
+		}
+	}
+
 	// Resume lineage run-name: name a resumed run `<base>_<n>` where <base> is
 	// the original run's tag (parsed from the reused --work-dir) and <n> is its
 	// position in the lineage (count of prior runs recorded against the same

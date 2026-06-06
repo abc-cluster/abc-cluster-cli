@@ -942,3 +942,26 @@ func CountRunsForWorkdirRoot(ctx context.Context, db *sql.DB, workdirRoot string
 	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE workdir_root = ?`, workdirRoot).Scan(&n)
 	return n, err
 }
+
+// LatestRunForWorkdirRoot returns the most recently submitted run recorded
+// against the given workdir_root, and ok=false when none exist. Used by
+// `abc pipeline run --resume` to auto-discover the revision a prior run of the
+// same --work-dir used, so the resume runs identical pipeline code (and thus
+// hits the cloudcache) without the user having to look it up and re-pass it.
+func LatestRunForWorkdirRoot(ctx context.Context, db *sql.DB, workdirRoot string) (Run, bool, error) {
+	row := db.QueryRowContext(ctx, `
+		SELECT run_id, workload_ref, workload_version, submitted_at, nomad_job_id
+		FROM runs
+		WHERE workdir_root = ?
+		ORDER BY submitted_at DESC, rowid DESC
+		LIMIT 1`, workdirRoot)
+	var r Run
+	err := row.Scan(&r.RunID, &r.WorkloadRef, &r.WorkloadVersion, &r.SubmittedAt, &r.NomadJobID)
+	if err == sql.ErrNoRows {
+		return Run{}, false, nil
+	}
+	if err != nil {
+		return Run{}, false, err
+	}
+	return r, true, nil
+}
