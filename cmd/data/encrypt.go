@@ -17,6 +17,7 @@ type encryptOptions struct {
 	cryptSalt     string
 	unsafeLocal   bool
 	progress      bool
+	force         bool
 }
 
 func newEncryptCmd() *cobra.Command {
@@ -57,6 +58,8 @@ for reuse in future encryption/decryption operations.
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption")
+	cmd.Flags().BoolVarP(&opts.force, "force", "f", false,
+		"overwrite the output file if it already exists (default: refuse and exit non-zero)")
 
 	return cmd
 }
@@ -93,8 +96,10 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 		if storedPW != "" {
 			if storedPW != opts.cryptPassword {
 				return inputError(
-					"crypt password already exists in config file.\n" +
-						"Remove it first (by editing ~/.abc/config.yaml) or use the stored password.")
+					"a different crypt password is already stored in the config file.\n" +
+						"  - to use the stored one: rerun without --crypt-password\n" +
+						"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.password,\n" +
+						"    then rerun with the new --crypt-password.")
 			}
 		} else {
 			if ctxErr != nil {
@@ -110,8 +115,10 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 		if storedSalt != "" {
 			if storedSalt != opts.cryptSalt {
 				return inputError(
-					"crypt salt already exists in config file.\n" +
-						"Remove it first (by editing ~/.abc/config.yaml) or use the stored salt.")
+					"a different crypt salt is already stored in the config file.\n" +
+						"  - to use the stored one: rerun without --crypt-salt\n" +
+						"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.salt,\n" +
+						"    then rerun with the new --crypt-salt.")
 			}
 		} else {
 			if ctxErr != nil {
@@ -168,14 +175,17 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	}
 
 	if info.IsDir() {
-		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.progress)
+		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.progress, opts.force)
 	}
-	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.progress)
+	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.progress, opts.force)
 }
 
-func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, progressEnabled bool) error {
+func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, progressEnabled, force bool) error {
 	if outputPath == "" {
 		outputPath = sourcePath + rcloneDefaultSuffix
+	}
+	if err := refuseClobber(outputPath, force); err != nil {
+		return err
 	}
 	info, err := os.Stat(sourcePath)
 	if err != nil {
@@ -196,7 +206,7 @@ func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	return nil
 }
 
-func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, progressEnabled bool) error {
+func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, progressEnabled, force bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -220,6 +230,9 @@ func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 		destPath := filepath.Join(outputDir, relPath) + rcloneDefaultSuffix
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
+		}
+		if err := refuseClobber(destPath, force); err != nil {
+			return err
 		}
 		progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", relPath), file.size)
 		if err := cryptor.encryptToPathWithProgress(cmd.Context(), file.path, destPath, func(n int64) {
