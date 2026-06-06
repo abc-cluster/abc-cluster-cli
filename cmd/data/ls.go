@@ -1,13 +1,16 @@
 package data
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
-	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
-	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
+	minio "github.com/minio/minio-go/v7"
 	"github.com/spf13/cobra"
+
+	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
 // parseBucketPath normalises an `abc data ls`/`stat` argument into
@@ -34,9 +37,10 @@ func parseBucketPath(arg string) (bucket, rest string) {
 
 func newLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "ls [bucket[/prefix]]",
-		Short: "List buckets or objects in cluster storage",
-		Long: `List objects stored in the abc-nodes S3-compatible store.
+		Use:     "list [bucket[/prefix]]",
+		Aliases: []string{"ls"},
+		Short:   "List buckets or objects in cluster storage",
+		Long: `List objects in cluster storage.
 
 Without arguments: list all buckets.
 With a bucket name: list objects at the bucket root.
@@ -71,100 +75,31 @@ func newStatCmd() *cobra.Command {
 	return cmd
 }
 
-// resolveS3Client builds an S3Client from the active context config.
-// It prefers the backend named by --storage; otherwise picks the first configured one.
-func resolveS3Client(cfg *abccfg.Config, backend string) (*floor.S3Client, string, error) {
-	ctx := cfg.ActiveCtx()
-
-	type candidate struct {
-		name      string
-		serviceID string // key in admin.services.*
-	}
-	order := []candidate{
-		{"minio", "minio"},
-		{"rustfs", "rustfs"},
-	}
-	if backend != "" {
-		order = []candidate{{backend, backend}}
-	}
-
-	for _, c := range order {
-		endpoint, ok := abccfg.GetAdminFloorField(&ctx.Admin.Services, c.serviceID, "endpoint")
-		if !ok || endpoint == "" {
-			// Fall back to "http" for services that use that field.
-			endpoint, ok = abccfg.GetAdminFloorField(&ctx.Admin.Services, c.serviceID, "http")
-			if !ok || endpoint == "" {
-				continue
-			}
-		}
-		accessKey, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, c.serviceID, "access_key")
-		secretKey, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, c.serviceID, "secret_key")
-
-		// Fall back to user/password (MinIO root credentials stored by config sync).
-		if accessKey == "" {
-			accessKey, _ = abccfg.GetAdminFloorField(&ctx.Admin.Services, c.serviceID, "user")
-		}
-		if secretKey == "" {
-			secretKey, _ = abccfg.GetAdminFloorField(&ctx.Admin.Services, c.serviceID, "password")
-		}
-
-		// Fall back to abc_nodes static credentials.
-		if accessKey == "" && ctx.Admin.ABCNodes != nil {
-			accessKey = ctx.Admin.ABCNodes.S3AccessKey
-			if accessKey == "" {
-				accessKey = ctx.Admin.ABCNodes.MinioRootUser
-			}
-		}
-		if secretKey == "" && ctx.Admin.ABCNodes != nil {
-			secretKey = ctx.Admin.ABCNodes.S3SecretKey
-			if secretKey == "" {
-				secretKey = ctx.Admin.ABCNodes.MinioRootPassword
-			}
-		}
-
-		region, _ := abccfg.GetAdminFloorField(&ctx.Admin.Services, c.serviceID, "region")
-		if region == "" && ctx.Admin.ABCNodes != nil {
-			region = ctx.Admin.ABCNodes.S3Region
-		}
-
-		return floor.NewS3Client(endpoint, accessKey, secretKey, region), c.name, nil
-	}
-
-	return nil, "", fmt.Errorf(
-		"no S3 endpoint configured for context %q\n"+
-			"  Run: abc cluster capabilities sync\n"+
-			"  Or:  abc config set admin.services.minio.endpoint http://<ip>:9000",
-		cfg.ActiveContext,
-	)
-}
-
 func runLs(cmd *cobra.Command, args []string) error {
 	cfg, err := abccfg.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	backend, _ := cmd.Flags().GetString("storage")
 	maxKeys, _ := cmd.Flags().GetInt("max")
 	long, _ := cmd.Flags().GetBool("long")
 
-	s3, backendName, err := resolveS3Client(cfg, backend)
+	cl, err := newMinioClient(cfg.ActiveCtx())
 	if err != nil {
 		return err
 	}
-
 	out := cmd.OutOrStdout()
 
 	// No argument: list buckets.
 	if len(args) == 0 {
-		buckets, err := s3.ListBuckets(cmd.Context())
+		buckets, err := cl.ListBuckets(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("list buckets (%s): %w", backendName, err)
+			return fmt.Errorf("list buckets: %w", err)
 		}
 		if len(buckets) == 0 {
-			fmt.Fprintf(out, "  No buckets found on %s.\n", backendName)
+			fmt.Fprintln(out, "  No buckets found.")
 			return nil
 		}
-		fmt.Fprintf(out, "  Buckets on %s:\n\n", backendName)
+		fmt.Fprintf(out, "  Buckets:\n\n")
 		for _, b := range buckets {
 			if long {
 				fmt.Fprintf(out, "  %-30s  %s\n", b.Name, b.CreationDate.Format("2006-01-02 15:04"))
@@ -177,41 +112,53 @@ func runLs(cmd *cobra.Command, args []string) error {
 
 	bucket, prefix := parseBucketPath(args[0])
 
-	objects, commonPrefixes, err := s3.ListObjects(cmd.Context(), bucket, prefix, maxKeys)
-	if err != nil {
-		return fmt.Errorf("list objects (%s/%s): %w", backendName, bucket, err)
+	// Cancel the listing producer if we stop early (avoids a goroutine leak).
+	lctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	type objRow struct {
+		key  string
+		size int64
+		mod  time.Time
+	}
+	var dirs []string
+	var objs []objRow
+	for o := range cl.ListObjects(lctx, bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: false}) {
+		if o.Err != nil {
+			return fmt.Errorf("list %s/%s: %w", bucket, prefix, o.Err)
+		}
+		if strings.HasSuffix(o.Key, "/") { // common prefix = "subdirectory"
+			dirs = append(dirs, o.Key)
+			continue
+		}
+		objs = append(objs, objRow{o.Key, o.Size, o.LastModified})
+		if maxKeys > 0 && len(objs) >= maxKeys {
+			break
+		}
 	}
 
-	if len(objects) == 0 && len(commonPrefixes) == 0 {
+	if len(objs) == 0 && len(dirs) == 0 {
 		fmt.Fprintf(out, "  No objects found at %s/%s\n", bucket, prefix)
 		return nil
 	}
 
 	fmt.Fprintf(out, "  %s/%s\n\n", bucket, prefix)
-
-	// Print common prefixes (subdirectories) first.
-	for _, cp := range commonPrefixes {
-		fmt.Fprintf(out, "  DIR  %s\n", cp)
+	for _, d := range dirs {
+		fmt.Fprintf(out, "  DIR  %s\n", d)
 	}
-
-	if long {
+	if long && len(objs) > 0 {
 		fmt.Fprintf(out, "  %-12s  %-20s  %s\n", "SIZE", "LAST MODIFIED", "KEY")
 		fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 72))
 	}
-	for _, o := range objects {
-		key := o.Key
+	for _, o := range objs {
 		if long {
-			fmt.Fprintf(out, "  %-12s  %-20s  %s\n",
-				formatSize(o.Size),
-				o.LastModified.Format("2006-01-02 15:04:05"),
-				key,
-			)
+			fmt.Fprintf(out, "  %-12s  %-20s  %s\n", formatSize(o.size), o.mod.Format("2006-01-02 15:04:05"), o.key)
 		} else {
-			fmt.Fprintf(out, "  %s\n", key)
+			fmt.Fprintf(out, "  %s\n", o.key)
 		}
 	}
-	fmt.Fprintf(out, "\n  %d object(s)", len(objects))
-	if maxKeys > 0 && len(objects) == maxKeys {
+	fmt.Fprintf(out, "\n  %d object(s)", len(objs))
+	if maxKeys > 0 && len(objs) == maxKeys {
 		fmt.Fprintf(out, " (truncated at %d; use --max to increase)", maxKeys)
 	}
 	fmt.Fprintln(out)
@@ -223,37 +170,45 @@ func runStat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	backend, _ := cmd.Flags().GetString("storage")
 
-	s3, backendName, err := resolveS3Client(cfg, backend)
+	cl, err := newMinioClient(cfg.ActiveCtx())
 	if err != nil {
 		return err
 	}
 
 	bucket, key := parseBucketPath(args[0])
-	ok := bucket != "" && key != ""
-	if !ok || key == "" {
-		return fmt.Errorf("specify <bucket>/<key>, e.g. tusd/my-upload-id")
+	if bucket == "" || key == "" {
+		return fmt.Errorf("specify <bucket>/<key>, e.g. su-mbhg-hostgen/user/calm-dassie/genome.fa")
 	}
 
-	obj, meta, err := s3.HeadObject(cmd.Context(), bucket, key)
+	info, err := cl.StatObject(cmd.Context(), bucket, key, minio.StatObjectOptions{})
 	if err != nil {
-		return fmt.Errorf("stat (%s/%s/%s): %w", backendName, bucket, key, err)
+		return fmt.Errorf("stat s3://%s/%s: %w", bucket, key, err)
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "\n  Object: %s/%s\n\n", bucket, key)
-	fmt.Fprintf(out, "  %-16s %s\n", "Backend:", backendName)
-	fmt.Fprintf(out, "  %-16s %s\n", "Size:", formatSize(obj.Size))
-	fmt.Fprintf(out, "  %-16s %s\n", "Last Modified:", obj.LastModified.Format(time.RFC3339))
-	fmt.Fprintf(out, "  %-16s %s\n", "ETag:", obj.ETag)
-	if obj.StorageClass != "" {
-		fmt.Fprintf(out, "  %-16s %s\n", "Storage Class:", obj.StorageClass)
+	fmt.Fprintf(out, "\n  s3://%s/%s\n\n", bucket, key)
+	fmt.Fprintf(out, "  %-14s %s\n", "Size", formatSize(info.Size))
+	fmt.Fprintf(out, "  %-14s %s\n", "Modified", info.LastModified.Format(time.RFC3339))
+	if info.ContentType != "" {
+		fmt.Fprintf(out, "  %-14s %s\n", "Content-Type", info.ContentType)
 	}
-	if len(meta) > 0 {
-		fmt.Fprintf(out, "\n  User Metadata:\n")
-		for k, v := range meta {
-			fmt.Fprintf(out, "  %-16s %s\n", k+":", v)
+	fmt.Fprintf(out, "  %-14s %s\n", "ETag", strings.Trim(info.ETag, "\""))
+	if info.VersionID != "" {
+		fmt.Fprintf(out, "  %-14s %s\n", "Version", info.VersionID)
+	}
+	if info.StorageClass != "" {
+		fmt.Fprintf(out, "  %-14s %s\n", "Storage-Class", info.StorageClass)
+	}
+	if len(info.UserMetadata) > 0 {
+		fmt.Fprintln(out, "\n  User metadata:")
+		keys := make([]string, 0, len(info.UserMetadata))
+		for k := range info.UserMetadata {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(out, "    %-12s %s\n", k, info.UserMetadata[k])
 		}
 	}
 	fmt.Fprintln(out)
