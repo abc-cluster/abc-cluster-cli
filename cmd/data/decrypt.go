@@ -20,7 +20,7 @@ type decryptOptions struct {
 	cryptSalt     string
 	unsafeLocal   bool
 	force         bool
-	removeSource  bool
+	replace       bool
 }
 
 func newDecryptCmd() *cobra.Command {
@@ -61,7 +61,7 @@ stored in ~/.abc/config.yaml for reuse in future encryption/decryption operation
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false,
 		"overwrite the output file if it already exists — sha256-compares old vs new; identical content is a no-op (default: refuse)")
-	cmd.Flags().BoolVar(&opts.removeSource, "remove-source", false,
+	cmd.Flags().BoolVar(&opts.replace, "replace", false,
 		"remove the source file after successful decryption (frees disk; the encrypted source is gone)")
 
 	return cmd
@@ -169,9 +169,9 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 	}
 
 	if info.IsDir() {
-		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.force, opts.removeSource)
+		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.force, opts.replace)
 	}
-	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.force, opts.removeSource)
+	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.force, opts.replace)
 }
 
 // resolveDecryptOutput chooses the output path for a decrypt:
@@ -192,7 +192,7 @@ func resolveDecryptOutput(sourcePath, outputPath string) (string, error) {
 	return clean, nil
 }
 
-func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, force, removeSource bool) error {
+func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, force, replace bool) error {
 	outputPath, err := resolveDecryptOutput(sourcePath, outputPath)
 	if err != nil {
 		return err
@@ -204,16 +204,16 @@ func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "File decrypted successfully.")
 	fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", outputPath)
-	if removeSource {
+	if replace {
 		if err := os.Remove(sourcePath); err != nil {
-			return fmt.Errorf("decrypt succeeded but failed to --remove-source %q: %w", sourcePath, err)
+			return fmt.Errorf("decrypt succeeded but --replace failed to delete source %q: %w", sourcePath, err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "  Removed source: %s\n", sourcePath)
 	}
 	return nil
 }
 
-func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, force, removeSource bool) error {
+func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, force, replace bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -250,9 +250,9 @@ func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Decrypted %s\n", relPath)
 		fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", destPath)
-		if removeSource {
+		if replace {
 			if err := os.Remove(file.path); err != nil {
-				return fmt.Errorf("decrypt succeeded but failed to --remove-source %q: %w", file.path, err)
+				return fmt.Errorf("decrypt succeeded but --replace failed to delete source %q: %w", file.path, err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "  Removed source: %s\n", file.path)
 		}
@@ -267,8 +267,8 @@ func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 //   - If destPath exists and !force → error (refuse silent clobber; devon B1+B2).
 //   - If destPath exists and force → write to a sibling temp file, sha256-hash
 //     both old and new, then:
-//     • identical → keep the existing file (no-op; remove temp)
-//     • different → atomic os.Rename(temp, destPath) and emit a stderr line
+//   - identical → keep the existing file (no-op; remove temp)
+//   - different → atomic os.Rename(temp, destPath) and emit a stderr line
 //     showing both hashes so the destructive overwrite is auditable
 //     (devon: "do a hashsum, not just rely on the name").
 //
