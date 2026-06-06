@@ -112,28 +112,25 @@ func runLs(cmd *cobra.Command, args []string) error {
 
 	bucket, prefix := parseBucketPath(args[0])
 
-	// Cancel the listing producer if we stop early (avoids a goroutine leak).
-	lctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	type objRow struct {
-		key  string
-		size int64
-		mod  time.Time
+	dirs, objs, err := listOneLevel(cmd.Context(), cl, bucket, prefix, maxKeys)
+	if err != nil {
+		return err
 	}
-	var dirs []string
-	var objs []objRow
-	for o := range cl.ListObjects(lctx, bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: false}) {
-		if o.Err != nil {
-			return fmt.Errorf("list %s/%s: %w", bucket, prefix, o.Err)
-		}
-		if strings.HasSuffix(o.Key, "/") { // common prefix = "subdirectory"
-			dirs = append(dirs, o.Key)
-			continue
-		}
-		objs = append(objs, objRow{o.Key, o.Size, o.LastModified})
-		if maxKeys > 0 && len(objs) >= maxKeys {
-			break
+
+	// Smart trailing slash: when the user wrote "users" (no slash) and the
+	// only result is a DIR matching "users/" with no objects, they almost
+	// certainly meant "users/" — auto-recurse one step into it. A small
+	// stderr note ensures the expansion isn't silent.
+	if !strings.HasSuffix(prefix, "/") && len(objs) == 0 && len(dirs) == 1 &&
+		dirs[0] == prefix+"/" {
+		expanded := prefix + "/"
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"  [hint] %q is a folder — listing %q (trailing '/' added)\n",
+			prefix, expanded)
+		prefix = expanded
+		dirs, objs, err = listOneLevel(cmd.Context(), cl, bucket, prefix, maxKeys)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -163,6 +160,35 @@ func runLs(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintln(out)
 	return nil
+}
+
+// listObjRow is the per-object row used by listOneLevel.
+type listObjRow struct {
+	key  string
+	size int64
+	mod  time.Time
+}
+
+// listOneLevel runs a non-recursive (delimiter='/') ListObjects for
+// bucket/prefix, splitting common-prefix "DIR" entries from object entries.
+// Stops after maxKeys objects when maxKeys > 0.
+func listOneLevel(ctx context.Context, cl *minio.Client, bucket, prefix string, maxKeys int) (dirs []string, objs []listObjRow, err error) {
+	lctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for o := range cl.ListObjects(lctx, bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: false}) {
+		if o.Err != nil {
+			return nil, nil, fmt.Errorf("list %s/%s: %w", bucket, prefix, o.Err)
+		}
+		if strings.HasSuffix(o.Key, "/") { // common prefix
+			dirs = append(dirs, o.Key)
+			continue
+		}
+		objs = append(objs, listObjRow{o.Key, o.Size, o.LastModified})
+		if maxKeys > 0 && len(objs) >= maxKeys {
+			break
+		}
+	}
+	return dirs, objs, nil
 }
 
 func runStat(cmd *cobra.Command, args []string) error {

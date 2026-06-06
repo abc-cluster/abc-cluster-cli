@@ -1,7 +1,10 @@
 package data
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +20,7 @@ type decryptOptions struct {
 	cryptSalt     string
 	unsafeLocal   bool
 	force         bool
+	removeSource  bool
 }
 
 func newDecryptCmd() *cobra.Command {
@@ -56,7 +60,9 @@ stored in ~/.abc/config.yaml for reuse in future encryption/decryption operation
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false,
-		"overwrite the output file if it already exists (default: refuse and exit non-zero)")
+		"overwrite the output file if it already exists — sha256-compares old vs new; identical content is a no-op (default: refuse)")
+	cmd.Flags().BoolVar(&opts.removeSource, "remove-source", false,
+		"remove the source file after successful decryption (frees disk; the encrypted source is gone)")
 
 	return cmd
 }
@@ -163,9 +169,9 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 	}
 
 	if info.IsDir() {
-		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.force)
+		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.force, opts.removeSource)
 	}
-	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.force)
+	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.force, opts.removeSource)
 }
 
 // resolveDecryptOutput chooses the output path for a decrypt:
@@ -186,23 +192,28 @@ func resolveDecryptOutput(sourcePath, outputPath string) (string, error) {
 	return clean, nil
 }
 
-func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, force bool) error {
+func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, force, removeSource bool) error {
 	outputPath, err := resolveDecryptOutput(sourcePath, outputPath)
 	if err != nil {
 		return err
 	}
-	if err := refuseClobber(outputPath, force); err != nil {
-		return err
-	}
-	if err := cryptor.decryptToPath(sourcePath, outputPath); err != nil {
+	err = writeWithCollisionCheck(outputPath, force, cmd.ErrOrStderr(),
+		func(p string) error { return cryptor.decryptToPath(sourcePath, p) })
+	if err != nil {
 		return fmt.Errorf("failed to decrypt %q: %w", sourcePath, err)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "File decrypted successfully.")
 	fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", outputPath)
+	if removeSource {
+		if err := os.Remove(sourcePath); err != nil {
+			return fmt.Errorf("decrypt succeeded but failed to --remove-source %q: %w", sourcePath, err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  Removed source: %s\n", sourcePath)
+	}
 	return nil
 }
 
-func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, force bool) error {
+func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, force, removeSource bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -233,38 +244,101 @@ func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
 		}
-		if err := refuseClobber(destPath, force); err != nil {
-			return err
-		}
-		if err := cryptor.decryptToPath(file.path, destPath); err != nil {
+		if err := writeWithCollisionCheck(destPath, force, cmd.ErrOrStderr(),
+			func(p string) error { return cryptor.decryptToPath(file.path, p) }); err != nil {
 			return fmt.Errorf("failed to decrypt %q: %w", relPath, err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Decrypted %s\n", relPath)
 		fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", destPath)
+		if removeSource {
+			if err := os.Remove(file.path); err != nil {
+				return fmt.Errorf("decrypt succeeded but failed to --remove-source %q: %w", file.path, err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  Removed source: %s\n", file.path)
+		}
 	}
 	return nil
 }
 
-// refuseClobber prepares path for an O_EXCL write:
-//   - if path exists and !force → error (devon B1/B2: never silently overwrite
-//     or rename around an existing file)
-//   - if path exists and force → remove it so the underlying cryptor's
-//     O_EXCL|O_CREATE open succeeds
-//   - if path doesn't exist → no-op
-func refuseClobber(path string, force bool) error {
-	if _, err := os.Stat(path); err != nil {
+// writeWithCollisionCheck writes a file via `writer(path)` with content-aware
+// overwrite handling:
+//
+//   - If destPath doesn't exist → call writer(destPath) directly.
+//   - If destPath exists and !force → error (refuse silent clobber; devon B1+B2).
+//   - If destPath exists and force → write to a sibling temp file, sha256-hash
+//     both old and new, then:
+//     • identical → keep the existing file (no-op; remove temp)
+//     • different → atomic os.Rename(temp, destPath) and emit a stderr line
+//     showing both hashes so the destructive overwrite is auditable
+//     (devon: "do a hashsum, not just rely on the name").
+//
+// The temp file lives next to destPath so the atomic rename is on the same
+// filesystem. Failures clean up the temp.
+func writeWithCollisionCheck(destPath string, force bool, warnOut io.Writer, writer func(path string) error) error {
+	st, err := os.Stat(destPath)
+	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return writer(destPath)
 		}
 		return err
 	}
 	if !force {
 		return fmt.Errorf(
 			"refusing to overwrite existing file: %s\n"+
-				"  pass --output <other-path> to write somewhere else, or --force to overwrite",
-			path)
+				"  pass --output <other-path> to write somewhere else, or --force to overwrite\n"+
+				"  (--force also sha256-compares old vs new; identical content is a no-op)",
+			destPath)
 	}
-	return os.Remove(path)
+
+	// Force path: temp-write then content-compare.
+	tmpPath := destPath + ".abc-write.tmp"
+	_ = os.Remove(tmpPath) // best-effort leftover cleanup from a prior crash
+	if err := writer(tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	oldHash, hErr := sha256File(destPath)
+	if hErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("hash existing %s: %w", destPath, hErr)
+	}
+	newHash, hErr := sha256File(tmpPath)
+	if hErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("hash new content: %w", hErr)
+	}
+	if oldHash == newHash {
+		_ = os.Remove(tmpPath)
+		if warnOut != nil {
+			fmt.Fprintf(warnOut, "  [no-op] %s already has this content (sha256: %s) — kept existing\n",
+				destPath, oldHash)
+		}
+		_ = st // existing file untouched
+		return nil
+	}
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("atomic overwrite %s: %w", destPath, err)
+	}
+	if warnOut != nil {
+		fmt.Fprintf(warnOut, "  [overwrote] %s\n    old sha256: %s\n    new sha256: %s\n",
+			destPath, oldHash, newHash)
+	}
+	return nil
+}
+
+// sha256File returns the hex sha256 digest of the file at path.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // defaultDecryptedPath strips the rclone-crypt default suffix to restore the
