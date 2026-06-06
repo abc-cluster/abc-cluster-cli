@@ -6,12 +6,15 @@
 //
 // Workflow:
 //
-//	abc admin tools init     # create ~/.abc/binaries/tools.toml from bundled default
-//	abc admin tools edit     # open tools.toml in $EDITOR
 //	abc admin tools fetch    # download all tools for all configured architectures
+//	                         #   (tools.toml is auto-created on first use from the
+//	                         #   bundled default — no explicit init step required)
 //	abc admin tools push     # upload cached binaries to cluster S3
 //	abc admin tools list     # show local cache vs remote state
 //	abc admin tools status   # quick health check (exit 1 if anything missing)
+//	abc admin tools edit     # open tools.toml in $EDITOR (auto-init if missing)
+//	abc admin tools init     # explicit init: --show prints bundled default,
+//	                         #   --reset restores it over an edited tools.toml
 package tools
 
 import (
@@ -38,8 +41,16 @@ func toolsConfigPath() (string, error) {
 }
 
 // loadToolsConfig reads tools.toml from the asset dir.
-// On first run after an upgrade it automatically migrates tools.toml and all
-// arch-suffixed binaries from the old ~/.abc/binaries/ location to ~/.abc/assets/.
+//
+// First-run behaviour (no manual `tools init` required):
+//   - If migration from the old ~/.abc/binaries/ layout finds tools.toml, use it.
+//   - Otherwise write the bundled default to the canonical path automatically
+//     and continue. A one-line stderr notice tells the user it happened, so the
+//     existence of the file isn't silent magic.
+//
+// Explicit `abc admin tools init` is still useful for `--show` (print the
+// bundled default) and `--reset` (restore over an edited tools.toml). It is no
+// longer a prerequisite for `fetch`/`push`/`list`/`status` — they auto-bootstrap.
 func loadToolsConfig() (*ToolsConfig, string, error) {
 	path, err := toolsConfigPath()
 	if err != nil {
@@ -51,8 +62,12 @@ func loadToolsConfig() (*ToolsConfig, string, error) {
 			fmt.Fprintf(os.Stderr, "[abc] warning: migration failed: %v\n", migErr)
 		}
 		if !migrated {
-			return nil, path, fmt.Errorf(
-				"tools.toml not found at %s\nRun: abc admin tools init", path)
+			if werr := os.WriteFile(path, defaultToolsTOML, 0o644); werr != nil {
+				return nil, path, fmt.Errorf(
+					"tools.toml not found at %s and auto-init failed: %w\n"+
+						"Run: abc admin tools init", path, werr)
+			}
+			fmt.Fprintf(os.Stderr, "[abc] tools.toml not found — wrote bundled default → %s\n", path)
 		}
 	}
 	cfg, err := ReadToolsConfig(path)
@@ -136,12 +151,15 @@ func NewCmd() *cobra.Command {
 		Short: "Manage cluster-node tool binaries (fetch, push, list)",
 		Long: `Download and distribute tool binaries for cluster nodes.
 
-  abc admin tools init        Create ~/.abc/assets/tools.toml from the bundled default
-  abc admin tools edit        Open tools.toml in $EDITOR
   abc admin tools fetch       Download tools for all configured architectures
+                              (tools.toml is auto-created on first use — no
+                              explicit init step required)
   abc admin tools push        Upload cached binaries to cluster S3
   abc admin tools list        Show local cache vs remote state side-by-side
   abc admin tools status      Quick health check; exits 1 if anything is missing
+  abc admin tools edit        Open tools.toml in $EDITOR (auto-init if missing)
+  abc admin tools init        Explicit init — --show prints bundled default,
+                              --reset restores it over an edited tools.toml
   abc admin tools artifact-url Print Nomad artifact stanza for a tool
   abc admin tools wave-layer  Build and push wave-layer tar.gz bundles to the cluster
 

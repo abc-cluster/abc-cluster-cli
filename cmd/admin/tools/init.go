@@ -13,12 +13,16 @@ func newInitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create ~/.abc/assets/tools.toml from the bundled default",
-		Long: `Write the bundled default tools.toml into ~/.abc/assets/.
+		Short: "Explicit tools.toml init (--show or --reset). Auto-init is on by default.",
+		Long: `tools.toml is auto-created on first use by 'fetch'/'push'/'list'/'status' from
+the bundled default — running 'init' explicitly is no longer required.
 
-If tools.toml already exists:
+Use this command for:
+  --show    Print the bundled default to stdout without writing anything
   --reset   Overwrite with the bundled default (saves existing as tools.toml.bak)
-  --show    Print the bundled default to stdout without writing anything`,
+
+With no flags it just reports that the file already exists (it was auto-created
+on first use or by an earlier explicit run).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(cmd, reset, show)
 		},
