@@ -1,11 +1,16 @@
 package data
 
-// du.go — `abc data disk-usage` (alias: du)
-// Reports storage usage for a prefix via s5cmd du.
+// du.go — `abc data disk-usage` (alias: du). Sums object sizes via a direct SDK
+// call (minio-go ListObjects) — no external tool.
 
 import (
-	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"context"
+	"fmt"
+
+	minio "github.com/minio/minio-go/v7"
 	"github.com/spf13/cobra"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
 
 func newDiskUsageCmd() *cobra.Command {
@@ -35,18 +40,38 @@ Examples:
 			if err != nil {
 				return err
 			}
-			bin, err := findTool("s5cmd")
-			if err != nil {
-				return err
-			}
+			ctx := cfg.ActiveCtx()
+
 			// Default to the active user's prefix when no arg given.
 			if len(args) == 0 {
-				ctx := cfg.ActiveCtx()
 				ns := ctx.AbcNodesNomadNamespaceOrDefault()
 				user := storageUserSlug(ctx)
 				args = []string{"s3://" + ns + "/user/" + user + "/"}
 			}
-			return execTool(bin, s5cmdArgs(cfg.ActiveCtx(), "du", args), s3Env(cfg.ActiveCtx()))
+			bucket, prefix := parseBucketPath(args[0])
+
+			cl, err := newMinioClient(ctx)
+			if err != nil {
+				return err
+			}
+
+			lctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+
+			var total, count int64
+			for o := range cl.ListObjects(lctx, bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+				if o.Err != nil {
+					return fmt.Errorf("disk-usage s3://%s/%s: %w", bucket, prefix, o.Err)
+				}
+				total += o.Size
+				count++
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "  %-9s %s (%d bytes)\n", "Total:", formatSize(total), total)
+			fmt.Fprintf(out, "  %-9s %d\n", "Objects:", count)
+			fmt.Fprintf(out, "  %-9s s3://%s/%s\n", "Prefix:", bucket, prefix)
+			return nil
 		},
 	}
 	return cmd
