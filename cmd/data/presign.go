@@ -2,20 +2,18 @@ package data
 
 // presign.go — `abc data presign`
 //
-// Generates a presigned URL for any accessible S3 object by wrapping mcli.
+// Generates a time-limited presigned URL for any accessible stored object via a
+// direct SDK call (minio-go) — no external tool, no subprocess, no text parsing.
+// The URL is printed to stdout as a bare string, suitable for piping to curl or
+// sharing with collaborators who have no cluster credentials.
 //
-//   mcli share download _abc/<bucket>/<key> --expire <duration>
-//
-// mcli outputs several lines; this command extracts the URL and prints it
-// to stdout as a bare string — suitable for piping to curl or sharing with
-// external collaborators who have no cluster credentials.
-//
-// Tool resolution: findTool("mcli") — ABC_BIN_MCLI → ~/.abc/binaries/mcli → PATH.
+// Part of the SDK-for-control-plane plan:
+// brainstorms/abc-data-platform/2026-06-05-sdk-vs-native-tools-for-data-ops.md
 
 import (
-	"bytes"
+	"context"
 	"fmt"
-	"os/exec"
+	"net/url"
 	"strings"
 	"time"
 
@@ -35,10 +33,8 @@ func newPresignCmd() *cobra.Command {
 		Long: `Generate a time-limited expiring URL for any accessible stored object.
 
 The URL is printed to stdout (bare, no decoration) so it can be piped to
-curl or shared with collaborators who have no cluster credentials.
-
-Uses mcli share download under the hood. Install mcli if not present:
-  abc admin tools fetch mcli
+curl or shared with collaborators who have no cluster credentials. Requires no
+external tools — it is signed directly against the storage backend.
 
 Examples:
 
@@ -54,7 +50,7 @@ Examples:
   # Download immediately with the generated URL:
   curl -L "$(abc data presign s3://bucket/key)" -o output.vcf
 
-  # Generate an upload URL (PUT) — requires mcli share upload:
+  # Generate an upload URL (PUT):
   abc data presign s3://bucket/key --method PUT`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -83,13 +79,16 @@ Examples:
 			if err != nil {
 				return err
 			}
+			if key == "" {
+				return fmt.Errorf("presign needs an object key: s3://%s/<key>", bucket)
+			}
 
-			url, err := presignViaMcli(cfg.ActiveCtx(), bucket, key, dur, method)
+			signed, err := presignViaSDK(cmd.Context(), cfg.ActiveCtx(), bucket, key, dur, method)
 			if err != nil {
 				return err
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), url)
+			fmt.Fprintln(cmd.OutOrStdout(), signed)
 			return nil
 		},
 	}
@@ -113,94 +112,21 @@ func parseS3URI(uri string) (bucket, key string, err error) {
 	return rest[:slash], rest[slash+1:], nil
 }
 
-// presignViaMcli uses mcli share download/upload to generate a presigned URL.
-// mcli outputs multiple lines; this function extracts the URL line.
-func presignViaMcli(ctx abccfg.Context, bucket, key string, expires time.Duration, method string) (string, error) {
-	bin, alias, tmpDir, cleanup, err := mcliAlias(ctx)
+// presignViaSDK signs a GET (download) or PUT (upload) URL directly against the
+// storage backend with minio-go — no external tool.
+func presignViaSDK(ctx context.Context, actx abccfg.Context, bucket, key string, expires time.Duration, method string) (string, error) {
+	cl, err := newMinioClient(actx)
 	if err != nil {
-		return "", fmt.Errorf("mcli alias: %w", err)
+		return "", err
 	}
-	defer cleanup()
-
-	// mcli share download/upload _abc/bucket/key --expire <duration>
-	// duration format for mcli: mcli accepts "168h" style Go durations.
-	durationStr := fmtMcliDuration(expires)
-
-	mcliSubcmd := "download"
+	var u *url.URL
 	if method == "PUT" {
-		mcliSubcmd = "upload"
+		u, err = cl.PresignedPutObject(ctx, bucket, key, expires)
+	} else {
+		u, err = cl.PresignedGetObject(ctx, bucket, key, expires, url.Values{})
 	}
-
-	objectPath := alias + "/" + bucket
-	if key != "" {
-		objectPath += "/" + strings.TrimLeft(key, "/")
+	if err != nil {
+		return "", fmt.Errorf("presign %s s3://%s/%s: %w", method, bucket, key, err)
 	}
-
-	env := append(s3Env(ctx), "MCLI_CONFIG_DIR="+tmpDir)
-
-	// Run mcli and capture output — we need to parse the URL from it.
-	c := exec.Command(bin, "share", mcliSubcmd, objectPath, "--expire", durationStr)
-	c.Env = env
-	var out bytes.Buffer
-	c.Stdout = &out
-	c.Stderr = &out
-	if err := c.Run(); err != nil {
-		return "", fmt.Errorf("mcli share %s: %w\n%s", mcliSubcmd, err, out.String())
-	}
-
-	url := extractURLFromMcliOutput(out.String())
-	if url == "" {
-		return "", fmt.Errorf("mcli share %s: could not find URL in output:\n%s", mcliSubcmd, out.String())
-	}
-	return url, nil
-}
-
-// extractURLFromMcliOutput scans mcli share output for the presigned URL.
-// mcli prints several lines:
-//
-//	URL: http://host/bucket/key            ← plain URL, no signature
-//	Expire: 30 minutes 0 seconds
-//	Share: http://host/bucket/key?X-Amz-… ← presigned URL with signature
-//
-// We prefer the "Share:" line (which carries the signature query params) over
-// the "URL:" line (which does not). Fall back to any http URL if Share is absent.
-func extractURLFromMcliOutput(output string) string {
-	var fallback string
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-
-		isShare := strings.HasPrefix(line, "Share:") || strings.HasPrefix(line, "Share :")
-		isURLPrefix := strings.HasPrefix(line, "URL:") || strings.HasPrefix(line, "URL :")
-
-		// Strip known prefixes.
-		for _, prefix := range []string{"Share:", "Share :", "URL:", "URL :"} {
-			if strings.HasPrefix(line, prefix) {
-				line = strings.TrimSpace(line[len(prefix):])
-				break
-			}
-		}
-
-		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
-			if isShare {
-				return line // Prefer the Share line — it has the signature.
-			}
-			if isURLPrefix && fallback == "" {
-				fallback = line
-			}
-			if !isShare && !isURLPrefix && fallback == "" {
-				fallback = line
-			}
-		}
-	}
-	return fallback
-}
-
-// fmtMcliDuration converts a Go duration to a string mcli's --expire flag accepts.
-// mcli accepts standard Go duration strings directly (e.g. "30m", "4h0m0s", "168h").
-// We round to the nearest second and return the string representation.
-func fmtMcliDuration(d time.Duration) string {
-	// Round to seconds — mcli doesn't need sub-second precision.
-	secs := int64(d.Seconds())
-	rounded := time.Duration(secs) * time.Second
-	return rounded.String()
+	return u.String(), nil
 }

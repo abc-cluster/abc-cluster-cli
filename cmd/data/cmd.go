@@ -130,7 +130,7 @@ Plumbing commands (short aliases accepted):
 
 	// ── Plumbing: s5cmd / mcli wrappers ─────────────────────────────────────
 	// Canonical names are full English words; unix short forms are registered aliases.
-	cmd.AddCommand(newListCmd())      // list         alias: ls
+	cmd.AddCommand(newLsCmd())        // list (ls)    — SDK (minio-go), no external tool
 	cmd.AddCommand(newSyncCmd())      // sync
 	cmd.AddCommand(newCatCmd())       // cat
 	cmd.AddCommand(newPipeCmd())      // pipe
