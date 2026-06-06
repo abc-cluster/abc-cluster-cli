@@ -54,11 +54,12 @@ var dropServiceLabels = []string{"nomad", "s3", "minio", "workbench", "upload", 
 
 func newDropCmd() *cobra.Command {
 	var (
-		expires      string
-		maxDownloads int
-		endpoint     string
-		token        string
-		progress     bool
+		expires       string
+		maxDownloads  int
+		endpoint      string
+		token         string
+		progress      bool
+		withRevokeURL bool
 	)
 
 	cmd := &cobra.Command{
@@ -158,10 +159,18 @@ Examples:
 			fmt.Fprintf(errW, "\n  ⚠ NON-SENSITIVE artifacts only — the link leaves the in-region\n")
 			fmt.Fprintf(errW, "    storage boundary when fetched. Never PHI or genomic data.\n")
 
-			// Delete link is secondary: dimmed + last so it never competes with
-			// the share link above.
+			// Early-revoke is the rare/advanced case (auto-expiry + max-downloads
+			// already self-destruct the payload), and the long delete URL competed
+			// with the share link / confused users (devon 2026-06-05, B6). So it is
+			// gated behind --with-revoke-url; by default we print only a one-line
+			// hint that the flag exists. The revoke URL itself is verified working
+			// (DELETE → 404).
 			if res.deleteURL != "" {
-				fmt.Fprintf(errW, "\n%s\n", styleDim("  revoke this link early: "+res.deleteURL, styleOn))
+				if withRevokeURL {
+					fmt.Fprintf(errW, "\n%s\n", styleDim("  revoke this link early: "+res.deleteURL, styleOn))
+				} else {
+					fmt.Fprintf(errW, "\n%s\n", styleDim("  (auto-deletes at the limits above; pass --with-revoke-url for an early-revoke link)", styleOn))
+				}
 			}
 			return nil
 		},
@@ -172,6 +181,7 @@ Examples:
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "transfer endpoint URL (or set ABC_TRANSFER_ENDPOINT; default derived from the active context)")
 	cmd.Flags().StringVar(&token, "token", "", "bearer token override (default: the active context's token)")
 	cmd.Flags().BoolVar(&progress, "progress", true, "show a live upload progress bar (rendered on stderr)")
+	cmd.Flags().BoolVar(&withRevokeURL, "with-revoke-url", false, "also print an early-revoke (delete) link; off by default since auto-expiry + max-downloads already self-destruct the payload")
 	return cmd
 }
 
