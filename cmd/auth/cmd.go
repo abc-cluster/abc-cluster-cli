@@ -291,51 +291,93 @@ instead (with a warning).`,
 					}
 				}
 			}
-			_ = idGenerated
 
-			// --- Display ---
-			fmt.Printf("Context      %s\n", cfg.ActiveContext)
+			// --- Display: lead with identity / role / group / endpoint (devon U2),
+			// then a secondary Details block for the internal IDs. ---
+
+			// Identity label: live token → cached auth.whoami → unknown.
+			identity, cached := "", false
+			if nomadTok != nil {
+				if l := utils.NomadWhoamiLabelFromACLToken(nomadTok); l != "" {
+					identity = l
+				} else if nomadTok.Name != "" {
+					identity = nomadTok.Name
+				}
+			}
+			if identity == "" && activeCtx.Auth != nil && activeCtx.Auth.Whoami != "" {
+				identity, cached = activeCtx.Auth.Whoami, true
+			}
+			if identity == "" {
+				identity = "(unknown — run 'abc auth login')"
+			}
+			persona := strings.TrimPrefix(identity, "slot-") // friendly headline
+
+			// Role from the Nomad token type.
+			role := "(unknown — Nomad unreachable)"
+			if nomadTok != nil {
+				switch nomadTok.Type {
+				case "management":
+					role = "operator / admin (management token)"
+				case "client":
+					role = "user / member (client token)"
+				default:
+					role = nomadTok.Type
+				}
+			}
+
+			group := activeCtx.NomadNamespace()
+			if group == "" {
+				group = "(none)"
+			}
+
+			fmt.Printf("You are   %s", persona)
+			if cached {
+				fmt.Printf("   (cached — Nomad unreachable)")
+			}
+			fmt.Printf("\n")
+			fmt.Printf("  role      %s\n", role)
+			fmt.Printf("  group     %s\n", group)
+			fmt.Printf("  cluster   %s · %s\n", cfg.ActiveContext, activeCtx.Endpoint)
+
+			// --- Details (secondary) ---
+			fmt.Printf("\nDetails\n")
 			if canon != cfg.ActiveContext {
-				fmt.Printf("Canonical    %s\n", canon)
+				fmt.Printf("  context     %s  (canonical: %s)\n", cfg.ActiveContext, canon)
+			} else {
+				fmt.Printf("  context     %s\n", cfg.ActiveContext)
 			}
 			if als := config.AliasesResolvingToCanon(cfg, canon); len(als) > 0 {
-				fmt.Printf("Aliases      %s\n", strings.Join(als, ", "))
+				fmt.Printf("  aliases     %s\n", strings.Join(als, ", "))
 			}
-			fmt.Printf("Endpoint     %s\n", activeCtx.Endpoint)
 			if activeCtx.OrgID != "" {
-				fmt.Printf("Organization %s\n", activeCtx.OrgID)
+				fmt.Printf("  org         %s\n", activeCtx.OrgID)
 			}
 			if activeCtx.WorkspaceID != "" {
-				fmt.Printf("Workspace    %s\n", activeCtx.WorkspaceID)
+				fmt.Printf("  workspace   %s\n", activeCtx.WorkspaceID)
 			}
 			if activeCtx.Region != "" {
-				fmt.Printf("Region       %s\n", activeCtx.Region)
+				fmt.Printf("  region      %s\n", activeCtx.Region)
 			}
-			fmt.Printf("Token        %s\n", maskToken(activeCtx.AccessToken))
+			fmt.Printf("  token       %s\n", maskToken(activeCtx.AccessToken))
+			if nomadTok != nil {
+				fmt.Printf("  accessor    %s\n", nomadTok.AccessorID)
+				if len(nomadTok.Policies) > 0 {
+					fmt.Printf("  policies    %s\n", strings.Join(nomadTok.Policies, ", "))
+				}
+			}
 			if activeCtx.Admin.ID != "" {
 				marker := ""
 				if idGenerated {
 					marker = "  ✓ generated"
 				}
-				fmt.Printf("User ID      %s%s  (ULID; created %s)\n",
-					activeCtx.Admin.ID, marker,
-					ulidCreatedAt(activeCtx.Admin.ID).Format(time.RFC3339))
-			}
-
-			if nomadTok != nil {
-				fmt.Printf("\nNomad identity\n")
-				fmt.Printf("  Name         %s\n", nomadTok.Name)
-				fmt.Printf("  Type         %s\n", nomadTok.Type)
-				fmt.Printf("  Accessor ID  %s\n", nomadTok.AccessorID)
-				if len(nomadTok.Policies) > 0 {
-					fmt.Printf("  Policies     %s\n", strings.Join(nomadTok.Policies, ", "))
+				// Only annotate the creation time when the id is actually a ULID;
+				// pool/slug ids (e.g. "pool-solar_civet") have no embedded timestamp.
+				if created := ulidCreatedAt(activeCtx.Admin.ID); created.Year() > 1 {
+					fmt.Printf("  user id     %s%s  (ULID; created %s)\n",
+						activeCtx.Admin.ID, marker, created.Format(time.RFC3339))
+				} else {
+					fmt.Printf("  user id     %s%s\n", activeCtx.Admin.ID, marker)
 				}
-				label := utils.NomadWhoamiLabelFromACLToken(nomadTok)
-				if label != "" {
-					fmt.Printf("  auth.whoami  %s  ✓ synced\n", label)
-				}
-			} else if activeCtx.Auth != nil && activeCtx.Auth.Whoami != "" {
-				fmt.Printf("\nNomad identity  %s  (cached — Nomad unreachable)\n", activeCtx.Auth.Whoami)
 			}
 
 			return nil
