@@ -18,6 +18,7 @@ type encryptOptions struct {
 	unsafeLocal   bool
 	progress      bool
 	force         bool
+	removeSource  bool
 }
 
 func newEncryptCmd() *cobra.Command {
@@ -59,7 +60,9 @@ for reuse in future encryption/decryption operations.
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false,
-		"overwrite the output file if it already exists (default: refuse and exit non-zero)")
+		"overwrite the output file if it already exists — sha256-compares old vs new and prints both digests for audit (default: refuse). Note: ciphertext nonces are random, so an encrypt 'overwrite' almost always shows differing hashes; this flag exists for symmetry with decrypt --force")
+	cmd.Flags().BoolVar(&opts.removeSource, "remove-source", false,
+		"remove the source plaintext after successful encryption to save space — only the .encrypted output is kept (you need the password to recover)")
 
 	return cmd
 }
@@ -175,26 +178,25 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	}
 
 	if info.IsDir() {
-		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.progress, opts.force)
+		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.progress, opts.force, opts.removeSource)
 	}
-	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.progress, opts.force)
+	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.progress, opts.force, opts.removeSource)
 }
 
-func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, progressEnabled, force bool) error {
+func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, progressEnabled, force, removeSource bool) error {
 	if outputPath == "" {
 		outputPath = sourcePath + rcloneDefaultSuffix
-	}
-	if err := refuseClobber(outputPath, force); err != nil {
-		return err
 	}
 	info, err := os.Stat(sourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to access path %q: %w", sourcePath, err)
 	}
 	progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", filepath.Base(sourcePath)), info.Size())
-	if err := cryptor.encryptToPathWithProgress(cmd.Context(), sourcePath, outputPath, func(n int64) {
-		progress.Add(n)
-	}); err != nil {
+	err = writeWithCollisionCheck(outputPath, force, cmd.ErrOrStderr(),
+		func(p string) error {
+			return cryptor.encryptToPathWithProgress(cmd.Context(), sourcePath, p, func(n int64) { progress.Add(n) })
+		})
+	if err != nil {
 		_ = progress.Complete()
 		return fmt.Errorf("failed to encrypt %q: %w", sourcePath, err)
 	}
@@ -203,10 +205,16 @@ func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "File encrypted successfully.")
 	fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", outputPath)
+	if removeSource {
+		if err := os.Remove(sourcePath); err != nil {
+			return fmt.Errorf("encrypt succeeded but failed to --remove-source %q: %w", sourcePath, err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  Removed source: %s\n", sourcePath)
+	}
 	return nil
 }
 
-func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, progressEnabled, force bool) error {
+func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, progressEnabled, force, removeSource bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -231,21 +239,26 @@ func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
 		}
-		if err := refuseClobber(destPath, force); err != nil {
-			return err
-		}
 		progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", relPath), file.size)
-		if err := cryptor.encryptToPathWithProgress(cmd.Context(), file.path, destPath, func(n int64) {
-			progress.Add(n)
-		}); err != nil {
+		writeErr := writeWithCollisionCheck(destPath, force, cmd.ErrOrStderr(),
+			func(p string) error {
+				return cryptor.encryptToPathWithProgress(cmd.Context(), file.path, p, func(n int64) { progress.Add(n) })
+			})
+		if writeErr != nil {
 			_ = progress.Complete()
-			return fmt.Errorf("failed to encrypt %q: %w", relPath, err)
+			return fmt.Errorf("failed to encrypt %q: %w", relPath, writeErr)
 		}
 		if doneErr := progress.Complete(); doneErr != nil {
 			return fmt.Errorf("failed to render encryption progress: %w", doneErr)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Encrypted %s\n", relPath)
 		fmt.Fprintf(cmd.OutOrStdout(), "  Output: %s\n", destPath)
+		if removeSource {
+			if err := os.Remove(file.path); err != nil {
+				return fmt.Errorf("encrypt succeeded but failed to --remove-source %q: %w", file.path, err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  Removed source: %s\n", file.path)
+		}
 	}
 	return nil
 }
