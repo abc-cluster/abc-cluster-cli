@@ -506,6 +506,19 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Guard against a versioned/bare plugin MIX before we submit a doomed job.
+	//
+	// Nextflow resolves a bare `id "<plugin>"` to the newest published release
+	// ONLY when every plugin in the block is bare. As soon as ANY entry carries
+	// an explicit @version, Nextflow stops auto-resolving the bare ones and the
+	// head fails at startup with `Unknown Nextflow plugin '<id>'` — after the
+	// head job has already been placed and pulled. Pinning versions is a normal,
+	// supported thing to do (--plugin id@ver), so we don't
+	// forbid it; we require CONSISTENCY: pin all baseline plugins or pin none.
+	if err := validatePluginVersionConsistency(spec.Plugins); err != nil {
+		return err
+	}
+
 	// Plugin-driven binary requirements — auto-add cluster tool binaries when
 	// the corresponding plugin is loaded, regardless of --dev-plugins. The
 	// head bootstrap shells out to these and the worker bootstrap probes

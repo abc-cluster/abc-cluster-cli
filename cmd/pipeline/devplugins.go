@@ -145,3 +145,40 @@ func resolveDevPluginBundle() (string, error) {
 	}
 	return url, nil
 }
+
+// validatePluginVersionConsistency rejects a plugins block that mixes
+// explicitly-versioned entries with bare ones.
+//
+// Why: Nextflow auto-resolves a bare `id "<plugin>"` to the newest published
+// release only when EVERY plugin in the block is bare. The moment any entry is
+// pinned (`id "<plugin>@<version>"`), Nextflow stops auto-resolving the bare
+// ones and the head fails at startup with `Unknown Nextflow plugin '<id>'`.
+//
+// Customizing a plugin version is fully supported — but it must be consistent:
+// pin all baseline plugins, or pin none and let them all track newest. Returns
+// nil for an all-bare or all-pinned set (and for the dev set, which is all
+// pinned to 99.99.99).
+func validatePluginVersionConsistency(plugins []PluginRef) error {
+	var pinned, bare []string
+	for _, p := range plugins {
+		if strings.TrimSpace(p.Version) != "" {
+			pinned = append(pinned, p.ID+"@"+p.Version)
+		} else {
+			bare = append(bare, p.ID)
+		}
+	}
+	if len(pinned) == 0 || len(bare) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"mixed plugin versions: pinned [%s] but [%s] would be left unversioned.\n"+
+			"Nextflow only auto-resolves bare plugin ids when EVERY plugin is bare; "+
+			"once any is pinned it cannot resolve the rest and the run fails with "+
+			"\"Unknown Nextflow plugin\".\n"+
+			"Fix one of:\n"+
+			"  • pin every plugin too — add a --plugin <id>@<version> for each bare "+
+			"plugin (e.g. --plugin %s@<version>); or\n"+
+			"  • pin none — drop the --plugin flags so all resolve to the newest "+
+			"published release.",
+		strings.Join(pinned, ", "), strings.Join(bare, ", "), bare[0])
+}
