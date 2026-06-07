@@ -54,6 +54,12 @@ const (
 // the ICANN-reserved private-use TLD.
 const InternalAppsDomain = "apps.internal"
 
+// CurrentSpecVersion is the current abc-app.yaml schema version. It is written
+// first in the descriptor (mirroring the config.yaml `version` convention).
+// Empty or the legacy "1" normalise to it; a different value is rejected so a
+// newer-schema file is not silently mis-parsed by an older CLI.
+const CurrentSpecVersion = "1.0"
+
 // DataMount is one entry in the `data:` list — a MinIO bucket the app reads
 // (or writes). Apps access buckets via injected AWS_* credentials, never a
 // filesystem mount, so `path` is rejected.
@@ -66,7 +72,11 @@ type DataMount struct {
 }
 
 // Spec is the parsed `abc-app.yaml`. Fields map 1:1 to the documented schema.
+// Version is first (written first on save — see MarshalCanonical), mirroring
+// config.yaml. The descriptor is parsed with KnownFields(true), so every field
+// the user may set must appear here.
 type Spec struct {
+	Version   string            `yaml:"version,omitempty"`
 	Name      string            `yaml:"name"`
 	Image     string            `yaml:"image"`
 	Project   string            `yaml:"project"`
@@ -130,6 +140,16 @@ const (
 // verify that the project is a group the user belongs to (that gate lives at
 // the auth-svc /validate edge) — only that `project` is present and well-formed.
 func (s *Spec) Validate() error {
+	// version — schema version, written first (mirrors config.yaml). Empty and
+	// the legacy "1" are accepted (normalised to CurrentSpecVersion); any other
+	// value is rejected so a newer-schema descriptor is not silently mis-parsed.
+	switch strings.TrimSpace(s.Version) {
+	case "", "1", CurrentSpecVersion:
+		// ok
+	default:
+		return fmt.Errorf("`version` %q is not supported by this CLI (supports %s); upgrade abc or check the abc-app.yaml schema version", s.Version, CurrentSpecVersion)
+	}
+
 	// name
 	if strings.TrimSpace(s.Name) == "" {
 		return fmt.Errorf("`name` is required")
@@ -249,6 +269,7 @@ func (s *Spec) Validate() error {
 // and normalises access/replicas. Call after Validate. Mutates the receiver so
 // `abc app show` / `--dry-run` reflect the resolved (post-default) values.
 func (s *Spec) ApplyDefaults() {
+	s.Version = normalizeSpecVersion(s.Version)
 	fw := s.NormFramework()
 	def := frameworkDefaults[fw]
 	if s.Port == 0 {
@@ -284,6 +305,16 @@ func (s *Spec) ApplyDefaults() {
 			s.Data[i].Access = strings.ToLower(strings.TrimSpace(s.Data[i].Access))
 		}
 	}
+}
+
+// normalizeSpecVersion maps empty or legacy "1" to CurrentSpecVersion
+// (mirrors config.normalizeConfigFileVersionForSave).
+func normalizeSpecVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "1" {
+		return CurrentSpecVersion
+	}
+	return v
 }
 
 // NormFramework returns the lowercased, trimmed framework value.

@@ -284,3 +284,29 @@ func TestExposure_Hosts(t *testing.T) {
 		})
 	}
 }
+
+func TestVersion_ValidationAndDefault(t *testing.T) {
+	// accepted: empty, legacy "1", current "1.0"
+	for _, v := range []string{"", "1", "1.0", " 1.0 "} {
+		s := validSucuriSpec()
+		s.Version = v
+		if err := s.Validate(); err != nil {
+			t.Errorf("version %q should be valid: %v", v, err)
+		}
+	}
+	// rejected: a different/future version
+	s := validSucuriSpec()
+	s.Version = "2.0"
+	if err := s.Validate(); err == nil {
+		t.Errorf("version %q should be rejected by a v%s CLI", s.Version, CurrentSpecVersion)
+	}
+	// empty + legacy "1" normalise to current after ApplyDefaults
+	for _, v := range []string{"", "1"} {
+		d := validSucuriSpec()
+		d.Version = v
+		d.ApplyDefaults()
+		if d.Version != CurrentSpecVersion {
+			t.Errorf("version %q normalised to %q, want %q", v, d.Version, CurrentSpecVersion)
+		}
+	}
+}
