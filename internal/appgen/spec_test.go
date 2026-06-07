@@ -223,3 +223,90 @@ func TestParse_StrictUnknownKey(t *testing.T) {
 		t.Fatal("expected strict-decode error for unknown key")
 	}
 }
+
+func TestExposure_ValidationAndDefault(t *testing.T) {
+	// valid values (incl. empty) pass; default resolves to public.
+	for _, v := range []string{"", "public", "internal", "both", "INTERNAL", " Both "} {
+		s := validSucuriSpec()
+		s.Exposure = v
+		if err := s.Validate(); err != nil {
+			t.Errorf("exposure %q should be valid: %v", v, err)
+		}
+	}
+	// invalid value rejected.
+	s := validSucuriSpec()
+	s.Exposure = "lan"
+	if err := s.Validate(); err == nil {
+		t.Errorf("exposure %q should be rejected", s.Exposure)
+	}
+	// default after ApplyDefaults.
+	d := validSucuriSpec()
+	d.ApplyDefaults()
+	if d.Exposure != ExposurePublic {
+		t.Errorf("default exposure = %q, want public", d.Exposure)
+	}
+}
+
+func TestExposure_Hosts(t *testing.T) {
+	pub := "abc-platform-sucuri." + AppsDomain
+	internal := "abc-platform-sucuri." + InternalAppsDomain
+	cases := []struct {
+		exposure  string
+		wantHosts []string
+		wantHost  string
+		wantURL   string
+	}{
+		{"public", []string{pub}, pub, "https://" + pub},
+		{"", []string{pub}, pub, "https://" + pub}, // default
+		{"internal", []string{internal}, internal, "http://" + internal},
+		{"both", []string{pub, internal}, pub, "https://" + pub},
+	}
+	for _, c := range cases {
+		t.Run(c.exposure, func(t *testing.T) {
+			s := validSucuriSpec()
+			s.Exposure = c.exposure
+			s.ApplyDefaults()
+			got := s.Hosts()
+			if len(got) != len(c.wantHosts) {
+				t.Fatalf("Hosts()=%v, want %v", got, c.wantHosts)
+			}
+			for i := range got {
+				if got[i] != c.wantHosts[i] {
+					t.Errorf("Hosts()[%d]=%q, want %q", i, got[i], c.wantHosts[i])
+				}
+			}
+			if s.Host() != c.wantHost {
+				t.Errorf("Host()=%q, want %q", s.Host(), c.wantHost)
+			}
+			if s.URL() != c.wantURL {
+				t.Errorf("URL()=%q, want %q", s.URL(), c.wantURL)
+			}
+		})
+	}
+}
+
+func TestVersion_ValidationAndDefault(t *testing.T) {
+	// accepted: empty, legacy "1", current "1.0"
+	for _, v := range []string{"", "1", "1.0", " 1.0 "} {
+		s := validSucuriSpec()
+		s.Version = v
+		if err := s.Validate(); err != nil {
+			t.Errorf("version %q should be valid: %v", v, err)
+		}
+	}
+	// rejected: a different/future version
+	s := validSucuriSpec()
+	s.Version = "2.0"
+	if err := s.Validate(); err == nil {
+		t.Errorf("version %q should be rejected by a v%s CLI", s.Version, CurrentSpecVersion)
+	}
+	// empty + legacy "1" normalise to current after ApplyDefaults
+	for _, v := range []string{"", "1"} {
+		d := validSucuriSpec()
+		d.Version = v
+		d.ApplyDefaults()
+		if d.Version != CurrentSpecVersion {
+			t.Errorf("version %q normalised to %q, want %q", v, d.Version, CurrentSpecVersion)
+		}
+	}
+}
