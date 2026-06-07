@@ -111,6 +111,13 @@ type Context struct {
 	// per-service credential backends (local/nomad/vault) — different position,
 	// different scope, shared name. The CONTEXT-level value is the higher-level
 	// lever ("how does this whole context resolve credentials at all").
+	// CredSource also governs the default user-secret backend (`abc secrets` +
+	// the crypt password for `abc data encrypt/decrypt`): when it is a broker
+	// tier (`seedling/v1`, …) those default to the `broker` backend, since the
+	// broker secrets path needs the opaque token that only a broker-tier context
+	// holds. There is no separate secret_source field — it would be redundant
+	// (portable secrets require the opaque). Spec:
+	// specs/active/abc-user-secret-portability.md.
 	CredSource string `yaml:"cred_source,omitempty"`
 	// AuthEndpoint is the explicit broker URL for this context. When non-empty,
 	// the credsource resolver POSTs to <AuthEndpoint>/auth/exchange (or just

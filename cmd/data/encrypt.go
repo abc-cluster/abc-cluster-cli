@@ -86,78 +86,91 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	}
 
 	passwordProvided := opts.cryptPassword != ""
-	saltProvided := opts.cryptSalt != ""
 
-	ctxName, ctx, ctxErr := cfg.ContextForSecrets()
-	storedPW, storedSalt := "", ""
-	if ctxErr == nil {
-		storedPW, storedSalt = ctx.Crypt.Password, ctx.Crypt.Salt
-	}
-
-	configChanged := false
-	if passwordProvided {
-		if storedPW != "" {
-			if storedPW != opts.cryptPassword {
-				return inputError(
-					"a different crypt password is already stored in the config file.\n" +
-						"  - to use the stored one: rerun without --crypt-password\n" +
-						"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.password,\n" +
-						"    then rerun with the new --crypt-password.")
-			}
-		} else {
-			if ctxErr != nil {
-				return inputError(
-					"cannot save crypt password without a saved context: %v\n"+
-						"Run abc auth login (or add a context) and abc context use <name>, then retry.", ctxErr)
-			}
-			ctx.Crypt.Password = opts.cryptPassword
-			configChanged = true
-		}
-	}
-	if saltProvided {
-		if storedSalt != "" {
-			if storedSalt != opts.cryptSalt {
-				return inputError(
-					"a different crypt salt is already stored in the config file.\n" +
-						"  - to use the stored one: rerun without --crypt-salt\n" +
-						"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.salt,\n" +
-						"    then rerun with the new --crypt-salt.")
-			}
-		} else {
-			if ctxErr != nil {
-				return inputError(
-					"cannot save crypt salt without a saved context: %v\n"+
-						"Run abc auth login (or add a context) and abc context use <name>, then retry.", ctxErr)
-			}
-			ctx.Crypt.Salt = opts.cryptSalt
-			configChanged = true
-		}
-	}
-	if configChanged {
-		cfg.Contexts[ctxName] = ctx
-		if err := cfg.Save(); err != nil {
+	// cred_source broker tier — store/fetch the crypt password portably via the
+	// broker (managed), unless --unsafe-local forces local storage for this run.
+	brokerMode := !opts.unsafeLocal && isBrokerCredSource(cfg)
+	if brokerMode {
+		pw, salt, err := resolveCryptViaBroker(cmd, cfg, opts.cryptPassword, opts.cryptSalt)
+		if err != nil {
 			return err
 		}
-	}
+		opts.cryptPassword, opts.cryptSalt = pw, salt
+	} else {
+		// ── local-config storage (today's behaviour; --unsafe-local forces this) ──
+		saltProvided := opts.cryptSalt != ""
 
-	if opts.unsafeLocal {
-		if ctxErr != nil {
-			return inputError("--unsafe-local requires a saved context; %v", ctxErr)
+		ctxName, ctx, ctxErr := cfg.ContextForSecrets()
+		storedPW, storedSalt := "", ""
+		if ctxErr == nil {
+			storedPW, storedSalt = ctx.Crypt.Password, ctx.Crypt.Salt
 		}
-		if ctx.Crypt.Password == "" {
-			return inputError("--crypt-password is required in --unsafe-local mode")
+
+		configChanged := false
+		if passwordProvided {
+			if storedPW != "" {
+				if storedPW != opts.cryptPassword {
+					return inputError(
+						"a different crypt password is already stored in the config file.\n" +
+							"  - to use the stored one: rerun without --crypt-password\n" +
+							"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.password,\n" +
+							"    then rerun with the new --crypt-password.")
+				}
+			} else {
+				if ctxErr != nil {
+					return inputError(
+						"cannot save crypt password without a saved context: %v\n"+
+							"Run abc auth login (or add a context) and abc context use <name>, then retry.", ctxErr)
+				}
+				ctx.Crypt.Password = opts.cryptPassword
+				configChanged = true
+			}
 		}
-		opts.cryptPassword = ctx.Crypt.Password
-		opts.cryptSalt = ctx.Crypt.Salt
-	} else if !passwordProvided {
-		if ctxErr == nil && ctx.Crypt.Password != "" {
+		if saltProvided {
+			if storedSalt != "" {
+				if storedSalt != opts.cryptSalt {
+					return inputError(
+						"a different crypt salt is already stored in the config file.\n" +
+							"  - to use the stored one: rerun without --crypt-salt\n" +
+							"  - to switch: edit ~/.abc/config.yaml under contexts.<ctx>.crypt.salt,\n" +
+							"    then rerun with the new --crypt-salt.")
+				}
+			} else {
+				if ctxErr != nil {
+					return inputError(
+						"cannot save crypt salt without a saved context: %v\n"+
+							"Run abc auth login (or add a context) and abc context use <name>, then retry.", ctxErr)
+				}
+				ctx.Crypt.Salt = opts.cryptSalt
+				configChanged = true
+			}
+		}
+		if configChanged {
+			cfg.Contexts[ctxName] = ctx
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+		}
+
+		if opts.unsafeLocal {
+			if ctxErr != nil {
+				return inputError("--unsafe-local requires a saved context; %v", ctxErr)
+			}
+			if ctx.Crypt.Password == "" {
+				return inputError("--crypt-password is required in --unsafe-local mode")
+			}
 			opts.cryptPassword = ctx.Crypt.Password
 			opts.cryptSalt = ctx.Crypt.Salt
-		} else {
-			return inputError(
-				"managed encryption (control-plane key) is not yet available.\n" +
-					"To encrypt with a local password, pass --crypt-password <password>.\n" +
-					"WARNING: in local mode the key is not managed — losing your password means losing your data.")
+		} else if !passwordProvided {
+			if ctxErr == nil && ctx.Crypt.Password != "" {
+				opts.cryptPassword = ctx.Crypt.Password
+				opts.cryptSalt = ctx.Crypt.Salt
+			} else {
+				return inputError(
+					"managed encryption is not enabled for this context.\n" +
+						"  - portable (broker): use a broker-tier context (cred_source: seedling/v1), then --crypt-password once to store it\n" +
+						"  - local: pass --crypt-password <password> (key not managed — losing it loses your data)")
+			}
 		}
 	}
 

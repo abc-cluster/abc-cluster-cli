@@ -74,12 +74,46 @@ Examples:
 	return cmd
 }
 
+// backendFromCmd resolves the secrets backend with this precedence:
+//
+//	explicit --backend flag  >  context cred_source (broker tier → broker)  >  default ("local")
+//
+// There is no separate secret_source field: a context on a broker cred tier
+// (seedling/v1, …) already holds the opaque the broker secrets path needs, so it
+// defaults to the broker backend. An explicit --backend always wins for that one
+// invocation (e.g. --backend local to force-skip the broker — the same escape
+// hatch as `abc data encrypt --unsafe-local`).
 func backendFromCmd(cmd *cobra.Command) string {
-	b, _ := cmd.Flags().GetString("backend")
-	if b == "" {
-		b, _ = cmd.Root().PersistentFlags().GetString("backend")
+	if cmd.Flags().Changed("backend") {
+		b, _ := cmd.Flags().GetString("backend")
+		return b
 	}
+	if b := backendFromCredSource(); b != "" {
+		return b
+	}
+	b, _ := cmd.Flags().GetString("backend")
 	return b
+}
+
+// backendFromCredSource maps the active context's cred_source to a secrets
+// backend: a broker tier → "broker"; unset/local → "" (caller falls back to the
+// flag default "local").
+func backendFromCredSource() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	ctx, ok := cfg.ContextNamed(cfg.ResolveContextName(cfg.ActiveContext))
+	if !ok {
+		return ""
+	}
+	switch ctx.CredSource {
+	case "", "local":
+		return ""
+	default:
+		// seedling/v1, grove/v1, cloud/v1, … all resolve to the broker backend.
+		return "broker"
+	}
 }
 
 // ── set ───────────────────────────────────────────────────────────────────────
@@ -105,6 +139,8 @@ func runSetSecret(cmd *cobra.Command, args []string) error {
 	name, value := args[0], args[1]
 
 	switch backend {
+	case "broker":
+		return runBrokerSet(cmd, name, value)
 	case "nomad":
 		cfg, err := config.Load()
 		if err != nil {
@@ -145,6 +181,8 @@ func runGetSecret(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
 	switch backend {
+	case "broker":
+		return runBrokerGet(cmd, name)
 	case "nomad":
 		cfg, err := config.Load()
 		if err != nil {
@@ -183,7 +221,19 @@ func newListCmd() *cobra.Command {
 func runListSecrets(cmd *cobra.Command, _ []string) error {
 	backend := backendFromCmd(cmd)
 
+	// Header: make the authoritative store visible (which backend, and the
+	// cred_source that selected it when no --backend was given).
+	hdr := "Backend: " + backend
+	if !cmd.Flags().Changed("backend") {
+		if cs := activeCredSource(); cs != "" && cs != "local" {
+			hdr += "  (cred_source: " + cs + ")"
+		}
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), hdr)
+
 	switch backend {
+	case "broker":
+		return runBrokerList(cmd)
 	case "nomad":
 		cfg, err := config.Load()
 		if err != nil {
@@ -199,6 +249,19 @@ func runListSecrets(cmd *cobra.Command, _ []string) error {
 	default:
 		return runLocalList(cmd)
 	}
+}
+
+// activeCredSource returns the active context's cred_source (or "").
+func activeCredSource() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	ctx, ok := cfg.ContextNamed(cfg.ResolveContextName(cfg.ActiveContext))
+	if !ok {
+		return ""
+	}
+	return ctx.CredSource
 }
 
 // ── delete ────────────────────────────────────────────────────────────────────
