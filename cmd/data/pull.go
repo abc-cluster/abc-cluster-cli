@@ -13,6 +13,10 @@ package data
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -21,6 +25,7 @@ import (
 func newPullCmd() *cobra.Command {
 	var destination string
 	var parallel int
+	var decompress bool
 
 	cmd := &cobra.Command{
 		Use:   "pull <s3-uri>",
@@ -58,7 +63,13 @@ Examples:
 				return fmt.Errorf("source must be an S3 URI (s3://...); got %q\n"+
 					"  To download from the internet, use: abc data fetch <url>", src)
 			}
-			return LocalFetchFromS3(cmd, src, destination, parallel)
+			if err := LocalFetchFromS3(cmd, src, destination, parallel); err != nil {
+				return err
+			}
+			if decompress {
+				return decompressPulled(cmd, src, destination)
+			}
+			return nil
 		},
 	}
 
@@ -66,6 +77,54 @@ Examples:
 		"local directory to download into (default: current working directory)")
 	cmd.Flags().IntVarP(&parallel, "parallel", "p", 4,
 		"number of parallel s5cmd workers")
+	cmd.Flags().BoolVar(&decompress, "decompress", false,
+		"after download, expand any .zst artifacts locally (integrity-verified); non-zstd files are left untouched")
 
 	return cmd
+}
+
+// decompressPulled expands .zst artifacts after a pull. For a single-object pull
+// it targets the one downloaded file; for a prefix pull it walks the destination
+// directory. Each .zst is decompressed (integrity-verified) and removed; a verify
+// failure aborts without deleting the .zst.
+func decompressPulled(cmd *cobra.Command, src, destination string) error {
+	destDir := destination
+	if destDir == "" {
+		destDir = "."
+	}
+	if !strings.HasSuffix(src, "/") {
+		base := path.Base(strings.TrimRight(strings.TrimPrefix(src, "s3://"), "/"))
+		target := filepath.Join(destDir, base)
+		if strings.HasSuffix(target, zstdDefaultSuffix) {
+			return decompressInPlace(cmd, target)
+		}
+		return nil
+	}
+	return filepath.WalkDir(destDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, zstdDefaultSuffix) {
+			return nil
+		}
+		return decompressInPlace(cmd, p)
+	})
+}
+
+func decompressInPlace(cmd *cobra.Command, zstPath string) error {
+	out := strings.TrimSuffix(zstPath, zstdDefaultSuffix)
+	comp := &compressConfig{}
+	err := writeWithCollisionCheck(out, true, cmd.ErrOrStderr(),
+		func(p string) error {
+			_, derr := comp.decompressToPath(cmd.Context(), zstPath, p, nil)
+			return derr
+		})
+	if err != nil {
+		return fmt.Errorf("decompress %q (left in place): %w", zstPath, err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Decompressed %s -> %s\n", zstPath, out)
+	if err := os.Remove(zstPath); err != nil {
+		return fmt.Errorf("remove %q after decompress: %w", zstPath, err)
+	}
+	return nil
 }
