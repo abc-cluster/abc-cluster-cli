@@ -176,6 +176,11 @@ type jobSpec struct {
 	StageHostVolumeSource string
 	StageHostVolumeMount  string
 	StageEnv              map[string]string
+	// StageS5cmdSkipTLS makes the stage-in/stage-out s5cmd invocations skip TLS
+	// verification (--no-verify-ssl). Required on abc-seedling where MinIO uses a
+	// private CA the stage task container does not trust. Detected from the
+	// resolved endpoint being HTTPS (mirrors cmd/pipeline/hcl_adapter.go).
+	StageS5cmdSkipTLS bool
 
 	// ── Debug / interactive directives ───────────────────────────────────────
 	// DebugSleepSecs injects a `sleep N` at the start of the job script so the

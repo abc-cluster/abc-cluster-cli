@@ -106,6 +106,66 @@ func TestClassifyInput_OutsideRoot(t *testing.T) {
 	}
 }
 
+// TestLocalUploads_MixedInputSet builds a Plan from a mixed --in set (one
+// local-only file, one already-in-MinIO URI, one common-mount symlink) via
+// ClassifyInput and asserts LocalUploads() returns exactly the local-only
+// input — the upload-before-submit set (spec acceptance A-D2-unit, A2).
+func TestLocalUploads_MixedInputSet(t *testing.T) {
+	root := t.TempDir()
+
+	// Common mount + a symlink under the project resolving into it.
+	common := filepath.Join(root, "common-mount")
+	if err := os.MkdirAll(filepath.Join(common, "datasets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commonFile := filepath.Join(common, "datasets", "ref.csv")
+	os.WriteFile(commonFile, []byte("r"), 0o644)
+	if err := os.MkdirAll(filepath.Join(root, "data", "external"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "data", "external", "ref.csv")
+	if err := os.Symlink(commonFile, link); err != nil {
+		t.Fatal(err)
+	}
+
+	// A plain local file under the project.
+	localF := filepath.Join(root, "data", "clean.parquet")
+	os.WriteFile(localF, []byte("y"), 0o644)
+
+	cm := CommonMount{Path: common, Bucket: "su-mbhg-hostgen", Prefix: "common/"}
+	bucket, slotPrefix := "su-mbhg-hostgen", "user/calm_dassie"
+
+	ins := []string{
+		localF, // local-only → uploaded
+		"s3://su-mbhg-hostgen/user/calm_dassie/proj/inputs/already.csv", // in-minio → not uploaded
+		link, // common symlink → not uploaded
+	}
+	p := Plan{
+		ProjectRoot: root,
+		RunPrefix:   "s3://su-mbhg-hostgen/user/calm_dassie/proj/jobs/r1",
+		DestRoot:    "$NOMAD_ALLOC_DIR/data/r1",
+	}
+	for _, in := range ins {
+		si, err := ClassifyInput(in, root, bucket, slotPrefix, cm)
+		if err != nil {
+			t.Fatalf("ClassifyInput(%q): %v", in, err)
+		}
+		p.Inputs = append(p.Inputs, si)
+	}
+
+	ups := p.LocalUploads()
+	if len(ups) != 1 {
+		t.Fatalf("expected exactly 1 local upload for a mixed set, got %d: %v", len(ups), ups)
+	}
+	if ups[0][0] != localF {
+		t.Errorf("upload src = %q, want %q", ups[0][0], localF)
+	}
+	wantDest := p.RunPrefix + "/inputs/data/clean.parquet"
+	if ups[0][1] != wantDest {
+		t.Errorf("upload dest = %q, want %q", ups[0][1], wantDest)
+	}
+}
+
 func TestManifestsAndUploads(t *testing.T) {
 	p := Plan{
 		ProjectRoot: "/proj",

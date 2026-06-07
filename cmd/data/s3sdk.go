@@ -23,7 +23,7 @@ import (
 // (resolveS3Creds → handles the seedling/v1 broker exchange as well as local
 // creds), so the SDK and the tools always agree on identity.
 func newMinioClient(ctx abccfg.Context) (*minio.Client, error) {
-	endpoint, accessKey, secretKey := resolveS3Creds(ctx)
+	endpoint, accessKey, secretKey := ResolveS3Creds(ctx)
 	if strings.TrimSpace(endpoint) == "" {
 		return nil, fmt.Errorf("no storage endpoint configured for the active context\n  Run: abc cluster capabilities sync")
 	}

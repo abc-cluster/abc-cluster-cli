@@ -387,6 +387,93 @@ func LocalFetchFromS3(cmd *cobra.Command, src, dstDir string, parallel int) erro
 	return nil
 }
 
+// LocalPushToS3 uploads a local file (or directory) from the user's machine to
+// an S3 destination by shelling out to s5cmd. It is the symmetric counterpart of
+// LocalFetchFromS3 and is used by the `abc job run` data-staging seam to upload
+// local-only inputs to the per-run inputs prefix before the job is submitted.
+//
+// Endpoint + credentials are resolved from the active context the same way as
+// LocalFetchFromS3 (resolveWorkbenchMinioCredsFromCtx); s5cmd is located via
+// findLocalS5cmd ($PATH, then /opt/abc-seedling/nf-work/bin/s5cmd).
+//
+// Returns an error with a helpful message if s5cmd is not found or the transfer
+// fails. The caller (job-staging) treats any error as fatal — a job whose
+// stage-in would 404 must not be submitted.
+func LocalPushToS3(cmd *cobra.Command, src, s3dest string, parallel int) error {
+	if !strings.HasPrefix(strings.ToLower(s3dest), "s3://") {
+		return fmt.Errorf("push: destination must be an S3 URI (s3://...); got %q", s3dest)
+	}
+
+	cfg, err := abccfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	actx := cfg.ActiveCtx()
+
+	endpoint, accessKey, secretKey, err := resolveWorkbenchMinioCredsFromCtx(actx)
+	if err != nil {
+		return err
+	}
+
+	s5cmdPath, err := findLocalS5cmd()
+	if err != nil {
+		return err
+	}
+
+	if parallel <= 0 {
+		parallel = 4
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(),
+		"Uploading %s → %s (s5cmd, %d workers)...\n", src, s3dest, parallel)
+
+	s5cmdArgs := []string{
+		"--endpoint-url", endpoint,
+		"--numworkers", fmt.Sprintf("%d", parallel),
+		"cp",
+		// --if-size-differ skips re-uploading objects whose size already
+		// matches, giving cheap idempotent re-runs of a staged job.
+		"--if-size-differ",
+		src,
+		s3dest,
+	}
+
+	c := exec.CommandContext(cmd.Context(), s5cmdPath, s5cmdArgs...)
+	c.Stdout = cmd.OutOrStdout()
+	c.Stderr = cmd.ErrOrStderr()
+	c.Env = append(os.Environ(),
+		"AWS_ACCESS_KEY_ID="+accessKey,
+		"AWS_SECRET_ACCESS_KEY="+secretKey,
+		"AWS_REGION=us-east-1",
+	)
+
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("s5cmd upload failed: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ uploaded to %s\n", s3dest)
+	return nil
+}
+
+// LocalPushBytesToS3 writes data to a temp file and uploads it to an S3
+// destination via LocalPushToS3. Used to push the run-manifest.json lineage
+// record to the per-run prefix without the caller managing a temp file.
+func LocalPushBytesToS3(cmd *cobra.Command, data []byte, s3dest string) error {
+	tmp, err := os.CreateTemp("", "abc-push-*")
+	if err != nil {
+		return fmt.Errorf("create temp file for push: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp file for push: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file for push: %w", err)
+	}
+	return LocalPushToS3(cmd, tmpPath, s3dest, 1)
+}
+
 // findLocalS5cmd returns the path to a local s5cmd binary, checking $PATH first
 // then /opt/abc-seedling/nf-work/bin/s5cmd. Returns an error with install guidance
 // if not found.

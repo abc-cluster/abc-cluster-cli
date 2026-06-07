@@ -84,4 +84,39 @@ func TestGenerate_StagingEnabled(t *testing.T) {
 	} {
 		contains(want)
 	}
+
+	// SkipTLS defaults off → the s5cmd invocation carries no --no-verify-ssl.
+	if strings.Contains(out, "--no-verify-ssl") {
+		t.Errorf("did not expect --no-verify-ssl when SkipTLS is unset:\n%s", out)
+	}
+}
+
+// TestGenerate_StagingSkipTLS verifies that the private-CA path (SkipTLS=true,
+// set by the wiring layer when the MinIO endpoint is HTTPS) emits
+// --no-verify-ssl as an s5cmd global flag — before the `run` subcommand — so
+// the stage tasks can reach the private-CA MinIO (spec cluster-seam detail §1,
+// mirrors the pipeline path's useTLS=false).
+func TestGenerate_StagingSkipTLS(t *testing.T) {
+	spec := Spec{
+		Name: "penguins-rf-tls", Driver: "exec", Nodes: 1, Priority: 50,
+		Staging: StagingSpec{
+			Enabled:          true,
+			StageInManifest:  "cp s3://b/common/penguins.csv analysis/data/external/penguins.csv\n",
+			StageOutManifest: "cp analysis/data/06_models/rf.pkl s3://b/user/s/p/jobs/r1/outputs/analysis/data/06_models/rf.pkl\n",
+			DestRoot:         "$NOMAD_ALLOC_DIR/data/r1",
+			S5cmdPath:        "/nxf-work/bin/s5cmd",
+			HostVolumeName:   "nf-work",
+			HostVolumeSource: "/opt/abc-seedling/nf-work",
+			HostVolumeMount:  "/nxf-work",
+			SkipTLS:          true,
+		},
+	}
+	out := Generate(spec, "run.sh", "python rf_train.py")
+	// The global flag must precede the `run` subcommand. Both stage tasks carry it.
+	if !strings.Contains(out, "--no-verify-ssl run") {
+		t.Errorf("expected `--no-verify-ssl run` (global flag before subcommand) when SkipTLS=true:\n%s", out)
+	}
+	if strings.Count(out, "--no-verify-ssl") < 2 {
+		t.Errorf("expected --no-verify-ssl on BOTH stage tasks (stage-in + stage-out):\n%s", out)
+	}
 }

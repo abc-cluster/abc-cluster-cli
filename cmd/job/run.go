@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 
 	"log/slog"
 
+	datacmd "github.com/abc-cluster/abc-cluster-cli/cmd/data"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
@@ -734,10 +736,43 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 	spec.StageHostVolumeName = "nf-work"
 	spec.StageHostVolumeSource = "/opt/abc-seedling/nf-work"
 	spec.StageHostVolumeMount = "/nxf-work"
-	// spec.StageEnv (MinIO creds + S3 endpoint + private-CA) is injected by the
-	// submit path against the cluster; empty here is fine for HCL emission.
+
+	// StageEnv: the member's resolved S3 creds + endpoint, rendered into the
+	// prestart/poststop s5cmd tasks' secrets/s5cmd.env (hcl_adapter → generator).
+	// Member-run jobs use the member identity (the active context's resolved
+	// creds). When the context carries no MinIO creds (e.g. off-cluster), the
+	// map stays empty — HCL still emits, but the live stage tasks would fail
+	// auth; the upload-before-submit path surfaces that earlier.
+	if endpoint, ak, sk := stageS3Creds(); endpoint != "" && ak != "" && sk != "" {
+		spec.StageEnv = map[string]string{
+			"AWS_ACCESS_KEY_ID":     ak,
+			"AWS_SECRET_ACCESS_KEY": sk,
+			"AWS_ENDPOINT_URL":      endpoint,
+			"AWS_REGION":            "us-east-1",
+		}
+		// Private CA: mirror the pipeline path — an HTTPS MinIO endpoint here
+		// always means a private deployment with a private CA (public cloud
+		// endpoints are never configured via admin.services.minio), so the
+		// stage task container can't verify it. Skip TLS verification.
+		if strings.HasPrefix(endpoint, "https://") {
+			spec.StageS5cmdSkipTLS = true
+		}
+	}
+
 	spec.ChDir = plan.DestRoot // main task work_dir = staged mirror (A6)
 	return plan, nil
+}
+
+// stageS3Creds resolves the member's S3 endpoint + credentials from the active
+// context for the stage-in/stage-out tasks. It reuses data.ResolveS3Creds (the
+// one cred resolver for the CLI). Returns empty strings when no context / creds
+// are available (off-cluster), which leaves spec.StageEnv empty.
+func stageS3Creds() (endpoint, accessKey, secretKey string) {
+	c, err := config.Load()
+	if err != nil || c == nil {
+		return "", "", ""
+	}
+	return datacmd.ResolveS3Creds(c.ActiveCtx())
 }
 
 // inferNotebookRuntime picks the env runtime from the env-file name when
@@ -1011,10 +1046,6 @@ func runJob(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"[abc] staging: %d input(s) (%d local upload), %d output(s) → %s\n",
 			len(stagePlan.Inputs), len(stagePlan.LocalUploads()), len(stagePlan.Outputs), stagePlan.RunPrefix)
-		// TODO(cluster session, spec steps 4 & 8): before submit, `abc data push`
-		// stagePlan.LocalUploads(); after runner.Watch, pull RunPrefix/outputs/
-		// back to --out destinations and push stagePlan.RunManifest(...) →
-		// RunPrefix/run-manifest.json. Requires a live alloc to verify.
 	}
 
 	var scriptBody string
@@ -1101,13 +1132,145 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 
 	if submit || dryRun {
-		return runWithNomad(cmd.Context(), cmd, spec, hcl, submit, dryRun)
+		// Upload-before-submit (spec step 4 / A2): for a real submit with
+		// staging, push every local-only input to the per-run inputs prefix
+		// BEFORE the job is registered. Any upload failure aborts here — we
+		// never submit a job whose stage-in would 404. Skipped on --dry-run
+		// (no real run) and when there are no local uploads.
+		if submit && stagePlan != nil {
+			if err := uploadStageInputs(cmd, stagePlan); err != nil {
+				return err
+			}
+		}
+		if err := runWithNomad(cmd.Context(), cmd, spec, hcl, submit, dryRun); err != nil {
+			return err
+		}
+		// Pull-back + run-manifest (spec steps 8 / A7 / A8): only after a real
+		// submit with staging. Waits for the alloc to reach a terminal state,
+		// pulls outputs back to --out on "complete", and writes the lineage
+		// run-manifest. Non-fatal once the job itself succeeded.
+		if submit && stagePlan != nil {
+			finalizeStaging(cmd, spec, stagePlan, runID, scriptPath)
+		}
+		return nil
 	}
 	if outputFile != "" {
 		return os.WriteFile(outputFile, []byte(hcl), 0644)
 	}
 	fmt.Fprint(cmd.OutOrStdout(), hcl)
 	return nil
+}
+
+// uploadStageInputs pushes every local-only input (plan.LocalUploads()) to the
+// per-run inputs prefix before the job is submitted. Returns the first upload
+// error so the caller aborts before registering a job whose stage-in would 404.
+func uploadStageInputs(cmd *cobra.Command, plan *jobstage.Plan) error {
+	uploads := plan.LocalUploads()
+	if len(uploads) == 0 {
+		return nil
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "[abc] staging: uploading %d local input(s) before submit...\n", len(uploads))
+	for _, pair := range uploads {
+		src, dest := pair[0], pair[1]
+		if err := datacmd.LocalPushToS3(cmd, src, dest, 4); err != nil {
+			return fmt.Errorf("data staging: upload %s → %s failed (aborting before submit): %w", src, dest, err)
+		}
+	}
+	return nil
+}
+
+// finalizeStaging waits for the staged job to reach a terminal state, then —
+// only on a clean "complete" — pulls the per-run outputs prefix back to the
+// --out destinations and pushes the run-manifest.json lineage record. On a
+// non-complete/failed terminal state it surfaces the failing phase and does
+// NOT pull back or write the manifest (spec A7/A8). All of this is best-effort:
+// the job has already been submitted, so errors here are reported, not returned
+// (outputs are durable in MinIO and recoverable via `abc data pull`).
+func finalizeStaging(cmd *cobra.Command, spec *jobSpec, plan *jobstage.Plan, runID, scriptPath string) {
+	errw := cmd.ErrOrStderr()
+	region := spec.Region
+	if region == "" {
+		region = "default"
+	}
+	target := runner.WatchTarget{RunID: runID, JobID: spec.Name, Namespace: spec.Namespace}
+
+	fmt.Fprintf(errw, "[abc] staging: waiting for job %s to finish before pulling outputs...\n", spec.Name)
+	res, err := runner.WaitTerminal(cmd.Context(), nomadAddrFromCmd(cmd), nomadTokenFromCmd(cmd), region,
+		target, 0, 0)
+	if err != nil {
+		fmt.Fprintf(errw, "[abc] staging: could not confirm job completion (%v); outputs remain in %s/outputs/ — pull later with `abc data pull`\n", err, plan.RunPrefix)
+		return
+	}
+	if res.Status != "complete" {
+		phase := res.FailedTask
+		if phase == "" {
+			phase = "main"
+		}
+		// Translate the Nomad task name to the staging phase for clarity.
+		switch phase {
+		case "stage-in":
+			phase = "stage-in (prestart)"
+		case "stage-out":
+			phase = "stage-out (poststop)"
+		}
+		msg := res.FailReason
+		if msg != "" {
+			msg = ": " + msg
+		}
+		fmt.Fprintf(errw, "[abc] staging: job did not complete — failing phase: %s%s; not pulling outputs\n", phase, msg)
+		return
+	}
+
+	// Pull the per-run outputs prefix back to the workbench. The stage-out task
+	// uploaded every declared output under RunPrefix/outputs/ preserving its
+	// relative tree (the same tree rooted at the project root), so a single
+	// recursive fetch into the project root reconstructs all --out paths in
+	// place. Pull-back failure after a successful job is non-fatal — outputs are
+	// durable in MinIO (recover with `abc data pull`).
+	outSrc := plan.RunPrefix + "/outputs/"
+	if err := datacmd.LocalFetchFromS3(cmd, outSrc, plan.ProjectRoot, 4); err != nil {
+		fmt.Fprintf(errw, "[abc] staging: pull-back of %s failed (non-fatal; recover with `abc data pull %s`): %v\n", outSrc, outSrc, err)
+		return
+	}
+
+	// Run-manifest (spec step 4 / A8): lineage record written after a
+	// successful pull-back. investigationID is resolved best-effort from the
+	// runs row written by auto-attach.
+	tags := jobRunTags(cmd, scriptPath)
+	manifest := plan.RunManifest(runID, scriptPath, spec.From, stageInvestigationID(runID), tags)
+	b, err := manifest.Marshal()
+	if err != nil {
+		fmt.Fprintf(errw, "[abc] staging: marshal run-manifest failed (non-fatal): %v\n", err)
+		return
+	}
+	manifestURI := plan.RunPrefix + "/run-manifest.json"
+	if err := datacmd.LocalPushBytesToS3(cmd, b, manifestURI); err != nil {
+		fmt.Fprintf(errw, "[abc] staging: writing run-manifest to %s failed (non-fatal): %v\n", manifestURI, err)
+		return
+	}
+	fmt.Fprintf(errw, "[abc] staging: outputs pulled back; run-manifest written to %s\n", manifestURI)
+}
+
+// stageInvestigationID returns the investigation_id recorded for runID by
+// auto-attach, or "" if none / unavailable. Best-effort lineage for the
+// run-manifest; never fatal.
+func stageInvestigationID(runID string) string {
+	if runID == "" {
+		return ""
+	}
+	db, err := state.Open()
+	if err != nil {
+		return ""
+	}
+	var inv sql.NullString
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT investigation_id FROM runs WHERE run_id = ?`, runID).Scan(&inv); err != nil {
+		return ""
+	}
+	if inv.Valid {
+		return inv.String
+	}
+	return ""
 }
 
 // resolveAutoDriver resolves an "auto-container" or "auto-exec" driver hint

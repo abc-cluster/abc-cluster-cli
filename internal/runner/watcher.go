@@ -176,6 +176,102 @@ func ReconcileStuckRuns(ctx context.Context, nomadAddr, token, region string, mi
 	return reconciled
 }
 
+// TerminalResult reports the outcome of WaitTerminal.
+type TerminalResult struct {
+	// Status is the mapped run status: "complete" when the alloc finished
+	// cleanly, "failed" when any task failed or the alloc was lost.
+	Status string
+	// FailedTask is the name of the first task that failed (e.g. "stage-in",
+	// "main", "stage-out") — empty on success. Used to surface the failing
+	// phase to the user.
+	FailedTask string
+	// FailReason is a best-effort human-readable message from the failed task's
+	// events.
+	FailReason string
+}
+
+// WaitTerminal blocks until the given job's allocation reaches a terminal
+// client status, then returns the outcome. It is used by the `abc job run`
+// data-staging seam to decide whether to pull staged outputs back (only on a
+// clean "complete"). It does NOT write to local.db (that is the background
+// Watch goroutine's job) — it only observes.
+//
+// pollInterval/timeout default to DefaultPollInterval / DefaultMaxDuration when
+// non-positive. Returns ctx.Err() if the parent context is cancelled, or a
+// timeout error if the alloc never reaches a terminal state in time.
+func WaitTerminal(ctx context.Context, addr, token, region string, t WatchTarget, pollInterval, timeout time.Duration) (TerminalResult, error) {
+	if addr == "" || t.JobID == "" {
+		return TerminalResult{}, fmt.Errorf("run-watcher: insufficient config (addr/jobID) to wait for terminal status")
+	}
+	if pollInterval <= 0 {
+		pollInterval = DefaultPollInterval
+	}
+	if timeout <= 0 {
+		timeout = DefaultMaxDuration
+	}
+	nc := utils.NewNomadClient(addr, token, region)
+
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if res, ok := terminalOnce(waitCtx, nc, t); ok {
+			return res, nil
+		}
+		select {
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return TerminalResult{}, ctx.Err()
+			}
+			return TerminalResult{}, fmt.Errorf("run-watcher: timed out after %s waiting for job %s", timeout, t.JobID)
+		case <-ticker.C:
+		}
+	}
+}
+
+// terminalOnce checks Nomad once for a terminal alloc. Returns (result, true)
+// when terminal; (_, false) while still running or on a transient error.
+func terminalOnce(ctx context.Context, nc *utils.NomadClient, t WatchTarget) (TerminalResult, bool) {
+	allocs, err := nc.GetJobAllocs(ctx, t.JobID, t.Namespace, false)
+	if err != nil || len(allocs) == 0 {
+		return TerminalResult{}, false
+	}
+	chosen := allocs[0]
+	for _, a := range allocs[1:] {
+		if a.ModifyTime > chosen.ModifyTime {
+			chosen = a
+		}
+	}
+	if !utils.AllocClientTerminalStatus(chosen.ClientStatus) {
+		return TerminalResult{}, false
+	}
+
+	res := TerminalResult{Status: "complete"}
+	switch strings.ToLower(strings.TrimSpace(chosen.ClientStatus)) {
+	case "failed", "lost":
+		res.Status = "failed"
+	}
+	// Identify the failing task (phase) for the user, regardless of the
+	// alloc-level status (a failed task can still leave the alloc "complete"
+	// in edge cases; surface it either way).
+	for name, ts := range chosen.TaskStates {
+		if ts.Failed {
+			res.Status = "failed"
+			res.FailedTask = name
+			for _, ev := range ts.Events {
+				if ev.DisplayMessage != "" {
+					res.FailReason = ev.DisplayMessage
+					break
+				}
+			}
+			break
+		}
+	}
+	return res, true
+}
+
 func run(addr, token, region string, t WatchTarget, cfg Config, logTo io.Writer) {
 	// Independent DB handle so the caller can Close their own.
 	db, err := state.Open()

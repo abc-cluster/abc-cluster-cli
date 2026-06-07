@@ -124,6 +124,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 			HostVolumeSource: spec.StageHostVolumeSource,
 			HostVolumeMount:  spec.StageHostVolumeMount,
 			Env:              spec.StageEnv,
+			SkipTLS:          spec.StageS5cmdSkipTLS,
 		}
 	}
 

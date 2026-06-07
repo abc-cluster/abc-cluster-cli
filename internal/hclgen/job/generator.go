@@ -213,6 +213,10 @@ type StagingSpec struct {
 	// stage tasks — MinIO creds + S3 endpoint + AWS_CA_BUNDLE/--no-verify-ssl
 	// for the private CA. Values supplied by the wiring layer.
 	Env map[string]string
+	// SkipTLS adds --no-verify-ssl to the stage-in/stage-out s5cmd invocations.
+	// Required on abc-seedling where MinIO uses a private CA the stage task
+	// container does not trust (mirrors the pipeline path's useTLS=false).
+	SkipTLS bool
 }
 
 // WaveSpec configures the Wave container build prestart task.
@@ -883,8 +887,15 @@ func appendStageTask(groupBody *hclwrite.Body, name, hook, manifest, manifestFil
 	// relative to it) then runs the manifest from the task dir. Bare $NOMAD_* (no
 	// braces) avoids hclwrite's ${...} escaping and is expanded by /bin/sh.
 	cfgBody.SetAttributeValue("command", cty.StringVal("/bin/sh"))
-	shCmd := fmt.Sprintf(`mkdir -p "%s" && cd "%s" && %s run "$NOMAD_TASK_DIR/local/%s"`,
-		s.DestRoot, s.DestRoot, s.S5cmdPath, manifestFile)
+	// --no-verify-ssl is a global s5cmd flag (must precede the `run` subcommand);
+	// set on private-CA deployments (abc-seedling) where the stage task container
+	// does not trust the MinIO certificate.
+	s5cmdGlobal := ""
+	if s.SkipTLS {
+		s5cmdGlobal = "--no-verify-ssl "
+	}
+	shCmd := fmt.Sprintf(`mkdir -p "%s" && cd "%s" && %s %srun "$NOMAD_TASK_DIR/local/%s"`,
+		s.DestRoot, s.DestRoot, s.S5cmdPath, s5cmdGlobal, manifestFile)
 	cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
 		cty.StringVal("-c"),
 		cty.StringVal(shCmd),

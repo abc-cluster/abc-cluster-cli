@@ -150,9 +150,10 @@ func isMinioClient(binary string) bool {
 	return strings.Contains(lower, "minio") || strings.Contains(lower, "mc version")
 }
 
-// resolveS3Creds reads S3 credentials and endpoint from the active context
+// ResolveS3Creds reads S3 credentials and endpoint from the active context
 // using a universal resolution that works for all cluster types (abc-nodes,
-// abc-seedling, abc-cloud).
+// abc-seedling, abc-cloud). It is the one cred resolver for the CLI; the job
+// data-staging seam (cmd/job) calls it to populate the stage tasks' env.
 //
 // Phase 1.5b: when the context has cred_source set to a broker tier
 // (seedling/v1 etc.), credentials are obtained from the credential broker
@@ -165,7 +166,7 @@ func isMinioClient(binary string) bool {
 //	admin.services.minio.{endpoint,access_key,secret_key}  (preferred)
 //	admin.services.rustfs.{endpoint,access_key,secret_key} (fallback)
 //	admin.abc_nodes.{s3_endpoint,s3_access_key,s3_secret_key} (legacy)
-func resolveS3Creds(ctx abccfg.Context) (endpoint, accessKey, secretKey string) {
+func ResolveS3Creds(ctx abccfg.Context) (endpoint, accessKey, secretKey string) {
 	if credsource.IsBroker(ctx.CredSource) {
 		if creds, err := credsource.ResolveFromContext(context.Background(), ctx); err == nil {
 			ep := strings.TrimRight(strings.TrimSpace(creds.Minio.Endpoint), "/")
@@ -223,7 +224,7 @@ func resolveS3Creds(ctx abccfg.Context) (endpoint, accessKey, secretKey string) 
 //	AWS_SECRET_ACCESS_KEY
 //	AWS_REGION (us-east-1 if not already set)
 func s3Env(ctx abccfg.Context) []string {
-	_, ak, sk := resolveS3Creds(ctx)
+	_, ak, sk := ResolveS3Creds(ctx)
 
 	toSet := map[string]string{
 		"AWS_ACCESS_KEY_ID":     ak,
@@ -261,7 +262,7 @@ func s3Env(ctx abccfg.Context) []string {
 // s5cmdEndpoint returns the S3 endpoint from the active context for use in
 // s5cmd --endpoint-url. Works for all cluster types.
 func s5cmdEndpoint(ctx abccfg.Context) string {
-	ep, _, _ := resolveS3Creds(ctx)
+	ep, _, _ := ResolveS3Creds(ctx)
 	return ep
 }
 
@@ -295,7 +296,7 @@ func s5cmdArgs(ctx abccfg.Context, subcmd string, rest []string, globalFlags ...
 //	defer cleanup()
 //	// use MCLI_CONFIG_DIR=tmpDir mcli <alias>/bucket/...
 func mcliAlias(ctx abccfg.Context) (bin, alias, tmpDir string, cleanup func(), err error) {
-	ep, ak, sk := resolveS3Creds(ctx)
+	ep, ak, sk := ResolveS3Creds(ctx)
 
 	if ep == "" || ak == "" || sk == "" {
 		return "", "", "", func() {}, fmt.Errorf("no S3 endpoint or credentials in active context")
@@ -327,7 +328,7 @@ func mcliAlias(ctx abccfg.Context) (bin, alias, tmpDir string, cleanup func(), e
 // rcloneConf writes a minimal rclone.conf with an S3 backend configured from
 // the active context and returns the file path and a cleanup function.
 func rcloneConf(ctx abccfg.Context) (confPath string, cleanup func(), err error) {
-	ep, ak, sk := resolveS3Creds(ctx)
+	ep, ak, sk := ResolveS3Creds(ctx)
 
 	if ep == "" || ak == "" || sk == "" {
 		return "", func() {}, fmt.Errorf("no S3 endpoint or credentials in active context")
