@@ -69,84 +69,36 @@ Examples:
 		newDeleteCmd(),
 		newRefCmd(),
 		newBackendCmd(),
-		newEnableCmd(),
 	)
 
 	return cmd
 }
 
-// newEnableCmd opts the active context into portable (broker) secret storage by
-// setting secret_source. This is the sanctioned opt-in (config-edit is not) and
-// prints the load-bearing operator-readable trust statement.
-func newEnableCmd() *cobra.Command {
-	var portable bool
-	cmd := &cobra.Command{
-		Use:   "enable",
-		Short: "Opt the active context into portable (broker) secret storage",
-		Long: `Set secret_source on the active context so 'abc secrets' (and the crypt
-password used by 'abc data encrypt/decrypt') store secrets via the cluster broker
-instead of this machine's config — making them portable across machines under the
-same identity.
-
-Local storage is the default and needs no enable; pass --portable to switch.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if !portable {
-				return fmt.Errorf("specify --portable to enable broker storage (local is the default; no enable needed)")
-			}
-			cfg, err := config.Load()
-			if err != nil {
-				return fmt.Errorf("load config: %w", err)
-			}
-			canon := cfg.ResolveContextName(cfg.ActiveContext)
-			if canon == "" {
-				canon = cfg.ActiveContext
-			}
-			ctx, ok := cfg.ContextNamed(canon)
-			if !ok {
-				return fmt.Errorf("no active context — run 'abc auth login' or 'abc auth claim' first")
-			}
-			ctx.SecretSource = "seedling/v1"
-			cfg.Contexts[canon] = ctx
-			if err := cfg.Save(); err != nil {
-				return fmt.Errorf("save config: %w", err)
-			}
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "✓ secret_source set to seedling/v1 (broker) for context %q\n\n", canon)
-			fmt.Fprintln(out, "  ⚠ Secrets in this mode are readable by the cluster operator — do not use")
-			fmt.Fprintln(out, "    for secrets the operator must not see; for operator-blind storage,")
-			fmt.Fprintln(out, "    wait for the envelope (content-encryption) mode.")
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&portable, "portable", false, "store secrets via the cluster broker (portable across machines, operator-readable)")
-	return cmd
-}
-
 // backendFromCmd resolves the secrets backend with this precedence:
 //
-//	explicit --backend flag  >  context secret_source  >  default ("local")
+//	explicit --backend flag  >  context cred_source (broker tier → broker)  >  default ("local")
 //
-// secret_source is the per-context default selector (mirrors cred_source): a
-// value of seedling/v1 (or any */v1 tier) maps to the broker backend, so a user
-// who has opted in doesn't pass --backend on every call. An explicit --backend
-// always wins for that one invocation (e.g. --backend local to force-skip the
-// broker — the same escape hatch as `abc data encrypt --unsafe-local`).
+// There is no separate secret_source field: a context on a broker cred tier
+// (seedling/v1, …) already holds the opaque the broker secrets path needs, so it
+// defaults to the broker backend. An explicit --backend always wins for that one
+// invocation (e.g. --backend local to force-skip the broker — the same escape
+// hatch as `abc data encrypt --unsafe-local`).
 func backendFromCmd(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("backend") {
 		b, _ := cmd.Flags().GetString("backend")
 		return b
 	}
-	if b := backendFromSecretSource(); b != "" {
+	if b := backendFromCredSource(); b != "" {
 		return b
 	}
 	b, _ := cmd.Flags().GetString("backend")
 	return b
 }
 
-// backendFromSecretSource maps the active context's secret_source to a backend
-// name, or "" when it's unset/local (caller falls back to the flag default).
-func backendFromSecretSource() string {
+// backendFromCredSource maps the active context's cred_source to a secrets
+// backend: a broker tier → "broker"; unset/local → "" (caller falls back to the
+// flag default "local").
+func backendFromCredSource() string {
 	cfg, err := config.Load()
 	if err != nil {
 		return ""
@@ -155,12 +107,11 @@ func backendFromSecretSource() string {
 	if !ok {
 		return ""
 	}
-	switch ctx.SecretSource {
+	switch ctx.CredSource {
 	case "", "local":
 		return ""
 	default:
-		// seedling/v1, grove/v1, cloud/v1, … all resolve to the broker backend;
-		// the tier/version distinguishes the endpoint, not the CLI dispatch.
+		// seedling/v1, grove/v1, cloud/v1, … all resolve to the broker backend.
 		return "broker"
 	}
 }
@@ -271,11 +222,11 @@ func runListSecrets(cmd *cobra.Command, _ []string) error {
 	backend := backendFromCmd(cmd)
 
 	// Header: make the authoritative store visible (which backend, and the
-	// secret_source that selected it when no --backend was given).
+	// cred_source that selected it when no --backend was given).
 	hdr := "Backend: " + backend
 	if !cmd.Flags().Changed("backend") {
-		if ss := activeSecretSource(); ss != "" && ss != "local" {
-			hdr += "  (secret_source: " + ss + ")"
+		if cs := activeCredSource(); cs != "" && cs != "local" {
+			hdr += "  (cred_source: " + cs + ")"
 		}
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), hdr)
@@ -300,8 +251,8 @@ func runListSecrets(cmd *cobra.Command, _ []string) error {
 	}
 }
 
-// activeSecretSource returns the active context's secret_source (or "").
-func activeSecretSource() string {
+// activeCredSource returns the active context's cred_source (or "").
+func activeCredSource() string {
 	cfg, err := config.Load()
 	if err != nil {
 		return ""
@@ -310,7 +261,7 @@ func activeSecretSource() string {
 	if !ok {
 		return ""
 	}
-	return ctx.SecretSource
+	return ctx.CredSource
 }
 
 // ── delete ────────────────────────────────────────────────────────────────────

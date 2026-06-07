@@ -7,7 +7,7 @@ package secrets
 // writes/reads a Nomad Variable on the user's behalf, so an ordinary user with
 // no ACL can store + fetch their own secret portably (same identity, any
 // machine). Selected by `--backend broker` or, by default, by a context whose
-// secret_source is a `*/v1` tier.
+// cred_source is a `*/v1` broker tier.
 //
 // Spec: specs/active/abc-user-secret-portability.md
 

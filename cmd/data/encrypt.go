@@ -87,9 +87,9 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 
 	passwordProvided := opts.cryptPassword != ""
 
-	// secret_source: broker — store/fetch the crypt password portably via the
+	// cred_source broker tier — store/fetch the crypt password portably via the
 	// broker (managed), unless --unsafe-local forces local storage for this run.
-	brokerMode := !opts.unsafeLocal && isBrokerSecretSource(cfg)
+	brokerMode := !opts.unsafeLocal && isBrokerCredSource(cfg)
 	if brokerMode {
 		pw, salt, err := resolveCryptViaBroker(cmd, cfg, opts.cryptPassword, opts.cryptSalt)
 		if err != nil {
@@ -168,7 +168,7 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 			} else {
 				return inputError(
 					"managed encryption is not enabled for this context.\n" +
-						"  - portable (broker): run 'abc secrets enable --portable', then --crypt-password once\n" +
+						"  - portable (broker): use a broker-tier context (cred_source: seedling/v1), then --crypt-password once to store it\n" +
 						"  - local: pass --crypt-password <password> (key not managed — losing it loses your data)")
 			}
 		}

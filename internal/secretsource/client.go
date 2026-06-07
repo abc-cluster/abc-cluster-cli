@@ -1,6 +1,6 @@
 // Package secretsource is the broker CLIENT for the user-secret store (the
 // `broker` / `seedling/v1` backend of `abc secrets`, and the store `abc data
-// encrypt/decrypt` use for the crypt password when secret_source is set).
+// encrypt/decrypt` use for the crypt password on a broker cred tier).
 //
 // It is a *client*, not a second secrets system: `abc secrets` still owns the
 // command surface + the local/nomad/vault backends. This package only adds the
@@ -50,7 +50,7 @@ type Client struct {
 func NewClient(ctx abccfg.Context) (*Client, error) {
 	opaque := strings.TrimSpace(ctx.AccessToken)
 	if opaque == "" {
-		return nil, fmt.Errorf("secret broker: context access_token (opaque) is empty — claim a slot or set secret_source: local")
+		return nil, fmt.Errorf("secret broker: context access_token (opaque) is empty — claim a slot or use cred_source: local")
 	}
 	base, err := brokerBaseURL(ctx)
 	if err != nil {

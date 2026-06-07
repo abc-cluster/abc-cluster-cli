@@ -2,8 +2,10 @@ package data
 
 // crypt_secret_source.go — routes the crypt password/salt used by
 // `abc data encrypt/decrypt` through the secret broker when the active context's
-// secret_source is a broker tier (seedling/v1), so the password is portable
-// across machines. `--unsafe-local` forces local-config storage for a run.
+// cred_source is a broker tier (seedling/v1), so the password is portable across
+// machines. `--unsafe-local` forces local-config storage for a run. (There is no
+// separate secret_source: a broker cred tier already holds the opaque the broker
+// secrets path needs.)
 //
 // Spec: specs/active/abc-user-secret-portability.md
 
@@ -22,14 +24,15 @@ const (
 	cryptSaltKey     = "crypt-salt"
 )
 
-// isBrokerSecretSource reports whether the active context routes user secrets
-// through the broker (secret_source = a */v1 tier). Empty/"local" → false.
-func isBrokerSecretSource(cfg *abccfg.Config) bool {
+// isBrokerCredSource reports whether the active context is on a broker cred tier
+// (cred_source = a */v1 tier), which is what routes user secrets — including the
+// crypt password — through the broker. Empty/"local" → false.
+func isBrokerCredSource(cfg *abccfg.Config) bool {
 	ctx, ok := cfg.ContextNamed(cfg.ResolveContextName(cfg.ActiveContext))
 	if !ok {
 		return false
 	}
-	switch ctx.SecretSource {
+	switch ctx.CredSource {
 	case "", "local":
 		return false
 	default:

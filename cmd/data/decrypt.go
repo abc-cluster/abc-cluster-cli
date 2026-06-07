@@ -81,9 +81,9 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 
 	passwordProvided := opts.cryptPassword != ""
 
-	// secret_source: broker — fetch (or store, if a password is provided) the
+	// cred_source broker tier — fetch (or store, if a password is provided) the
 	// crypt password via the broker, unless --unsafe-local forces local.
-	brokerMode := !opts.unsafeLocal && isBrokerSecretSource(cfg)
+	brokerMode := !opts.unsafeLocal && isBrokerCredSource(cfg)
 	if brokerMode {
 		pw, salt, err := resolveCryptViaBroker(cmd, cfg, opts.cryptPassword, opts.cryptSalt)
 		if err != nil {
@@ -162,7 +162,7 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 			} else {
 				return fmt.Errorf(
 					"managed decryption is not enabled for this context.\n" +
-						"  - portable (broker): run 'abc secrets enable --portable' (the password set at encrypt time resolves here)\n" +
+						"  - portable (broker): use a broker-tier context (cred_source: seedling/v1); the password set at encrypt time resolves here\n" +
 						"  - local: pass --crypt-password <password>")
 			}
 		}
