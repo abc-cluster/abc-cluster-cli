@@ -1,6 +1,6 @@
 # `abc report`
 
-Researcher-productivity summary read entirely from `~/.abc/local.db`. No
+Researcher-productivity summary read entirely from `~/.abc/db/local.db`. No
 network calls — `abc report` is a seed-tier-native command.
 
 ## Usage
@@ -177,7 +177,7 @@ two lenses (`abc report` for showback, `abc accounting` for budget caps).
 
 Lists one row per submitted job/pipeline with cost + emissions derived
 from the stored resources × the rate card. Jobs sort first (most-recent
-within), then pipelines. Reads `~/.abc/local.db`; re-probes Nomad for
+within), then pipelines. Reads `~/.abc/db/local.db`; re-probes Nomad for
 runs whose completion watcher died (the CLI exits seconds after
 submission, but jobs take minutes) unless `--no-reconcile` is passed.
 

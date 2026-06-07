@@ -91,7 +91,7 @@ the Nomad job is deregistered. The Caddy admin API route is removed in both case
 
 ### `abc workbench status`
 
-Show session details from the local database (`~/.abc/local.db`).
+Show session details from the local database (`~/.abc/db/local.db`).
 
 ```bash
 abc workbench status

@@ -28,7 +28,7 @@ This document describes every command available in the `abc` CLI.
   - [secrets delete](#secrets-delete-key)
   - [secrets ref](#secrets-ref-key)
   - [secrets backend setup](#secrets-backend-setup)
-- [submit](#submit)
+- [submit (removed)](#submit-removed)
 - [pipeline run](#pipeline-run)
 - [pipeline lifecycle](#pipeline-lifecycle)
   - [pipeline delete](#pipeline-delete-name)
@@ -75,7 +75,7 @@ This document describes every command available in the `abc` CLI.
   - [accounting list](#accounting-list)
   - [accounting show](#accounting-show)
   - [accounting set](#accounting-set)
-- [compliance](#compliance)
+- [report compliance](#report-compliance)
 - [admin services](#admin-services)
 - [status (alias)](#status-alias)
 
@@ -297,7 +297,7 @@ secrets:                          # encrypted credentials, managed via abc secre
 ```
 
 The `admin.services.nomad` block is automatically populated when you provision or
-add a node via `abc infra compute add`. Once set, `abc job`, `abc pipeline`, and `abc submit`
+add a node via `abc infra compute add`. Once set, `abc job`, `abc pipeline`, and `abc module`
 will use it as defaults without requiring the `--nomad-addr` / `--nomad-token` flags.
 
 `contexts.<name>.region` (and `defaults.region`) are **not** sent as Nomad’s `region` query parameter.
@@ -613,95 +613,20 @@ abc secrets backend setup --backend nomad
 
 ---
 
-## `submit`
+## `submit` (removed)
 
-Unified entry point. Auto-detects whether `<target>` is a Nextflow pipeline, an nf-core module,
-or a local batch script and dispatches to the appropriate underlying command.
-
-```
-abc submit <target> [flags]
-```
-
-### Detection order
-
-| Priority | Condition | Dispatches to |
-|----------|-----------|---------------|
-| 1 | `--type pipeline\|job\|module` | forced |
-| 2 | `<target>` is a local file path | `job run` |
-| 3 | `<target>` starts with `http://` or `https://` | `pipeline run` |
-| 4 | `<target>` has ≥ 3 path segments (e.g. `nf-core/modules/bwa/mem`) | `module run` |
-| 5 | `<target>` matches `owner/repo` (one `/`) | `pipeline run` |
-| 6 | `<target>` matches a saved pipeline name in Nomad Variables | `pipeline run` |
-| — | no match | error — use `--type` |
-
-> **Conda / pixi meta:** Add `#ABC --conda=<spec>` or `#ABC --pixi` for Nomad meta labels. **`abc job run`** also accepts `--conda`, `--runtime`, `--from-file`, and **`--task-tmp`** (see [Software stack](#software-stack-runtime-and-from-file) and [Task workspace temp](#task-workspace-temp) under `job run`). `abc submit` does not accept those flags for batch scripts; put them in the preamble or use `abc job run` directly.
-
-### Flags
-
-**Data / params**
-
-| Flag | Description |
-|------|-------------|
-| `--input <path>` | Input file/samplesheet/directory (→ `params.input`) |
-| `--output <path>` | Output directory (→ `params.outdir`; nf-core convention) |
-| `--param key=val` | Extra parameter (repeatable; merged into params file) |
-
-**Mode**
-
-| Flag | Description |
-|------|-------------|
-| `--type pipeline\|job\|module` | Force dispatch mode; bypass auto-detection |
-
-**Pipeline flags** *(active when mode = pipeline)*
-
-| Flag | Description |
-|------|-------------|
-| `--revision <string>` | Git branch/tag/SHA |
-| `--profile <string>` | Nextflow profile(s), comma-separated |
-| `--config <path>` | Extra Nextflow config file to merge |
-| `--work-dir <path>` | Nextflow work directory |
-| `--nf-version <string>` | Nextflow Docker image tag |
-
-**Job flags** *(active when mode = job)*
-
-| Flag | Description |
-|------|-------------|
-| `--cores <int>` | CPU cores |
-| `--mem <size>` | Memory, e.g. `4G`, `512M` |
-| `--time <HH:MM:SS>` | Walltime limit |
-
-**Shared**
-
-| Flag | Description |
-|------|-------------|
-| `--name <string>` | Override Nomad job name |
-| `--namespace <string>` | Nomad namespace |
-| `--datacenter <string>` | Nomad datacenter (repeatable) |
-| `--wait` | Block until job completes |
-| `--logs` | Stream logs after submit |
-| `--dry-run` | Print generated HCL without submitting |
-
-### Examples
-
-```bash
-# Run a saved pipeline with a samplesheet
-abc submit rnaseq --input samplesheet.csv
-
-# Run an nf-core pipeline directly
-abc submit nf-core/rnaseq --input samplesheet.csv --revision 3.14 --output /results
-
-# Run an nf-core module
-abc submit nf-core/modules/bwa/mem --input samplesheet.csv
-
-# Submit a local script with input data
-abc submit align.sh --input /data/reads
-
-# Force pipeline mode and stream logs
-abc submit my-analysis --type pipeline --wait --logs
-
-# Dry-run — print generated HCL without submitting
-abc submit nf-core/rnaseq --dry-run
-```
+> **Removed.** The unified `abc submit` auto-dispatch entry point is no longer
+> a command. Call the underlying verb directly:
+>
+> | Target | Use |
+> |--------|-----|
+> | Nextflow pipeline (saved name or `owner/repo` / URL) | [`abc pipeline run`](#pipeline-run) |
+> | nf-core module (e.g. `nf-core/modules/bwa/mem`) | [`abc module run`](#module-run) |
+> | Local batch script | [`abc job run`](#job-run) |
+>
+> Map the old flags: `--input` → `--param input=…` / `--params-file`,
+> `--output` → `--param outdir=…`, and `--cores`/`--mem`/`--time` are `#ABC`
+> preamble directives for `abc job run`.
 
 ---
 
@@ -720,19 +645,25 @@ abc pipeline run <name-or-url> [flags]
 | Flag                  | Description                                                         | Default |
 |-----------------------|---------------------------------------------------------------------|---------|
 | `--params-file`       | YAML or JSON file with Nextflow pipeline parameters                 |         |
+| `--param`             | Inline parameter override `key=value` (repeatable; merged on top of `--params-file`) | |
 | `--revision`          | Pipeline revision (branch, tag, or commit SHA)                      |         |
 | `--profile`           | Nextflow config profile(s), comma-separated                         |         |
 | `--config`            | Extra Nextflow config file to merge into the run                    |         |
-| `--work-dir`          | Shared host volume path for Nextflow work directory                 | `/work/nextflow-work` |
-| `--datacenter`        | Nomad datacenter (repeatable)                                       | `dc1`   |
-| `--nf-version`        | Nextflow Docker image tag                                           | `25.10.4` |
-| `--nf-plugin-version` | nf-nomad plugin version                                             | `0.4.0-edge3` |
-| `--cpu`               | Head job CPU in MHz                                                 | `1000`  |
-| `--memory`            | Head job memory in MB                                               | `2048`  |
+| `--plugin`            | Pin a Nextflow plugin to a version, `id@version` (repeatable), e.g. `--plugin nf-nomad@0.4.0-edge8`. Plugins otherwise resolve to the newest published release. | |
+| `--project`           | Override active project (slug or ID); `--no-project` disables       |         |
+| `--investigation`     | Override active investigation (slug or ID); `--no-investigation` disables | |
+| `--head-pool`         | Nomad node-pool for the pipeline head (defaults to context's `head_pool`, typically `platform`) | |
+| `--worker-pool`       | Nomad node-pool for nf-nomad workers (defaults to context's `worker_pool`, typically `compute`) | |
+| `--wave`              | Enable Wave container augmentation (routes to `abc-wave` if healthy, else falls back to `wave.seqera.io`) | |
+| `--fusion`            | Enable Fusion filesystem alongside Wave (requires `--wave` and an `s3://` work dir) | |
+| `--scratch-gb`        | Scratch storage reservation (GB) for accounting/emissions reporting |         |
 | `--name`              | Override Nomad job name                                             | `nextflow-head` |
+| `--resume`            | Append `-resume` to the `nextflow run` command (checkpoint restart) |         |
 | `--wait`              | Block until the head job completes                                  |         |
 | `--logs`              | Stream head job logs after submit                                   |         |
 | `--dry-run`           | Print generated HCL without submitting                              |         |
+
+> **`--nf-plugin-version` was removed** — pin the plugin with `--plugin nf-nomad@<v>` instead (plugins otherwise default to the newest published release via the bare id). The legacy `--nf-version`, `--datacenter`, `--work-dir`, `--cpu`, and `--memory` flags still work but are now hidden from `--help`; prefer node-pool placement (`--head-pool` / `--worker-pool`) and auto-derived work dirs. Run `abc pipeline run --help` for the full current flag set.
 
 ### Secret params (`secret://name`)
 
@@ -762,10 +693,11 @@ abc pipeline run rnaseq --params-file params.yaml
 # Ad-hoc run from GitHub
 abc pipeline run https://github.com/nf-core/rnaseq --revision 3.14
 
-# Override resources for a large run
+# Pin a plugin version and choose node pools for a large run
 abc pipeline run nf-core/rnaseq \
   --params-file params.yaml \
-  --cpu 2000 --memory 8192 \
+  --plugin nf-nomad@0.4.0-edge8 \
+  --worker-pool compute \
   --profile test,docker \
   --wait
 
@@ -818,13 +750,13 @@ List all saved pipelines.
 abc pipeline list
 ```
 
-### `pipeline info <name>`
+### `pipeline show <name>`
 
-Show full details of a saved pipeline, including all stored defaults.
+Show full details of a saved pipeline, including all stored defaults. (`info` is kept as an alias.)
 
 ```bash
-abc pipeline info rnaseq
-abc pipeline info rnaseq --json
+abc pipeline show rnaseq
+abc pipeline show rnaseq --json
 ```
 
 ### `pipeline update <name>`
@@ -915,25 +847,25 @@ abc module run <nf-core/module> [flags]
 | Flag                    | Description                                                              | Default |
 |-------------------------|--------------------------------------------------------------------------|---------|
 | `--name`                | Override Nomad job name                                                   | `module-<slug>` |
-| `--profile`             | Nextflow profile(s) for the generated driver run                          | `nomad,test` |
-| `--work-dir`            | Shared host volume path                                                   | `/work/nextflow-work` |
-| `--output-prefix`       | Output prefix for generated module runs                                   | `s3://user-output/nextflow` |
-| `--params-file`         | Optional params YAML to pass to nf-pipeline-gen                           |         |
-| `--config-file`         | Optional module.config for nf-pipeline-gen                                |         |
-| `--module-revision`     | Override module revision recorded in generated driver                     |         |
-| `--pipeline-gen-repo`   | GitHub repository for nf-pipeline-gen release assets (`owner/repo`)       | `abc-cluster/nf-pipeline-gen` |
-| `--pipeline-gen-version`| nf-pipeline-gen release version                                           | `latest` |
-| `--pipeline-gen-no-run-manifest` | Pass `--no-run-manifest` to nf-pipeline-gen (omit `run-manifest.json` in the generated driver) | (unset) |
-| `--github-token`        | GitHub token for release API/download access (or `GITHUB_TOKEN`/`GH_TOKEN`) |       |
-| `--nf-version`          | Nextflow Docker image tag                                                 | `25.10.4` |
-| `--nf-plugin-version`   | nf-nomad plugin version for execution config                              | `0.4.0-edge3` |
-| `--cpu`                 | Main Nextflow task CPU in MHz                                             | `1500`  |
-| `--memory`              | Main Nextflow task memory in MB                                           | `4096`  |
-| `--datacenter`          | Nomad datacenter(s) (repeatable)                                          | `dc1`   |
-| `--minio-endpoint`      | Optional MinIO endpoint for generated driver execution                    |         |
+| `--profile`             | Nextflow profile(s) for the generated driver run (auto-includes `test` when `--test` is set) | `test` |
+| `--test`                | Run the module's bundled `tests/main.nf.test` fixtures; forces `test` profile and ignores `--params-file` inputs |  |
+| `--samplesheet`         | Local CSV samplesheet; staged into prestart and validated against the module's `meta.yml`. Scaffold one with `abc module samplesheet emit`. |  |
+| `--params-file`         | Optional `params.yml` to pass to nf-pipeline-gen (default: auto-generated from `meta.yml`) |         |
+| `--config-file`         | Optional `module.config` for nf-pipeline-gen                              |         |
+| `--driver`              | Nomad task driver for prestart + run tasks (`docker` or `containerd-driver`) | `docker` |
+| `--host-volume`         | Name of the Nomad host volume to mount as the shared work dir            | `scratch` |
+| `--project`             | Override active project (slug or ID); `--no-project` disables             |         |
+| `--investigation`       | Override active investigation (slug or ID); `--no-investigation` disables |         |
+| `--scratch-gb`          | Scratch storage reservation (GB) for accounting/emissions reporting       |         |
+| `--s3-access-key` / `--s3-secret-key` | S3 credentials for the generated driver (fall back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) | |
+| `--pipeline-gen-url-base` | Direct URL base for the nf-pipeline-gen JAR (skips GitHub)              |         |
+| `--pipeline-gen-jar-url` | Complete JAR URL (overrides `--pipeline-gen-url-base`); auto-resolved from the context's `abc admin tools push nf-pipeline-gen` artifact when unset | |
+| `--nf-plugin-zip-url`   | Optional URL to a Nextflow plugin `.zip` fetched before launching nextflow (e.g. a patched nf-nomad) | |
 | `--wait`                | Block until the module run job completes                                  |         |
 | `--logs`                | Stream module run logs after submit                                       |         |
 | `--dry-run`             | Print generated HCL without submitting                                    |         |
+
+> The default profile is now `test` (was `nomad,test`). `--minio-endpoint` was removed. The legacy `--work-dir`, `--output-prefix`, `--module-revision`, `--pipeline-gen-repo`, `--pipeline-gen-version`, `--nf-version`, `--nf-plugin-version`, `--cpu`, `--memory`, `--datacenter`, and `--github-token` flags still work but are now hidden from `--help`. Run `abc module run --help` for the full current set.
 
 ### Examples
 
@@ -941,13 +873,12 @@ abc module run <nf-core/module> [flags]
 # Run the bwa/mem module
 abc module run nf-core/modules/bwa/mem
 
-# Run with a test profile and wait for completion
-abc module run nf-core/modules/fastqc --profile nomad,test --wait
+# Run the module's bundled tests and wait for completion
+abc module run nf-core/modules/fastqc --test --wait
 
-# Use a specific nf-pipeline-gen version
+# Run with a local samplesheet (validated against the module's meta.yml)
 abc module run nf-core/modules/samtools/sort \
-  --pipeline-gen-version v0.3.0 \
-  --output-prefix s3://my-bucket/results
+  --samplesheet ./samplesheet.csv
 
 # Dry-run to inspect generated HCL
 abc module run nf-core/modules/bwa/mem --dry-run
@@ -2411,7 +2342,7 @@ abc --cloud cluster decommission my-cluster --yes
 
 ## `report`
 
-`abc report` is the **canonical showback command**. It reads `~/.abc/local.db` only — no network calls, no controller dependency — and prints the closed-loop summary: investigations completed, pipeline runs, total compute, spend, carbon emissions, and estimated researcher-time saved.
+`abc report` is the **canonical showback command**. It reads `~/.abc/db/local.db` only — no network calls, no controller dependency — and prints the closed-loop summary: investigations completed, pipeline runs, total compute, spend, carbon emissions, and estimated researcher-time saved.
 
 The same rate-card resolver feeds `abc accounting` (write-side caps) and `abc report` (read-side showback), so spend and emissions agree to within float epsilon for the same window.
 
@@ -2544,13 +2475,13 @@ The commands are:
 abc accounting {list, set, show}
 ```
 
-The `budget` subgroup requires `abc-controller-svc` and `abc-policy-svc`. At seedling (no controller, no policy gate) the commands reject with a clear capability message:
+The `accounting` commands require `abc-controller-svc` and `abc-policy-svc`. At seedling (no controller, no policy gate) the commands reject with a clear capability message:
 
 ```
 error: abc accounting requires abc-controller-svc; not available in this context.
 ```
 
-Top-level alias: **`cost`** (e.g. `abc cost budget list`).
+Top-level alias: **`cost`** (e.g. `abc cost list`).
 
 ### `accounting list`
 
@@ -2596,17 +2527,17 @@ When `current_spend / monthly` reaches `alert-at`, an alert is emitted; when it 
 
 ---
 
-## `compliance`
+## `report compliance`
 
-Fetch **compliance** posture from the ABC API (`GET /v1/compliance`). Uses global **`--url`**, **`--access-token`**, and optional **`--workspace`**.
+Fetch **compliance** posture from the ABC API (`GET /v1/compliance`). Uses global **`--url`**, **`--access-token`**, and optional **`--workspace`**. (Formerly the top-level `abc compliance`; folded under `abc report` in the verb-tree restructure.)
 
 | Flag      | Description                          |
 |-----------|--------------------------------------|
 | `--scope` | Optional scope filter (`scope` query) |
 
 ```bash
-abc compliance --workspace ws-123
-abc compliance --scope workspace
+abc report compliance --workspace ws-123
+abc report compliance --scope workspace
 ```
 
 ---

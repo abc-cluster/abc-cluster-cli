@@ -427,13 +427,18 @@ Using `:?` in parameter expansion causes the script to exit immediately with a h
 ```bash
 abc job list                   # list recent jobs in the current namespace
 abc job show <id>              # detailed status and task breakdown
+abc job inspect <id>          # show the shell script the job ran (--def for full Nomad JSON)
 abc job stop <id>              # cancel a running job
-abc job logs <id>              # tail allocation logs (stdout + stderr)
+abc job logs <id>              # tail allocation logs (live); --source=loki for historical/GC'd jobs
 abc job status <id>            # short status summary
 abc job dispatch <id>          # dispatch a parameterised job
 abc job translate <script.sh>  # print generated Nomad HCL without submitting
 abc job trace <id>             # trace Nomad allocation events
 ```
+
+> The `<id>` positional on `show`, `inspect`, `logs`, `status`, and `stop`
+> also accepts a full Nomad Web UI URL pasted from the browser —
+> `--namespace`/`--alloc`/`--task` are seeded from the URL automatically.
 
 ---
 

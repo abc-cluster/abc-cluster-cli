@@ -1,13 +1,18 @@
-# Local state — `~/.abc/local.db`
+# Local state — `~/.abc/db/local.db`
 
 The abc CLI keeps local state in a single SQLite database at
-`~/.abc/local.db`. The driver is pure Go (`modernc.org/sqlite`), so the
+`~/.abc/db/local.db`. The driver is pure Go (`modernc.org/sqlite`), so the
 binary remains CGO-free.
 
-> **Renamed 2026-05-08:** the file was previously `~/.abc/state.db`. On
-> first invocation post-upgrade, the CLI auto-renames the legacy file +
-> WAL/SHM sidecars + any `state.db.backup-pre-*` files in place, prints
-> a one-line stderr note, and continues. No manual action required.
+> **Moved 2026-06-02:** the file now lives at `~/.abc/db/local.db` (under a
+> `db/` subdirectory) so the home directory stays tidy. On first invocation
+> post-upgrade, the CLI moves a flat `~/.abc/local.db` (plus its WAL/SHM
+> sidecars and `local.db.backup-pre-*` files) into `~/.abc/db/` in place.
+>
+> **Renamed 2026-05-08:** the file was previously `~/.abc/state.db`. The CLI
+> still auto-renames a legacy `state.db` (plus sidecars/backups) to `local.db`
+> before the move above. Both migrations run automatically on first invocation
+> post-upgrade, print a one-line stderr note, and require no manual action.
 
 ## Tables
 
@@ -51,7 +56,7 @@ On every `state.Open()` (which fires on every DB-backed command) the CLI:
    open with `ErrSchemaAhead` and a clear "upgrade `abc`" message. Prevents
    an old binary from operating against a future schema.
 3. **Binary ahead of DB** (embedded migrations not yet applied) — write a
-   pre-migration backup to `~/.abc/local.db.backup-pre-<version>-<unix>`,
+   pre-migration backup to `~/.abc/db/local.db.backup-pre-<version>-<unix>`,
    then apply each pending migration in its own IMMEDIATE transaction.
    The most recent 5 backups are retained automatically; older ones pruned.
 4. **Equal** — no-op.
@@ -89,15 +94,15 @@ DB stays at the pre-migration version, and the error message points at
 the backup file written before the attempt:
 
 ```
-~/.abc/local.db.backup-pre-NNNN_<name>-<unix>
+~/.abc/db/local.db.backup-pre-NNNN_<name>-<unix>
 ```
 
-To restore: stop all `abc` processes, replace `~/.abc/local.db` with the
+To restore: stop all `abc` processes, replace `~/.abc/db/local.db` with the
 backup, then re-run `abc localdb status` to confirm the schema version.
 
 ## Backup
 
-`~/.abc/local.db` is a single file. Copy it (with the `-wal` and `-shm`
+`~/.abc/db/local.db` is a single file. Copy it (with the `-wal` and `-shm`
 sidecars while idle) to back up. The CLI never writes anything cluster-side
 that depends on this file. Pre-migration backups (above) are an automatic
 form of this for the migration boundary specifically.

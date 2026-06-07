@@ -79,7 +79,7 @@ abc report runs
 abc report runs --full
 ```
 
-`abc report` reads `~/.abc/local.db` only — no network calls — and prints a
+`abc report` reads `~/.abc/db/local.db` only — no network calls — and prints a
 year-to-date personal summary: investigations explored, runs (succeeded vs.
 retried), compute consumed, and the period's **spend + emissions** estimate.
 `abc report runs` lists each run individually; job costs are exact, pipeline

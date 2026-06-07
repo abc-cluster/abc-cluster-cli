@@ -77,7 +77,7 @@ Outputs a structured table of: available datacenters, node drivers
 
 High-level cluster reporting commands. **`abc report`** is the read-side
 showback (spend, emissions, hours saved) and works at every tier from
-`~/.abc/local.db`. **`abc accounting`** is the write-side budget surface
+`~/.abc/db/local.db`. **`abc accounting`** is the write-side budget surface
 and requires grove+/cloud (gated by the capability layer):
 
 ```bash
@@ -85,7 +85,7 @@ abc report                                # closed-loop showback (all tiers)
 abc --cloud accounting list        # cloud namespace cap list
 abc --cloud accounting set \
     --namespace=genpath --monthly=50000   # set a cap
-abc compliance --cloud                    # compliance status summary
+abc report compliance --cloud             # compliance status summary
 ```
 
 `--all-contexts` (cross-context aggregation) on `abc report` is gated by

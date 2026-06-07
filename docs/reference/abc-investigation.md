@@ -2,7 +2,7 @@
 
 A research-oriented record primitive: every investigation is a
 branchable, mergeable, annotateable thread of attempts. Backed by
-`~/.abc/local.db` (see `docs/reference/local-state.md`).
+`~/.abc/db/local.db` (see `docs/reference/local-state.md`).
 
 > **Relocated 2026-05-08:** the canonical command is now
 > `abc project investigation ...` (with `abc project inv ...` as a

@@ -17,7 +17,7 @@ status reviews, and exporting for methods sections.
 > calling → resistance profiling → manuscript draft.
 
 > **Cluster:** None required for this tutorial — every command writes to the
-> local `~/.abc/local.db`. Pipeline submissions in this tutorial are
+> local `~/.abc/db/local.db`. Pipeline submissions in this tutorial are
 > illustrative; replace `abc pipeline run …` with `abc pipeline run … --no-submit`
 > if you want to follow along without a live cluster.
 
