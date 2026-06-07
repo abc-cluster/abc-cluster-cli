@@ -38,6 +38,7 @@ orphans. If the health check times out, the job is left running for diagnosis
 	}
 	cmd.Flags().StringP("file", "f", appgen.DefaultSpecFile, "Path to the app descriptor")
 	cmd.Flags().String("image", "", "Override the image in abc-app.yaml without editing the file")
+	cmd.Flags().String("exposure", "", "Network reach: internal|public|both (overrides abc-app.yaml; default public)")
 	cmd.Flags().Bool("dry-run", false, "Print the templated Nomad HCL and exit; submit nothing")
 	cmd.Flags().Bool("no-wait", false, "Return after submission without polling health")
 	return cmd
@@ -49,6 +50,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 
 	file, _ := cmd.Flags().GetString("file")
 	imageOverride, _ := cmd.Flags().GetString("image")
+	exposureOverride, _ := cmd.Flags().GetString("exposure")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	noWait, _ := cmd.Flags().GetBool("no-wait")
 
@@ -59,6 +61,9 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 	if strings.TrimSpace(imageOverride) != "" {
 		spec.Image = strings.TrimSpace(imageOverride)
+	}
+	if strings.TrimSpace(exposureOverride) != "" {
+		spec.Exposure = strings.TrimSpace(exposureOverride)
 	}
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("invalid %s: %w", file, err)
@@ -133,6 +138,14 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 
 	fmt.Fprintf(out, "Submitted %s\n", spec.JobName())
 	fmt.Fprintf(out, "  URL: %s\n", spec.URL())
+	if spec.NormExposure() != appgen.ExposurePublic {
+		// Internal apps are off the public edge — reachable only via Tailscale +
+		// campus LAN, and the apps.internal host resolves only where the operator
+		// has wired internal DNS. Surface that so the user isn't left guessing.
+		fmt.Fprintf(out, "  exposure: %s — institution-only (not on the public edge).\n", spec.NormExposure())
+		fmt.Fprintf(out, "    Internal host: %s (needs internal DNS: Tailscale MagicDNS / campus resolver).\n", spec.InternalHost())
+		fmt.Fprintln(out, "    See abc-deployments .../docs/internal-app-exposure.md for resolution + Tailscale Serve.")
+	}
 
 	if noWait {
 		fmt.Fprintln(out, "  (--no-wait: not polling health)")

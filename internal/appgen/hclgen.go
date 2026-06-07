@@ -73,6 +73,7 @@ func Generate(s *Spec, p JobParams) string {
 	metaBody.SetAttributeValue("abc_framework", cty.StringVal(s.NormFramework()))
 	metaBody.SetAttributeValue("abc_health", cty.StringVal(s.Health))
 	metaBody.SetAttributeValue("abc_url", cty.StringVal(s.URL()))
+	metaBody.SetAttributeValue("abc_exposure", cty.StringVal(s.NormExposure()))
 	metaBody.SetAttributeValue("abc_cpu", cty.StringVal(fmt.Sprintf("%d", s.Resources.CPU)))
 	metaBody.SetAttributeValue("abc_memory", cty.StringVal(fmt.Sprintf("%d", s.Resources.Memory)))
 	if b := bucketList(s.Data); b != "" {
@@ -115,9 +116,18 @@ func Generate(s *Spec, p JobParams) string {
 
 	// Traefik routing tags. Phase 1: Host router rule + loadbalancer server
 	// port only. No stripprefix (root), no middleware (auth is at Caddy edge).
+	//
+	// The Host rule is driven by `exposure` (see Spec.Hosts): public → the public
+	// edge wildcard host; internal → an off-edge host the public Caddy does not
+	// proxy (Tailscale + campus LAN only); both → both, ORed.
+	hostParts := make([]string, 0, len(s.Hosts()))
+	for _, h := range s.Hosts() {
+		hostParts = append(hostParts, fmt.Sprintf("Host(`%s`)", h))
+	}
+	hostRule := strings.Join(hostParts, " || ")
 	tags := []cty.Value{
 		cty.StringVal("traefik.enable=true"),
-		cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.rule=Host(`%s`)", s.JobName(), s.Host())),
+		cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.rule=%s", s.JobName(), hostRule)),
 		cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.entrypoints=web", s.JobName())),
 		cty.StringVal(fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port=%d", s.JobName(), s.Port)),
 		// PHASE 2 (sticky sessions): for stateful frameworks with replicas > 1,

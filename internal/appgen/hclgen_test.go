@@ -173,3 +173,46 @@ func TestGenerate_BucketsAndStampInMeta(t *testing.T) {
 		t.Errorf("expected data buckets stamped in meta:\n%s", hcl)
 	}
 }
+
+func TestGenerate_Exposure(t *testing.T) {
+	pubHost := "Host(`abc-platform-sucuri.apps.seedling.abc-cluster.cloud`)"
+	intHost := "Host(`abc-platform-sucuri.apps.internal`)"
+
+	// internal: router rule must use the internal host and NOT the public one.
+	si := resolvedSucuriWithExposure(t, "internal")
+	hi := Generate(si, JobParams{Namespace: "abc-apps"})
+	if !containsNorm(hi, "rule="+intHost) {
+		t.Errorf("internal exposure should route to %s:\n%s", intHost, hi)
+	}
+	if strings.Contains(hi, pubHost) {
+		t.Errorf("internal exposure must NOT carry the public-edge host:\n%s", hi)
+	}
+	if !containsNorm(hi, `abc_exposure = "internal"`) {
+		t.Errorf("internal exposure should be stamped in meta:\n%s", hi)
+	}
+
+	// both: rule must OR the public and internal hosts.
+	sb := resolvedSucuriWithExposure(t, "both")
+	hb := Generate(sb, JobParams{Namespace: "abc-apps"})
+	if !containsNorm(hb, "rule="+pubHost+" || "+intHost) {
+		t.Errorf("both exposure should OR public and internal hosts:\n%s", hb)
+	}
+
+	// public (default): unchanged — public host, no internal host.
+	sp := resolvedSucuri(t)
+	hp := Generate(sp, JobParams{Namespace: "abc-apps"})
+	if !containsNorm(hp, "rule="+pubHost) || strings.Contains(hp, intHost) {
+		t.Errorf("public exposure should route to the public host only:\n%s", hp)
+	}
+}
+
+func resolvedSucuriWithExposure(t *testing.T, exposure string) *Spec {
+	t.Helper()
+	s := validSucuriSpec()
+	s.Exposure = exposure
+	if err := s.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	s.ApplyDefaults()
+	return s
+}

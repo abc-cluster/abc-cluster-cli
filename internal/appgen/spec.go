@@ -34,6 +34,26 @@ const (
 	AccessReadWrite = "read-write"
 )
 
+// Exposure modes — the network-reach axis, orthogonal to Access (auth). It
+// selects which Traefik Host zone the app's router rule uses:
+//   - public:   under the public edge wildcard (*.apps.seedling…) → internet-reachable
+//   - internal: off the public edge (under InternalAppsDomain) → Tailscale + campus LAN only
+//   - both:     both host rules
+// See abc-universe brainstorms/abc-scientific-apps/2026-06-07-app-exposure-internal-public-sovereignty.md.
+const (
+	ExposurePublic   = "public"
+	ExposureInternal = "internal"
+	ExposureBoth     = "both"
+)
+
+// InternalAppsDomain is the parent domain for internal-only app hosts.
+// Deliberately NOT under AppsDomain (*.apps.seedling…): the public edge only
+// proxies that wildcard, so anything here has no public route by construction.
+// Internal resolution (Tailscale MagicDNS / campus DNS) is operator infra — see
+// abc-deployments/abc-seedling-prod/docs/internal-app-exposure.md. `.internal` is
+// the ICANN-reserved private-use TLD.
+const InternalAppsDomain = "apps.internal"
+
 // DataMount is one entry in the `data:` list — a MinIO bucket the app reads
 // (or writes). Apps access buckets via injected AWS_* credentials, never a
 // filesystem mount, so `path` is rejected.
@@ -54,6 +74,7 @@ type Spec struct {
 	Port      int               `yaml:"port,omitempty"`
 	Health    string            `yaml:"health,omitempty"`
 	Access    string            `yaml:"access,omitempty"`
+	Exposure  string            `yaml:"exposure,omitempty"`
 	Replicas  int               `yaml:"replicas,omitempty"`
 	Env       map[string]string `yaml:"env,omitempty"`
 	Data      []DataMount       `yaml:"data,omitempty"`
@@ -179,6 +200,15 @@ func (s *Spec) Validate() error {
 		return fmt.Errorf("`access` %q is invalid; phase 1 supports only `team`", s.Access)
 	}
 
+	// exposure — network-reach axis, orthogonal to access. Empty defaults to
+	// public (ApplyDefaults). All three values are accepted.
+	switch strings.ToLower(strings.TrimSpace(s.Exposure)) {
+	case "", ExposurePublic, ExposureInternal, ExposureBoth:
+		// ok
+	default:
+		return fmt.Errorf("`exposure` %q is invalid; use `internal`, `public`, or `both`", s.Exposure)
+	}
+
 	// replicas
 	if s.Replicas < 0 {
 		return fmt.Errorf("`replicas` %d is invalid", s.Replicas)
@@ -241,6 +271,11 @@ func (s *Spec) ApplyDefaults() {
 	} else {
 		s.Access = strings.ToLower(strings.TrimSpace(s.Access))
 	}
+	if strings.TrimSpace(s.Exposure) == "" {
+		s.Exposure = ExposurePublic // phase-1 default preserves current behaviour
+	} else {
+		s.Exposure = strings.ToLower(strings.TrimSpace(s.Exposure))
+	}
 	s.Framework = fw
 	for i := range s.Data {
 		if strings.TrimSpace(s.Data[i].Access) == "" {
@@ -267,15 +302,52 @@ func (s *Spec) Subdomain() string {
 	return s.Project + "-" + s.Name
 }
 
-// Host returns the full external Host for routing, e.g.
-// `mtb-resistotyper-ml-tb-resistance-dashboard.apps.seedling.abc-cluster.cloud`.
-func (s *Spec) Host() string {
+// NormExposure returns the lowercased exposure mode, defaulting to public.
+func (s *Spec) NormExposure() string {
+	e := strings.ToLower(strings.TrimSpace(s.Exposure))
+	if e == "" {
+		return ExposurePublic
+	}
+	return e
+}
+
+// PublicHost is the public-edge host, under the *.apps.seedling… wildcard.
+func (s *Spec) PublicHost() string {
 	return s.Subdomain() + "." + AppsDomain
 }
 
-// URL returns the full external app URL (https, root path).
+// InternalHost is the internal-only host, off the public edge wildcard.
+func (s *Spec) InternalHost() string {
+	return s.Subdomain() + "." + InternalAppsDomain
+}
+
+// Hosts returns the routing Host(s) for the spec's exposure, in priority order
+// (primary first). The Traefik router rule ORs these together.
+func (s *Spec) Hosts() []string {
+	switch s.NormExposure() {
+	case ExposureInternal:
+		return []string{s.InternalHost()}
+	case ExposureBoth:
+		return []string{s.PublicHost(), s.InternalHost()}
+	default: // public
+		return []string{s.PublicHost()}
+	}
+}
+
+// Host returns the primary external Host for routing (Hosts()[0]). For public
+// and both this is the public-edge host (unchanged); for internal it is the
+// internal-only host.
+func (s *Spec) Host() string {
+	return s.Hosts()[0]
+}
+
+// URL returns the primary app URL. Public/both → https (public edge TLS);
+// internal → http (served via Traefik/Tailscale Serve, no public-edge cert).
 func (s *Spec) URL() string {
-	return "https://" + s.Host()
+	if s.NormExposure() == ExposureInternal {
+		return "http://" + s.InternalHost()
+	}
+	return "https://" + s.PublicHost()
 }
 
 // JobName returns the Nomad job (and service) name: `app-<project>-<name>`.
