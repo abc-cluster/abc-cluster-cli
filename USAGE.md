@@ -52,6 +52,8 @@ This document describes every command available in the `abc` CLI.
 - [data upload](#data-upload)
 - [data encrypt](#data-encrypt)
 - [data decrypt](#data-decrypt)
+- [data compress](#data-compress)
+- [data decompress](#data-decompress)
 - [data download](#data-download)
 - [infra compute add](#infra-compute-add)
 - [infra compute list](#infra-compute-list)
@@ -1662,6 +1664,7 @@ abc data upload <path> [flags]
 | `--upload-token`   | `ABC_UPLOAD_TOKEN`    | Bearer token for tus (or context upload token; falls back to `--access-token`) |
 | `--crypt-password` |                       | rclone crypt password for client-side encryption                    |
 | `--crypt-salt`     |                       | rclone crypt salt (password2)                                       |
+| `--compress`       |                       | zstd-compress raw files before upload (`fast`/`default`/`better`/`best`; bare flag = `default`). Already-compressed files pass through; compression runs **before** encryption |
 | `--checksum`       |                       | Include SHA-256 checksum metadata (default: `true`)                 |
 | `--progress`       |                       | Show live progress bars (default: `true`)                           |
 | `--parallel`       |                       | Upload directory files in parallel (default: `true`)                |
@@ -1677,6 +1680,8 @@ abc data upload <path> [flags]
 abc data upload ./data.csv
 abc data upload ./dataset                             # recursive, parallel
 abc data upload ./data.csv --crypt-password "secret"
+abc data upload ./calls.vcf --compress                # zstd raw outputs before upload
+abc data upload ./calls.vcf --compress=best --crypt-password "secret"  # compress, then encrypt
 abc data upload ./data.csv --status
 abc data upload ./data.csv --clear && abc data upload ./data.csv --no-resume
 ```
@@ -1776,58 +1781,127 @@ File decrypted successfully.
 
 ---
 
+## `data compress`
+
+Compress a file or folder with zstd. Raw files become `<name>.zst`; files that are
+already compressed (gzip, **BGZF**, zstd) are passed through unchanged —
+recompressing them gains nothing and would break BGZF (`.bam`, tabix-indexed
+`.vcf.gz`) random access.
+
+Each `.zst` carries an integrity frame (original name, size, SHA-256), so
+`abc data decompress` can verify the result and `--replace` can safely delete the
+source only after a verified round-trip. The output is still readable by stock
+`zstd -d`.
+
+```
+abc data compress <path> [flags]
+```
+
+| Flag           | Description                                                                 |
+|----------------|-----------------------------------------------------------------------------|
+| `--level`      | Compression level: `fast`, `default`, `better`, `best` (default: `default`) |
+| `--output`     | Output file path (single-file compression)                                  |
+| `--output-dir` | Output directory (folder compression)                                       |
+| `--replace`    | Delete the source after a successful, verified compression                  |
+| `--force`/`-f` | Overwrite an existing output (SHA-256-compares; identical content is a no-op) |
+| `--progress`   | Show live progress bars (default: `true`)                                   |
+
+```bash
+# Compress a raw VCF (≈8–10× on real genomic text):
+abc data compress ./calls.vcf
+
+# Best ratio, and delete the source after a verified round-trip:
+abc data compress ./calls.vcf --level best --replace
+
+# A whole folder (already-compressed files are skipped):
+abc data compress ./run-outputs --output-dir ./run-outputs-zst
+```
+
+The same `--compress` capability is available inline on `abc data upload` and
+`abc data push`; `abc data pull --decompress` expands `.zst` artifacts on the way
+down.
+
+---
+
+## `data decompress`
+
+Decompress a zstd file or folder produced by `abc data compress` (or any stock
+zstd file). When an abc integrity frame is present, the output is verified against
+the original SHA-256 before it is trusted; stock zstd files decompress too, with a
+note that verification was skipped.
+
+```
+abc data decompress <path> [flags]
+```
+
+| Flag           | Description                                                                 |
+|----------------|-----------------------------------------------------------------------------|
+| `--output`     | Output file path (single-file); default strips the `.zst` suffix            |
+| `--output-dir` | Output directory (folder decompression)                                     |
+| `--replace`    | Remove the source `.zst` after successful, verified decompression           |
+| `--force`/`-f` | Overwrite an existing output (SHA-256-compares; identical content is a no-op) |
+| `--progress`   | Show live progress bars (default: `true`)                                   |
+
+```bash
+abc data decompress ./calls.vcf.zst
+abc data decompress ./calls.vcf.zst --output ./restored.vcf --replace
+```
+
+---
+
 ## `data download`
 
-Two modes:
+Acquire data from a scientific database by **accession**, storing it in cluster
+storage (MinIO). The source database is auto-detected from the accession ID — SRA/
+ENA accessions submit an [nf-core/fetchngs](https://github.com/nf-core/fetchngs)
+pipeline run via the control plane; NCBI Datasets accessions use the `datasets`
+tool — or set it explicitly with `--from`.
 
-1. **Nextflow / fetchngs** — when `--tool` is `nextflow` (explicit or default overridden), submit an [nf-core/fetchngs](https://github.com/nf-core/fetchngs) pipeline run via the control plane.
-2. **Ad-hoc transfer tools** — when `--tool` is `aria2`, `rclone`, `wget`, or `s5cmd`, the CLI generates a shell script and runs `abc job run` so Nomad executes downloads (and optional follow-up upload) on the cluster.
+For other acquisition paths:
+
+- **From an arbitrary URL** (aria2/rclone/wget/s5cmd on the cluster): `abc data fetch <url>`.
+- **From cluster storage to your local machine**: `abc data pull <s3-uri>`.
 
 ```
-abc data download [flags]
+abc data download <accession> [accession...] [flags]
 ```
 
-### Nextflow mode (`--tool nextflow`)
+| Flag             | Description                                                                 |
+|------------------|-----------------------------------------------------------------------------|
+| `--from`         | Source database ID/alias (auto-detected when omitted): `sra`, `ena`, `geo`, `refseq` |
+| `--format`       | Output format (default: the database default, e.g. `fastq`)                 |
+| `--destination`  | `storage` → MinIO under `downloads/<user>/` (default), or an explicit `s3://...` URI |
+| `--storage-path` | Override the S3 path under `--destination storage`                          |
+| `--name`         | Custom pipeline run name                                                    |
+| `--profile`      | Nextflow profile (e.g. `singularity`, `docker`)                             |
+| `--work-dir`     | Nextflow work directory                                                     |
+| `--revision`     | Pipeline revision (tag or commit)                                           |
+| `--config`       | Nextflow config file to include                                             |
+| `--params-file`  | YAML/JSON params file (alternative to positional accessions)                |
+| `--node`         | Pin the Nomad job to a specific node (UUID or name)                         |
 
-| Flag            | Description                                                      |
-|-----------------|------------------------------------------------------------------|
-| `--accession`   | Accession(s) to fetch (repeatable; e.g. SRR, ERR, DRR IDs)       |
-| `--params-file` | Path to a YAML or JSON params file                               |
-| `--name`        | Custom name for this download run                                |
-| `--config`      | Path to a Nextflow config file                                   |
-| `--profile`     | Nextflow profile(s) to use                                       |
-| `--work-dir`    | Work directory for pipeline execution                            |
-| `--revision`    | Pipeline revision (branch, tag, or commit SHA)                  |
-
-At least one `--accession` or `--params-file` is required.
+At least one accession argument or `--params-file` is required.
 
 ```bash
-abc data download --tool nextflow --accession SRR1234567
-abc data download --tool nextflow --accession SRR1234567 --accession SRR1234568
-abc data download --tool nextflow --params-file fetchngs-params.yaml
+# Auto-detect SRA and submit nf-core/fetchngs:
+abc data download SRR1234567
+abc data download SRR1234567 SRR1234568
+
+# From a params file:
+abc data download --params-file fetchngs-params.yaml
+
+# Store to an explicit destination:
+abc data download SRR1234567 --destination s3://su-mbhg-hostgen/user/calm-dassie/raw/
 ```
 
-### Tool mode (`aria2`, `rclone`, `wget`, `s5cmd`)
+Expected output:
+```
+Detected database: NCBI SRA (sra)
+Download pipeline submitted successfully (NCBI SRA).
+  Run ID:   r-123
+  Run Name: fetchngs-run
 
-| Flag | Description |
-|------|-------------|
-| `--tool` | Download tool (default `aria2`) |
-| `--driver` | Nomad task driver: `exec`, `docker`, or `containerd` (default `exec`; `containerd` uses nomad-driver-containerd + OCI `image=`) |
-| `--source` | Source URL or path (unless `--url-file` is set) |
-| `--url-file` | Newline-separated list of URLs |
-| `--destination` | Directory on the **task** filesystem where files are written (or a special target such as `abc-bucket`) |
-| `--node` | Nomad **node** placement: full node UUID, or `node.unique.name` value — emits `#ABC --constraint=...` in the generated job script |
-| `--parallel` | Parallelism hint for the tool (default `4`) |
-| `--tool-args` | Extra arguments appended to the tool command |
-| `--name` | Passed through as `#ABC --name` on the generated script |
-
-**Placement:** UUIDs (36 hex chars with hyphens) map to `node.unique.id==<uuid>`; any other string maps to `node.unique.name==<value>`. With `--driver=exec`, the chosen tool must exist on that node; with `--driver=containerd` or `--driver=docker`, the CLI pins a known-good OCI image per tool (recommended when combining placement with non-`wget` tools).
-
-**`--destination abc-bucket`:** After download, the script runs `abc data upload` for each file under that directory, using the same tus resolution as the CLI (`ABC_UPLOAD_*`, context `upload_endpoint` / `upload_token`, or `--url`-derived `<api>/files/` and `--access-token`).
-
-```bash
-abc data download --tool wget --source https://example.com/file.zip --destination /tmp/my-dl --driver containerd
-abc data download --tool aria2 --source https://example.com/a.bin --destination /tmp/out --node compute-01 --driver containerd
+Monitor with: abc job logs r-123
 ```
 
 ---

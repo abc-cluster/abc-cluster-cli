@@ -45,6 +45,35 @@ matches the remote), `--dry-run`.
 
 ---
 
+## Compress & decompress (zstd)
+
+| Command | What it does |
+|---|---|
+| `abc data compress <path>` | zstd-compress a raw file/folder to `.zst` (BGZF-aware); already-compressed inputs pass through |
+| `abc data decompress <path>` | expand a `.zst` (or any stock zstd) file/folder, verifying integrity |
+
+zstd compresses raw genomic text well (≈8–10× on real VCF, ≈25–30× on TSV/TXT).
+Already-compressed inputs — gzip, **BGZF** (`.bam`, tabix-indexed `.vcf.gz`), zstd —
+are detected by magic bytes and **passed through unchanged**; recompressing BGZF
+would break tabix random access. Each `.zst` embeds an integrity frame (original
+name, size, SHA-256), so `decompress` verifies the result and `compress --replace`
+deletes the source only after a verified round-trip. Output is readable by stock
+`zstd -d`.
+
+```bash
+# Compress a raw VCF; keep only the .zst once verified:
+abc data compress ./calls.vcf --level best --replace
+
+# Restore it (integrity-checked):
+abc data decompress ./calls.vcf.zst
+```
+
+The same capability is available inline on the transfer commands:
+`abc data upload --compress` (compresses **before** encryption),
+`abc data push --compress`, and `abc data pull --decompress`.
+
+---
+
 ## Acquiring data: external → cluster
 
 | Command | Source | Mechanism |
