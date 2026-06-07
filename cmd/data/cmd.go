@@ -104,6 +104,8 @@ Plumbing commands (short aliases accepted):
 	cmd.AddCommand(newUploadCmd(serverURL, accessToken, workspace, f))
 	cmd.AddCommand(newEncryptCmd())
 	cmd.AddCommand(newDecryptCmd())
+	cmd.AddCommand(newCompressCmd())   // zstd compress (BGZF-aware)
+	cmd.AddCommand(newDecompressCmd()) // zstd decompress (integrity-verified)
 
 	// ── Porcelain: data movement ─────────────────────────────────────────────
 	cmd.AddCommand(newFetchCmd(serverURL, accessToken, workspace)) // external/accession → MinIO

@@ -48,6 +48,7 @@ type uploadOptions struct {
 	endpoint      string
 	cryptPassword string
 	cryptSalt     string
+	compress      string // "" = off; set by --compress (NoOptDefVal "default"); compresses raw inputs before encryption
 	token         string
 	checksum      bool
 	progress      bool
@@ -232,6 +233,8 @@ Examples:
 	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "upload endpoint URL (or set ABC_UPLOAD_ENDPOINT / context upload_endpoint; defaults to <url>/files/ from API --url or context endpoint)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
+	cmd.Flags().StringVar(&opts.compress, "compress", "", "zstd-compress raw files before upload (level: fast|default|better|best); already-compressed files pass through. Compression runs before encryption")
+	cmd.Flags().Lookup("compress").NoOptDefVal = "default"
 	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for uploads (or set ABC_UPLOAD_TOKEN / context upload_token; then ABC_TOKEN / context token; falls back to --access-token)")
 	cmd.Flags().BoolVar(&opts.checksum, "checksum", true, "include sha256 checksum metadata in upload metadata")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption and uploads")
@@ -438,6 +441,15 @@ func uploadOnePath(cmd *cobra.Command, uploader Uploader, path string, cryptor *
 	registryFn func(filename, originalPath, checksum string, sizeBytes int64),
 	opts *uploadOptions, extraMeta map[string]string) error {
 
+	var compressor *compressConfig
+	if opts.compress != "" {
+		c, err := newCompressConfig(opts.compress)
+		if err != nil {
+			return err
+		}
+		compressor = c
+	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -487,14 +499,14 @@ func uploadOnePath(cmd *cobra.Command, uploader Uploader, path string, cryptor *
 				}
 			}
 		}
-		return uploadDirectory(cmd, uploader, path, cryptor, opts.checksum, opts.progress, jobs, extraMeta, onSuccess)
+		return uploadDirectory(cmd, uploader, path, cryptor, compressor, opts.checksum, opts.progress, jobs, extraMeta, onSuccess)
 	}
 
 	uploadedName := opts.name
 	if uploadedName == "" {
 		uploadedName = filepath.Base(path)
 	}
-	checksum, uploadErr := uploadSingleFile(cmd, uploader, path, opts.name, info.Size(), cryptor, opts.checksum, opts.progress, extraMeta)
+	checksum, uploadErr := uploadSingleFile(cmd, uploader, path, opts.name, info.Size(), cryptor, compressor, opts.checksum, opts.progress, extraMeta)
 	if uploadErr != nil {
 		return uploadErr
 	}
@@ -599,7 +611,7 @@ type uploadResult struct {
 
 // uploadDirectory uploads all files in dir. onSuccess is called for each
 // file that uploads without error; it may be nil.
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, jobs int, extraMeta map[string]string, onSuccess func(r uploadResult)) error {
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, jobs int, extraMeta map[string]string, onSuccess func(r uploadResult)) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -611,7 +623,7 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 	fmt.Fprintf(cmd.OutOrStdout(), "Uploading %d files...\n", len(files))
 	if jobs <= 1 {
 		for _, file := range files {
-			result := uploadDirectoryFile(cmd.Context(), cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, progressEnabled, extraMeta)
+			result := uploadDirectoryFile(cmd.Context(), cmd.OutOrStdout(), uploader, dir, file, cryptor, compressor, checksumEnabled, progressEnabled, extraMeta)
 			if result.err != nil {
 				return result.err
 			}
@@ -638,7 +650,7 @@ func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor 
 		go func() {
 			defer wg.Done()
 			for file := range jobsCh {
-				result := uploadDirectoryFile(ctx, cmd.OutOrStdout(), uploader, dir, file, cryptor, checksumEnabled, false, extraMeta)
+				result := uploadDirectoryFile(ctx, cmd.OutOrStdout(), uploader, dir, file, cryptor, compressor, checksumEnabled, false, extraMeta)
 				if result.err != nil {
 					cancel()
 				}
@@ -684,7 +696,7 @@ submitLoop:
 	return nil
 }
 
-func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, dir string, file uploadFile, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) uploadResult {
+func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, dir string, file uploadFile, cryptor *cryptConfig, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) uploadResult {
 	result := uploadResult{}
 	relPath, err := filepath.Rel(dir, file.path)
 	if err != nil {
@@ -699,8 +711,40 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 	}
 	metadata["filename"] = filepath.Base(file.path)
 	metadata["relativePath"] = filepath.ToSlash(relPath)
-	encryptProgress := newProgressReporter(out, progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), file.size)
-	uploadPath, cleanup, err := encryptForUpload(ctx, file.path, cryptor, func(n int64) {
+
+	// Compress raw inputs before encryption (compress-then-encrypt); already-
+	// compressed inputs pass through unchanged.
+	compressProgress := newProgressReporter(out, progressEnabled && compressor != nil, fmt.Sprintf("Compressing %s", relPath), file.size)
+	srcPath, compCleanup, didCompress, origSum, err := compressForUpload(ctx, file.path, compressor, func(n int64) {
+		compressProgress.Add(n)
+	})
+	if cerr := compressProgress.Complete(); cerr != nil {
+		result.err = fmt.Errorf("failed to render compression progress: %w", cerr)
+		return result
+	}
+	if err != nil {
+		result.err = localIOError("compression failed for %q: %w", relPath, err)
+		return result
+	}
+	if compCleanup != nil {
+		defer func() { _ = compCleanup() }()
+	}
+	if didCompress {
+		metadata["filename"] = filepath.Base(file.path) + zstdDefaultSuffix
+		metadata["relativePath"] = filepath.ToSlash(relPath) + zstdDefaultSuffix
+		metadata["compressed"] = "zstd"
+		metadata["originalSize"] = fmt.Sprintf("%d", file.size)
+		metadata["originalSha256"] = "sha256:" + origSum
+	}
+
+	encTotal := file.size
+	if didCompress {
+		if st, statErr := os.Stat(srcPath); statErr == nil {
+			encTotal = st.Size()
+		}
+	}
+	encryptProgress := newProgressReporter(out, progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), encTotal)
+	uploadPath, cleanup, err := encryptForUpload(ctx, srcPath, cryptor, func(n int64) {
 		encryptProgress.Add(n)
 	})
 	encryptDoneErr := encryptProgress.Complete()
@@ -771,7 +815,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 // uploadSingleFile uploads one file. Returns the checksum string (empty when
 // --checksum=false) and any error. Callers use the checksum to record the
 // upload in the local registry.
-func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) (checksum string, err error) {
+func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) (checksum string, err error) {
 	metadata := make(map[string]string, len(extraMeta)+3)
 	for k, v := range extraMeta {
 		metadata[k] = v
@@ -790,8 +834,39 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		metadata["checksum"] = ""
 	}
 
-	encryptProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", filepath.Base(filePath)), size)
-	uploadPath, cleanup, err := encryptForUpload(cmd.Context(), filePath, cryptor, func(n int64) {
+	// Compress raw inputs before encryption (compress-then-encrypt); already-
+	// compressed inputs pass through unchanged.
+	compressProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && compressor != nil, fmt.Sprintf("Compressing %s", filepath.Base(filePath)), size)
+	srcPath, compCleanup, didCompress, origSum, err := compressForUpload(cmd.Context(), filePath, compressor, func(n int64) {
+		compressProgress.Add(n)
+	})
+	if cerr := compressProgress.Complete(); cerr != nil {
+		return "", fmt.Errorf("failed to render compression progress: %w", cerr)
+	}
+	if err != nil {
+		return "", fmt.Errorf("compression failed: %w", err)
+	}
+	if compCleanup != nil {
+		defer func() { _ = compCleanup() }()
+	}
+	if didCompress {
+		metadata["filename"] = metadata["filename"] + zstdDefaultSuffix
+		metadata["compressed"] = "zstd"
+		metadata["originalSize"] = fmt.Sprintf("%d", size)
+		metadata["originalSha256"] = "sha256:" + origSum
+		if name != "" {
+			metadata["name"] = name + zstdDefaultSuffix
+		}
+	}
+
+	encTotal := size
+	if didCompress {
+		if st, statErr := os.Stat(srcPath); statErr == nil {
+			encTotal = st.Size()
+		}
+	}
+	encryptProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", filepath.Base(filePath)), encTotal)
+	uploadPath, cleanup, err := encryptForUpload(cmd.Context(), srcPath, cryptor, func(n int64) {
 		encryptProgress.Add(n)
 	})
 	encryptDoneErr := encryptProgress.Complete()
