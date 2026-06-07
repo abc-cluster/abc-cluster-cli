@@ -47,7 +47,7 @@ func TestDataDownload_Submission(t *testing.T) {
 	defer func() { data.PipelineFactory = oldPipelineFactory }()
 
 	cmd := data.NewCmd(&serverURL, &accessToken, &workspace)
-	out, err := executeDataCmd(t, cmd, "download", "--tool", "nextflow", "--accession", "SRR000000")
+	out, err := executeDataCmd(t, cmd, "download", "--accession", "SRR000000")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,10 +57,11 @@ func TestDataDownload_Submission(t *testing.T) {
 	if runner.lastReq.Pipeline != "https://github.com/nf-core/fetchngs" {
 		t.Fatalf("unexpected pipeline URL: %q", runner.lastReq.Pipeline)
 	}
-	if requestAccession, ok := runner.lastReq.Params["accession"]; !ok || requestAccession != "SRR000000" {
-		t.Fatalf("unexpected accession param %#v", runner.lastReq.Params)
+	// nf-core/fetchngs takes the accession(s) via its --input param.
+	if input, ok := runner.lastReq.Params["input"]; !ok || input != "SRR000000" {
+		t.Fatalf("unexpected input param %#v", runner.lastReq.Params)
 	}
-	if !strings.Contains(out, "Data download pipeline submitted successfully") {
+	if !strings.Contains(out, "Download pipeline submitted successfully") {
 		t.Fatalf("expected success output, got: %s", out)
 	}
 }
@@ -79,7 +80,7 @@ func TestDataDownload_ParamsFileLoad(t *testing.T) {
 	os.WriteFile(paramsFile, []byte("accession: SRR000001\n"), 0600)
 
 	cmd := data.NewCmd(&serverURL, &accessToken, &workspace)
-	_, err := executeDataCmd(t, cmd, "download", "--tool", "nextflow", "--params-file", paramsFile)
+	_, err := executeDataCmd(t, cmd, "download", "--params-file", paramsFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -12,7 +12,8 @@ package data
 //   - --destination defaults to "storage" (push to MinIO under downloads/<user>/)
 //   - --tool defaults to aria2 (best general-purpose HTTP downloader)
 //   - --driver is hidden and auto-selected (raw_exec for s5cmd, exec for others)
-//   - Nextflow pipeline mode is NOT available here (use `abc data download --tool nextflow`)
+//   - Nextflow pipeline mode is NOT available here (use `abc data download <accession>`,
+//     which auto-detects the database and dispatches nf-core/fetchngs for SRA/ENA)
 
 import (
 	"fmt"
@@ -135,7 +136,7 @@ func runFetch(cmd *cobra.Command, opts *fetchOptions, source, serverURL, accessT
 	}
 
 	if tool == "nextflow" {
-		return fmt.Errorf("nextflow is not supported by `abc data fetch`; use `abc data download --tool nextflow` instead")
+		return fmt.Errorf("nextflow is not supported by `abc data fetch`; use `abc data download <accession>` instead (auto-dispatches nf-core/fetchngs for SRA/ENA)")
 	}
 
 	// Map fetchOptions → downloadOptions so we share all the build/submit logic.
