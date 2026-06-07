@@ -8,8 +8,10 @@ package job
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -146,6 +148,39 @@ func TestResolveStaging_EmptyStageEnvWithoutCreds(t *testing.T) {
 	}
 	if spec.StageS5cmdSkipTLS {
 		t.Error("expected StageS5cmdSkipTLS=false when no creds/endpoint resolved")
+	}
+}
+
+// TestResolveStaging_RunPrefixUsesPathSegmentSlug guards FIX 2: the staged
+// run prefix must use the full path-safe whoami segment (WhoamiPathSegment,
+// e.g. "calm-dassie") that upload/pipeline use — NOT the abbreviated 5-char
+// job-id slug (ActiveWhoamiSlug, e.g. "calda"). A divergence here would scatter
+// staged data to user/<short>/… instead of the member's real home
+// user/<full>/…, breaking discoverability and the upload <-> stage contract.
+func TestResolveStaging_RunPrefixUsesPathSegmentSlug(t *testing.T) {
+	setStagingConfig(t, stagingConfigWithMinio) // whoami: calm_dassie
+	root, scriptPath := writeStagingProject(t)
+
+	cmd := stagingTestCmd(t, []string{filepath.Join(root, "data", "in.csv")}, []string{"results/"})
+	spec := &jobSpec{Namespace: "su-mbhg-hostgen"}
+
+	plan, err := resolveStaging(cmd, scriptPath, "r-123", spec)
+	if err != nil {
+		t.Fatalf("resolveStaging: %v", err)
+	}
+
+	pathSeg := utils.WhoamiPathSegment("calm_dassie") // "calm-dassie"
+	shortSlug := utils.WhoamiSlug("calm_dassie")       // "calda"
+	if pathSeg == "" || shortSlug == "" || pathSeg == shortSlug {
+		t.Fatalf("test precondition broken: pathSeg=%q shortSlug=%q", pathSeg, shortSlug)
+	}
+
+	wantSegment := "/user/" + pathSeg + "/"
+	if !strings.Contains(plan.RunPrefix, wantSegment) {
+		t.Errorf("RunPrefix = %q, want it to contain %q (WhoamiPathSegment slug)", plan.RunPrefix, wantSegment)
+	}
+	if strings.Contains(plan.RunPrefix, "/user/"+shortSlug+"/") {
+		t.Errorf("RunPrefix = %q must NOT use the abbreviated ActiveWhoamiSlug %q", plan.RunPrefix, shortSlug)
 	}
 }
 

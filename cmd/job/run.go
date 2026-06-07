@@ -700,7 +700,12 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 	if len(ins) == 0 {
 		ins = []string{filepath.Join(root, "data")} // convention default within staging mode
 	}
-	slot := utils.ActiveWhoamiSlug()
+	// FIX 2: use the same full-length, path-safe whoami segment that upload
+	// and the pipeline path use (WhoamiPathSegment → "solar-civet"), NOT the
+	// abbreviated 5-char job-id slug (ActiveWhoamiSlug → "solar"). The latter
+	// scattered staged data to user/solar/… instead of the member's real home
+	// user/solar-civet/…, diverging from where uploads land.
+	slot := utils.ActiveWhoamiPathSegment()
 	if slot == "" {
 		return nil, fmt.Errorf("data staging: cannot resolve slot — run `abc auth whoami`")
 	}
@@ -1137,7 +1142,11 @@ func runJob(cmd *cobra.Command, args []string) error {
 		// BEFORE the job is registered. Any upload failure aborts here — we
 		// never submit a job whose stage-in would 404. Skipped on --dry-run
 		// (no real run) and when there are no local uploads.
-		if submit && stagePlan != nil {
+		// FIX 3: gate on `submit && !dryRun`. The --submit flag defaults to
+		// true, so `abc job run … --dry-run` has submit=true AND dryRun=true;
+		// without the !dryRun guard the dry-run would upload local inputs even
+		// though no job is ever registered.
+		if submit && !dryRun && stagePlan != nil {
 			if err := uploadStageInputs(cmd, stagePlan); err != nil {
 				return err
 			}
@@ -1149,7 +1158,10 @@ func runJob(cmd *cobra.Command, args []string) error {
 		// submit with staging. Waits for the alloc to reach a terminal state,
 		// pulls outputs back to --out on "complete", and writes the lineage
 		// run-manifest. Non-fatal once the job itself succeeded.
-		if submit && stagePlan != nil {
+		// FIX 3: gate on `submit && !dryRun` (see above) — a dry-run never
+		// registers a job, so finalizeStaging would otherwise block forever
+		// waiting on an alloc that will never exist.
+		if submit && !dryRun && stagePlan != nil {
 			finalizeStaging(cmd, spec, stagePlan, runID, scriptPath)
 		}
 		return nil
@@ -1387,6 +1399,16 @@ func runJobNativeHCL(cmd *cobra.Command, path string) error {
 
 	jobID := extractJobIDFromJSON(jobJSON)
 
+	// FIX 1 (native-HCL path): pin the register namespace to the namespace
+	// declared in the (canonicalized) job body, so the ?namespace= query param
+	// on /v1/jobs matches the job's own namespace. Without this, a pool-slot
+	// member token whose client default namespace diverges from the HCL's
+	// `namespace = "..."` 403s at register. No-op when the HCL omits a
+	// namespace (Nomad falls back to the server default).
+	if ns := extractNamespaceFromJSON(jobJSON); ns != "" {
+		nc = nc.WithNamespace(ns)
+	}
+
 	if err := nc.PreflightJobTaskDrivers(ctx, jobJSON, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
@@ -1464,9 +1486,36 @@ func extractJobIDFromJSON(jobJSON json.RawMessage) string {
 	return ""
 }
 
+// extractNamespaceFromJSON extracts the Namespace from a Nomad job JSON blob
+// (returned by ParseHCL after canonicalization). Used by the native-HCL submit
+// path — which has no jobSpec — to pin the register namespace to the namespace
+// declared in the HCL body, mirroring FIX 1 in runWithNomad. Falls back to an
+// empty string if the field is absent or malformed.
+func extractNamespaceFromJSON(jobJSON json.RawMessage) string {
+	var obj struct {
+		Namespace string `json:"Namespace"`
+	}
+	if err := json.Unmarshal(jobJSON, &obj); err == nil {
+		return strings.TrimSpace(obj.Namespace)
+	}
+	return ""
+}
+
 func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl string, submit, dryRun bool) error {
 	log := debuglog.FromContext(ctx)
 	nc := nomadClientFromCmd(cmd)
+
+	// FIX 1: pin the register/parse/plan namespace to the job's own namespace.
+	// Nomad ACL checks the ?namespace= query param on /v1/jobs (and /v1/jobs/parse),
+	// NOT the `namespace = "..."` embedded in the job body. nomadClientFromCmd
+	// derives its default namespace via the credsource resolver, which can diverge
+	// from spec.Namespace (the value actually stamped into the HCL). A pool-slot
+	// member token only has write access in its own namespace, so a mismatch 403s
+	// at register. Forcing the client's namespace to spec.Namespace makes the
+	// register request target exactly the namespace the job declares.
+	if ns := strings.TrimSpace(spec.Namespace); ns != "" {
+		nc = nc.WithNamespace(ns)
+	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "  Parsing HCL via Nomad (%s)...\n", nomadAddrFromCmd(cmd))
 	t := time.Now()
