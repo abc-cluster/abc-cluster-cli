@@ -63,6 +63,9 @@ func (c *NomadClient) Token() string { return c.token }
 // Addr returns the Nomad API address configured on this client.
 func (c *NomadClient) Addr() string { return c.addr }
 
+// Region returns the Nomad region configured on this client.
+func (c *NomadClient) Region() string { return c.region }
+
 // WithSudo marks this client to send X-ABC-Sudo: 1 on every request.
 // The method returns the receiver so it can be chained with NewNomadClient.
 func (c *NomadClient) WithSudo(sudo bool) *NomadClient {
@@ -262,7 +265,7 @@ type NomadDynamicPort struct {
 }
 
 type nomadAllocNetwork struct {
-	IP            string             `json:"IP"`   // host-side IP for bridge/host network; fallback when DynamicPort.HostIP is empty
+	IP            string             `json:"IP"` // host-side IP for bridge/host network; fallback when DynamicPort.HostIP is empty
 	DynamicPorts  []NomadDynamicPort `json:"DynamicPorts"`
 	ReservedPorts []NomadDynamicPort `json:"ReservedPorts"`
 }
@@ -474,18 +477,18 @@ type NomadNodeStub struct {
 
 // NomadNode represents full node details from GET /v1/node/<id>.
 type NomadNode struct {
-	ID                    string                          `json:"ID"`
-	Name                  string                          `json:"Name"`
-	Datacenter            string                          `json:"Datacenter"`
-	Region                string                          `json:"Region"`
-	NodeClass             string                          `json:"NodeClass"`
-	Status                string                          `json:"Status"`
-	Drain                 bool                            `json:"Drain"`
-	SchedulingEligibility string                          `json:"SchedulingEligibility"`
-	Attributes            map[string]string               `json:"Attributes"`
-	NodeResources         *NomadNodeResource              `json:"NodeResources"`
-	ReservedResources     *NomadNodeResource              `json:"ReservedResources"`
-	Drivers               map[string]NomadDriverInfo      `json:"Drivers"`
+	ID                    string                           `json:"ID"`
+	Name                  string                           `json:"Name"`
+	Datacenter            string                           `json:"Datacenter"`
+	Region                string                           `json:"Region"`
+	NodeClass             string                           `json:"NodeClass"`
+	Status                string                           `json:"Status"`
+	Drain                 bool                             `json:"Drain"`
+	SchedulingEligibility string                           `json:"SchedulingEligibility"`
+	Attributes            map[string]string                `json:"Attributes"`
+	NodeResources         *NomadNodeResource               `json:"NodeResources"`
+	ReservedResources     *NomadNodeResource               `json:"ReservedResources"`
+	Drivers               map[string]NomadDriverInfo       `json:"Drivers"`
 	HostVolumes           map[string]NomadHostVolumeConfig `json:"HostVolumes"`
 }
 
@@ -651,6 +654,29 @@ func (c *NomadClient) GetJob(ctx context.Context, jobID, namespace string) (*Nom
 	}
 	var out NomadJob
 	return &out, c.get(ctx, "/v1/job/"+url.PathEscape(jobID), q, &out)
+}
+
+// GetJobRaw returns the full job definition as raw JSON, preserving every field
+// (not just the subset modelled by NomadJob). Use it when a job must be mutated
+// and re-registered without losing fields the typed struct does not carry.
+func (c *NomadClient) GetJobRaw(ctx context.Context, jobID, namespace string) (json.RawMessage, error) {
+	q := url.Values{}
+	if ns := c.nsOrDefault(namespace); ns != "" {
+		q.Set("namespace", ns)
+	}
+	var out json.RawMessage
+	return out, c.get(ctx, "/v1/job/"+url.PathEscape(jobID), q, &out)
+}
+
+// RestartAlloc restarts every task in a single allocation in place via Nomad's
+// client endpoint PUT /v1/client/allocation/<id>/restart. An empty body
+// restarts all tasks in the alloc (a non-empty {"TaskName": …} would target one
+// task). This is the real restart primitive: Nomad has no job-level restart HTTP
+// endpoint — `nomad job restart` is client-side orchestration over this call.
+//
+// This is a client endpoint; namespace is not a query parameter on it.
+func (c *NomadClient) RestartAlloc(ctx context.Context, allocID string) error {
+	return c.put(ctx, "/v1/client/allocation/"+url.PathEscape(allocID)+"/restart", nil, map[string]interface{}{}, nil)
 }
 
 func (c *NomadClient) GetJobAllocs(ctx context.Context, jobID, namespace string, all bool) ([]NomadAllocStub, error) {
@@ -848,6 +874,56 @@ func (c *NomadClient) GetServiceInstances(ctx context.Context, name, namespace s
 	}
 	var out []NomadServiceInstance
 	return out, c.get(ctx, "/v1/service/"+url.PathEscape(name), q, &out)
+}
+
+// ── Allocation health-check + stats API methods ────────────────────────────────
+
+// NomadCheckStatus is one entry from GET /v1/client/allocation/<id>/checks.
+// The endpoint returns a map keyed by an opaque check id; each value carries
+// the check's Status ("success" | "failure" | "pending"), the registered
+// service/check names, and a human Output string for diagnostics.
+type NomadCheckStatus struct {
+	Check     string `json:"Check"`
+	Group     string `json:"Group"`
+	Service   string `json:"Service"`
+	Status    string `json:"Status"`
+	Output    string `json:"Output"`
+	Timestamp int64  `json:"Timestamp"`
+}
+
+// GetAllocChecks returns the Nomad-native health-check results for an
+// allocation (GET /v1/client/allocation/<id>/checks). Seedling is Consul-free,
+// so this — not the Consul /v1/health/service endpoint — is the source of
+// truth for `service` job health. The returned map is keyed by Nomad's opaque
+// check id.
+func (c *NomadClient) GetAllocChecks(ctx context.Context, allocID string) (map[string]NomadCheckStatus, error) {
+	var out map[string]NomadCheckStatus
+	return out, c.get(ctx, "/v1/client/allocation/"+url.PathEscape(allocID)+"/checks", nil, &out)
+}
+
+// NomadAllocResourceUsage is the subset of GET /v1/client/allocation/<id>/stats
+// the CLI surfaces in `abc app show` (best-effort live CPU/mem). Only the
+// aggregate ResourceUsage is read; per-task breakdowns are ignored.
+type NomadAllocResourceUsage struct {
+	ResourceUsage struct {
+		MemoryStats struct {
+			RSS   int64 `json:"RSS"`
+			Usage int64 `json:"Usage"`
+		} `json:"MemoryStats"`
+		CpuStats struct {
+			Percent    float64 `json:"Percent"`
+			TotalTicks float64 `json:"TotalTicks"`
+		} `json:"CpuStats"`
+	} `json:"ResourceUsage"`
+}
+
+// GetAllocStats returns best-effort live resource usage for a running
+// allocation (GET /v1/client/allocation/<id>/stats). Callers must treat any
+// error as "stats unavailable" and omit the data — a stopped or just-started
+// alloc has no stats and that is not a command failure.
+func (c *NomadClient) GetAllocStats(ctx context.Context, allocID string) (*NomadAllocResourceUsage, error) {
+	var out NomadAllocResourceUsage
+	return &out, c.get(ctx, "/v1/client/allocation/"+url.PathEscape(allocID)+"/stats", nil, &out)
 }
 
 // ── Variables API methods ─────────────────────────────────────────────────────

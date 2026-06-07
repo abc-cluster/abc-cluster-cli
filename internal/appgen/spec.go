@@ -1,0 +1,311 @@
+// Package appgen models the `abc-app.yaml` scientific-app deployment
+// descriptor, validates it, resolves framework defaults, and generates the
+// Nomad `service` job HCL that `abc app deploy` submits.
+//
+// Spec: abc-universe specs/active/abc-app-deploy.md.
+//
+// Phase 1 scope: BYOI (image-only), frameworks pode/streamlit/shiny/custom,
+// access: team only, single replica, seedling tier only. Subdomain routing
+// (apps served at root, no path prefix), Caddy edge forward-auth, Traefik
+// Nomad-provider discovery (no Consul). The CLI emits Traefik routing tags on
+// the Nomad service block; it makes no out-of-band route-registration call.
+package appgen
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+// AppsDomain is the wildcard parent domain apps are served under. Each app is
+// reachable at https://<project>-<name>.<AppsDomain> at the container root.
+const AppsDomain = "apps.seedling.abc-cluster.cloud"
+
+// DefaultNamespace is the Nomad namespace researcher-deployed apps run in.
+// Overridable via the deploy command's --namespace flag.
+const DefaultNamespace = "abc-apps"
+
+// nameRe is the allowed character class for app names and projects.
+var nameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// AccessRead / AccessReadWrite are the two supported data-access modes.
+const (
+	AccessRead      = "read"
+	AccessReadWrite = "read-write"
+)
+
+// DataMount is one entry in the `data:` list — a MinIO bucket the app reads
+// (or writes). Apps access buckets via injected AWS_* credentials, never a
+// filesystem mount, so `path` is rejected.
+type DataMount struct {
+	Bucket string `yaml:"bucket"`
+	Access string `yaml:"access,omitempty"`
+	// Path is rejected in phase 1 — present only so a stray `path:` produces a
+	// clear validation error rather than being silently ignored.
+	Path string `yaml:"path,omitempty"`
+}
+
+// Spec is the parsed `abc-app.yaml`. Fields map 1:1 to the documented schema.
+type Spec struct {
+	Name      string            `yaml:"name"`
+	Image     string            `yaml:"image"`
+	Project   string            `yaml:"project"`
+	Framework string            `yaml:"framework"`
+	Port      int               `yaml:"port,omitempty"`
+	Health    string            `yaml:"health,omitempty"`
+	Access    string            `yaml:"access,omitempty"`
+	Replicas  int               `yaml:"replicas,omitempty"`
+	Env       map[string]string `yaml:"env,omitempty"`
+	Data      []DataMount       `yaml:"data,omitempty"`
+	Resources Resources         `yaml:"resources,omitempty"`
+
+	// Source is rejected in phase 1 (no cluster-side build path). Declared so a
+	// stray `source:` produces a clear error instead of being ignored.
+	Source string `yaml:"source,omitempty"`
+}
+
+// Resources holds the declared hard resource limits applied to the Nomad task.
+type Resources struct {
+	CPU    int `yaml:"cpu,omitempty"`    // MHz; default 500
+	Memory int `yaml:"memory,omitempty"` // MiB; default 1024
+}
+
+// frameworkDefault carries the port + health-path defaults for a framework and
+// whether it is stateful (phase-2 sticky-cookie classification, documented but
+// not emitted in phase 1).
+type frameworkDefault struct {
+	port      int
+	health    string
+	stateful  bool
+	supported bool // false → recognised but not supported in phase 1
+}
+
+// frameworkDefaults is the framework table from the spec. dash/panel/voila are
+// recognised (so they reject with a precise "not yet supported in phase 1"
+// message) but unsupported in phase 1.
+var frameworkDefaults = map[string]frameworkDefault{
+	"streamlit": {port: 8501, health: "/_stcore/health", stateful: true, supported: true},
+	"shiny":     {port: 3838, health: "/", stateful: true, supported: true},
+	"pode":      {port: 8085, health: "/health/live", stateful: false, supported: true},
+	"dash":      {port: 8050, health: "/", stateful: true, supported: false},
+	"panel":     {port: 5006, health: "/", stateful: true, supported: false},
+	"voila":     {port: 8866, health: "/", stateful: true, supported: false},
+	// custom has no defaults — port + health are mandatory.
+	"custom": {supported: true},
+}
+
+const (
+	defaultCPU    = 500
+	defaultMemory = 1024
+	maxNameLen    = 48
+)
+
+// Validate checks the spec against all phase-1 rules and returns the first
+// violation as a human-readable error. It does NOT touch the network (bucket
+// existence is checked separately by the DataProvisioner before any Nomad or
+// Vault side effects).
+//
+// Format-only: it validates field shape and the phase-1 value set; it does not
+// verify that the project is a group the user belongs to (that gate lives at
+// the auth-svc /validate edge) — only that `project` is present and well-formed.
+func (s *Spec) Validate() error {
+	// name
+	if strings.TrimSpace(s.Name) == "" {
+		return fmt.Errorf("`name` is required")
+	}
+	if len(s.Name) > maxNameLen {
+		return fmt.Errorf("`name` is too long (%d chars); max %d", len(s.Name), maxNameLen)
+	}
+	if !nameRe.MatchString(s.Name) {
+		return fmt.Errorf("`name` %q is invalid; must match [a-z0-9-]+", s.Name)
+	}
+
+	// source — rejected before image so the migration hint is shown.
+	if strings.TrimSpace(s.Source) != "" {
+		return fmt.Errorf("`source:` is not yet supported (use `image:`); there is no cluster-side build path in phase 1")
+	}
+
+	// image
+	if strings.TrimSpace(s.Image) == "" {
+		return fmt.Errorf("`image` is required and must be a fully-qualified OCI image reference (e.g. ghcr.io/org/app:tag); there is no source-based or script-based deploy path")
+	}
+	if !looksLikeImageRef(s.Image) {
+		return fmt.Errorf("`image` %q does not look like a fully-qualified OCI image reference (expected registry/repo[:tag])", s.Image)
+	}
+
+	// project
+	if strings.TrimSpace(s.Project) == "" {
+		return fmt.Errorf("`project` is required; it is the key for the `access: team` group check and data-bucket scoping (e.g. mtb-resistotyper-ml, or abc-platform for platform tooling)")
+	}
+	if !nameRe.MatchString(s.Project) {
+		return fmt.Errorf("`project` %q is invalid; must match [a-z0-9-]+", s.Project)
+	}
+
+	// framework
+	fw := strings.ToLower(strings.TrimSpace(s.Framework))
+	if fw == "" {
+		return fmt.Errorf("`framework` is required; one of: streamlit, shiny, pode, custom (phase 1)")
+	}
+	def, known := frameworkDefaults[fw]
+	if !known {
+		return fmt.Errorf("`framework` %q is not recognised; valid values: streamlit, shiny, dash, panel, voila, pode, custom", s.Framework)
+	}
+	if !def.supported {
+		return fmt.Errorf("`framework: %s` is not yet supported in phase 1; supported: streamlit, shiny, pode, custom", fw)
+	}
+	if fw == "custom" {
+		if s.Port == 0 {
+			return fmt.Errorf("`framework: custom` requires an explicit `port`")
+		}
+		if strings.TrimSpace(s.Health) == "" {
+			return fmt.Errorf("`framework: custom` requires an explicit `health` path")
+		}
+	}
+	if s.Port < 0 || s.Port > 65535 {
+		return fmt.Errorf("`port` %d is out of range (1-65535)", s.Port)
+	}
+
+	// access
+	access := strings.ToLower(strings.TrimSpace(s.Access))
+	if access == "" {
+		access = "team"
+	}
+	switch access {
+	case "team":
+		// ok
+	case "cluster", "public":
+		return fmt.Errorf("`access: %s` is not yet supported in phase 1 (only `team`); cluster and public are reserved for phase 2", access)
+	default:
+		return fmt.Errorf("`access` %q is invalid; phase 1 supports only `team`", s.Access)
+	}
+
+	// replicas
+	if s.Replicas < 0 {
+		return fmt.Errorf("`replicas` %d is invalid", s.Replicas)
+	}
+	if s.Replicas > 1 {
+		return fmt.Errorf("`replicas: %d` is not yet supported in phase 1 (single replica only); multi-replica load balancing is phase 2", s.Replicas)
+	}
+
+	// resources
+	if s.Resources.CPU < 0 {
+		return fmt.Errorf("`resources.cpu` %d is invalid", s.Resources.CPU)
+	}
+	if s.Resources.Memory < 0 {
+		return fmt.Errorf("`resources.memory` %d is invalid", s.Resources.Memory)
+	}
+
+	// data
+	for i, d := range s.Data {
+		if strings.TrimSpace(d.Bucket) == "" {
+			return fmt.Errorf("`data[%d].bucket` is required", i)
+		}
+		if strings.TrimSpace(d.Path) != "" {
+			return fmt.Errorf("`data[%d].path` is not supported; apps access MinIO via the injected AWS_* credentials + ABC_MINIO_ENDPOINT, not via filesystem mounts", i)
+		}
+		acc := strings.ToLower(strings.TrimSpace(d.Access))
+		if acc == "" {
+			acc = AccessRead
+		}
+		if acc != AccessRead && acc != AccessReadWrite {
+			return fmt.Errorf("`data[%d].access` %q is invalid; use `read` (default) or `read-write`", i, d.Access)
+		}
+	}
+
+	return nil
+}
+
+// ApplyDefaults fills framework-derived port/health and the resource defaults,
+// and normalises access/replicas. Call after Validate. Mutates the receiver so
+// `abc app show` / `--dry-run` reflect the resolved (post-default) values.
+func (s *Spec) ApplyDefaults() {
+	fw := s.NormFramework()
+	def := frameworkDefaults[fw]
+	if s.Port == 0 {
+		s.Port = def.port
+	}
+	if strings.TrimSpace(s.Health) == "" {
+		s.Health = def.health
+	}
+	if s.Resources.CPU == 0 {
+		s.Resources.CPU = defaultCPU
+	}
+	if s.Resources.Memory == 0 {
+		s.Resources.Memory = defaultMemory
+	}
+	if s.Replicas == 0 {
+		s.Replicas = 1
+	}
+	if strings.TrimSpace(s.Access) == "" {
+		s.Access = "team"
+	} else {
+		s.Access = strings.ToLower(strings.TrimSpace(s.Access))
+	}
+	s.Framework = fw
+	for i := range s.Data {
+		if strings.TrimSpace(s.Data[i].Access) == "" {
+			s.Data[i].Access = AccessRead
+		} else {
+			s.Data[i].Access = strings.ToLower(strings.TrimSpace(s.Data[i].Access))
+		}
+	}
+}
+
+// NormFramework returns the lowercased, trimmed framework value.
+func (s *Spec) NormFramework() string {
+	return strings.ToLower(strings.TrimSpace(s.Framework))
+}
+
+// Stateful reports the framework's phase-2 sticky-cookie classification.
+// Documented for the multi-replica path; not emitted in phase 1.
+func (s *Spec) Stateful() bool {
+	return frameworkDefaults[s.NormFramework()].stateful
+}
+
+// Subdomain returns the flat `<project>-<name>` host label.
+func (s *Spec) Subdomain() string {
+	return s.Project + "-" + s.Name
+}
+
+// Host returns the full external Host for routing, e.g.
+// `mtb-resistotyper-ml-tb-resistance-dashboard.apps.seedling.abc-cluster.cloud`.
+func (s *Spec) Host() string {
+	return s.Subdomain() + "." + AppsDomain
+}
+
+// URL returns the full external app URL (https, root path).
+func (s *Spec) URL() string {
+	return "https://" + s.Host()
+}
+
+// JobName returns the Nomad job (and service) name: `app-<project>-<name>`.
+func (s *Spec) JobName() string {
+	return "app-" + s.Project + "-" + s.Name
+}
+
+// ServiceAccountName returns the Vault/MinIO service-account name for this app:
+// `abc-app-<project>-<name>`.
+func (s *Spec) ServiceAccountName() string {
+	return "abc-app-" + s.Project + "-" + s.Name
+}
+
+// looksLikeImageRef does a cheap structural check that an image string is a
+// fully-qualified OCI reference (has a registry/repo shape). It deliberately
+// does not attempt a full grammar — Nomad/the registry are the real authority;
+// this just catches obviously-wrong values (bare words, empty tags) early.
+func looksLikeImageRef(img string) bool {
+	img = strings.TrimSpace(img)
+	if img == "" {
+		return false
+	}
+	// Must contain a slash (registry/repo or org/repo) OR a tag/digest on a
+	// known-registry-less form is too ambiguous — require a path separator.
+	if !strings.Contains(img, "/") {
+		return false
+	}
+	// Reject a trailing ':' with no tag.
+	if strings.HasSuffix(img, ":") {
+		return false
+	}
+	return true
+}
