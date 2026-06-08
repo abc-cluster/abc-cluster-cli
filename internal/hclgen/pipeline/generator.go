@@ -782,8 +782,8 @@ func buildNextflowConfig(spec Spec) string {
 	var sb strings.Builder
 
 	// nf-nomad volumes block. When work dir is S3 and nf-nomad-s5cmd is in the
-	// plugin list, mount the nf-work host volume as /nxf-work so workers can
-	// find the s5cmd binary at /nxf-work/bin/s5cmd (see S5cmdNomadInterop).
+	// plugin list, mount the `abc-tools` host volume as /nxf-work so workers can
+	// find the s5cmd binary at /nxf-work/bin/s5cmd (ADR-0061; was nf-work, see below).
 	// Otherwise omit the volume when S3 is the work dir (no shared local disk needed).
 	hostVol := spec.HostVolume
 	if hostVol == "" || hostVol == "-" {
@@ -797,12 +797,14 @@ func buildNextflowConfig(spec Spec) string {
 	volumesLine := fmt.Sprintf(`volumes = [[type: "host", name: "%s", path: "%s"]]`, hostVol, spec.WorkDir)
 	if isS3URI(spec.WorkDir) || spec.HostVolume == "-" {
 		if isS3URI(spec.WorkDir) && hasPlugin(spec.Plugins, "nf-nomad-s5cmd") {
-			// Mount nf-work host volume into workers — bootstrap script prepends /nxf-work/bin
-			// to PATH so s5cmd is found at /nxf-work/bin/s5cmd (see S5cmdNomadInterop.bootstrapScript).
-			// readOnly omitted: nf-nomad auto-marks the first volume as workDir, which
-			// conflicts with readOnly=true per validate(); the mount is effectively read-only
-			// by convention (workers only read the s5cmd binary, never write to nf-work).
-			volumesLine = `volumes = [[type: "host", name: "nf-work", path: "/nxf-work"]]`
+			// ADR-0061: mount the tools-only `abc-tools` host volume (s5cmd only, no
+			// cross-group data — unlike `nf-work`, which members can't safely be granted).
+			// Mounted at /nxf-work so the s5cmd plugin bootstrap finds /nxf-work/bin/s5cmd
+			// unchanged (abc-tools uses a bin/ layout). readOnly omitted: nf-nomad's
+			// validate() rejects readOnly=true on the workDir volume, so the mount is RW;
+			// tamper-safety comes from the binaries being root-owned 0755 (a non-root worker
+			// UID cannot modify them), and the member host_volume grant is policy=write.
+			volumesLine = `volumes = [[type: "host", name: "abc-tools", path: "/nxf-work"]]`
 		} else {
 			volumesLine = `volumes = []`
 		}
@@ -933,7 +935,22 @@ fusion {
 process {
   executor      = "nomad"
   errorStrategy = "retry"
-  maxRetries    = 1
+  // Bumped 1→3: concurrent pipelines briefly overwhelm the single Nomad
+  // server's per-client HTTP connection budget (all heads co-locate on the
+  // platform node, sharing one client IP), surfacing as empty
+  // io.nomadproject.client.ApiException on worker submit. More retries ride
+  // out the transient burst. See abc-universe ADR (nf-nomad concurrent submit).
+  maxRetries    = 3
+}
+
+executor {
+  // Cap concurrent in-flight tasks + submission rate so a single pipeline
+  // doesn't open an unbounded number of connections to the Nomad server.
+  // With heads co-located on the platform node, several pipelines share the
+  // server's per-client-IP connection budget (Nomad default
+  // http_max_conns_per_client = 100), so each pipeline must stay modest.
+  queueSize       = 50
+  submitRateLimit = "10/1sec"
 }
 
 workDir = "%s"
@@ -952,7 +969,7 @@ nomad {
   client {
     address        = System.getenv("NOMAD_ADDR") ?: "http://127.0.0.1:4646"
     token          = System.getenv("NOMAD_TOKEN") ?: ""
-    pollInterval   = "2s"
+    pollInterval   = "5s"
     submitThrottle = "100ms"
   }
   jobs {

@@ -154,11 +154,13 @@ func TestGenerate_S5cmdBlock_SkipTLS(t *testing.T) {
 		}
 	})
 
-	t.Run("nf-work volume mounted at /nxf-work", func(t *testing.T) {
+	t.Run("abc-tools volume mounted at /nxf-work", func(t *testing.T) {
 		spec := base
 		cfg := buildNextflowConfig(spec)
-		if !strings.Contains(cfg, `name: "nf-work"`) || !strings.Contains(cfg, `path: "/nxf-work"`) {
-			t.Fatalf("expected nf-work volume at /nxf-work:\n%s", cfg)
+		// ADR-0061: tools volume is `abc-tools` (bin/ layout) mounted at /nxf-work so
+		// the s5cmd plugin bootstrap still finds /nxf-work/bin/s5cmd.
+		if !strings.Contains(cfg, `name: "abc-tools"`) || !strings.Contains(cfg, `path: "/nxf-work"`) {
+			t.Fatalf("expected abc-tools volume at /nxf-work:\n%s", cfg)
 		}
 	})
 
