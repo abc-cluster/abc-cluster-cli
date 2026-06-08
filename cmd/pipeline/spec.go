@@ -64,6 +64,11 @@ type PipelineSpec struct {
 	// worker_pool, then to the CLI's build-time default ("compute" on
 	// seedling). Bypassed when PinWorkers is true.
 	WorkerPool string `json:"workerPool,omitempty" yaml:"workerPool,omitempty"`
+	// HeadNomadAddr is the NOMAD_ADDR injected into the head task so nf-nomad
+	// registers worker jobs against the cluster's INTERNAL Nomad API rather than
+	// the public ingress the CLI dials. Empty falls through to the build-time
+	// default (the node-local agent via ${attr.unique.network.ip-address}).
+	HeadNomadAddr string `json:"headNomadAddr,omitempty" yaml:"headNomadAddr,omitempty"`
 
 	// DevPlugins toggles loading the cluster's nf-abc-cluster-dev meta-plugin
 	// bundle into the head container. When set, run.go resolves PluginBundleURL
@@ -230,6 +235,9 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	}
 	if override.WorkerPool != "" {
 		base.WorkerPool = override.WorkerPool
+	}
+	if override.HeadNomadAddr != "" {
+		base.HeadNomadAddr = override.HeadNomadAddr
 	}
 	if override.DevPlugins {
 		base.DevPlugins = true

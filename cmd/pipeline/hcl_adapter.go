@@ -237,6 +237,7 @@ func generateHeadJobHCLWithStaticEnvAndFlagsEx(spec *PipelineSpec, nomadAddr, no
 		WorkerExcludeHost:        spec.WorkerExcludeHost,
 		HeadPool:                 spec.HeadPool,
 		WorkerPool:               spec.WorkerPool,
+		HeadNomadAddr:            spec.HeadNomadAddr,
 		PluginBundleURL:          spec.PluginBundleURL,
 		NextflowBinURL:           spec.NextflowBinURL,
 		Plugins:                  plugins,

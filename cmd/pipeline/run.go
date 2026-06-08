@@ -123,6 +123,9 @@ EXAMPLES
 	cmd.Flags().String("worker-pool", "",
 		"Nomad node-pool nf-nomad workers should land in. Overrides the active context's admin.services.nomad.worker_pool. "+
 			"Bypassed when --pin-workers is set. Empty = use the active context's default (typically 'compute').")
+	cmd.Flags().String("head-nomad-addr", "",
+		"NOMAD_ADDR the head uses to register worker jobs (the INTERNAL Nomad API; the head runs on-cluster). "+
+			"Empty = node-local agent via ${attr.unique.network.ip-address}:4646, so worker registers bypass the public ingress.")
 	cmd.Flags().String("host-volume", "", "Nomad host volume name for the work dir (default: nextflow-work; use \"-\" to disable)")
 	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (workers spread freely; combine with --pin-workers for single-host runs)")
 	cmd.Flags().Bool("pin-workers", false, "When --node is set, ALSO pin every spawned process to that node (single-host run; needed when there is no shared FS / nf-rclone)")
@@ -279,6 +282,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("worker-pool"); v != "" {
 		override.WorkerPool = v
+	}
+	if v, _ := cmd.Flags().GetString("head-nomad-addr"); v != "" {
+		override.HeadNomadAddr = v
 	}
 	if v, _ := cmd.Flags().GetStringSlice("datacenter"); len(v) > 0 {
 		override.Datacenters = v
@@ -494,6 +500,16 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 			} else {
 				spec.WorkerPool = "compute"
 			}
+		}
+		// Head submits worker registers to the INTERNAL Nomad API, not the public
+		// ingress the CLI dials (the ingress masked real 403s as empty
+		// ApiExceptions — see brainstorms/abc-seedling-prod/
+		// 2026-06-08-nf-nomad-concurrent-submit-conn-cap.md). Default to the
+		// node-local agent: the head runs on-cluster and
+		// ${attr.unique.network.ip-address} is resolved by Nomad per-node at
+		// placement, so no address is hard-coded. Override with --head-nomad-addr.
+		if spec.HeadNomadAddr == "" {
+			spec.HeadNomadAddr = "http://${attr.unique.network.ip-address}:4646"
 		}
 		if spec.WorkDir == "" && groupBucket != "" && userSeg != "" {
 			spec.WorkDir = derivedWorkDir(groupBucket, scope, userSeg, runTag)

@@ -17,6 +17,16 @@ type Spec struct {
 	WorkDir string
 	Params  map[string]any
 
+	// HeadNomadAddr is the NOMAD_ADDR injected into the head task env — the
+	// address nf-nomad uses to register WORKER jobs. It should be the cluster's
+	// INTERNAL Nomad API (the head runs on-cluster), NOT the public ingress URL
+	// the CLI itself dials: routing worker registers through the public proxy
+	// (tailscaled-Serve → Traefik) masked real 403s as empty ApiExceptions and
+	// is a fragile control-plane path (see brainstorms/abc-seedling-prod/
+	// 2026-06-08-nf-nomad-concurrent-submit-conn-cap.md). When empty the
+	// generator falls back to the CLI's nomadAddr (legacy behaviour).
+	HeadNomadAddr string
+
 	CPU             int
 	MemoryMB        int
 	// HeadDiskMB is the head group's ephemeral_disk size in MB. The head needs
@@ -716,7 +726,15 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	// Environment
 	envBody := taskBody.AppendNewBlock("env", nil).Body()
-	envBody.SetAttributeValue("NOMAD_ADDR", cty.StringVal(nomadAddr))
+	// The head submits WORKER jobs via this address. Prefer the internal Nomad
+	// API (spec.HeadNomadAddr, typically the node-local agent via
+	// ${attr.unique.network.ip-address}) so registers never traverse the public
+	// ingress; fall back to the CLI's dial address when unset.
+	headAddr := nomadAddr
+	if spec.HeadNomadAddr != "" {
+		headAddr = spec.HeadNomadAddr
+	}
+	envBody.SetAttributeValue("NOMAD_ADDR", cty.StringVal(headAddr))
 	envBody.SetAttributeValue("NOMAD_TOKEN", cty.StringVal(nomadToken))
 	// Run tag for single-prefix correlation. nf-nomad's NomadHelper composes
 	// `<runtag>-<8task>-` as the prefix on every child Nomad job-id;
