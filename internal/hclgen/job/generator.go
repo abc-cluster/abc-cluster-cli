@@ -356,11 +356,13 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 	if spec.Staging.Enabled {
 		vol := groupBody.AppendNewBlock("volume", []string{spec.Staging.HostVolumeName}).Body()
 		vol.SetAttributeValue("type", cty.StringVal("host"))
-		vol.SetAttributeValue("source", cty.StringVal(spec.Staging.HostVolumeSource))
+		// `source` is the client-registered host_volume NAME, not its host path
+		// (the path lives only in the Nomad client config). HostVolumeSource is
+		// retained for documentation but must not be emitted here.
+		vol.SetAttributeValue("source", cty.StringVal(spec.Staging.HostVolumeName))
 		vol.SetAttributeValue("read_only", cty.BoolVal(true))
-		stageDriver := stageTaskDriver(spec.Driver)
-		appendStageTask(groupBody, "stage-in", "prestart", spec.Staging.StageInManifest, "stage-in.txt", spec.Staging, stageDriver)
-		appendStageTask(groupBody, "stage-out", "poststop", spec.Staging.StageOutManifest, "stage-out.txt", spec.Staging, stageDriver)
+		appendStageTask(groupBody, "stage-in", "prestart", spec.Staging.StageInManifest, "stage-in.txt", spec.Staging)
+		appendStageTask(groupBody, "stage-out", "poststop", spec.Staging.StageOutManifest, "stage-out.txt", spec.Staging)
 	}
 
 	mainBody := groupBody.AppendNewBlock("task", []string{"main"}).Body()
@@ -841,58 +843,20 @@ func hasExplicitRuntimeExposure(spec Spec) bool {
 // artifact stanza because Nomad artifact stanzas do not resolve ${attr.*} node
 // attributes in source URLs — they are passed literally to go-getter, which then
 // fails. The curl approach mirrors how micromamba fetches its binary.
-// stageTaskDriver picks the Nomad task driver for the s5cmd stage-in/stage-out
-// lifecycle tasks. The stage tasks always run host-side (they execute the host
-// s5cmd binary delivered by the nf-work host_volume), so they must use a
-// host-exec driver — never the main task's container driver.
-//
-// Member driver-admission (jurist / ADR-0058) admits ONLY exec2 for member
-// jobs; a raw `exec` stage task makes `nomad register` 403 regardless of the
-// main `--driver`. So:
-//
-//   - If the resolved main driver is itself a host-exec driver (exec2 / exec /
-//     raw_exec — the case on a member cluster after `auto-exec` resolves to the
-//     admitted exec2), the stage tasks FOLLOW it. This keeps the stage tasks on
-//     the same admitted host driver the cluster placed the job under.
-//   - Otherwise (OCI main driver, slurm/pbs bridge, or anything else), the
-//     stage tasks DEFAULT to exec2 — the admission-safe host driver. We never
-//     fall back to bare `exec` here on purpose: that is exactly what triggers
-//     the member 403.
-//
-// Note: `main` is untouched and still honours `--driver`; only the host-side
-// stage tasks are driver-selected here.
-func stageTaskDriver(mainDriver string) string {
-	switch mainDriver {
-	case "exec2", "exec", "raw_exec":
-		return mainDriver
-	default:
-		return "exec2"
-	}
-}
-
 // appendStageTask emits an s5cmd staging task (spec abc-job-data-staging Part A).
 // hook is "prestart" (stage-in, before main) or "poststop" (stage-out, after main
 // succeeds). The manifest is written as a template at local/<manifestFile> and run
 // via `s5cmd run`. The nf-work host volume (carrying the s5cmd binary) is mounted
 // read-only. With sidecar=false a non-zero prestart exit aborts the job before main;
 // poststop runs only on main success (so partial outputs are not staged out).
-//
-// driver is the host-exec driver chosen by stageTaskDriver (exec2 on a member
-// cluster). For exec2 the task runs under landlock fs-restriction + a dynamic
-// non-root UID + capability dropping, so the task config differs from plain
-// exec: exec2 needs an explicit `command`/`args` split (no /bin/sh -c string
-// field — exec2's config has `command`+`args`, same as exec) PLUS an `unveil`
-// allow-list for every host path the task touches that is NOT already covered
-// by the driver's default access. See appendStageExec2Unveil for the path
-// reasoning.
-func appendStageTask(groupBody *hclwrite.Body, name, hook, manifest, manifestFile string, s StagingSpec, driver string) {
+func appendStageTask(groupBody *hclwrite.Body, name, hook, manifest, manifestFile string, s StagingSpec) {
 	taskBody := groupBody.AppendNewBlock("task", []string{name}).Body()
 
 	lc := taskBody.AppendNewBlock("lifecycle", nil).Body()
 	lc.SetAttributeValue("hook", cty.StringVal(hook))
 	lc.SetAttributeValue("sidecar", cty.BoolVal(false))
 
-	taskBody.SetAttributeValue("driver", cty.StringVal(driver))
+	taskBody.SetAttributeValue("driver", cty.StringVal("exec"))
 
 	// Mount the host volume carrying the s5cmd binary (read-only).
 	vm := taskBody.AppendNewBlock("volume_mount", nil).Body()
@@ -940,61 +904,9 @@ func appendStageTask(groupBody *hclwrite.Body, name, hook, manifest, manifestFil
 		cty.StringVal(shCmd),
 	}))
 
-	if driver == "exec2" {
-		appendStageExec2Unveil(cfgBody, s)
-	}
-
 	resBody := taskBody.AppendNewBlock("resources", nil).Body()
 	resBody.SetAttributeValue("cpu", cty.NumberIntVal(500))
 	resBody.SetAttributeValue("memory", cty.NumberIntVal(512))
-}
-
-// appendStageExec2Unveil emits the exec2 `unveil` allow-list the stage task
-// needs to run the host s5cmd under landlock filesystem restriction.
-//
-// What exec2 grants WITHOUT unveil (so we do NOT list these):
-//   - the task dir ($NOMAD_TASK_DIR) and the shared alloc dir
-//     ($NOMAD_ALLOC_DIR) — covers secrets/s5cmd.env, local/<manifest>, and the
-//     alloc-shared DestRoot (which is under $NOMAD_ALLOC_DIR/...).
-//   - with the driver's unveil_defaults=true (the install default): /lib, /usr/lib,
-//     ld.so.*, /tmp, /dev/null|zero|urandom, /etc/hosts, /etc/resolv.conf, and —
-//     critically for the private-CA MinIO — the system CA bundles under
-//     /etc/ssl/certs + /etc/pki/... . So AWS_CA_BUNDLE pointing at a system CA
-//     path needs no extra unveil; a CA bundle staged into the task dir is also
-//     already reachable.
-//
-// What exec2 does NOT grant by default, so we unveil it here:
-//   - the s5cmd binary's host_volume mount (e.g. /nxf-work). exec2 explicitly
-//     does NOT auto-unveil the `command` path or any host_volume mount — the
-//     README notes the command filepath "is not automatically made accessible
-//     to the task". We grant rx (read+execute) on the mount root so /nxf-work/bin/s5cmd
-//     is executable and any sibling libs/config it reads are visible.
-//   - /bin and /usr/bin: the wrapper is `/bin/sh -c "... mkdir -p ... && cd ... && s5cmd ..."`.
-//     unveil_defaults does NOT include /bin or /usr/bin, so the shell + mkdir
-//     would be unreachable. rx covers exec of sh + coreutils. (cd is a shell
-//     builtin and needs nothing.)
-//
-// IMPORTANT operator dependency: task-level `unveil` only takes effect if the
-// exec2 plugin is configured with `unveil_by_task = true` in the Nomad client
-// agent (plugin "nomad-driver-exec2" { config { unveil_by_task = true } }). If
-// the member cluster's exec2 plugin leaves that at its default (false), Nomad
-// REJECTS the job for specifying task unveil, OR (depending on version) ignores
-// it and the task fails at runtime when it cannot reach /nxf-work. This is the
-// single biggest live-run unknown — see the handoff report.
-func appendStageExec2Unveil(cfgBody *hclwrite.Body, s StagingSpec) {
-	paths := []string{
-		// Host volume mount carrying s5cmd (binary + any adjacent files). rx so
-		// the binary is executable and readable.
-		"rx:" + s.HostVolumeMount,
-		// Shell + coreutils used by the wrapper command.
-		"rx:/bin",
-		"rx:/usr/bin",
-	}
-	vals := make([]cty.Value, len(paths))
-	for i, p := range paths {
-		vals[i] = cty.StringVal(p)
-	}
-	cfgBody.SetAttributeValue("unveil", cty.ListVal(vals))
 }
 
 func appendWavePrestartTask(groupBody *hclwrite.Body, w WaveSpec) {

@@ -737,10 +737,13 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 	spec.StageInManifest = plan.StageInManifest()
 	spec.StageOutManifest = plan.StageOutManifest()
 	spec.StageDestRoot = plan.DestRoot
-	spec.StageS5cmdPath = "/nxf-work/bin/s5cmd"
-	spec.StageHostVolumeName = "nf-work"
-	spec.StageHostVolumeSource = "/opt/abc-seedling/nf-work"
-	spec.StageHostVolumeMount = "/nxf-work"
+	// ADR-0061: s5cmd comes from the tools-only `abc-tools` host volume (members
+	// have a safe read grant; no cross-group data, unlike nf-work). Mounted RO;
+	// stage tasks run on `exec` (member-allowed, ADR-0058) and read the binary.
+	spec.StageS5cmdPath = "/opt/abc-tools/bin/s5cmd"
+	spec.StageHostVolumeName = "abc-tools"
+	spec.StageHostVolumeSource = "/opt/abc-cluster/abc-tools"
+	spec.StageHostVolumeMount = "/opt/abc-tools"
 
 	// StageEnv: the member's resolved S3 creds + endpoint, rendered into the
 	// prestart/poststop s5cmd tasks' secrets/s5cmd.env (hcl_adapter → generator).
