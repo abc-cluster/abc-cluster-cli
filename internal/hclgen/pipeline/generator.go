@@ -264,6 +264,15 @@ type Identity struct {
 	RunName     string // user-supplied via --name (or auto)
 	SubmittedAt string // ISO-8601 UTC, set by abc-cluster-cli at submit time
 	CLIVersion  string // semver of the abc CLI binary that submitted
+
+	// Identity classification (mirrors utils.UserIdentity — keep in sync).
+	// UserKind:  "named" | "slot"        — who they are (from token, INDEPENDENT of where they ran)
+	// RunOrigin: "cluster" | "external"  — where the runner ran (orthogonal to UserKind)
+	// A named user running nextflow from a laptop is "named" + "external",
+	// not "external" + "external" — identity follows the token, not the
+	// means of submission. See cmd/utils/identity.go for full semantics.
+	UserKind  string
+	RunOrigin string
 }
 
 // Empty reports whether no identity fields are populated. Used to skip the
@@ -312,6 +321,12 @@ func (i Identity) MetaMap() map[string]string {
 	}
 	if i.CLIVersion != "" {
 		out["abc_cli_version"] = i.CLIVersion
+	}
+	if i.UserKind != "" {
+		out["abc_user_kind"] = i.UserKind
+	}
+	if i.RunOrigin != "" {
+		out["abc_run_origin"] = i.RunOrigin
 	}
 	return out
 }

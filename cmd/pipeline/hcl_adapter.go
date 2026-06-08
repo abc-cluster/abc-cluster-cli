@@ -30,6 +30,8 @@ func resolveIdentity(spec *PipelineSpec) hclpipeline.Identity {
 		Tenant:           base.Tenant,
 		SubmittedAt:      base.SubmittedAt,
 		CLIVersion:       base.CLIVersion,
+		UserKind:         base.UserKind,
+		RunOrigin:        base.RunOrigin,
 		PipelineURL:      spec.Repository,
 		PipelineRevision: spec.Revision,
 		RunName:          spec.Name,

@@ -1102,6 +1102,11 @@ contexts:
 		{"abc_user_id", "01KS7XXZBRNKRJJ0TR7PW9FWV9"},
 		{"abc_workspace", "su-mbhg-hostgen"},
 		{"abc_tenant", "su-mbhg-hostgen"},
+		// abc_user_kind + abc_run_origin: classify the submitter for downstream
+		// rollups (Kayastha / `abc report` / jurist). "named" because "anel" is
+		// not a slot-* pseudonym; "cluster" because abc CLI head IS a Nomad job.
+		{"abc_user_kind", "named"},
+		{"abc_run_origin", "cluster"},
 	}
 	for _, p := range wantPairs {
 		re := regexp.MustCompile(regexp.QuoteMeta(p.key) + `\s*= "` + regexp.QuoteMeta(p.value) + `"`)
