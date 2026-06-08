@@ -12,14 +12,18 @@ type PipelineSpec struct {
 	// Nextflow pipeline source
 	Repository string `json:"repository" yaml:"repository"` // e.g. nextflow-io/hello or https://github.com/nf-core/rnaseq
 	Revision   string `json:"revision,omitempty" yaml:"revision,omitempty"`
-	Profile    string `json:"profile,omitempty" yaml:"profile,omitempty"`   // comma-separated
+	Profile    string `json:"profile,omitempty" yaml:"profile,omitempty"` // comma-separated
 
 	// Runtime
 	WorkDir     string         `json:"workDir,omitempty" yaml:"workDir,omitempty"`         // host volume path or s3:// URI
 	ExtraConfig string         `json:"extraConfig,omitempty" yaml:"extraConfig,omitempty"` // appended to nextflow config
 	Params      map[string]any `json:"params,omitempty" yaml:"params,omitempty"`           // nextflow pipeline params
-	Resume      bool           `json:"resume,omitempty" yaml:"resume,omitempty"`           // append -resume to nextflow run
-	SessionID   string         `json:"sessionID,omitempty" yaml:"sessionID,omitempty"`     // resume specific Nextflow session
+	// ExtraEnv are user-supplied env vars injected into the head job's env
+	// block (e.g. GITHUB_TOKEN for a private-repo head-job clone). Set via
+	// `--env KEY=VALUE` / `--git-token` on `abc pipeline run`.
+	ExtraEnv  map[string]string `json:"extraEnv,omitempty" yaml:"extraEnv,omitempty"`
+	Resume    bool              `json:"resume,omitempty" yaml:"resume,omitempty"`       // append -resume to nextflow run
+	SessionID string            `json:"sessionID,omitempty" yaml:"sessionID,omitempty"` // resume specific Nextflow session
 	// RunTag is a short alphanumeric prefix shared by the head Nomad job-id
 	// and every child Nomad job-id (single-prefix correlation). Set per-
 	// submission by run.go (newRunTag); not user-configurable.
@@ -39,7 +43,7 @@ type PipelineSpec struct {
 	PipelineSlug string `json:"-" yaml:"-"`
 	// HostVolume is the Nomad host volume name for shared work storage.
 	// Use "-" to disable host volumes (e.g. when workDir is an S3 URI).
-	HostVolume     string `json:"hostVolume,omitempty" yaml:"hostVolume,omitempty"`
+	HostVolume string `json:"hostVolume,omitempty" yaml:"hostVolume,omitempty"`
 	// NodeConstraint pins the head job to a specific Nomad node hostname.
 	NodeConstraint string `json:"nodeConstraint,omitempty" yaml:"nodeConstraint,omitempty"`
 	// PinWorkers, when true with NodeConstraint set, also pins every spawned
@@ -115,9 +119,9 @@ type PipelineSpec struct {
 	S5cmdSkipTLS bool `json:"s5cmdSkipTLS,omitempty" yaml:"s5cmdSkipTLS,omitempty"`
 
 	// Head job resource overrides
-	CPU        int `json:"cpu,omitempty" yaml:"cpu,omitempty"`               // MHz
-	MemoryMB   int `json:"memoryMB,omitempty" yaml:"memoryMB,omitempty"`     // MB
-	HeadDiskMB int `json:"headDiskMB,omitempty" yaml:"headDiskMB,omitempty"` // ephemeral_disk MB
+	CPU             int    `json:"cpu,omitempty" yaml:"cpu,omitempty"`               // MHz
+	MemoryMB        int    `json:"memoryMB,omitempty" yaml:"memoryMB,omitempty"`     // MB
+	HeadDiskMB      int    `json:"headDiskMB,omitempty" yaml:"headDiskMB,omitempty"` // ephemeral_disk MB
 	NfVersion       string `json:"nfVersion,omitempty" yaml:"nfVersion,omitempty"`
 	NfPluginVersion string `json:"nfPluginVersion,omitempty" yaml:"nfPluginVersion,omitempty"`
 
@@ -172,6 +176,14 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 		}
 		for k, v := range override.Params {
 			base.Params[k] = v
+		}
+	}
+	if len(override.ExtraEnv) > 0 {
+		if base.ExtraEnv == nil {
+			base.ExtraEnv = map[string]string{}
+		}
+		for k, v := range override.ExtraEnv {
+			base.ExtraEnv[k] = v
 		}
 	}
 	if override.CPU != 0 {

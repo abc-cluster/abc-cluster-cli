@@ -29,6 +29,36 @@ const (
 	watchTimeout = 5 * time.Minute
 )
 
+// parseHeadEnv turns `--env` entries into a name→value map. Each entry is
+// either `KEY=VALUE`, or a bare `KEY` whose value is read from the caller's
+// environment (so a secret like GITHUB_TOKEN need not appear in argv/history).
+func parseHeadEnv(entries []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, e := range entries {
+		if strings.TrimSpace(e) == "" {
+			continue
+		}
+		// Trim only the key; preserve the value verbatim (env values may
+		// legitimately contain leading/trailing spaces).
+		if k, v, ok := strings.Cut(e, "="); ok {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				return nil, fmt.Errorf("--env %q: empty key", e)
+			}
+			out[k] = v
+			continue
+		}
+		// bare KEY → read from the caller's environment.
+		key := strings.TrimSpace(e)
+		v, ok := os.LookupEnv(key)
+		if !ok {
+			return nil, fmt.Errorf("--env %s: no value provided and %s is not set in your environment (use --env %s=VALUE)", key, key, key)
+		}
+		out[key] = v
+	}
+	return out, nil
+}
+
 func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run <name-or-url>",
@@ -122,6 +152,8 @@ EXAMPLES
 
 	// Inline parameter overrides (--param key=value, repeatable)
 	cmd.Flags().StringArray("param", nil, "Inline pipeline parameter override (key=value, repeatable; merged on top of --params-file)")
+	cmd.Flags().StringArray("env", nil, "Inject an env var into the head job (KEY=VALUE, repeatable; a bare KEY reads the value from your current environment). Use for a private-repo GITHUB_TOKEN, etc.")
+	cmd.Flags().String("git-token", "", "Convenience for a private-repo head-job clone: sets GITHUB_TOKEN in the head job to this value. (To read it from your environment instead, use --env GITHUB_TOKEN.)")
 
 	// Resume / session control
 	cmd.Flags().Bool("resume", false, "Append -resume to the nextflow run command (checkpoint restart)")
@@ -286,6 +318,25 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 			k, v, _ := strings.Cut(kv, "=")
 			override.Params[strings.TrimSpace(k)] = v
 		}
+	}
+	// --env KEY=VALUE | KEY (repeatable) + --git-token convenience → head-job env.
+	if envKVs, _ := cmd.Flags().GetStringArray("env"); len(envKVs) > 0 {
+		ev, err := parseHeadEnv(envKVs)
+		if err != nil {
+			return err
+		}
+		if override.ExtraEnv == nil {
+			override.ExtraEnv = map[string]string{}
+		}
+		for k, v := range ev {
+			override.ExtraEnv[k] = v
+		}
+	}
+	if gt, _ := cmd.Flags().GetString("git-token"); gt != "" {
+		if override.ExtraEnv == nil {
+			override.ExtraEnv = map[string]string{}
+		}
+		override.ExtraEnv["GITHUB_TOKEN"] = gt
 	}
 	if resume, _ := cmd.Flags().GetBool("resume"); resume {
 		override.Resume = true

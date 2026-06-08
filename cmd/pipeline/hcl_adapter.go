@@ -147,6 +147,14 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 		// Explicit override on the spec wins (e.g. saved pipeline or test).
 		s5cmdSkipTLS = true
 	}
+	// User-supplied env (--env / --git-token) is injected last so it wins over
+	// the derived monitoring/MinIO env in the head job's env block.
+	for k, v := range spec.ExtraEnv {
+		if staticEnv == nil {
+			staticEnv = map[string]string{}
+		}
+		staticEnv[k] = v
+	}
 	return generateHeadJobHCLWithStaticEnvAndFlagsEx(spec, nomadAddr, nomadToken, runUUID, staticEnv, skipNomadVarCreds, s5cmdSkipTLS)
 }
 
@@ -203,44 +211,44 @@ func generateHeadJobHCLWithStaticEnvAndFlagsEx(spec *PipelineSpec, nomadAddr, no
 		}
 	}
 	return hclpipeline.Generate(hclpipeline.Spec{
-		Name:            spec.Name,
-		WorkDir:         spec.WorkDir,
-		Params:          spec.Params,
-		CPU:             spec.CPU,
-		MemoryMB:        spec.MemoryMB,
-		HeadDiskMB:      spec.HeadDiskMB,
-		NfVersion:       spec.NfVersion,
-		NfPluginVersion: spec.NfPluginVersion,
-		Namespace:       spec.Namespace,
-		Datacenters:     spec.Datacenters,
-		Repository:      spec.Repository,
-		Revision:        spec.Revision,
-		Profile:         spec.Profile,
-		ExtraConfig:     spec.ExtraConfig,
-		Resume:          spec.Resume,
-		SessionID:       spec.SessionID,
-		RunTag:            spec.RunTag,
-		NextflowRunName:   spec.NextflowRunName,
-		PinnedSessionUUID: spec.PinnedSessionUUID,
-		PipelineSlug:    spec.PipelineSlug,
-		HostVolume:      spec.HostVolume,
-		NodeConstraint:    spec.NodeConstraint,
-		PinWorkers:        spec.PinWorkers,
-		WorkerExcludeHost: spec.WorkerExcludeHost,
-		HeadPool:          spec.HeadPool,
-		WorkerPool:        spec.WorkerPool,
-		PluginBundleURL: spec.PluginBundleURL,
-		NextflowBinURL:  spec.NextflowBinURL,
-		Plugins:         plugins,
-		ExtraBinaries:   bins,
-		StaticEnv:               staticEnv,
-		SkipNomadVarCreds:       skipNomadVarCreds,
-		ExtraPassthroughEnvKeys: extraPassthrough,
+		Name:                     spec.Name,
+		WorkDir:                  spec.WorkDir,
+		Params:                   spec.Params,
+		CPU:                      spec.CPU,
+		MemoryMB:                 spec.MemoryMB,
+		HeadDiskMB:               spec.HeadDiskMB,
+		NfVersion:                spec.NfVersion,
+		NfPluginVersion:          spec.NfPluginVersion,
+		Namespace:                spec.Namespace,
+		Datacenters:              spec.Datacenters,
+		Repository:               spec.Repository,
+		Revision:                 spec.Revision,
+		Profile:                  spec.Profile,
+		ExtraConfig:              spec.ExtraConfig,
+		Resume:                   spec.Resume,
+		SessionID:                spec.SessionID,
+		RunTag:                   spec.RunTag,
+		NextflowRunName:          spec.NextflowRunName,
+		PinnedSessionUUID:        spec.PinnedSessionUUID,
+		PipelineSlug:             spec.PipelineSlug,
+		HostVolume:               spec.HostVolume,
+		NodeConstraint:           spec.NodeConstraint,
+		PinWorkers:               spec.PinWorkers,
+		WorkerExcludeHost:        spec.WorkerExcludeHost,
+		HeadPool:                 spec.HeadPool,
+		WorkerPool:               spec.WorkerPool,
+		PluginBundleURL:          spec.PluginBundleURL,
+		NextflowBinURL:           spec.NextflowBinURL,
+		Plugins:                  plugins,
+		ExtraBinaries:            bins,
+		StaticEnv:                staticEnv,
+		SkipNomadVarCreds:        skipNomadVarCreds,
+		ExtraPassthroughEnvKeys:  extraPassthrough,
 		SecretPassthroughEnvKeys: secretPassthrough,
-		WaveEndpoint:      spec.WaveEndpoint,
-		FusionEnabled:     spec.FusionEnabled,
-		ContainerRuntime:  spec.ContainerRuntime,
-		S5cmdSkipTLS:      s5cmdSkipTLS,
-		Identity:          resolveIdentity(spec),
+		WaveEndpoint:             spec.WaveEndpoint,
+		FusionEnabled:            spec.FusionEnabled,
+		ContainerRuntime:         spec.ContainerRuntime,
+		S5cmdSkipTLS:             s5cmdSkipTLS,
+		Identity:                 resolveIdentity(spec),
 	}, nomadAddr, nomadToken, runUUID)
 }

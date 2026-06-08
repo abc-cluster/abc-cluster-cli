@@ -3,6 +3,7 @@ package job
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,44 @@ pasted from any tier's Nomad UI work the same way:
 	cmd.Flags().String("output", "", "Write stdout logs to file (nomad source only)")
 	cmd.Flags().String("error", "", "Write stderr logs to file (nomad source only)")
 	return cmd
+}
+
+// resolveAllocTask picks the task to stream logs from. It honours an explicit
+// --task (erroring with the available tasks if it's wrong), and auto-resolves
+// the default "main" against the allocation's real tasks: a single-task alloc
+// uses that task; a Nextflow head job resolves to "nextflow"/"nf-task".
+func resolveAllocTask(cmd *cobra.Command, target *NomadAllocStub, requested string) (string, error) {
+	if target == nil || len(target.TaskStates) == 0 {
+		return requested, nil // nothing to resolve against; let StreamLogs try
+	}
+	if _, ok := target.TaskStates[requested]; ok {
+		return requested, nil
+	}
+	names := make([]string, 0, len(target.TaskStates))
+	for n := range target.TaskStates {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	id := target.ID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	// An explicit --task that doesn't exist → clear error listing the options.
+	if cmd.Flags().Changed("task") {
+		return "", fmt.Errorf("task %q not found in allocation %s; available tasks: %s",
+			requested, id, strings.Join(names, ", "))
+	}
+	// Default "main" not present → auto-resolve.
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	for _, pref := range []string{"nextflow", "nf-task", "main"} {
+		if _, ok := target.TaskStates[pref]; ok {
+			return pref, nil
+		}
+	}
+	return "", fmt.Errorf("allocation %s has multiple tasks; pick one with --task: %s",
+		id, strings.Join(names, ", "))
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
@@ -129,6 +168,15 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 	if target == nil {
 		return fmt.Errorf("no allocation matching %q found for job %q", allocPrefix, jobID)
+	}
+
+	// Resolve the task name. The default --task "main" is the abc job-run
+	// convention but does not exist on Nextflow head jobs (task "nextflow") or
+	// many other jobs; auto-resolve against the allocation's actual tasks so
+	// `abc job logs <job>` just works without the caller knowing the task name.
+	task, err = resolveAllocTask(cmd, target, task)
+	if err != nil {
+		return err
 	}
 
 	origin := "start"
