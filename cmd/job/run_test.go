@@ -263,8 +263,12 @@ python analysis.py
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertJobNamePrefix(t, out, "serial-python")
+	// Job-scope key alignment shifts with the longest key present (e.g. the
+	// node_pool fallback), so assert the type assignment whitespace-tolerantly.
+	if !regexp.MustCompile(`type\s*=\s*"batch"`).MatchString(out) {
+		t.Errorf("expected type=batch in output\ngot:\n%s", out)
+	}
 	checks := []string{
-		`type     = "batch"`,
 		`count = 1`,
 		`cores  = 4`,
 		`memory = 8192`,
@@ -617,7 +621,7 @@ func TestJobRun_Priority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "priority = 80") {
+	if !regexp.MustCompile(`priority\s*=\s*80`).MatchString(out) {
 		t.Errorf("expected priority=80, got:\n%s", out)
 	}
 }
@@ -629,7 +633,7 @@ func TestJobRun_DefaultPriority50(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "priority = 50") {
+	if !regexp.MustCompile(`priority\s*=\s*50`).MatchString(out) {
 		t.Errorf("expected default priority=50, got:\n%s", out)
 	}
 }
