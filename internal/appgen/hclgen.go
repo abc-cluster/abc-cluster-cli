@@ -102,10 +102,16 @@ func Generate(s *Spec, p JobParams) string {
 	restartBody.SetAttributeValue("interval", cty.StringVal("5m"))
 	restartBody.SetAttributeValue("mode", cty.StringVal("delay"))
 
-	// network — a dynamic host port mapped to the app's declared container port.
+	// network — HOST mode + a static host port equal to the container port. The
+	// container binds s.Port directly on the host network namespace, so the
+	// Traefik `loadbalancer.server.port` tag (= s.Port) routes correctly. A
+	// dynamic mapped port (`to`) combined with a hardcoded LB-port tag mismatch
+	// → Traefik can't reach the app → 502. (Matches the live working apps:
+	// network mode=host, reserved static port, docker network_mode=host.)
 	netBody := groupBody.AppendNewBlock("network", nil).Body()
+	netBody.SetAttributeValue("mode", cty.StringVal("host"))
 	portBody := netBody.AppendNewBlock("port", []string{"http"}).Body()
-	portBody.SetAttributeValue("to", cty.NumberIntVal(int64(s.Port)))
+	portBody.SetAttributeValue("static", cty.NumberIntVal(int64(s.Port)))
 
 	// service — Nomad-native (provider = "nomad"), NOT Consul. Service name
 	// matches the job name so `abc app` and Traefik discover it consistently.
@@ -153,7 +159,11 @@ func Generate(s *Spec, p JobParams) string {
 
 	cfgBody := taskBody.AppendNewBlock("config", nil).Body()
 	cfgBody.SetAttributeValue("image", cty.StringVal(s.Image))
-	cfgBody.SetAttributeValue("ports", cty.ListVal([]cty.Value{cty.StringVal("http")}))
+	// Host networking: the container shares the host network namespace and binds
+	// the static port reserved above directly. No docker port mapping (`ports`)
+	// is used — that is for bridge mode, which would hide the app behind a
+	// dynamic host port the Traefik LB-port tag doesn't know about.
+	cfgBody.SetAttributeValue("network_mode", cty.StringVal("host"))
 
 	// env — platform-injected vars merged with the user's env. Platform wins
 	// on key collision (the reserved ABC_*/AWS_* names below take precedence).
