@@ -55,6 +55,12 @@ This document describes every command available in the `abc` CLI.
 - [data compress](#data-compress)
 - [data decompress](#data-decompress)
 - [data download](#data-download)
+- [app](#app)
+  - [abc-app.yaml](#abc-appyaml)
+  - [app init](#abc-app-init)
+  - [app validate](#abc-app-validate)
+  - [app deploy](#abc-app-deploy)
+  - [app lifecycle](#lifecycle)
 - [infra compute add](#infra-compute-add)
 - [infra compute list](#infra-compute-list)
 - [infra compute show](#infra-compute-show)
@@ -1833,6 +1839,143 @@ Download pipeline submitted successfully (NCBI SRA).
   Run Name: fetchngs-run
 
 Monitor with: abc job logs r-123
+```
+
+---
+
+## `app`
+
+Deploy a containerised, browser-facing scientific web app — **Streamlit, R Shiny,
+Pode.Web, or a custom image** — as a persistent, auth-gated Nomad `service`. A
+single `abc-app.yaml` in the project directory describes the app; the platform
+handles Nomad templating, subdomain routing, TLS, and Vault-managed MinIO data
+access — no Nomad HCL, router config, or Vault policy is written by hand.
+
+Apps are served at the container root (no path prefix). The `image` must be a
+pre-built, fully-qualified OCI reference — there is no source-based build path.
+
+### `abc-app.yaml`
+
+| Field | Required | Description |
+|---|---|---|
+| `version` | — | Schema version, written first. Defaults to `1.0` (legacy `1` normalises; an unknown version is rejected). |
+| `name` | yes | App name, `[a-z0-9-]+`, ≤ 48 chars. |
+| `project` | yes | Project/group you deploy as — the `access: team` group check + data-bucket scope. |
+| `framework` | yes | `streamlit` \| `shiny` \| `pode` \| `custom`. |
+| `image` | yes | Fully-qualified OCI image, e.g. `ghcr.io/org/app:tag`. |
+| `port` | custom only | Container listen port (the app must bind `0.0.0.0`). Framework default otherwise. |
+| `health` | custom only | HTTP readiness path Nomad polls. Framework default otherwise. |
+| `access` | — | `team` (default; the only supported value today). |
+| `exposure` | — | `public` (default) \| `internal` \| `both` — see below. |
+| `replicas` | — | `1` (default). |
+| `resources` | — | `cpu` (MHz, default 500), `memory` (MiB, default 1024). |
+| `env` | — | Plain (non-secret) env vars. `ABC_*` / `AWS_*` are platform-injected and rejected here. |
+| `data` | — | MinIO buckets the app reads/writes: list of `{ bucket, access: read\|read-write }`. Accessed via injected `AWS_*` creds — no filesystem mount. |
+
+Framework defaults (port / health): `streamlit` → `8501` / `/_stcore/health`;
+`shiny` → `3838` / `/`; `pode` → `8085` / `/health/live`. `custom` requires
+explicit `port` + `health`.
+
+**`exposure` — the network-reach axis (orthogonal to `access`):**
+
+| Value | Reach |
+|---|---|
+| `public` (default) | served under the public edge wildcard — internet-reachable |
+| `internal` | off the public edge — reachable only via Tailscale + campus LAN |
+| `both` | both host rules |
+
+`access` (auth) and `exposure` (network reach) are independent: `internal` + `team`
+= institution-only **and** authenticated.
+
+```yaml
+version: "1.0"
+name: tb-resistance-viewer
+project: mtb-resistotyper-ml
+framework: streamlit
+image: ghcr.io/your-org/tb-resistance-viewer:1.0
+access: team
+exposure: internal           # institution-only (Tailscale + campus LAN)
+resources:
+  cpu: 1000
+  memory: 2048
+data:
+  - bucket: mtb-resistotyper-ml
+    access: read
+```
+
+### `abc app init`
+
+Scaffold an `abc-app.yaml` (and optionally a framework Dockerfile starter).
+
+```
+abc app init [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `--framework` | `streamlit` (default) \| `shiny` \| `pode` \| `custom` |
+| `--name` | App name (default: a framework-flavoured placeholder) |
+| `--project` | Project/group you deploy as |
+| `--with-dockerfile` | Also write a minimal framework Dockerfile starter |
+| `--force` | Overwrite existing files |
+
+### `abc app validate`
+
+Validate the descriptor + print the resolved (post-default) values. Does not
+contact the cluster (use `deploy --dry-run` for the rendered HCL).
+
+```
+abc app validate [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `-f`, `--file` | Descriptor path (default `abc-app.yaml`) |
+| `--canonical` | Print the **canonical** YAML (version-first, key-sorted) instead of the summary. Pipe to re-sort a descriptor: `abc app validate --canonical > abc-app.yaml` |
+
+### `abc app deploy`
+
+Provision the app's MinIO service account (if `data:`), template + submit the
+Nomad `service` job, and poll Nomad-native health until ready.
+
+```
+abc app deploy [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `-f`, `--file` | Descriptor path (default `abc-app.yaml`) |
+| `--image` | Override the image without editing the file |
+| `--exposure` | `internal` \| `public` \| `both` — override the descriptor (default `public`) |
+| `--node-pool` | Nomad node pool to place the app in (overrides the context's `head_pool`) |
+| `--dry-run` | Print the templated Nomad HCL and exit; submit nothing |
+| `--no-wait` | Return after submission without polling health |
+
+For `exposure: internal`, the printed URL is the internal host; reach it via
+Tailscale / campus DNS (an internal app is **not** on the public edge).
+
+### Lifecycle
+
+| Command | Action |
+|---|---|
+| `abc app list` | Table: name, status, URL, project, image, uptime |
+| `abc app show <name>` | Alloc, health, URL, image, framework, resources, data buckets, deploy time (+ live CPU/mem if running) |
+| `abc app logs <name> [-f] [--tail N] [--since]` | Stream app container logs |
+| `abc app open <name>` | Open the app URL in a browser |
+| `abc app restart <name>` | Restart the running allocation |
+| `abc app exec <name> -- <cmd>` | Run a command in the app container |
+| `abc app config list\|get\|set\|unset <name> [K=V...]` | View/change env vars and re-roll (protects `ABC_*` / `AWS_*`) |
+| `abc app stop <name>` | Stop the job (preserve definition) |
+| `abc app delete <name> --confirm` | Stop + purge the job and revoke the MinIO service account |
+
+```bash
+abc app init --framework shiny --name diversity --project microbiome
+abc app validate
+abc app validate --canonical > abc-app.yaml      # normalise: version-first, sorted
+abc app deploy --exposure internal               # institution-only
+abc app list
+abc app logs diversity -f
+abc app delete diversity --confirm
 ```
 
 ---
