@@ -41,6 +41,7 @@ orphans. If the health check times out, the job is left running for diagnosis
 	cmd.Flags().String("exposure", "", "Network reach: internal|public|both (overrides abc-app.yaml; default public)")
 	cmd.Flags().Bool("dry-run", false, "Print the templated Nomad HCL and exit; submit nothing")
 	cmd.Flags().Bool("no-wait", false, "Return after submission without polling health")
+	cmd.Flags().String("node-pool", "", "Nomad node pool to place the app in (overrides the context's admin.services.nomad.head_pool)")
 	return cmd
 }
 
@@ -80,6 +81,10 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Namespace:   appNamespace(cmd),
 		Datacenters: activeCtx.NomadDatacenters(),
 		NodePool:    activeCtx.NomadHeadPool(),
+	}
+	// --node-pool overrides the context's head_pool (parallels --namespace).
+	if np, _ := cmd.Flags().GetString("node-pool"); strings.TrimSpace(np) != "" {
+		params.NodePool = strings.TrimSpace(np)
 	}
 
 	// MinIO endpoint + creds for bucket checks + SA provisioning. Only required
