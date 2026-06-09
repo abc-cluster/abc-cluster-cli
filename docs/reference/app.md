@@ -22,6 +22,7 @@ abc app logs -f           # tail the container logs
 ## `abc-app.yaml`
 
 ```yaml
+version: "1.0"             # abc-app.yaml schema version (kept first; legacy "1" normalises)
 name: tb-viewer            # short app name (kebab-case); addressed as `abc app <name>`
 project: mtb-resistotyper-ml   # group you deploy as (access: team is scoped to it)
 framework: streamlit       # streamlit | shiny | pode | custom
@@ -30,7 +31,8 @@ image: ghcr.io/your-org/tb-viewer:1.0.0   # pre-built OCI image (no source build
 port: 8501                 # container listen port (must bind 0.0.0.0)
 health: /_stcore/health    # HTTP path the platform polls for readiness
 
-access: team               # team only (cluster/public reserved)
+access: team               # WHO can reach it (auth): team only (cluster/public reserved)
+exposure: public           # WHICH networks: public (default) | internal | both
 
 resources:                 # hard limits (defaults: cpu 500 MHz, memory 1024 MiB)
   cpu: 1000
@@ -57,13 +59,29 @@ data:                      # MinIO buckets the app reads (Vault-minted AWS_* cre
 
 `abc app init --with-dockerfile` writes a starter `Dockerfile` that already honours this.
 
+## Exposure — which networks can reach the app
+
+`exposure` is the **network-reach** axis, independent of `access` (which is *auth*). Every combination is valid — e.g. `internal` + `team` is institution-only **and** authenticated.
+
+| `exposure` | Reach |
+|---|---|
+| `public` (default) | served at the public subdomain — internet-reachable |
+| `internal` | **off the public edge** — reachable only from inside the institution (Tailscale + campus LAN) |
+| `both` | both |
+
+```bash
+abc app deploy --exposure internal      # institution-only (override the descriptor)
+```
+
+For `exposure: internal`, the app is **not** published at the public `*.apps.<tier>` subdomain; reach it over Tailscale (MagicDNS / Tailscale Serve) or the campus LAN. An internal app can also be served directly on a dedicated host port for fully DNS-free LAN access — see the operator runbook (`abc-deployments/abc-seedling-prod/docs/internal-app-exposure.md`).
+
 ## Commands
 
 | Command | Description |
 |---|---|
 | `abc app init [--framework F] [--name N] [--project P] [--with-dockerfile] [--force]` | Scaffold an `abc-app.yaml` (and optional `Dockerfile`) in the cwd |
-| `abc app validate [-f FILE]` | Validate the descriptor + print resolved values (offline) |
-| `abc app deploy [-f FILE] [--image TAG] [--dry-run] [--no-wait]` | Deploy/update; polls health unless `--no-wait`; `--dry-run` prints the Nomad HCL |
+| `abc app validate [-f FILE] [--canonical]` | Validate the descriptor + print resolved values (offline); `--canonical` prints the version-first, key-sorted YAML (pipe to re-sort a descriptor) |
+| `abc app deploy [-f FILE] [--image TAG] [--exposure E] [--node-pool P] [--dry-run] [--no-wait]` | Deploy/update; polls health unless `--no-wait`; `--dry-run` prints the Nomad HCL. `--exposure` overrides the descriptor; `--node-pool` overrides the context's head pool |
 | `abc app list` | Table of deployed apps: name, status, project, image, uptime, URL |
 | `abc app show <name>` | One app's status, alloc, URL, image, resources, data buckets |
 | `abc app logs <name> [-f] [--tail N] [--since D]` | Stream container logs; `-f` follows live |
