@@ -63,13 +63,13 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	if health == "" {
 		health = "/"
 	}
-	if err := waitHealthy(ctx, out, nc, r.JobID, health); err != nil {
+	if err := waitHealthy(ctx, out, nc, r.JobID, health, defaultHealthTimeout); err != nil {
 		if errors.Is(err, errHealthTimeout) {
 			return fmt.Errorf(
 				"app %q did not become healthy within %s after restart\n"+
 					"  • inspect logs: abc app logs %s\n"+
 					"  the job was left running for diagnosis",
-				r.Name, healthTimeout, r.Name)
+				r.Name, defaultHealthTimeout, r.Name)
 		}
 		return err
 	}

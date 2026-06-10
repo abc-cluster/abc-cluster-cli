@@ -102,16 +102,18 @@ func Generate(s *Spec, p JobParams) string {
 	restartBody.SetAttributeValue("interval", cty.StringVal("5m"))
 	restartBody.SetAttributeValue("mode", cty.StringVal("delay"))
 
-	// network — HOST mode + a static host port equal to the container port. The
-	// container binds s.Port directly on the host network namespace, so the
-	// Traefik `loadbalancer.server.port` tag (= s.Port) routes correctly. A
-	// dynamic mapped port (`to`) combined with a hardcoded LB-port tag mismatch
-	// → Traefik can't reach the app → 502. (Matches the live working apps:
-	// network mode=host, reserved static port, docker network_mode=host.)
+	// network — BRIDGE mode + a dynamic host port mapped to the app's declared
+	// container port (`to = s.Port`). Each app runs in its own network namespace,
+	// so every app may use its framework's default container port (e.g. 8501 for
+	// every Streamlit) with NO host-port collision: Nomad allocates a unique
+	// dynamic host port per alloc, and Traefik discovers it from the service
+	// registration (we deliberately OMIT `loadbalancer.server.port` from the tags
+	// so Traefik uses the registered dynamic port, not a hardcoded one). This
+	// supersedes the host-net + static-port model, which collided whenever two
+	// same-framework apps shared a container port on one node.
 	netBody := groupBody.AppendNewBlock("network", nil).Body()
-	netBody.SetAttributeValue("mode", cty.StringVal("host"))
 	portBody := netBody.AppendNewBlock("port", []string{"http"}).Body()
-	portBody.SetAttributeValue("static", cty.NumberIntVal(int64(s.Port)))
+	portBody.SetAttributeValue("to", cty.NumberIntVal(int64(s.Port)))
 
 	// service — Nomad-native (provider = "nomad"), NOT Consul. Service name
 	// matches the job name so `abc app` and Traefik discover it consistently.
@@ -120,8 +122,11 @@ func Generate(s *Spec, p JobParams) string {
 	svcBody.SetAttributeValue("provider", cty.StringVal("nomad"))
 	svcBody.SetAttributeValue("port", cty.StringVal("http"))
 
-	// Traefik routing tags. Phase 1: Host router rule + loadbalancer server
-	// port only. No stripprefix (root), no middleware (auth is at Caddy edge).
+	// Traefik routing tags. Phase 1: Host router rule only. No stripprefix (root),
+	// no middleware (auth is at Caddy edge), and crucially NO
+	// `loadbalancer.server.port` — with bridge networking the app sits behind a
+	// dynamic host port; omitting the tag lets Traefik route to the port the
+	// service actually registered (the dynamic one) instead of a hardcoded value.
 	//
 	// The Host rule is driven by `exposure` (see Spec.Hosts): public → the public
 	// edge wildcard host; internal → an off-edge host the public Caddy does not
@@ -135,7 +140,6 @@ func Generate(s *Spec, p JobParams) string {
 		cty.StringVal("traefik.enable=true"),
 		cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.rule=%s", s.JobName(), hostRule)),
 		cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.entrypoints=web", s.JobName())),
-		cty.StringVal(fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port=%d", s.JobName(), s.Port)),
 		// PHASE 2 (sticky sessions): for stateful frameworks with replicas > 1,
 		// append the loadbalancer sticky-cookie tags here, e.g.
 		//   traefik.http.services.<job>.loadbalancer.sticky.cookie=true
@@ -159,11 +163,10 @@ func Generate(s *Spec, p JobParams) string {
 
 	cfgBody := taskBody.AppendNewBlock("config", nil).Body()
 	cfgBody.SetAttributeValue("image", cty.StringVal(s.Image))
-	// Host networking: the container shares the host network namespace and binds
-	// the static port reserved above directly. No docker port mapping (`ports`)
-	// is used — that is for bridge mode, which would hide the app behind a
-	// dynamic host port the Traefik LB-port tag doesn't know about.
-	cfgBody.SetAttributeValue("network_mode", cty.StringVal("host"))
+	// Bridge networking: Nomad maps the allocated dynamic host port to the
+	// container's declared port via the group `network` port "http" (`to = s.Port`).
+	// The app binds 0.0.0.0:s.Port inside its own namespace; no host-port collision.
+	cfgBody.SetAttributeValue("ports", cty.ListVal([]cty.Value{cty.StringVal("http")}))
 
 	// env — platform-injected vars merged with the user's env. Platform wins
 	// on key collision (the reserved ABC_*/AWS_* names below take precedence).

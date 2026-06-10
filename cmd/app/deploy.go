@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	healthPollInterval = 5 * time.Second
-	healthTimeout      = 60 * time.Second
+	healthPollInterval   = 5 * time.Second
+	defaultHealthTimeout = 180 * time.Second // heavy images (JVM, large layers) need >1m to first-respond
 )
 
 func newDeployCmd() *cobra.Command {
@@ -42,6 +42,7 @@ orphans. If the health check times out, the job is left running for diagnosis
 	cmd.Flags().Bool("dry-run", false, "Print the templated Nomad HCL and exit; submit nothing")
 	cmd.Flags().Bool("no-wait", false, "Return after submission without polling health")
 	cmd.Flags().String("node-pool", "", "Nomad node pool to place the app in (overrides the context's admin.services.nomad.head_pool)")
+	cmd.Flags().Duration("health-timeout", 0, "How long to wait for the app to become healthy, e.g. 3m or 90s (overrides abc-app.yaml health_timeout; default 3m)")
 	return cmd
 }
 
@@ -158,9 +159,10 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 
 	// ── Poll Nomad-native health (step 4) ───────────────────────────────────
-	if err := waitHealthy(ctx, out, nc, spec.JobName(), spec.Health); err != nil {
+	healthTO := resolveHealthTimeout(cmd, spec)
+	if err := waitHealthy(ctx, out, nc, spec.JobName(), spec.Health, healthTO); err != nil {
 		// Health timeout: leave the job in place for diagnosis.
-		return healthTimeoutErr(spec)
+		return healthTimeoutErr(spec, healthTO)
 	}
 	fmt.Fprintf(out, "  Healthy. %s\n", spec.URL())
 	return nil
@@ -182,14 +184,28 @@ func rollback(ctx context.Context, p *appgen.DataProvisioner, spec *appgen.Spec)
 // their own (deploy vs restart) context-specific guidance.
 var errHealthTimeout = fmt.Errorf("health check did not reach success before timeout")
 
+// resolveHealthTimeout picks the health-poll budget, most-specific first:
+// --health-timeout flag > abc-app.yaml `health_timeout` > defaultHealthTimeout.
+func resolveHealthTimeout(cmd *cobra.Command, spec *appgen.Spec) time.Duration {
+	if f, _ := cmd.Flags().GetDuration("health-timeout"); f > 0 {
+		return f
+	}
+	if spec.HealthTimeout != "" {
+		if d, err := time.ParseDuration(spec.HealthTimeout); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultHealthTimeout
+}
+
 // waitHealthy polls a job's alloc checks (Nomad-native, Consul-free) every
-// healthPollInterval until a check reports "success", or healthTimeout elapses.
+// healthPollInterval until a check reports "success", or defaultHealthTimeout elapses.
 // It uses /v1/client/allocation/<id>/checks, not the Consul health endpoint.
 // Shared by `deploy` and `restart`; callers map errHealthTimeout to their own
 // guidance message.
-func waitHealthy(ctx context.Context, out io.Writer, nc *utils.NomadClient, jobName, health string) error {
-	deadline := time.Now().Add(healthTimeout)
-	fmt.Fprintf(out, "  Waiting for health check (%s, timeout %s)...\n", health, healthTimeout)
+func waitHealthy(ctx context.Context, out io.Writer, nc *utils.NomadClient, jobName, health string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	fmt.Fprintf(out, "  Waiting for health check (%s, timeout %s)...\n", health, timeout)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -224,13 +240,15 @@ func waitHealthy(ctx context.Context, out io.Writer, nc *utils.NomadClient, jobN
 }
 
 // healthTimeoutErr returns the health-check-timeout error with the bind-contract
-// hint (the most common standalone-Shiny / framework failure mode).
-func healthTimeoutErr(spec *appgen.Spec) error {
+// hint (the most common standalone-Shiny / framework failure mode) and a pointer
+// at --health-timeout for slow-booting (JVM/large) images.
+func healthTimeoutErr(spec *appgen.Spec, timeout time.Duration) error {
 	return fmt.Errorf(
 		"app %q did not become healthy within %s\n"+
 			"  health check: %s%s (expected the container to respond on 0.0.0.0:%d)\n"+
 			"  • confirm the container binds 0.0.0.0:%d, not localhost/127.0.0.1\n"+
+			"  • slow image (JVM/large)? raise the budget: --health-timeout 5m (or health_timeout in abc-app.yaml)\n"+
 			"  • inspect logs: abc app logs %s\n"+
 			"  the job was left running for diagnosis (not auto-rolled-back)",
-		spec.Name, healthTimeout, spec.URL(), spec.Health, spec.Port, spec.Port, spec.Name)
+		spec.Name, timeout, spec.URL(), spec.Health, spec.Port, spec.Port, spec.Name)
 }
