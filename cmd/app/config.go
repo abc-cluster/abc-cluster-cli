@@ -296,7 +296,7 @@ func patchAndReroll(ctx context.Context, out io.Writer, cmd *cobra.Command, nc *
 	if health == "" {
 		health = "/"
 	}
-	if err := waitHealthy(ctx, out, nc, r.JobID, health); err != nil {
+	if err := waitHealthy(ctx, out, nc, r.JobID, health, defaultHealthTimeout); err != nil {
 		return fmt.Errorf("app %q did not become healthy after config change: inspect `abc app logs %s`", r.Name, r.Name)
 	}
 	return nil

@@ -46,7 +46,7 @@ func TestGenerate_ServiceJobShape(t *testing.T) {
 		`name     = "app-abc-platform-sucuri"`,
 		"traefik.enable=true",
 		"Host(`abc-platform-sucuri.apps.seedling.abc-cluster.cloud`)",
-		"loadbalancer.server.port=8085",
+		"to = 8085", // bridge: dynamic host port -> container port (no static host port)
 		`abc_project = "abc-platform"`,
 		`image = "ghcr.io/biosharp-dotnet/sucuri-api:latest"`,
 		`count = 1`,
@@ -54,6 +54,13 @@ func TestGenerate_ServiceJobShape(t *testing.T) {
 	for _, frag := range must {
 		if !containsNorm(hcl, frag) {
 			t.Errorf("generated HCL missing fragment:\n  %s\n--- HCL ---\n%s", frag, hcl)
+		}
+	}
+	// Bridge networking + dynamic-port discovery: these must NOT appear (they were
+	// the host-net + static-port era that collided when apps shared a container port).
+	for _, banned := range []string{"loadbalancer.server.port", `mode = "host"`, `network_mode = "host"`} {
+		if containsNorm(hcl, banned) {
+			t.Errorf("generated HCL must NOT contain %q (bridge networking; Traefik uses the dynamic registered port):\n%s", banned, hcl)
 		}
 	}
 }

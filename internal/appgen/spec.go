@@ -39,6 +39,7 @@ const (
 //   - public:   under the public edge wildcard (*.apps.seedling…) → internet-reachable
 //   - internal: off the public edge (under InternalAppsDomain) → Tailscale + campus LAN only
 //   - both:     both host rules
+//
 // See abc-universe brainstorms/abc-scientific-apps/2026-06-07-app-exposure-internal-public-sovereignty.md.
 const (
 	ExposurePublic   = "public"
@@ -76,19 +77,20 @@ type DataMount struct {
 // config.yaml. The descriptor is parsed with KnownFields(true), so every field
 // the user may set must appear here.
 type Spec struct {
-	Version   string            `yaml:"version,omitempty"`
-	Name      string            `yaml:"name"`
-	Image     string            `yaml:"image"`
-	Project   string            `yaml:"project"`
-	Framework string            `yaml:"framework"`
-	Port      int               `yaml:"port,omitempty"`
-	Health    string            `yaml:"health,omitempty"`
-	Access    string            `yaml:"access,omitempty"`
-	Exposure  string            `yaml:"exposure,omitempty"`
-	Replicas  int               `yaml:"replicas,omitempty"`
-	Env       map[string]string `yaml:"env,omitempty"`
-	Data      []DataMount       `yaml:"data,omitempty"`
-	Resources Resources         `yaml:"resources,omitempty"`
+	Version       string            `yaml:"version,omitempty"`
+	Name          string            `yaml:"name"`
+	Image         string            `yaml:"image"`
+	Project       string            `yaml:"project"`
+	Framework     string            `yaml:"framework"`
+	Port          int               `yaml:"port,omitempty"`
+	Health        string            `yaml:"health,omitempty"`
+	HealthTimeout string            `yaml:"health_timeout,omitempty"` // e.g. "3m"; overrides the deploy default
+	Access        string            `yaml:"access,omitempty"`
+	Exposure      string            `yaml:"exposure,omitempty"`
+	Replicas      int               `yaml:"replicas,omitempty"`
+	Env           map[string]string `yaml:"env,omitempty"`
+	Data          []DataMount       `yaml:"data,omitempty"`
+	Resources     Resources         `yaml:"resources,omitempty"`
 
 	// Source is rejected in phase 1 (no cluster-side build path). Declared so a
 	// stray `source:` produces a clear error instead of being ignored.
