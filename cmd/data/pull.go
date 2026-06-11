@@ -8,7 +8,7 @@ package data
 //
 // The local s5cmd binary is used because:
 //   - It is fast (parallel, multi-part)
-//   - --if-checksum-differ makes every run resumable and idempotent
+//   - --if-size-differ makes every run resumable and idempotent
 //   - There is no server-side job latency or quota impact
 
 import (
@@ -32,8 +32,8 @@ func newPullCmd() *cobra.Command {
 		Short: "Download a file or prefix from cluster storage to your local machine",
 		Long: `Download data from your cluster MinIO bucket to the local machine using s5cmd.
 
-Downloads are resumable and checksum-verified: files whose local checksum
-matches the remote are skipped automatically (--if-checksum-differ). This
+Downloads are resumable and idempotent: files whose local size already
+matches the remote are skipped automatically (--if-size-differ). This
 means you can safely re-run the command after an interrupted download or to
 sync any newly added objects.
 

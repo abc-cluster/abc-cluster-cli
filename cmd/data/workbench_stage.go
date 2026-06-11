@@ -364,9 +364,11 @@ func LocalFetchFromS3(cmd *cobra.Command, src, dstDir string, parallel int) erro
 		"--endpoint-url", endpoint,
 		"--numworkers", fmt.Sprintf("%d", parallel),
 		"cp",
-		// s5cmd cp --if-checksum-differ skips objects whose local ETag/checksum
-		// matches the remote, giving both resumability and integrity verification.
-		"--if-checksum-differ",
+		// s5cmd cp --if-size-differ skips objects whose size already matches the
+		// destination, giving resumable, idempotent re-runs. (s5cmd has no
+		// checksum-based skip flag; --if-size-differ is the correct one — see
+		// `s5cmd cp --help`. The symmetric LocalPushToS3 uses the same flag.)
+		"--if-size-differ",
 		cpSrc,
 		cpDst,
 	}
