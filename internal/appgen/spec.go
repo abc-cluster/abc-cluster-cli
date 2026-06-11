@@ -47,6 +47,25 @@ const (
 	ExposureBoth     = "both"
 )
 
+// Exposure planes — the `expose:` set (network-reach axis, orthogonal to access).
+// Each plane is realised by a distinct routing target / Traefik entrypoint, and the
+// app keeps the SAME stable name (Subdomain()) across all of them:
+//   - public:  Host(<app>.apps.seedling…)  on entrypoint `web`     → GCP edge (internet)
+//   - private: PathPrefix(/apps/<app>)      on entrypoint `private` → campus-IP:443 door
+//   - shared:  PathPrefix(/apps/<app>)      on entrypoint `shared`  → overlay-VPN (Tailscale Serve)
+// Changing `expose:` re-points routers; it never renames the app. See abc-universe
+// brainstorms/abc-scientific-apps/2026-06-10-lan-only-app-reverse-proxy-port-constraint.md.
+const (
+	ExposePublic  = "public"
+	ExposeShared  = "shared"
+	ExposePrivate = "private"
+)
+
+// AppsPathPrefix is the parent path for private/shared apps: `/apps/<app>`. The
+// private (campus-IP:443) and shared (Tailscale Serve) doors forward `/apps/*` to
+// Traefik, which routes by PathPrefix — Host-agnostic, so it works on a bare IP.
+const AppsPathPrefix = "/apps"
+
 // InternalAppsDomain is the parent domain for internal-only app hosts.
 // Deliberately NOT under AppsDomain (*.apps.seedling…): the public edge only
 // proxies that wildcard, so anything here has no public route by construction.
@@ -86,7 +105,8 @@ type Spec struct {
 	Health        string            `yaml:"health,omitempty"`
 	HealthTimeout string            `yaml:"health_timeout,omitempty"` // e.g. "3m"; overrides the deploy default
 	Access        string            `yaml:"access,omitempty"`
-	Exposure      string            `yaml:"exposure,omitempty"`
+	Expose        []string          `yaml:"expose,omitempty"`   // network-reach planes: [public|shared|private]
+	Exposure      string            `yaml:"exposure,omitempty"` // DEPRECATED legacy scalar (public|internal|both); maps to Expose
 	Replicas      int               `yaml:"replicas,omitempty"`
 	Env           map[string]string `yaml:"env,omitempty"`
 	Data          []DataMount       `yaml:"data,omitempty"`
@@ -222,13 +242,27 @@ func (s *Spec) Validate() error {
 		return fmt.Errorf("`access` %q is invalid; phase 1 supports only `team`", s.Access)
 	}
 
-	// exposure — network-reach axis, orthogonal to access. Empty defaults to
-	// public (ApplyDefaults). All three values are accepted.
+	// exposure (DEPRECATED legacy scalar) — kept for back-compat; maps to `expose`.
 	switch strings.ToLower(strings.TrimSpace(s.Exposure)) {
 	case "", ExposurePublic, ExposureInternal, ExposureBoth:
 		// ok
 	default:
-		return fmt.Errorf("`exposure` %q is invalid; use `internal`, `public`, or `both`", s.Exposure)
+		return fmt.Errorf("`exposure` %q is invalid; use `internal`, `public`, or `both` (or the newer `expose:` set)", s.Exposure)
+	}
+	// expose — the network-reach plane set, orthogonal to access. Each entry must be
+	// public/shared/private. Cannot be combined with the legacy `exposure:` scalar.
+	if len(s.Expose) > 0 {
+		if strings.TrimSpace(s.Exposure) != "" {
+			return fmt.Errorf("set either `expose:` (the plane list) or the legacy `exposure:`, not both")
+		}
+		for _, p := range s.Expose {
+			switch strings.ToLower(strings.TrimSpace(p)) {
+			case ExposePublic, ExposeShared, ExposePrivate:
+				// ok
+			default:
+				return fmt.Errorf("`expose` value %q is invalid; use `public`, `shared`, and/or `private`", p)
+			}
+		}
 	}
 
 	// replicas
@@ -294,10 +328,21 @@ func (s *Spec) ApplyDefaults() {
 	} else {
 		s.Access = strings.ToLower(strings.TrimSpace(s.Access))
 	}
-	if strings.TrimSpace(s.Exposure) == "" {
-		s.Exposure = ExposurePublic // phase-1 default preserves current behaviour
+	// Normalise the network-reach planes into s.Expose (the canonical form):
+	//   explicit `expose:` wins; else map the legacy `exposure:`; else default public.
+	if len(s.Expose) > 0 {
+		s.Expose = normPlanes(s.Expose)
+		s.Exposure = "" // canonicalise on the new field
 	} else {
-		s.Exposure = strings.ToLower(strings.TrimSpace(s.Exposure))
+		switch strings.ToLower(strings.TrimSpace(s.Exposure)) {
+		case ExposureInternal:
+			s.Expose = []string{ExposeShared, ExposePrivate}
+		case ExposureBoth:
+			s.Expose = []string{ExposePublic, ExposeShared, ExposePrivate}
+		default: // "" or public → public (preserves phase-1 default)
+			s.Expose = []string{ExposePublic}
+		}
+		s.Exposure = ""
 	}
 	s.Framework = fw
 	for i := range s.Data {
@@ -335,13 +380,67 @@ func (s *Spec) Subdomain() string {
 	return s.Project + "-" + s.Name
 }
 
-// NormExposure returns the lowercased exposure mode, defaulting to public.
+// NormExposure returns a legacy {public|internal|both} summary derived from the
+// normalised plane set — for back-compat with callers/meta that predate `expose:`.
 func (s *Spec) NormExposure() string {
-	e := strings.ToLower(strings.TrimSpace(s.Exposure))
-	if e == "" {
+	pub := s.HasPlane(ExposePublic)
+	internal := s.HasPlane(ExposeShared) || s.HasPlane(ExposePrivate)
+	switch {
+	case pub && internal:
+		return ExposureBoth
+	case internal:
+		return ExposureInternal
+	default:
 		return ExposurePublic
 	}
-	return e
+}
+
+// Planes returns the normalised network-reach plane set (from `expose:`, the legacy
+// `exposure:`, or the default). Order is canonical: public, shared, private.
+func (s *Spec) Planes() []string {
+	if len(s.Expose) > 0 {
+		return normPlanes(s.Expose)
+	}
+	switch strings.ToLower(strings.TrimSpace(s.Exposure)) {
+	case ExposureInternal:
+		return []string{ExposeShared, ExposePrivate}
+	case ExposureBoth:
+		return []string{ExposePublic, ExposeShared, ExposePrivate}
+	default:
+		return []string{ExposePublic}
+	}
+}
+
+// HasPlane reports whether the app is exposed on the given plane.
+func (s *Spec) HasPlane(plane string) bool {
+	for _, p := range s.Planes() {
+		if p == plane {
+			return true
+		}
+	}
+	return false
+}
+
+// AppPath is the stable path segment for the private/shared planes: `/apps/<app>`.
+// The app must serve under this base path (Wave H2O_WAVE_BASE_URL, Streamlit
+// --server.baseUrlPath); the doors forward `/apps/*` and Traefik PathPrefix-routes it.
+func (s *Spec) AppPath() string {
+	return AppsPathPrefix + "/" + s.Subdomain()
+}
+
+// normPlanes lowercases, dedupes, and canonically orders a plane list.
+func normPlanes(in []string) []string {
+	seen := map[string]bool{}
+	for _, p := range in {
+		seen[strings.ToLower(strings.TrimSpace(p))] = true
+	}
+	out := make([]string, 0, 3)
+	for _, p := range []string{ExposePublic, ExposeShared, ExposePrivate} {
+		if seen[p] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // PublicHost is the public-edge host, under the *.apps.seedling… wildcard.
@@ -374,13 +473,14 @@ func (s *Spec) Host() string {
 	return s.Hosts()[0]
 }
 
-// URL returns the primary app URL. Public/both → https (public edge TLS);
-// internal → http (served via Traefik/Tailscale Serve, no public-edge cert).
+// URL returns the primary app URL hint. If exposed publicly → the public-edge https
+// URL. Otherwise the path-routed address under /apps/<app> (the private/shared door
+// host — campus IP / overlay — is operator infra, so only the path is known here).
 func (s *Spec) URL() string {
-	if s.NormExposure() == ExposureInternal {
-		return "http://" + s.InternalHost()
+	if s.HasPlane(ExposePublic) {
+		return "https://" + s.PublicHost()
 	}
-	return "https://" + s.PublicHost()
+	return s.AppPath() + "/"
 }
 
 // JobName returns the Nomad job (and service) name: `app-<project>-<name>`.

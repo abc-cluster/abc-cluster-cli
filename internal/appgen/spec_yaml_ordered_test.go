@@ -33,7 +33,7 @@ func TestMarshalCanonical_VersionFirstAndOrdered(t *testing.T) {
 		t.Errorf("env keys not sorted (ALPHA<MID<ZED): %d %d %d\n%s", ia, im, iz, y)
 	}
 	// top-level field order: version < name < project < framework < image.
-	order := []string{"version:", "name:", "project:", "framework:", "image:", "exposure:"}
+	order := []string{"version:", "name:", "project:", "framework:", "image:", "expose:"}
 	prev := -1
 	for _, k := range order {
 		i := strings.Index(y, "\n"+k)

@@ -46,8 +46,12 @@ func (s *Spec) MarshalCanonical() ([]byte, error) {
 	if strings.TrimSpace(s.Access) != "" {
 		add("access", scalar(strings.ToLower(strings.TrimSpace(s.Access))))
 	}
-	if strings.TrimSpace(s.Exposure) != "" {
-		add("exposure", scalar(s.NormExposure()))
+	if planes := s.Planes(); len(planes) > 0 {
+		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+		for _, p := range planes {
+			seq.Content = append(seq.Content, scalar(p))
+		}
+		add("expose", seq)
 	}
 	if s.Replicas != 0 {
 		add("replicas", intNode(s.Replicas))
