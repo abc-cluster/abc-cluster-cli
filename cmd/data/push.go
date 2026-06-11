@@ -107,30 +107,50 @@ Examples:
 				}
 			}
 
-			// Build s5cmd invocation.
-			// --numworkers is a global flag (before subcommand); cp flags go after.
+			// Build s5cmd invocation. --numworkers is a global flag (before the
+			// subcommand); cp flags are built by buildPushCpArgs and precede the
+			// positionals (see that function for why ordering matters).
 			var globalFlags []string
 			if parallel > 0 {
 				globalFlags = append(globalFlags, "--numworkers", fmt.Sprintf("%d", parallel))
 			}
 
-			cpArgs := []string{localPath, s3URI}
-			if checksum {
-				cpArgs = append(cpArgs, "--if-checksum-differ")
-			}
-			if dryRun {
-				cpArgs = append(cpArgs, "--dry-run")
-			}
+			cpArgs := buildPushCpArgs(checksum, dryRun, localPath, s3URI)
 
 			return execTool(bin, s5cmdArgs(cfg.ActiveCtx(), "cp", cpArgs, globalFlags...), s3Env(cfg.ActiveCtx()))
 		},
 	}
 
 	cmd.Flags().IntVar(&parallel, "parallel", 4, "number of parallel s5cmd workers")
-	cmd.Flags().BoolVar(&checksum, "checksum", false, "skip files whose checksum matches the remote ETag (--if-checksum-differ)")
+	cmd.Flags().BoolVar(&checksum, "checksum", false, "skip files whose size already matches the remote object — idempotent re-push (s5cmd --if-size-differ)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without transferring")
 	cmd.Flags().StringVar(&compress, "compress", "", "zstd-compress a raw file before push (level: fast|default|better|best); already-compressed files push as-is, directories are not supported")
 	cmd.Flags().Lookup("compress").NoOptDefVal = "default"
 
 	return cmd
+}
+
+// buildPushCpArgs builds the s5cmd `cp` argument list (everything after the
+// `cp` subcommand) for a push: any flags FIRST, then the source/destination
+// positionals.
+//
+// Ordering is load-bearing: s5cmd uses urfave/cli, which stops parsing flags at
+// the first positional argument. A flag placed after <src> <dst> is treated as a
+// bogus third positional and s5cmd fails with "expected source and destination
+// arguments". (This was bug G-D.)
+//
+// The skip-if-unchanged flag is `--if-size-differ` — s5cmd has NO checksum-based
+// skip flag (`--if-checksum-differ` does not exist; that was the root cause of
+// bugs G-D and G-E). `--if-size-differ` gives idempotent, resumable re-pushes for
+// immutable objects and matches LocalPushToS3 / LocalFetchFromS3.
+func buildPushCpArgs(checksum, dryRun bool, localPath, s3URI string) []string {
+	var cpArgs []string
+	if checksum {
+		cpArgs = append(cpArgs, "--if-size-differ")
+	}
+	if dryRun {
+		cpArgs = append(cpArgs, "--dry-run")
+	}
+	cpArgs = append(cpArgs, localPath, s3URI)
+	return cpArgs
 }
