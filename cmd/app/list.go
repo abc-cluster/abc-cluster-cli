@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	"github.com/abc-cluster/abc-cluster-cli/internal/appgen"
 	"github.com/spf13/cobra"
 )
 
@@ -79,17 +80,26 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 			}
 		}
 	}
-	var hasPublic, hasShared, hasPrivate bool
-	var pubURL, pathURL string
+	var hasPublic, hasShared, hasPrivate, hasLegacy bool
+	var pubURL, pathURL, legacyURL string
 	for r, rule := range rules {
 		switch {
-		case strings.HasPrefix(rule, "Host("):
-			hasPublic = true
-			h := strings.TrimSuffix(strings.TrimPrefix(rule, "Host(`"), "`)")
-			pubURL = "https://" + h + "/"
-		case strings.HasPrefix(rule, "PathPrefix("):
-			p := strings.TrimSuffix(strings.TrimPrefix(rule, "PathPrefix(`"), "`)")
-			pathURL = p + "/"
+		case strings.Contains(rule, "Host("):
+			// One or more Host(`h`) ORed. Take the first host. A host under the
+			// public wildcard is the `public` plane; any other host is a legacy
+			// internal route (tailnet / campus name) pre-dating the expose scheme.
+			h := firstQuoted(rule, "Host(`")
+			if strings.HasSuffix(h, appgen.AppsDomain) {
+				hasPublic = true
+				pubURL = "https://" + h + "/"
+			} else if h != "" {
+				hasLegacy = true
+				if legacyURL == "" {
+					legacyURL = "https://" + h + "/"
+				}
+			}
+		case strings.Contains(rule, "PathPrefix("):
+			pathURL = firstQuoted(rule, "PathPrefix(`") + "/"
 			ep := eps[r]
 			hasPrivate = hasPrivate || strings.Contains(ep, "private")
 			hasShared = hasShared || strings.Contains(ep, "shared")
@@ -105,6 +115,9 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 	if hasPrivate {
 		pl = append(pl, "private")
 	}
+	if hasLegacy && !hasShared && !hasPrivate {
+		pl = append(pl, "internal*") // legacy Host-routed internal (pre-expose)
+	}
 	if len(pl) == 0 {
 		return "—", "—"
 	}
@@ -112,7 +125,24 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 	if u == "" {
 		u = pathURL
 	}
+	if u == "" {
+		u = legacyURL
+	}
 	return strings.Join(pl, ","), u
+}
+
+// firstQuoted extracts the first backtick-quoted argument after a matcher prefix,
+// e.g. firstQuoted("Host(`a`) || Host(`b`)", "Host(`") == "a".
+func firstQuoted(rule, prefix string) string {
+	i := strings.Index(rule, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := rule[i+len(prefix):]
+	if j := strings.Index(rest, "`"); j >= 0 {
+		return rest[:j]
+	}
+	return ""
 }
 
 func orDash(s string) string {
