@@ -1866,7 +1866,7 @@ pre-built, fully-qualified OCI reference — there is no source-based build path
 | `port` | custom only | Container listen port (the app must bind `0.0.0.0`). Framework default otherwise. |
 | `health` | custom only | HTTP readiness path Nomad polls. Framework default otherwise. |
 | `access` | — | `team` (default; the only supported value today). |
-| `exposure` | — | `public` (default) \| `internal` \| `both` — see below. |
+| `expose` | — | Network-reach planes, a set of `public` / `shared` / `private` — see below. (Legacy scalar `exposure: public\|internal\|both` still accepted.) |
 | `replicas` | — | `1` (default). |
 | `resources` | — | `cpu` (MHz, default 500), `memory` (MiB, default 1024). |
 | `env` | — | Plain (non-secret) env vars. `ABC_*` / `AWS_*` are platform-injected and rejected here. |
@@ -1876,16 +1876,27 @@ Framework defaults (port / health): `streamlit` → `8501` / `/_stcore/health`;
 `shiny` → `3838` / `/`; `pode` → `8085` / `/health/live`. `custom` requires
 explicit `port` + `health`.
 
-**`exposure` — the network-reach axis (orthogonal to `access`):**
+**`expose` — the network-reach planes (orthogonal to `access`):**
 
-| Value | Reach |
-|---|---|
-| `public` (default) | served under the public edge wildcard — internet-reachable |
-| `internal` | off the public edge — reachable only via Tailscale + campus LAN |
-| `both` | both host rules |
+A **set** of planes; the app keeps the **same name** across all of them, so changing
+`expose` never renames the app or its URL path.
 
-`access` (auth) and `exposure` (network reach) are independent: `internal` + `team`
-= institution-only **and** authenticated.
+| Plane | Reach | URL |
+|---|---|---|
+| `public` | internet (public edge wildcard) | `https://<project>-<name>.apps.seedling.abc-cluster.cloud/` |
+| `shared` | the shared overlay VPN (any member, anywhere) | `https://<overlay-host>/apps/<project>-<name>/` |
+| `private` | the hosting institution's own network (on-campus) | `https://<campus-ip>/apps/<project>-<name>/` |
+
+`expose: [shared, private]` means "reachable on the overlay VPN **and** the campus
+network, **not** public". `access` (auth) and `expose` (network reach) are independent:
+`[private]` + `team` = institution-only **and** authenticated. Override at deploy time
+with `--expose public,shared,private`. The legacy scalar `exposure:` still maps
+(`internal → [shared, private]`, `both → all`).
+
+> **Path-routed planes (`shared`/`private`) serve under `/apps/<project>-<name>`.** The
+> app must be told its base path — Streamlit `--server.baseUrlPath=/apps/<project>-<name>`,
+> H2O Wave `H2O_WAVE_BASE_URL=/apps/<project>-<name>/` (Wave also needs
+> `H2O_WAVE_ALLOWED_ORIGINS=*`). The `public` plane serves at root.
 
 ```yaml
 version: "1.0"
@@ -1894,7 +1905,7 @@ project: mtb-resistotyper-ml
 framework: streamlit
 image: ghcr.io/your-org/tb-resistance-viewer:1.0
 access: team
-exposure: internal           # institution-only (Tailscale + campus LAN)
+expose: [private]            # institution-only (campus network); promote later to shared / public
 resources:
   cpu: 1000
   memory: 2048
@@ -1958,7 +1969,7 @@ Tailscale / campus DNS (an internal app is **not** on the public edge).
 
 | Command | Action |
 |---|---|
-| `abc app list` | Table: name, status, URL, project, image, uptime |
+| `abc app list` | Table: name, status, project, **expose** (the plane set), URL (public = full edge URL; shared/private = the `/apps/<app>/` path) |
 | `abc app show <name>` | Alloc, health, URL, image, framework, resources, data buckets, deploy time (+ live CPU/mem if running) |
 | `abc app logs <name> [-f] [--tail N] [--since]` | Stream app container logs |
 | `abc app open <name>` | Open the app URL in a browser |
@@ -1972,8 +1983,8 @@ Tailscale / campus DNS (an internal app is **not** on the public edge).
 abc app init --framework shiny --name diversity --project microbiome
 abc app validate
 abc app validate --canonical > abc-app.yaml      # normalise: version-first, sorted
-abc app deploy --exposure internal               # institution-only
-abc app list
+abc app deploy --expose private                  # institution-only (campus network)
+abc app list                                     # name · status · expose · URL
 abc app logs diversity -f
 abc app delete diversity --confirm
 ```
