@@ -38,7 +38,8 @@ orphans. If the health check times out, the job is left running for diagnosis
 	}
 	cmd.Flags().StringP("file", "f", appgen.DefaultSpecFile, "Path to the app descriptor")
 	cmd.Flags().String("image", "", "Override the image in abc-app.yaml without editing the file")
-	cmd.Flags().String("exposure", "", "Network reach: internal|public|both (overrides abc-app.yaml; default public)")
+	cmd.Flags().String("expose", "", "Network-reach planes, comma-separated: public,shared,private (overrides abc-app.yaml)")
+	cmd.Flags().String("exposure", "", "DEPRECATED legacy reach: internal|public|both (use --expose)")
 	cmd.Flags().Bool("dry-run", false, "Print the templated Nomad HCL and exit; submit nothing")
 	cmd.Flags().Bool("no-wait", false, "Return after submission without polling health")
 	cmd.Flags().String("node-pool", "", "Nomad node pool to place the app in (overrides the context's admin.services.nomad.head_pool)")
@@ -52,6 +53,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 
 	file, _ := cmd.Flags().GetString("file")
 	imageOverride, _ := cmd.Flags().GetString("image")
+	exposeOverride, _ := cmd.Flags().GetString("expose")
 	exposureOverride, _ := cmd.Flags().GetString("exposure")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	noWait, _ := cmd.Flags().GetBool("no-wait")
@@ -64,8 +66,19 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	if strings.TrimSpace(imageOverride) != "" {
 		spec.Image = strings.TrimSpace(imageOverride)
 	}
-	if strings.TrimSpace(exposureOverride) != "" {
+	if strings.TrimSpace(exposeOverride) != "" {
+		parts := strings.Split(exposeOverride, ",")
+		planes := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				planes = append(planes, t)
+			}
+		}
+		spec.Expose = planes
+		spec.Exposure = "" // --expose wins over any legacy value in the file
+	} else if strings.TrimSpace(exposureOverride) != "" {
 		spec.Exposure = strings.TrimSpace(exposureOverride)
+		spec.Expose = nil
 	}
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("invalid %s: %w", file, err)

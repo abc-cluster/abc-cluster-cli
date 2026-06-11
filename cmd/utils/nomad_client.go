@@ -217,9 +217,18 @@ type NomadJob struct {
 }
 
 type NomadTaskGroup struct {
-	Name  string      `json:"Name"`
-	Count int         `json:"Count"`
-	Tasks []NomadTask `json:"Tasks"`
+	Name     string            `json:"Name"`
+	Count    int               `json:"Count"`
+	Tasks    []NomadTask       `json:"Tasks"`
+	Services []NomadJobService `json:"Services,omitempty"`
+}
+
+// NomadJobService is a `service { … }` block on a task group as it appears in the
+// job spec (provider = "nomad"), carrying the Traefik routing Tags `abc app list`
+// parses to report each app's exposure planes + URLs.
+type NomadJobService struct {
+	Name string   `json:"Name"`
+	Tags []string `json:"Tags"`
 }
 
 type NomadTask struct {

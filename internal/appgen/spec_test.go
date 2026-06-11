@@ -239,11 +239,11 @@ func TestExposure_ValidationAndDefault(t *testing.T) {
 	if err := s.Validate(); err == nil {
 		t.Errorf("exposure %q should be rejected", s.Exposure)
 	}
-	// default after ApplyDefaults.
+	// default after ApplyDefaults: planes normalise to [public] (back-compat default).
 	d := validSucuriSpec()
 	d.ApplyDefaults()
-	if d.Exposure != ExposurePublic {
-		t.Errorf("default exposure = %q, want public", d.Exposure)
+	if got := d.Planes(); len(got) != 1 || got[0] != ExposePublic {
+		t.Errorf("default planes = %v, want [public]", got)
 	}
 }
 
@@ -258,7 +258,7 @@ func TestExposure_Hosts(t *testing.T) {
 	}{
 		{"public", []string{pub}, pub, "https://" + pub},
 		{"", []string{pub}, pub, "https://" + pub}, // default
-		{"internal", []string{internal}, internal, "http://" + internal},
+		{"internal", []string{internal}, internal, "/apps/abc-platform-sucuri/"}, // path-routed now
 		{"both", []string{pub, internal}, pub, "https://" + pub},
 	}
 	for _, c := range cases {

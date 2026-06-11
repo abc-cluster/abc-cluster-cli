@@ -122,31 +122,44 @@ func Generate(s *Spec, p JobParams) string {
 	svcBody.SetAttributeValue("provider", cty.StringVal("nomad"))
 	svcBody.SetAttributeValue("port", cty.StringVal("http"))
 
-	// Traefik routing tags. Phase 1: Host router rule only. No stripprefix (root),
-	// no middleware (auth is at Caddy edge), and crucially NO
-	// `loadbalancer.server.port` — with bridge networking the app sits behind a
-	// dynamic host port; omitting the tag lets Traefik route to the port the
-	// service actually registered (the dynamic one) instead of a hardcoded value.
+	// Traefik routing tags, one router per network-reach plane (see Spec.Planes).
+	// No `loadbalancer.server.port` — bridge networking gives the app a dynamic host
+	// port; omitting the tag lets Traefik route to the port the service registered.
 	//
-	// The Host rule is driven by `exposure` (see Spec.Hosts): public → the public
-	// edge wildcard host; internal → an off-edge host the public Caddy does not
-	// proxy (Tailscale + campus LAN only); both → both, ORed.
-	hostParts := make([]string, 0, len(s.Hosts()))
-	for _, h := range s.Hosts() {
-		hostParts = append(hostParts, fmt.Sprintf("Host(`%s`)", h))
+	//   public  → router <job>-public:   Host(<app>.apps.seedling…)  on entrypoint web
+	//   private → router <job>-internal:  PathPrefix(/apps/<app>)     on entrypoint private
+	//   shared  → router <job>-internal:  PathPrefix(/apps/<app>)     on entrypoint shared
+	//
+	// The app keeps the SAME name across planes (public subdomain == private/shared
+	// path segment). private+shared share one PathPrefix router with both entrypoints;
+	// the plane an app is reachable on is decided by which door (entrypoint) the
+	// request entered — sovereignty by routing.
+	tags := []cty.Value{cty.StringVal("traefik.enable=true")}
+	job := s.JobName()
+
+	if s.HasPlane(ExposePublic) {
+		r := job + "-public"
+		tags = append(tags,
+			cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.rule=Host(`%s`)", r, s.PublicHost())),
+			cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.entrypoints=web", r)),
+		)
 	}
-	hostRule := strings.Join(hostParts, " || ")
-	tags := []cty.Value{
-		cty.StringVal("traefik.enable=true"),
-		cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.rule=%s", s.JobName(), hostRule)),
-		cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.entrypoints=web", s.JobName())),
+
+	internalEps := make([]string, 0, 2)
+	if s.HasPlane(ExposePrivate) {
+		internalEps = append(internalEps, ExposePrivate)
+	}
+	if s.HasPlane(ExposeShared) {
+		internalEps = append(internalEps, ExposeShared)
+	}
+	if len(internalEps) > 0 {
+		r := job + "-internal"
+		tags = append(tags,
+			cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.rule=PathPrefix(`%s`)", r, s.AppPath())),
+			cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.entrypoints=%s", r, strings.Join(internalEps, ","))),
+		)
 		// PHASE 2 (sticky sessions): for stateful frameworks with replicas > 1,
-		// append the loadbalancer sticky-cookie tags here, e.g.
-		//   traefik.http.services.<job>.loadbalancer.sticky.cookie=true
-		//   traefik.http.services.<job>.loadbalancer.sticky.cookie.name=abc_app_lb
-		// Stateful classification: streamlit/shiny/dash/voila/panel = yes,
-		// pode = no. Single replica (phase 1) needs no balancing, so nothing
-		// is emitted.
+		// append loadbalancer sticky-cookie tags on the <job> service here.
 	}
 	svcBody.SetAttributeValue("tags", cty.ListVal(tags))
 

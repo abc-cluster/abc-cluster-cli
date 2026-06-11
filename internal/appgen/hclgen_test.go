@@ -182,34 +182,47 @@ func TestGenerate_BucketsAndStampInMeta(t *testing.T) {
 }
 
 func TestGenerate_Exposure(t *testing.T) {
-	pubHost := "Host(`abc-platform-sucuri.apps.seedling.abc-cluster.cloud`)"
-	intHost := "Host(`abc-platform-sucuri.apps.internal`)"
+	pubRule := "rule=Host(`abc-platform-sucuri.apps.seedling.abc-cluster.cloud`)"
+	privPath := "rule=PathPrefix(`/apps/abc-platform-sucuri`)"
 
-	// internal: router rule must use the internal host and NOT the public one.
+	// legacy `exposure: internal` → maps to [shared, private]: one PathPrefix router
+	// on both internal entrypoints; NO public host.
 	si := resolvedSucuriWithExposure(t, "internal")
 	hi := Generate(si, JobParams{Namespace: "abc-apps"})
-	if !containsNorm(hi, "rule="+intHost) {
-		t.Errorf("internal exposure should route to %s:\n%s", intHost, hi)
+	if !containsNorm(hi, privPath) {
+		t.Errorf("internal exposure should route by PathPrefix(/apps/<app>):\n%s", hi)
 	}
-	if strings.Contains(hi, pubHost) {
+	if !containsNorm(hi, "app-abc-platform-sucuri-internal.entrypoints=private,shared") {
+		t.Errorf("internal exposure should bind the private+shared entrypoints:\n%s", hi)
+	}
+	if strings.Contains(hi, "apps.seedling.abc-cluster.cloud") {
 		t.Errorf("internal exposure must NOT carry the public-edge host:\n%s", hi)
 	}
-	if !containsNorm(hi, `abc_exposure = "internal"`) {
-		t.Errorf("internal exposure should be stamped in meta:\n%s", hi)
-	}
 
-	// both: rule must OR the public and internal hosts.
+	// legacy `both` → public Host router + internal PathPrefix router.
 	sb := resolvedSucuriWithExposure(t, "both")
 	hb := Generate(sb, JobParams{Namespace: "abc-apps"})
-	if !containsNorm(hb, "rule="+pubHost+" || "+intHost) {
-		t.Errorf("both exposure should OR public and internal hosts:\n%s", hb)
+	if !containsNorm(hb, pubRule) || !containsNorm(hb, privPath) {
+		t.Errorf("both exposure should emit a public Host router AND an internal PathPrefix router:\n%s", hb)
 	}
 
-	// public (default): unchanged — public host, no internal host.
+	// public (default): public Host router only, no PathPrefix router.
 	sp := resolvedSucuri(t)
 	hp := Generate(sp, JobParams{Namespace: "abc-apps"})
-	if !containsNorm(hp, "rule="+pubHost) || strings.Contains(hp, intHost) {
-		t.Errorf("public exposure should route to the public host only:\n%s", hp)
+	if !containsNorm(hp, pubRule) || strings.Contains(hp, "PathPrefix") {
+		t.Errorf("public exposure should route by Host only (no PathPrefix):\n%s", hp)
+	}
+
+	// new `expose: [private]` → PathPrefix on the private entrypoint ONLY (not shared,
+	// not public). The app name is the SAME as the public subdomain.
+	spr := resolvedSucuriWithExpose(t, []string{"private"})
+	hpr := Generate(spr, JobParams{Namespace: "abc-apps"})
+	if !containsNorm(hpr, privPath) ||
+		!containsNorm(hpr, "app-abc-platform-sucuri-internal.entrypoints=private") {
+		t.Errorf("expose:[private] should route PathPrefix(/apps/<app>) on entrypoint private:\n%s", hpr)
+	}
+	if strings.Contains(hpr, "entrypoints=private,shared") || strings.Contains(hpr, "apps.seedling.abc-cluster.cloud") {
+		t.Errorf("expose:[private] must NOT bind shared or the public host:\n%s", hpr)
 	}
 }
 
@@ -217,6 +230,17 @@ func resolvedSucuriWithExposure(t *testing.T, exposure string) *Spec {
 	t.Helper()
 	s := validSucuriSpec()
 	s.Exposure = exposure
+	if err := s.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	s.ApplyDefaults()
+	return s
+}
+
+func resolvedSucuriWithExpose(t *testing.T, expose []string) *Spec {
+	t.Helper()
+	s := validSucuriSpec()
+	s.Expose = expose
 	if err := s.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
