@@ -3,8 +3,8 @@ package app
 import (
 	"fmt"
 	"strings"
-	"time"
 
+	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -27,9 +27,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("list apps: %w", err)
 	}
 
-	fmt.Fprintf(out, "  %-26s %-9s %-12s %-20s %-10s %s\n",
-		"NAME", "STATUS", "PROJECT", "IMAGE", "UPTIME", "URL")
-	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 110))
+	fmt.Fprintf(out, "  %-30s %-9s %-14s %-22s %s\n",
+		"NAME", "STATUS", "PROJECT", "EXPOSE", "URL")
+	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 116))
 
 	count := 0
 	for i := range stubs {
@@ -39,21 +39,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 		count++
 		job, err := nc.GetJob(ctx, stubs[i].ID, nc.DefaultNamespace())
 		name := strings.TrimPrefix(stubs[i].ID, appJobPrefix)
-		project, image, url := "—", "—", "—"
+		project, expose, url := "—", "—", "—"
 		if err == nil {
 			if v := job.Meta["abc_app"]; v != "" {
 				name = v
 			}
 			project = orDash(job.Meta["abc_project"])
-			image = shortImage(taskImage(job))
-			if project != "—" {
-				url = "https://" + project + "-" + name + ".apps.seedling.abc-cluster.cloud"
-			}
+			expose, url = appExpose(job)
 		}
 		status := appStatus(stubs[i])
-		uptime := uptimeSince(stubs[i].SubmitTime)
-		fmt.Fprintf(out, "  %-26s %-9s %-12s %-20s %-10s %s\n",
-			name, status, project, image, uptime, url)
+		fmt.Fprintf(out, "  %-30s %-9s %-14s %-22s %s\n",
+			name, status, project, expose, url)
 	}
 	if count == 0 {
 		fmt.Fprintf(out, "  (no apps deployed in namespace %q)\n", nc.DefaultNamespace())
@@ -61,37 +57,67 @@ func runList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// appExpose parses an app job's Traefik routing tags into its exposure planes
+// (public/shared/private, canonical order) and a primary URL. public → the full
+// public-edge https URL; private/shared → the /apps/<app>/ path (the door host —
+// campus IP / overlay — is operator infra, not known to the CLI).
+func appExpose(job *utils.NomadJob) (planes, url string) {
+	if job == nil {
+		return "—", "—"
+	}
+	rules := map[string]string{} // router-prefix → rule
+	eps := map[string]string{}   // router-prefix → entrypoints
+	for _, g := range job.TaskGroups {
+		for _, svc := range g.Services {
+			for _, tag := range svc.Tags {
+				if r, v, ok := strings.Cut(tag, ".rule="); ok {
+					rules[r] = v
+				}
+				if r, v, ok := strings.Cut(tag, ".entrypoints="); ok {
+					eps[r] = v
+				}
+			}
+		}
+	}
+	var hasPublic, hasShared, hasPrivate bool
+	var pubURL, pathURL string
+	for r, rule := range rules {
+		switch {
+		case strings.HasPrefix(rule, "Host("):
+			hasPublic = true
+			h := strings.TrimSuffix(strings.TrimPrefix(rule, "Host(`"), "`)")
+			pubURL = "https://" + h + "/"
+		case strings.HasPrefix(rule, "PathPrefix("):
+			p := strings.TrimSuffix(strings.TrimPrefix(rule, "PathPrefix(`"), "`)")
+			pathURL = p + "/"
+			ep := eps[r]
+			hasPrivate = hasPrivate || strings.Contains(ep, "private")
+			hasShared = hasShared || strings.Contains(ep, "shared")
+		}
+	}
+	pl := make([]string, 0, 3)
+	if hasPublic {
+		pl = append(pl, "public")
+	}
+	if hasShared {
+		pl = append(pl, "shared")
+	}
+	if hasPrivate {
+		pl = append(pl, "private")
+	}
+	if len(pl) == 0 {
+		return "—", "—"
+	}
+	u := pubURL
+	if u == "" {
+		u = pathURL
+	}
+	return strings.Join(pl, ","), u
+}
+
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "—"
 	}
 	return s
-}
-
-func shortImage(img string) string {
-	if img == "" {
-		return "—"
-	}
-	// Show repo:tag, drop the registry host for width.
-	if i := strings.LastIndex(img, "/"); i >= 0 {
-		return img[i+1:]
-	}
-	return img
-}
-
-func uptimeSince(submitNanos int64) string {
-	if submitNanos <= 0 {
-		return "—"
-	}
-	d := time.Since(time.Unix(0, submitNanos))
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
 }
