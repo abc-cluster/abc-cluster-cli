@@ -65,13 +65,142 @@ func TestGenerate_ServiceJobShape(t *testing.T) {
 	}
 }
 
-func TestGenerate_NoStripPrefixNoMiddleware(t *testing.T) {
-	s := resolvedSucuri(t)
+// TestGenerate_NoAuthMiddleware locks the no-auth-middleware decision: forward-auth
+// is at the Caddy edge, not in Traefik. StripPrefix is NOW framework-conditional
+// (see TestGenerate_StripPrefix_*); the original test name was misleading.
+func TestGenerate_NoAuthMiddleware(t *testing.T) {
+	s := resolvedSucuri(t) // pode framework → no stripPrefix
 	hcl := Generate(s, JobParams{Namespace: "abc-apps"})
-	for _, banned := range []string{"stripprefix", "stripPrefix", "middleware", "forwardauth", "abc-auth"} {
+	for _, banned := range []string{"forwardauth", "abc-auth"} {
 		if strings.Contains(strings.ToLower(hcl), strings.ToLower(banned)) {
-			t.Errorf("generated HCL must NOT contain %q (auth/strip is at the Caddy edge):\n%s", banned, hcl)
+			t.Errorf("generated HCL must NOT contain %q (auth is at the Caddy edge):\n%s", banned, hcl)
 		}
+	}
+	// Non-custom framework on public-only exposure: stripPrefix MUST be absent.
+	for _, banned := range []string{"stripprefix", "middlewares="} {
+		if strings.Contains(strings.ToLower(hcl), strings.ToLower(banned)) {
+			t.Errorf("pode (non-custom, public-only) must NOT emit stripPrefix: contained %q\n%s", banned, hcl)
+		}
+	}
+}
+
+// TestGenerate_StripPrefix_CustomPrivateEmitsMiddleware exercises the v0.1.55
+// fix: a `framework: custom` app on private/shared planes MUST emit a
+// stripPrefix middleware so Traefik strips `/apps/<project>-<name>` before
+// forwarding (else the BYOI container serving at `/` returns 404).
+func TestGenerate_StripPrefix_CustomPrivateEmitsMiddleware(t *testing.T) {
+	s := &Spec{
+		Name:      "docs",
+		Image:     "aither.local/docs:poc",
+		Project:   "abc-platform",
+		Framework: "custom",
+		Port:      8080,
+		Health:    "/",
+		Expose:    ExposePlanes{ExposePrivate, ExposeShared},
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	s.ApplyDefaults()
+	if s.StripPrefix == nil || !*s.StripPrefix {
+		t.Fatalf("custom framework: StripPrefix default should be true; got %v", s.StripPrefix)
+	}
+	hcl := Generate(s, JobParams{Namespace: "abc-apps"})
+	must := []string{
+		"traefik.http.middlewares.app-abc-platform-docs-strip.stripprefix.prefixes=/apps/abc-platform-docs",
+		"traefik.http.routers.app-abc-platform-docs-internal.middlewares=app-abc-platform-docs-strip@nomad-abc-apps",
+	}
+	for _, w := range must {
+		if !strings.Contains(hcl, w) {
+			t.Errorf("expected tag %q in HCL:\n%s", w, hcl)
+		}
+	}
+}
+
+// TestGenerate_StripPrefix_StreamlitPrivateNoMiddleware: non-custom frameworks
+// serve under the prefix natively (--server.baseUrlPath etc.) and MUST NOT get
+// stripPrefix — otherwise the framework would double-handle the prefix.
+func TestGenerate_StripPrefix_StreamlitPrivateNoMiddleware(t *testing.T) {
+	s := &Spec{
+		Name:      "dash",
+		Image:     "ghcr.io/o/a:1",
+		Project:   "p",
+		Framework: "streamlit",
+		Expose:    ExposePlanes{ExposePrivate, ExposeShared},
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s.ApplyDefaults()
+	if s.StripPrefix == nil || *s.StripPrefix {
+		t.Errorf("streamlit framework: StripPrefix default should be false; got %v", s.StripPrefix)
+	}
+	hcl := Generate(s, JobParams{Namespace: "abc-apps"})
+	if strings.Contains(strings.ToLower(hcl), "stripprefix") {
+		t.Errorf("streamlit (non-custom) must NOT emit stripPrefix:\n%s", hcl)
+	}
+}
+
+// TestGenerate_StripPrefix_ExplicitOverride: the abc-app.yaml author can pin
+// `strip_prefix: <bool>` to override the framework-derived default.
+func TestGenerate_StripPrefix_ExplicitOverride(t *testing.T) {
+	t.Run("custom + strip_prefix: false → no middleware", func(t *testing.T) {
+		s := &Spec{
+			Name: "docs", Image: "x/y:z", Project: "p", Framework: "custom",
+			Port: 8080, Health: "/",
+			Expose: ExposePlanes{ExposePrivate},
+		}
+		if err := s.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		off := false
+		s.StripPrefix = &off
+		s.ApplyDefaults() // must NOT clobber the explicit value
+		if s.StripPrefix == nil || *s.StripPrefix {
+			t.Fatalf("ApplyDefaults clobbered explicit strip_prefix=false: %v", s.StripPrefix)
+		}
+		hcl := Generate(s, JobParams{Namespace: "abc-apps"})
+		if strings.Contains(strings.ToLower(hcl), "stripprefix") {
+			t.Errorf("explicit strip_prefix=false must suppress middleware:\n%s", hcl)
+		}
+	})
+	t.Run("streamlit + strip_prefix: true → middleware emitted", func(t *testing.T) {
+		s := &Spec{
+			Name: "dash", Image: "x/y:z", Project: "p", Framework: "streamlit",
+			Expose: ExposePlanes{ExposePrivate},
+		}
+		if err := s.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		on := true
+		s.StripPrefix = &on
+		s.ApplyDefaults()
+		if s.StripPrefix == nil || !*s.StripPrefix {
+			t.Fatalf("ApplyDefaults clobbered explicit strip_prefix=true: %v", s.StripPrefix)
+		}
+		hcl := Generate(s, JobParams{Namespace: "abc-apps"})
+		if !strings.Contains(strings.ToLower(hcl), "stripprefix") {
+			t.Errorf("explicit strip_prefix=true must emit middleware:\n%s", hcl)
+		}
+	})
+}
+
+// TestGenerate_StripPrefix_PublicOnlyNoMiddleware: stripPrefix is only relevant
+// for path-prefix planes (private/shared). A public-only app uses Host-rule
+// routing — no prefix to strip.
+func TestGenerate_StripPrefix_PublicOnlyNoMiddleware(t *testing.T) {
+	s := &Spec{
+		Name: "docs", Image: "x/y:z", Project: "p", Framework: "custom",
+		Port: 8080, Health: "/",
+		Expose: ExposePlanes{ExposePublic},
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s.ApplyDefaults()
+	hcl := Generate(s, JobParams{Namespace: "abc-apps"})
+	if strings.Contains(strings.ToLower(hcl), "stripprefix") {
+		t.Errorf("public-only exposure must NOT emit stripPrefix (no prefix):\n%s", hcl)
 	}
 }
 

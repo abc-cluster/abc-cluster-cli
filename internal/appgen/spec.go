@@ -109,6 +109,16 @@ type Spec struct {
 	Access        string            `yaml:"access,omitempty"`
 	Expose        ExposePlanes      `yaml:"expose,omitempty"`   // network-reach planes: [public|shared|private]
 	Exposure      string            `yaml:"exposure,omitempty"` // DEPRECATED legacy scalar (public|internal|both); maps to Expose
+	// StripPrefix controls whether Traefik strips the `/apps/<project>-<name>`
+	// PathPrefix before forwarding to the container, for apps using the private
+	// or shared planes. Defaults are framework-derived in ApplyDefaults:
+	//   custom  → true  (containers typically serve at `/`; the prefix would 404)
+	//   others  → false (streamlit/shiny/pode/etc. are configured to serve under
+	//                    the prefix via --server.baseUrlPath / H2O_WAVE_BASE_URL
+	//                    / ABC_APP_URL and need the prefix to remain).
+	// Set explicitly to override the framework default. No effect on apps using
+	// only the public plane (Host-rule routing, no prefix).
+	StripPrefix   *bool             `yaml:"strip_prefix,omitempty"`
 	Replicas      int               `yaml:"replicas,omitempty"`
 	Env           map[string]string `yaml:"env,omitempty"`
 	Data          []DataMount       `yaml:"data,omitempty"`
@@ -396,6 +406,15 @@ func (s *Spec) ApplyDefaults() {
 		s.Access = "team"
 	} else {
 		s.Access = strings.ToLower(strings.TrimSpace(s.Access))
+	}
+	// StripPrefix default: when the user didn't set it, derive from framework.
+	// `custom` containers are BYOI — they typically serve at `/` and would 404
+	// on the `/apps/<project>-<name>/...` prefix Traefik forwards. The framework
+	// presets (streamlit/shiny/pode) are configured to serve under the prefix
+	// natively (--server.baseUrlPath etc.) and need the prefix to remain.
+	if s.StripPrefix == nil {
+		v := strings.ToLower(strings.TrimSpace(s.Framework)) == "custom"
+		s.StripPrefix = &v
 	}
 	// Normalise the network-reach planes into s.Expose (the canonical form):
 	//   explicit `expose:` wins; else map the legacy `exposure:`; else default public.

@@ -125,6 +125,24 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 
 	// ── dry-run: render HCL and stop (no side effects) ──────────────────────
 	if dryRun {
+		// Visibility on placement: HCL omits datacenters / node_pool when the
+		// active context didn't supply them. Saved HCL won't place on submit if
+		// the cluster has no matching default — warn loudly here so the user
+		// edits the context (or saves with `--node-pool …` added).
+		if len(params.Datacenters) == 0 || params.NodePool == "" {
+			fmt.Fprintln(os.Stderr,
+				"warning: active context did not provide all placement params — saved HCL may not place on submit:")
+			if len(params.Datacenters) == 0 {
+				fmt.Fprintln(os.Stderr, "  datacenters: <empty>  (set via context's admin.services.nomad.datacenters)")
+			} else {
+				fmt.Fprintf(os.Stderr, "  datacenters: %v\n", params.Datacenters)
+			}
+			if params.NodePool == "" {
+				fmt.Fprintln(os.Stderr, "  node_pool:   <empty>  (set via admin.services.nomad.head_pool, or pass --node-pool)")
+			} else {
+				fmt.Fprintf(os.Stderr, "  node_pool:   %s\n", params.NodePool)
+			}
+		}
 		fmt.Fprint(out, appgen.Generate(spec, params))
 		return nil
 	}

@@ -158,6 +158,20 @@ func Generate(s *Spec, p JobParams) string {
 			cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.rule=PathPrefix(`%s`)", r, s.AppPath())),
 			cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.entrypoints=%s", r, strings.Join(internalEps, ","))),
 		)
+		// stripPrefix middleware: when the container serves at `/` (typical for
+		// `framework: custom` BYOI images), Traefik must strip the
+		// `/apps/<project>-<name>` prefix before forwarding, else the upstream
+		// 404s on every request. Framework presets (streamlit/shiny/pode) set
+		// the prefix-aware mode natively (--server.baseUrlPath etc.) and would
+		// double-prefix if stripped. Default is framework-derived; overridable
+		// via `strip_prefix:` in abc-app.yaml. See Spec.StripPrefix docs.
+		if s.StripPrefix != nil && *s.StripPrefix {
+			mw := job + "-strip"
+			tags = append(tags,
+				cty.StringVal(fmt.Sprintf("traefik.http.middlewares.%s.stripprefix.prefixes=%s", mw, s.AppPath())),
+				cty.StringVal(fmt.Sprintf("traefik.http.routers.%s.middlewares=%s@nomad-%s", r, mw, p.Namespace)),
+			)
+		}
 		// PHASE 2 (sticky sessions): for stateful frameworks with replicas > 1,
 		// append loadbalancer sticky-cookie tags on the <job> service here.
 	}
