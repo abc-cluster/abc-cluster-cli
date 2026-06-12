@@ -177,11 +177,12 @@ func TestDefaultDecryptedPath(t *testing.T) {
 		wantPath string
 		wantOK   bool
 	}{
-		{"report.pdf" + rcloneDefaultSuffix, "report.pdf", true},
-		{"/tmp/x/report.pdf" + rcloneDefaultSuffix, "/tmp/x/report.pdf", true},
+		{"report.pdf" + abccrypt.Suffix, "report.pdf", true},
+		{"/tmp/x/report.pdf" + abccrypt.Suffix, "/tmp/x/report.pdf", true},
 		{"report.pdf", "", false},
-		{"report.bin", "", false},                  // wrong suffix
-		{rcloneDefaultSuffix, "", false},            // suffix-only → empty trim
+		{"report.bin", "", false},               // wrong suffix
+		{"report.pdf.encrypted", "", false},     // legacy rclone suffix no longer recognised
+		{abccrypt.Suffix, "", false},            // suffix-only → empty trim
 		{"", "", false},
 	}
 	for _, c := range cases {

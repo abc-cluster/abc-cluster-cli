@@ -180,26 +180,24 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		return fmt.Errorf("--output-dir can only be used when decrypting a directory")
 	}
 
-	cryptor, err := newCryptConfig(opts.cryptPassword, opts.cryptSalt, nil)
-	if err != nil {
-		return err
-	}
-	// Age identity from the same passphrase, for age-format files; legacy
-	// rclone-crypt files fall back to `cryptor`. Format is detected per file.
+	// Decrypt is age-only (rclone-crypt back-compat dropped 2026-06-12 — no live
+	// users). Gather the identities to try; age.Decrypt matches the right stanza
+	// (passphrase / managed abc / X25519). Passphrase identity from the resolved
+	// password. (The managed abc identity is added by the Phase-2 KEK wiring.)
 	var ageIDs []age.Identity
 	if id, ierr := abccrypt.PassphraseIdentity(opts.cryptPassword); ierr == nil {
 		ageIDs = []age.Identity{id}
 	}
 
 	if info.IsDir() {
-		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, ageIDs, opts.force, opts.replace)
+		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, ageIDs, opts.force, opts.replace)
 	}
-	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, ageIDs, opts.force, opts.replace)
+	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, ageIDs, opts.force, opts.replace)
 }
 
 // resolveDecryptOutput chooses the output path for a decrypt:
 //   - if outputPath was passed explicitly → use it verbatim
-//   - else strip the .encrypted suffix from sourcePath → the clean restored name
+//   - else strip the .age suffix from sourcePath → the clean restored name
 //   - else error (no silent ".dec" fallback; devon B1)
 func resolveDecryptOutput(sourcePath, outputPath string) (string, error) {
 	if outputPath != "" {
@@ -210,18 +208,18 @@ func resolveDecryptOutput(sourcePath, outputPath string) (string, error) {
 		return "", fmt.Errorf(
 			"cannot determine output path: %q has no recognised crypt suffix (expected %q)\n"+
 				"  pass --output <path> to specify where to write the decrypted file",
-			sourcePath, rcloneDefaultSuffix)
+			sourcePath, abccrypt.Suffix)
 	}
 	return clean, nil
 }
 
-func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, ageIDs []age.Identity, force, replace bool) error {
+func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, ageIDs []age.Identity, force, replace bool) error {
 	outputPath, err := resolveDecryptOutput(sourcePath, outputPath)
 	if err != nil {
 		return err
 	}
 	err = writeWithCollisionCheck(outputPath, force, cmd.ErrOrStderr(),
-		func(p string) error { return decryptDispatch(cmd.Context(), sourcePath, p, cryptor, ageIDs) })
+		func(p string) error { return ageDecryptToPath(cmd.Context(), sourcePath, p, ageIDs) })
 	if err != nil {
 		return fmt.Errorf("failed to decrypt %q: %w", sourcePath, err)
 	}
@@ -236,7 +234,7 @@ func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	return nil
 }
 
-func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, ageIDs []age.Identity, force, replace bool) error {
+func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, ageIDs []age.Identity, force, replace bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -268,7 +266,7 @@ func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
 		}
 		if err := writeWithCollisionCheck(destPath, force, cmd.ErrOrStderr(),
-			func(p string) error { return decryptDispatch(cmd.Context(), file.path, p, cryptor, ageIDs) }); err != nil {
+			func(p string) error { return ageDecryptToPath(cmd.Context(), file.path, p, ageIDs) }); err != nil {
 			return fmt.Errorf("failed to decrypt %q: %w", relPath, err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Decrypted %s\n", relPath)
@@ -369,12 +367,9 @@ func sha256File(path string) (string, error) {
 // suffix — callers must require an explicit --output in that case rather than
 // invent one (no silent ".dec" fallback; devon B1).
 func defaultDecryptedPath(path string) (string, bool) {
-	// Recognise the age suffix (current) and the legacy rclone-crypt suffix.
-	for _, suffix := range []string{abccrypt.Suffix, rcloneDefaultSuffix} {
-		if strings.HasSuffix(path, suffix) {
-			if trimmed := strings.TrimSuffix(path, suffix); trimmed != "" {
-				return trimmed, true
-			}
+	if strings.HasSuffix(path, abccrypt.Suffix) {
+		if trimmed := strings.TrimSuffix(path, abccrypt.Suffix); trimmed != "" {
+			return trimmed, true
 		}
 	}
 	return "", false

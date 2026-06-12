@@ -75,35 +75,6 @@ func ageDecryptToPath(_ context.Context, srcPath, dstPath string, ids []age.Iden
 	return nil
 }
 
-// detectFileFormat opens path and returns its encryption format (age, legacy
-// rclone-crypt, or unknown) for decrypt dispatch.
-func detectFileFormat(path string) (abccrypt.Format, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return abccrypt.FormatUnknown, fmt.Errorf("open %q: %w", path, err)
-	}
-	defer f.Close()
-	format, _, err := abccrypt.DetectFormat(f)
-	return format, err
-}
-
-// decryptDispatch decrypts srcPath into dstPath, choosing the engine from the
-// file's on-disk format: age (ADR-0067) via ageIDs, or the retired rclone-crypt
-// format via cryptor (back-compat for pre-age `.encrypted` files).
-func decryptDispatch(ctx context.Context, srcPath, dstPath string, cryptor *cryptConfig, ageIDs []age.Identity) error {
-	format, err := detectFileFormat(srcPath)
-	if err != nil {
-		return err
-	}
-	switch format {
-	case abccrypt.FormatAge:
-		if len(ageIDs) == 0 {
-			return fmt.Errorf("%q is age-encrypted but no passphrase/identity is available to decrypt it", srcPath)
-		}
-		return ageDecryptToPath(ctx, srcPath, dstPath, ageIDs)
-	case abccrypt.FormatRcloneLegacy:
-		return cryptor.decryptToPath(srcPath, dstPath)
-	default:
-		return fmt.Errorf("unrecognised encryption format for %q (not an age or rclone-crypt file)", srcPath)
-	}
-}
+// (Legacy rclone-crypt decrypt dispatch removed 2026-06-12 — no live users; decrypt
+// is age-only. age.Decrypt matches the right stanza across the supplied identities
+// — passphrase, managed abc recipient, or X25519 — so no format branching is needed.)
