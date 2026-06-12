@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"filippo.io/age"
 	"github.com/spf13/cobra"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/abccrypt"
 )
 
 type encryptOptions struct {
@@ -185,20 +188,23 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 		return fmt.Errorf("--output-dir can only be used when encrypting a directory")
 	}
 
-	cryptor, err := newCryptConfig(opts.cryptPassword, opts.cryptSalt, nil)
+	// New encryption is always the age envelope (ADR-0067). The passphrase is an
+	// age scrypt recipient — the resulting file is decryptable by stock `age`.
+	rcpt, err := abccrypt.PassphraseRecipient(opts.cryptPassword)
 	if err != nil {
 		return err
 	}
+	rcpts := []age.Recipient{rcpt}
 
 	if info.IsDir() {
-		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.progress, opts.force, opts.replace)
+		return encryptDirectory(cmd, opts.inputPath, opts.outputDir, rcpts, opts.progress, opts.force, opts.replace)
 	}
-	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.progress, opts.force, opts.replace)
+	return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, rcpts, opts.progress, opts.force, opts.replace)
 }
 
-func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, progressEnabled, force, replace bool) error {
+func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, rcpts []age.Recipient, progressEnabled, force, replace bool) error {
 	if outputPath == "" {
-		outputPath = sourcePath + rcloneDefaultSuffix
+		outputPath = sourcePath + abccrypt.Suffix
 	}
 	info, err := os.Stat(sourcePath)
 	if err != nil {
@@ -207,7 +213,7 @@ func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", filepath.Base(sourcePath)), info.Size())
 	err = writeWithCollisionCheck(outputPath, force, cmd.ErrOrStderr(),
 		func(p string) error {
-			return cryptor.encryptToPathWithProgress(cmd.Context(), sourcePath, p, func(n int64) { progress.Add(n) })
+			return ageEncryptToPath(cmd.Context(), sourcePath, p, rcpts, func(n int64) { progress.Add(n) })
 		})
 	if err != nil {
 		_ = progress.Complete()
@@ -227,7 +233,7 @@ func encryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	return nil
 }
 
-func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, progressEnabled, force, replace bool) error {
+func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, rcpts []age.Recipient, progressEnabled, force, replace bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -248,14 +254,14 @@ func encryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 		if err != nil {
 			return fmt.Errorf("failed to resolve path for %q: %w", file.path, err)
 		}
-		destPath := filepath.Join(outputDir, relPath) + rcloneDefaultSuffix
+		destPath := filepath.Join(outputDir, relPath) + abccrypt.Suffix
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
 		}
 		progress := newProgressReporter(cmd.OutOrStdout(), progressEnabled, fmt.Sprintf("Encrypting %s", relPath), file.size)
 		writeErr := writeWithCollisionCheck(destPath, force, cmd.ErrOrStderr(),
 			func(p string) error {
-				return cryptor.encryptToPathWithProgress(cmd.Context(), file.path, p, func(n int64) { progress.Add(n) })
+				return ageEncryptToPath(cmd.Context(), file.path, p, rcpts, func(n int64) { progress.Add(n) })
 			})
 		if writeErr != nil {
 			_ = progress.Complete()

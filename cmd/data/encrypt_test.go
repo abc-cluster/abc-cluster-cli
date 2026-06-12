@@ -2,11 +2,14 @@ package data
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/abccrypt"
 )
 
 // writeMinimalDataCLIConfig writes a config with one context so ContextForSecrets resolves.
@@ -45,7 +48,8 @@ func TestDataEncrypt_FileDefaultOutput(t *testing.T) {
 		t.Fatalf("expected output message, got %q", out)
 	}
 
-	encryptedPath := sourcePath + rcloneDefaultSuffix
+	// New encryption produces an age file (ADR-0067), not rclone-crypt.
+	encryptedPath := sourcePath + abccrypt.Suffix
 	t.Cleanup(func() {
 		_ = os.Remove(encryptedPath)
 	})
@@ -53,15 +57,18 @@ func TestDataEncrypt_FileDefaultOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read encrypted file: %v", err)
 	}
-
-	cryptor, err := newCryptConfig("secret", "", bytes.NewReader(make([]byte, rcloneFileNonceSize)))
-	if err != nil {
-		t.Fatalf("newCryptConfig: %v", err)
+	if f, _, _ := abccrypt.DetectFormat(bytes.NewReader(encrypted)); f != abccrypt.FormatAge {
+		t.Fatalf("expected an age file, got format %v", f)
 	}
-	decrypted, err := decryptRclone(encrypted, cryptor.dataKey)
+	id, err := abccrypt.PassphraseIdentity("secret")
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	r, err := abccrypt.Decrypt(bytes.NewReader(encrypted), id)
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
+	decrypted, _ := io.ReadAll(r)
 	if !bytes.Equal(decrypted, plaintext) {
 		t.Fatalf("decrypted content mismatch")
 	}
