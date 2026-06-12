@@ -30,7 +30,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	fmt.Fprintf(out, "  %-30s %-9s %-14s %-22s %s\n",
 		"NAME", "STATUS", "PROJECT", "EXPOSE", "URL")
-	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 116))
+	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 140))
 
 	count := 0
 	for i := range stubs {
@@ -59,9 +59,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 }
 
 // appExpose parses an app job's Traefik routing tags into its exposure planes
-// (public/shared/private, canonical order) and a primary URL. public → the full
-// public-edge https URL; private/shared → the /apps/<app>/ path (the door host —
-// campus IP / overlay — is operator infra, not known to the CLI).
+// (public/shared/private, canonical order) and a clickable primary URL:
+//
+//   - public  → https://<subdomain>.apps.seedling.abc-cluster.cloud/   (AppsDomain)
+//   - private → https://<PrivateAppsDoor>/apps/<subdomain>/             (campus-LAN door)
+//   - shared  → https://<SharedAppsDoor>/apps/<subdomain>/  (or private door if
+//                                                            shared not wired yet)
+//   - legacy Host(internal-only) → https://<that-host>/  (pre-expose deployments)
+//
+// Plane label order is canonical (public, shared, private). The URL prefers
+// public > private > shared > legacy so the displayed link is the most
+// stable / widely-reachable surface.
 func appExpose(job *utils.NomadJob) (planes, url string) {
 	if job == nil {
 		return "—", "—"
@@ -81,7 +89,7 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 		}
 	}
 	var hasPublic, hasShared, hasPrivate, hasLegacy bool
-	var pubURL, pathURL, legacyURL string
+	var pubURL, pathPart, legacyURL string
 	for r, rule := range rules {
 		switch {
 		case strings.Contains(rule, "Host("):
@@ -99,7 +107,7 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 				}
 			}
 		case strings.Contains(rule, "PathPrefix("):
-			pathURL = firstQuoted(rule, "PathPrefix(`") + "/"
+			pathPart = firstQuoted(rule, "PathPrefix(`") + "/"
 			ep := eps[r]
 			hasPrivate = hasPrivate || strings.Contains(ep, "private")
 			hasShared = hasShared || strings.Contains(ep, "shared")
@@ -121,9 +129,23 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 	if len(pl) == 0 {
 		return "—", "—"
 	}
+	// URL selection.
 	u := pubURL
-	if u == "" {
-		u = pathURL
+	if u == "" && pathPart != "" {
+		switch {
+		case hasPrivate:
+			u = "https://" + appgen.PrivateAppsDoor + pathPart
+		case hasShared:
+			if appgen.SharedAppsDoor != "" {
+				u = "https://" + appgen.SharedAppsDoor + pathPart
+			} else {
+				// shared-only but no shared door wired — fall back to private door
+				// (Traefik PathPrefix matches on either entrypoint, so the campus-
+				// LAN door reaches the same backing service for users who can hit
+				// it). The "shared" plane label still appears in the EXPOSE column.
+				u = "https://" + appgen.PrivateAppsDoor + pathPart
+			}
+		}
 	}
 	if u == "" {
 		u = legacyURL

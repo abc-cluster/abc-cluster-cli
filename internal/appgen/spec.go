@@ -68,6 +68,23 @@ const (
 // Traefik, which routes by PathPrefix — Host-agnostic, so it works on a bare IP.
 const AppsPathPrefix = "/apps"
 
+// PrivateAppsDoor is the host of the campus-LAN TLS door (Caddy bound to the
+// campus IP :443) that fronts the Traefik `private` entrypoint at `/apps/*`.
+// Used by `abc app list` to assemble a clickable URL for private/shared apps.
+// Hard-coded for the seedling-prod deployment; future deployments can override
+// via the active context (admin.services.apps.private_door).
+const PrivateAppsDoor = "aither.mb.sun.ac.za"
+
+// SharedAppsDoor is the host of the overlay-VPN (Tailscale Serve) TLS door
+// fronting the Traefik `shared` entrypoint at `/apps/*`. Empty in the current
+// seedling-prod deployment — Tailscale Serve is not yet bound at the tailnet
+// `:443` (tailscaled binds it itself). When empty, `abc app list` falls back
+// to the private-door URL for shared-only apps (Traefik routes the path on
+// either entrypoint, so the campus-LAN door reaches the same service when
+// the user can hit it). Override via admin.services.apps.shared_door once
+// wired.
+const SharedAppsDoor = ""
+
 // InternalAppsDomain is the parent domain for internal-only app hosts.
 // Deliberately NOT under AppsDomain (*.apps.seedling…): the public edge only
 // proxies that wildcard, so anything here has no public route by construction.
