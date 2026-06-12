@@ -74,7 +74,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 				planes = append(planes, t)
 			}
 		}
-		spec.Expose = planes
+		spec.Expose = appgen.ExposePlanes(planes)
 		spec.Exposure = "" // --expose wins over any legacy value in the file
 	} else if strings.TrimSpace(exposureOverride) != "" {
 		spec.Exposure = strings.TrimSpace(exposureOverride)

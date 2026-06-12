@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // AppsDomain is the wildcard parent domain apps are served under. Each app is
@@ -105,7 +107,7 @@ type Spec struct {
 	Health        string            `yaml:"health,omitempty"`
 	HealthTimeout string            `yaml:"health_timeout,omitempty"` // e.g. "3m"; overrides the deploy default
 	Access        string            `yaml:"access,omitempty"`
-	Expose        []string          `yaml:"expose,omitempty"`   // network-reach planes: [public|shared|private]
+	Expose        ExposePlanes      `yaml:"expose,omitempty"`   // network-reach planes: [public|shared|private]
 	Exposure      string            `yaml:"exposure,omitempty"` // DEPRECATED legacy scalar (public|internal|both); maps to Expose
 	Replicas      int               `yaml:"replicas,omitempty"`
 	Env           map[string]string `yaml:"env,omitempty"`
@@ -115,6 +117,73 @@ type Spec struct {
 	// Source is rejected in phase 1 (no cluster-side build path). Declared so a
 	// stray `source:` produces a clear error instead of being ignored.
 	Source string `yaml:"source,omitempty"`
+}
+
+// ExposePlanes is the network-reach plane set parsed from abc-app.yaml's
+// `expose:` key. Underlying representation is []string so every consumer
+// (range loops, len, conversion to []string for normPlanes) works unchanged.
+//
+// The custom UnmarshalYAML accepts either a YAML scalar (one plane) or a
+// YAML sequence (multiple planes) — both forms are equivalent and idiomatic:
+//
+//	expose: private              # scalar — one plane
+//	expose: [private, shared]    # sequence — many planes
+//	expose: public               # scalar
+//	expose:                      # block sequence — also valid
+//	  - public
+//	  - shared
+//
+// MarshalYAML renders the canonical form back: a scalar when len == 1, a
+// flow-style sequence otherwise. The order-preserving canonical marshal in
+// spec_yaml_ordered.go decides serialization for `abc app spec show` etc.;
+// this MarshalYAML is the fallback for any direct yaml.Marshal call.
+type ExposePlanes []string
+
+// UnmarshalYAML implements yaml.Unmarshaler. See ExposePlanes for the accepted
+// shapes. An empty / null value yields a nil slice.
+func (e *ExposePlanes) UnmarshalYAML(node *yaml.Node) error {
+	if node == nil {
+		return nil
+	}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		// yaml.v3 represents an explicit `null` / `~` as a scalar with tag
+		// !!null — yaml.Decode into a string then yields "" for that case.
+		var s string
+		if err := node.Decode(&s); err != nil {
+			return fmt.Errorf("expose: invalid scalar at line %d: %w", node.Line, err)
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			*e = nil
+			return nil
+		}
+		*e = ExposePlanes{s}
+		return nil
+	case yaml.SequenceNode:
+		var arr []string
+		if err := node.Decode(&arr); err != nil {
+			return fmt.Errorf("expose: invalid sequence at line %d: %w", node.Line, err)
+		}
+		*e = ExposePlanes(arr)
+		return nil
+	default:
+		return fmt.Errorf("expose: must be a string or a list of strings (line %d)", node.Line)
+	}
+}
+
+// MarshalYAML implements yaml.Marshaler. Single-entry plane sets serialize as
+// a scalar; multi-entry sets serialize as a flow sequence. nil/empty serializes
+// as a nil value (so the `omitempty` tag on the field works).
+func (e ExposePlanes) MarshalYAML() (any, error) {
+	switch len(e) {
+	case 0:
+		return nil, nil
+	case 1:
+		return e[0], nil
+	default:
+		return []string(e), nil
+	}
 }
 
 // Resources holds the declared hard resource limits applied to the Nomad task.
@@ -331,16 +400,16 @@ func (s *Spec) ApplyDefaults() {
 	// Normalise the network-reach planes into s.Expose (the canonical form):
 	//   explicit `expose:` wins; else map the legacy `exposure:`; else default public.
 	if len(s.Expose) > 0 {
-		s.Expose = normPlanes(s.Expose)
+		s.Expose = ExposePlanes(normPlanes([]string(s.Expose)))
 		s.Exposure = "" // canonicalise on the new field
 	} else {
 		switch strings.ToLower(strings.TrimSpace(s.Exposure)) {
 		case ExposureInternal:
-			s.Expose = []string{ExposeShared, ExposePrivate}
+			s.Expose = ExposePlanes{ExposeShared, ExposePrivate}
 		case ExposureBoth:
-			s.Expose = []string{ExposePublic, ExposeShared, ExposePrivate}
+			s.Expose = ExposePlanes{ExposePublic, ExposeShared, ExposePrivate}
 		default: // "" or public → public (preserves phase-1 default)
-			s.Expose = []string{ExposePublic}
+			s.Expose = ExposePlanes{ExposePublic}
 		}
 		s.Exposure = ""
 	}
@@ -399,7 +468,7 @@ func (s *Spec) NormExposure() string {
 // `exposure:`, or the default). Order is canonical: public, shared, private.
 func (s *Spec) Planes() []string {
 	if len(s.Expose) > 0 {
-		return normPlanes(s.Expose)
+		return normPlanes([]string(s.Expose))
 	}
 	switch strings.ToLower(strings.TrimSpace(s.Exposure)) {
 	case ExposureInternal:

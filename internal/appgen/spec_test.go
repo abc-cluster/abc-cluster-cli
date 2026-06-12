@@ -3,6 +3,8 @@ package appgen
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func validSucuriSpec() *Spec {
@@ -309,4 +311,135 @@ func TestVersion_ValidationAndDefault(t *testing.T) {
 			t.Errorf("version %q normalised to %q, want %q", v, d.Version, CurrentSpecVersion)
 		}
 	}
+}
+
+// TestExposePlanes_YAMLForms locks the two accepted shapes of the `expose:`
+// key — a scalar string for a single plane, and a sequence (flow or block)
+// for multiple. Both round-trip through Parse → s.Expose → s.Planes().
+func TestExposePlanes_YAMLForms(t *testing.T) {
+	baseDoc := func(exposeFragment string) string {
+		return `version: "1.0"
+name: test-app
+image: aither.local/test:latest
+project: abc-platform
+framework: custom
+port: 8080
+health: /
+access: team
+` + exposeFragment
+	}
+
+	cases := []struct {
+		name     string
+		fragment string
+		want     []string // canonical (normalised) plane order
+	}{
+		{"scalar private",       "expose: private",                   []string{ExposePrivate}},
+		{"scalar shared",        "expose: shared",                    []string{ExposeShared}},
+		{"scalar public",        "expose: public",                    []string{ExposePublic}},
+		{"scalar with quotes",   "expose: \"private\"",               []string{ExposePrivate}},
+		{"flow sequence two",    "expose: [private, shared]",         []string{ExposeShared, ExposePrivate}},
+		{"flow sequence one",    "expose: [private]",                 []string{ExposePrivate}},
+		{"flow sequence three",  "expose: [public, shared, private]", []string{ExposePublic, ExposeShared, ExposePrivate}},
+		{"block sequence",       "expose:\n  - public\n  - shared",   []string{ExposePublic, ExposeShared}},
+		// empty scalar → field is cleared by UnmarshalYAML; ApplyDefaults then
+		// applies the "default to public" rule (no expose AND no exposure).
+		{"empty scalar defaults", "expose: \"\"",                     []string{ExposePublic}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, err := Parse([]byte(baseDoc(c.fragment)))
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", c.fragment, err)
+			}
+			if err := s.Validate(); err != nil {
+				t.Fatalf("Validate after parse(%q) error: %v", c.fragment, err)
+			}
+			s.ApplyDefaults()
+			got := s.Planes()
+			if !equalStrings(got, c.want) {
+				t.Errorf("Planes() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestExposePlanes_InvalidYAMLShape ensures we reject things that are clearly
+// neither a scalar nor a sequence (e.g. a mapping). The error message must
+// guide the user toward the two supported forms.
+func TestExposePlanes_InvalidYAMLShape(t *testing.T) {
+	docs := []string{
+		// mapping (not allowed)
+		`version: "1.0"
+name: test-app
+image: aither.local/test:latest
+project: abc-platform
+framework: custom
+port: 8080
+health: /
+access: team
+expose:
+  private: true
+  shared: true
+`,
+	}
+	for i, d := range docs {
+		_, err := Parse([]byte(d))
+		if err == nil {
+			t.Errorf("case %d: expected parse error for mapping-shaped expose, got nil", i)
+		}
+	}
+}
+
+// TestExposePlanes_Marshal locks the fallback yaml.Marshal output:
+//   - one plane          → scalar (no list markers)
+//   - two or more planes → a sequence (yaml.v3 default style is block; the
+//     canonical writer in spec_yaml_ordered.go uses flow style for the
+//     full-spec serialization. Both are valid YAML and round-trip through
+//     our UnmarshalYAML.)
+func TestExposePlanes_Marshal(t *testing.T) {
+	cases := []struct {
+		name           string
+		in             ExposePlanes
+		wantContains   []string // substrings expected in output
+		wantNotContain []string
+	}{
+		{"single scalar", ExposePlanes{ExposePrivate},
+			[]string{"private"}, []string{"- ", "[", "]"}},
+		{"two as sequence", ExposePlanes{ExposePrivate, ExposeShared},
+			[]string{"private", "shared"}, nil},
+		{"nil empty", nil, []string{"null"}, []string{"private", "shared", "public"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := yaml.Marshal(c.in)
+			if err != nil {
+				t.Fatalf("Marshal error: %v", err)
+			}
+			s := string(out)
+			for _, w := range c.wantContains {
+				if !strings.Contains(s, w) {
+					t.Errorf("Marshal output %q missing %q", s, w)
+				}
+			}
+			for _, n := range c.wantNotContain {
+				if strings.Contains(s, n) {
+					t.Errorf("Marshal output %q must not contain %q", s, n)
+				}
+			}
+		})
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
