@@ -95,6 +95,13 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Namespace:   appNamespace(cmd),
 		Datacenters: activeCtx.NomadDatacenters(),
 		NodePool:    activeCtx.NomadHeadPool(),
+		AppsDoors: appgen.AppsDoors{
+			PublicDomain:  activeCtx.AppsPublicDomain(),
+			PrivateDoor:   activeCtx.AppsPrivateDoor(),
+			PrivateDoorIP: activeCtx.AppsPrivateDoorIP(),
+			SharedDoor:    activeCtx.AppsSharedDoor(),
+			SharedDoorIP:  activeCtx.AppsSharedDoorIP(),
+		},
 	}
 	// --node-pool overrides the context's head_pool (parallels --namespace).
 	if np, _ := cmd.Flags().GetString("node-pool"); strings.TrimSpace(np) != "" {
@@ -174,14 +181,21 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintf(out, "Submitted %s\n", spec.JobName())
-	fmt.Fprintf(out, "  URL: %s\n", spec.URL())
+	fmt.Fprintf(out, "  URL:    %s\n", spec.URL(params.AppsDoors))
+	if u := spec.URLIP(params.AppsDoors); u != "" {
+		// IP form for users without a campus DNS / hosts-file entry for the door.
+		fmt.Fprintf(out, "  URL-IP: %s\n", u)
+	}
 	if spec.NormExposure() != appgen.ExposurePublic {
-		// Internal apps are off the public edge — reachable only via Tailscale +
-		// campus LAN, and the apps.internal host resolves only where the operator
-		// has wired internal DNS. Surface that so the user isn't left guessing.
+		// Private/shared apps live behind operator-configured TLS doors — off the
+		// public edge by design. Surface a hosts-file hint when the operator
+		// supplied both DNS + IP for the private door (typical for SUN-campus-IT-
+		// off-DNS deployments like seedling-prod's aither.mb.sun.ac.za).
 		fmt.Fprintf(out, "  exposure: %s — institution-only (not on the public edge).\n", spec.NormExposure())
-		fmt.Fprintf(out, "    Internal host: %s (needs internal DNS: Tailscale MagicDNS / campus resolver).\n", spec.InternalHost())
-		fmt.Fprintln(out, "    See abc-deployments .../docs/internal-app-exposure.md for resolution + Tailscale Serve.")
+		if params.AppsDoors.PrivateDoor != "" && params.AppsDoors.PrivateDoorIP != "" {
+			fmt.Fprintf(out, "    /etc/hosts hint (off-network): %s   %s\n",
+				params.AppsDoors.PrivateDoorIP, params.AppsDoors.PrivateDoor)
+		}
 	}
 
 	if noWait {
@@ -193,9 +207,9 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	healthTO := resolveHealthTimeout(cmd, spec)
 	if err := waitHealthy(ctx, out, nc, spec.JobName(), spec.Health, healthTO); err != nil {
 		// Health timeout: leave the job in place for diagnosis.
-		return healthTimeoutErr(spec, healthTO)
+		return healthTimeoutErr(spec, params.AppsDoors, healthTO)
 	}
-	fmt.Fprintf(out, "  Healthy. %s\n", spec.URL())
+	fmt.Fprintf(out, "  Healthy. %s\n", spec.URL(params.AppsDoors))
 	return nil
 }
 
@@ -273,7 +287,7 @@ func waitHealthy(ctx context.Context, out io.Writer, nc *utils.NomadClient, jobN
 // healthTimeoutErr returns the health-check-timeout error with the bind-contract
 // hint (the most common standalone-Shiny / framework failure mode) and a pointer
 // at --health-timeout for slow-booting (JVM/large) images.
-func healthTimeoutErr(spec *appgen.Spec, timeout time.Duration) error {
+func healthTimeoutErr(spec *appgen.Spec, doors appgen.AppsDoors, timeout time.Duration) error {
 	return fmt.Errorf(
 		"app %q did not become healthy within %s\n"+
 			"  health check: %s%s (expected the container to respond on 0.0.0.0:%d)\n"+
@@ -281,5 +295,5 @@ func healthTimeoutErr(spec *appgen.Spec, timeout time.Duration) error {
 			"  • slow image (JVM/large)? raise the budget: --health-timeout 5m (or health_timeout in abc-app.yaml)\n"+
 			"  • inspect logs: abc app logs %s\n"+
 			"  the job was left running for diagnosis (not auto-rolled-back)",
-		spec.Name, timeout, spec.URL(), spec.Health, spec.Port, spec.Port, spec.Name)
+		spec.Name, timeout, spec.URL(doors), spec.Health, spec.Port, spec.Port, spec.Name)
 }

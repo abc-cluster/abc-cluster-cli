@@ -68,22 +68,28 @@ const (
 // Traefik, which routes by PathPrefix — Host-agnostic, so it works on a bare IP.
 const AppsPathPrefix = "/apps"
 
-// PrivateAppsDoor is the host of the campus-LAN TLS door (Caddy bound to the
-// campus IP :443) that fronts the Traefik `private` entrypoint at `/apps/*`.
-// Used by `abc app list` to assemble a clickable URL for private/shared apps.
-// Hard-coded for the seedling-prod deployment; future deployments can override
-// via the active context (admin.services.apps.private_door).
-const PrivateAppsDoor = "aither.mb.sun.ac.za"
-
-// SharedAppsDoor is the host of the overlay-VPN (Tailscale Serve) TLS door
-// fronting the Traefik `shared` entrypoint at `/apps/*`. Empty in the current
-// seedling-prod deployment — Tailscale Serve is not yet bound at the tailnet
-// `:443` (tailscaled binds it itself). When empty, `abc app list` falls back
-// to the private-door URL for shared-only apps (Traefik routes the path on
-// either entrypoint, so the campus-LAN door reaches the same service when
-// the user can hit it). Override via admin.services.apps.shared_door once
-// wired.
-const SharedAppsDoor = ""
+// AppsDoors carries the per-plane ingress door hostnames + IP forms the URL
+// composers in this package use. EVERY field is supplied by the caller (from
+// the active context's admin.services.apps block — see config.AppsService); no
+// cluster-specific defaults are baked into source. Empty fields cause the URL
+// composers to fall through to the next-priority plane or to the bare path.
+//
+// Populate via:
+//
+//	doors := appgen.AppsDoors{
+//	    PublicDomain:  ctx.AppsPublicDomain(),
+//	    PrivateDoor:   ctx.AppsPrivateDoor(),
+//	    PrivateDoorIP: ctx.AppsPrivateDoorIP(),
+//	    SharedDoor:    ctx.AppsSharedDoor(),
+//	    SharedDoorIP:  ctx.AppsSharedDoorIP(),
+//	}
+type AppsDoors struct {
+	PublicDomain  string
+	PrivateDoor   string
+	PrivateDoorIP string
+	SharedDoor    string
+	SharedDoorIP  string
+}
 
 // InternalAppsDomain is the parent domain for internal-only app hosts.
 // Deliberately NOT under AppsDomain (*.apps.seedling…): the public edge only
@@ -578,14 +584,70 @@ func (s *Spec) Host() string {
 	return s.Hosts()[0]
 }
 
-// URL returns the primary app URL hint. If exposed publicly → the public-edge https
-// URL. Otherwise the path-routed address under /apps/<app> (the private/shared door
-// host — campus IP / overlay — is operator infra, so only the path is known here).
-func (s *Spec) URL() string {
+// URL returns the primary clickable app URL using the supplied per-deployment
+// AppsDoors (the active context's admin.services.apps block). Preference:
+//
+//	public  → https://<sub>.<doors.PublicDomain>/  (falls back to the build-time
+//	          AppsDomain const when doors.PublicDomain is empty — back-compat;
+//	          to be removed once every context surface migrates to the new field.)
+//	private → https://<doors.PrivateDoor>/apps/<sub>/
+//	shared  → https://<doors.SharedDoor>/apps/<sub>/  (falls back to PrivateDoor
+//	          when SharedDoor is empty — Traefik routes the PathPrefix on either
+//	          entrypoint, so the private door reaches the same backing service).
+//
+// When every relevant door is empty, returns the bare /apps/<sub>/ path as a
+// last resort (a hint, not a clickable URL).
+func (s *Spec) URL(doors AppsDoors) string {
 	if s.HasPlane(ExposePublic) {
-		return "https://" + s.PublicHost()
+		dom := strings.TrimSpace(doors.PublicDomain)
+		if dom == "" {
+			// Back-compat: callers that didn't populate doors.PublicDomain get the
+			// build-time AppsDomain const. New code should pass doors with this
+			// field populated (from ctx.AppsPublicDomain()).
+			dom = AppsDomain
+		}
+		return "https://" + s.Subdomain() + "." + dom
+	}
+	if s.HasPlane(ExposePrivate) && strings.TrimSpace(doors.PrivateDoor) != "" {
+		return "https://" + doors.PrivateDoor + s.AppPath() + "/"
+	}
+	if s.HasPlane(ExposeShared) {
+		if h := strings.TrimSpace(doors.SharedDoor); h != "" {
+			return "https://" + h + s.AppPath() + "/"
+		}
+		if h := strings.TrimSpace(doors.PrivateDoor); h != "" {
+			return "https://" + h + s.AppPath() + "/"
+		}
 	}
 	return s.AppPath() + "/"
+}
+
+// URLIP returns the bare-IP form of URL for private/shared apps — useful for
+// users without DNS / hosts-file resolution for the door host. Composes from
+// doors.PrivateDoorIP (or SharedDoorIP, when only shared is exposed and
+// configured). Returns "" when:
+//   - the app is public-only (the wildcard host is the URL),
+//   - the app uses no path-prefix plane, or
+//   - no relevant *DoorIP is configured.
+//
+// The TLS cert at the door must include the IP as a SAN for browsers not to
+// warn — operators are responsible for that on their deployments.
+func (s *Spec) URLIP(doors AppsDoors) string {
+	if !s.HasPlane(ExposePrivate) && !s.HasPlane(ExposeShared) {
+		return ""
+	}
+	if s.HasPlane(ExposePrivate) && strings.TrimSpace(doors.PrivateDoorIP) != "" {
+		return "https://" + doors.PrivateDoorIP + s.AppPath() + "/"
+	}
+	if s.HasPlane(ExposeShared) {
+		if ip := strings.TrimSpace(doors.SharedDoorIP); ip != "" {
+			return "https://" + ip + s.AppPath() + "/"
+		}
+		if ip := strings.TrimSpace(doors.PrivateDoorIP); ip != "" {
+			return "https://" + ip + s.AppPath() + "/"
+		}
+	}
+	return ""
 }
 
 // JobName returns the Nomad job (and service) name: `app-<project>-<name>`.

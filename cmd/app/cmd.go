@@ -17,6 +17,7 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/appgen"
+	"github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -84,6 +85,27 @@ func appNamespace(cmd *cobra.Command) string {
 		return strings.TrimSpace(ns)
 	}
 	return appgen.DefaultNamespace
+}
+
+// appsDoorsFromActiveContext returns the per-plane ingress door hostnames + IPs
+// from the active context's admin.services.apps block. Each unset field is
+// surfaced as "" — the URL composers in internal/appgen fall through cleanly.
+// Any caller of Spec.URL() / Spec.URLIP() / Spec.ResolvedSummary() that lives
+// inside a CLI command should use this helper so URLs reflect the user's
+// configured cluster, not a build-time constant.
+func appsDoorsFromActiveContext() appgen.AppsDoors {
+	cfg, _ := config.Load()
+	if cfg == nil {
+		return appgen.AppsDoors{}
+	}
+	ctx := cfg.ActiveCtx()
+	return appgen.AppsDoors{
+		PublicDomain:  ctx.AppsPublicDomain(),
+		PrivateDoor:   ctx.AppsPrivateDoor(),
+		PrivateDoorIP: ctx.AppsPrivateDoorIP(),
+		SharedDoor:    ctx.AppsSharedDoor(),
+		SharedDoorIP:  ctx.AppsSharedDoorIP(),
+	}
 }
 
 // nomadClientFromCmd builds a NomadClient from flags, falling back to the

@@ -28,6 +28,12 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("list apps: %w", err)
 	}
 
+	// Active-context doors are used to compose URLs for legacy jobs whose meta
+	// predates abc_url (or to recompose when the active deployment's doors have
+	// changed since deploy time). Modern jobs carry abc_url + abc_url_ip in
+	// meta directly — preferred when present.
+	doors := appsDoorsFromActiveContext()
+
 	fmt.Fprintf(out, "  %-30s %-9s %-14s %-22s %s\n",
 		"NAME", "STATUS", "PROJECT", "EXPOSE", "URL")
 	fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 140))
@@ -46,7 +52,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 				name = v
 			}
 			project = orDash(job.Meta["abc_project"])
-			expose, url = appExpose(job)
+			expose, url = appExpose(job, doors)
 		}
 		status := appStatus(stubs[i])
 		fmt.Fprintf(out, "  %-30s %-9s %-14s %-22s %s\n",
@@ -61,16 +67,21 @@ func runList(cmd *cobra.Command, _ []string) error {
 // appExpose parses an app job's Traefik routing tags into its exposure planes
 // (public/shared/private, canonical order) and a clickable primary URL:
 //
-//   - public  → https://<subdomain>.apps.seedling.abc-cluster.cloud/   (AppsDomain)
-//   - private → https://<PrivateAppsDoor>/apps/<subdomain>/             (campus-LAN door)
-//   - shared  → https://<SharedAppsDoor>/apps/<subdomain>/  (or private door if
-//                                                            shared not wired yet)
+//   - public  → https://<subdomain>.<doors.PublicDomain>/  (active context's
+//                                                            apps.public_domain)
+//   - private → https://<doors.PrivateDoor>/apps/<subdomain>/
+//   - shared  → https://<doors.SharedDoor>/apps/<subdomain>/  (or private door
+//                                                              if shared not wired yet)
 //   - legacy Host(internal-only) → https://<that-host>/  (pre-expose deployments)
 //
 // Plane label order is canonical (public, shared, private). The URL prefers
 // public > private > shared > legacy so the displayed link is the most
 // stable / widely-reachable surface.
-func appExpose(job *utils.NomadJob) (planes, url string) {
+//
+// When a door for the displayed plane is empty in `doors`, the URL falls
+// through to the bare /apps/<subdomain>/ path (a hint, not a clickable link).
+// Operators populate doors via the active context's admin.services.apps block.
+func appExpose(job *utils.NomadJob, doors appgen.AppsDoors) (planes, url string) {
 	if job == nil {
 		return "—", "—"
 	}
@@ -94,10 +105,17 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 		switch {
 		case strings.Contains(rule, "Host("):
 			// One or more Host(`h`) ORed. Take the first host. A host under the
-			// public wildcard is the `public` plane; any other host is a legacy
-			// internal route (tailnet / campus name) pre-dating the expose scheme.
+			// configured public-edge wildcard is the `public` plane; any other
+			// host is a legacy internal route (tailnet / campus name) pre-dating
+			// the expose scheme. We compare against the active context's
+			// PublicDomain when set; otherwise fall back to the build-time const
+			// for back-compat with operators not yet on the new config.
 			h := firstQuoted(rule, "Host(`")
-			if strings.HasSuffix(h, appgen.AppsDomain) {
+			publicSuffix := strings.TrimSpace(doors.PublicDomain)
+			if publicSuffix == "" {
+				publicSuffix = appgen.AppsDomain
+			}
+			if strings.HasSuffix(h, publicSuffix) {
 				hasPublic = true
 				pubURL = "https://" + h + "/"
 			} else if h != "" {
@@ -134,17 +152,23 @@ func appExpose(job *utils.NomadJob) (planes, url string) {
 	if u == "" && pathPart != "" {
 		switch {
 		case hasPrivate:
-			u = "https://" + appgen.PrivateAppsDoor + pathPart
+			if h := strings.TrimSpace(doors.PrivateDoor); h != "" {
+				u = "https://" + h + pathPart
+			}
 		case hasShared:
-			if appgen.SharedAppsDoor != "" {
-				u = "https://" + appgen.SharedAppsDoor + pathPart
-			} else {
+			if h := strings.TrimSpace(doors.SharedDoor); h != "" {
+				u = "https://" + h + pathPart
+			} else if h := strings.TrimSpace(doors.PrivateDoor); h != "" {
 				// shared-only but no shared door wired — fall back to private door
 				// (Traefik PathPrefix matches on either entrypoint, so the campus-
 				// LAN door reaches the same backing service for users who can hit
 				// it). The "shared" plane label still appears in the EXPOSE column.
-				u = "https://" + appgen.PrivateAppsDoor + pathPart
+				u = "https://" + h + pathPart
 			}
+		}
+		if u == "" {
+			// No relevant door configured — surface the bare path as a hint.
+			u = pathPart
 		}
 	}
 	if u == "" {

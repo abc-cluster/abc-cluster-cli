@@ -107,7 +107,7 @@ func TestResolvedSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.ApplyDefaults()
-	out := s.ResolvedSummary()
+	out := s.ResolvedSummary(AppsDoors{})
 	for _, frag := range []string{
 		"name        sucuri",
 		"framework   pode",

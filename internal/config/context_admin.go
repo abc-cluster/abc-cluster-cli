@@ -163,6 +163,51 @@ type AdminServices struct {
 	Traefik      *AdminFloorService `yaml:"traefik,omitempty"`
 	Uppy         *AdminFloorService `yaml:"uppy,omitempty"`
 	Wave         *AdminFloorService `yaml:"wave,omitempty"`
+	Apps         *AppsService       `yaml:"apps,omitempty"`
+}
+
+// AppsService configures the cluster's per-plane app ingress doors — the
+// hostnames (and bare-IP forms) of the TLS termination points that proxy
+// `/apps/*` requests to the Traefik shared/private entrypoints. Used by
+// `abc app deploy` to bake clickable URLs into the job meta, and by
+// `abc app list` to render them. EVERY field is operator-provided per
+// deployment; the CLI never assumes cluster-specific defaults.
+//
+// YAML path: contexts.<name>.admin.services.apps
+//
+// Example (the seedling-prod context):
+//
+//	admin:
+//	  services:
+//	    apps:
+//	      public_domain:   apps.seedling.abc-cluster.cloud
+//	      private_door:    aither.mb.sun.ac.za
+//	      private_door_ip: 146.232.174.77
+//	      shared_door:     ""    # Tailscale Serve hostname; empty until wired
+//	      shared_door_ip:  ""
+//
+// Empty fields disable URL composition for the corresponding plane —
+// `abc app list` falls through to the bare /apps/<app>/ path; `abc_url`
+// meta on the job ends up at the path too.
+type AppsService struct {
+	// PublicDomain is the wildcard suffix for the public-edge plane. An app
+	// named `<sub>` is routed at `https://<sub>.<PublicDomain>/`. Empty means
+	// the cluster has no public-edge plane (institution-only deployments).
+	PublicDomain string `yaml:"public_domain,omitempty"`
+
+	// PrivateDoor is the campus-LAN TLS door hostname (e.g. a campus DNS name
+	// or `aither.mb.sun.ac.za`). Caddy on this host forwards `/apps/*` to
+	// Traefik's `private` entrypoint.
+	PrivateDoor string `yaml:"private_door,omitempty"`
+	// PrivateDoorIP is the bare-IP form of PrivateDoor, for users without the
+	// DNS / hosts-file entry. The TLS cert is expected to carry an IP-SAN.
+	PrivateDoorIP string `yaml:"private_door_ip,omitempty"`
+
+	// SharedDoor is the overlay-VPN (e.g. Tailscale Serve, WireGuard) hostname
+	// that forwards `/apps/*` to Traefik's `shared` entrypoint.
+	SharedDoor string `yaml:"shared_door,omitempty"`
+	// SharedDoorIP is the bare-IP form of SharedDoor.
+	SharedDoorIP string `yaml:"shared_door_ip,omitempty"`
 }
 
 // AdminABCNodes holds optional static operator credentials for abc-nodes–style
@@ -504,4 +549,55 @@ func splitDatacenterList(raw string) []string {
 		return nil
 	}
 	return out
+}
+
+// AppsPublicDomain returns contexts.<name>.admin.services.apps.public_domain
+// — the wildcard hostname suffix under which the cluster serves public-plane
+// apps (e.g. "apps.seedling.abc-cluster.cloud"). Returns "" when the cluster
+// has no public-edge plane configured.
+func (c Context) AppsPublicDomain() string {
+	if c.Admin.Services.Apps == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Apps.PublicDomain)
+}
+
+// AppsPrivateDoor returns contexts.<name>.admin.services.apps.private_door —
+// the campus-LAN TLS door hostname (Caddy bound to a campus IP) that fronts
+// the Traefik `private` entrypoint at `/apps/*`. Returns "" when unset.
+func (c Context) AppsPrivateDoor() string {
+	if c.Admin.Services.Apps == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Apps.PrivateDoor)
+}
+
+// AppsPrivateDoorIP returns contexts.<name>.admin.services.apps.private_door_ip
+// — the bare-IP form of AppsPrivateDoor, for users without DNS/hosts-file
+// resolution. The TLS cert is expected to carry the IP as a SAN.
+func (c Context) AppsPrivateDoorIP() string {
+	if c.Admin.Services.Apps == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Apps.PrivateDoorIP)
+}
+
+// AppsSharedDoor returns contexts.<name>.admin.services.apps.shared_door —
+// the overlay-VPN (e.g. Tailscale Serve) hostname fronting the Traefik
+// `shared` entrypoint at `/apps/*`. Returns "" when unset (Tailscale Serve
+// or equivalent not yet wired).
+func (c Context) AppsSharedDoor() string {
+	if c.Admin.Services.Apps == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Apps.SharedDoor)
+}
+
+// AppsSharedDoorIP returns contexts.<name>.admin.services.apps.shared_door_ip
+// — the bare-IP form of AppsSharedDoor.
+func (c Context) AppsSharedDoorIP() string {
+	if c.Admin.Services.Apps == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Admin.Services.Apps.SharedDoorIP)
 }

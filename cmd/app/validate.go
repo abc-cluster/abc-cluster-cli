@@ -48,6 +48,6 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintf(out, "%s is valid. Resolved values:\n", file)
-	fmt.Fprint(out, spec.ResolvedSummary())
+	fmt.Fprint(out, spec.ResolvedSummary(appsDoorsFromActiveContext()))
 	return nil
 }

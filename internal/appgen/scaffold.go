@@ -195,7 +195,12 @@ func PlatformEnvKeys() []string {
 // ResolvedSummary returns a human-readable listing of the spec's resolved
 // (post-Validate + ApplyDefaults) values, for `abc app validate`. It does not
 // contact the cluster — it reflects only what the descriptor + defaults imply.
-func (s *Spec) ResolvedSummary() string {
+// ResolvedSummary returns a human-readable post-default summary of the spec
+// for `abc app validate`. The `doors` argument supplies the URL composer with
+// per-deployment ingress hosts (from the active context's
+// admin.services.apps); pass appgen.AppsDoors{} when door info isn't
+// available — the rendered URL falls back to the bare /apps/<app>/ path.
+func (s *Spec) ResolvedSummary(doors AppsDoors) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  version     %s\n", normalizeSpecVersion(s.Version))
 	fmt.Fprintf(&b, "  name        %s\n", s.Name)
@@ -209,7 +214,7 @@ func (s *Spec) ResolvedSummary() string {
 	fmt.Fprintf(&b, "  replicas    %d\n", s.Replicas)
 	fmt.Fprintf(&b, "  resources   cpu=%dMHz memory=%dMiB\n", s.Resources.CPU, s.Resources.Memory)
 	fmt.Fprintf(&b, "  job         %s (namespace %s)\n", s.JobName(), DefaultNamespace)
-	fmt.Fprintf(&b, "  url         %s\n", s.URL())
+	fmt.Fprintf(&b, "  url         %s\n", s.URL(doors))
 	if len(s.Env) > 0 {
 		fmt.Fprintf(&b, "  env\n")
 		for _, k := range sortedKeys(s.Env) {

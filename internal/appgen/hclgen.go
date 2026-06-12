@@ -27,6 +27,12 @@ type JobParams struct {
 	MinIOEndpoint string
 	AWSAccessKey  string
 	AWSSecretKey  string
+	// AppsDoors carries the per-deployment ingress door hostnames + IP forms
+	// (from the active context's admin.services.apps block). Used to compose
+	// abc_url / abc_url_ip in the job meta. The zero value renders abc_url as
+	// the bare /apps/<app>/ path and omits abc_url_ip — back-compat for callers
+	// that don't populate this field yet.
+	AppsDoors AppsDoors
 }
 
 // Generate produces the Nomad HCL for an app `service` job from a resolved Spec
@@ -72,7 +78,14 @@ func Generate(s *Spec, p JobParams) string {
 	metaBody.SetAttributeValue("abc_app", cty.StringVal(s.Name))
 	metaBody.SetAttributeValue("abc_framework", cty.StringVal(s.NormFramework()))
 	metaBody.SetAttributeValue("abc_health", cty.StringVal(s.Health))
-	metaBody.SetAttributeValue("abc_url", cty.StringVal(s.URL()))
+	metaBody.SetAttributeValue("abc_url", cty.StringVal(s.URL(p.AppsDoors)))
+	// abc_url_ip — bare-IP form of abc_url for private/shared apps. Users
+	// without a campus DNS / hosts-file entry for the door use this. Omitted
+	// for public-only apps and for any plane whose *DoorIP isn't configured
+	// in the active context's admin.services.apps block.
+	if u := s.URLIP(p.AppsDoors); u != "" {
+		metaBody.SetAttributeValue("abc_url_ip", cty.StringVal(u))
+	}
 	metaBody.SetAttributeValue("abc_exposure", cty.StringVal(s.NormExposure()))
 	metaBody.SetAttributeValue("abc_cpu", cty.StringVal(fmt.Sprintf("%d", s.Resources.CPU)))
 	metaBody.SetAttributeValue("abc_memory", cty.StringVal(fmt.Sprintf("%d", s.Resources.Memory)))
@@ -221,7 +234,7 @@ func Generate(s *Spec, p JobParams) string {
 func platformEnv(s *Spec, p JobParams) map[string]string {
 	env := map[string]string{
 		"ABC_APP_NAME":     s.Name,
-		"ABC_APP_URL":      s.URL(),
+		"ABC_APP_URL":      s.URL(p.AppsDoors),
 		"ABC_APP_BASE_URL": "/",
 		"ABC_PROJECT":      s.Project,
 	}

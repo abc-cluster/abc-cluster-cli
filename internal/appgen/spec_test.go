@@ -211,7 +211,7 @@ func TestDerivedNames(t *testing.T) {
 	if got := s.Host(); got != wantHost {
 		t.Errorf("Host: got %q want %q", got, wantHost)
 	}
-	if got, want := s.URL(), "https://"+wantHost; got != want {
+	if got, want := s.URL(AppsDoors{}), "https://"+wantHost; got != want {
 		t.Errorf("URL: got %q want %q", got, want)
 	}
 	if got, want := s.ServiceAccountName(), "abc-app-mtb-resistotyper-ml-tb-resistance-dashboard"; got != want {
@@ -280,8 +280,11 @@ func TestExposure_Hosts(t *testing.T) {
 			if s.Host() != c.wantHost {
 				t.Errorf("Host()=%q, want %q", s.Host(), c.wantHost)
 			}
-			if s.URL() != c.wantURL {
-				t.Errorf("URL()=%q, want %q", s.URL(), c.wantURL)
+			// URL() now needs per-deployment doors; the test expects bare-path
+			// fallback for `internal`, full https for `public` / `both` (uses the
+			// build-time AppsDomain const when doors.PublicDomain is empty).
+			if got := s.URL(AppsDoors{}); got != c.wantURL {
+				t.Errorf("URL()=%q, want %q", got, c.wantURL)
 			}
 		})
 	}
@@ -442,4 +445,116 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestURL_WithDoors locks the context-driven URL composition. NOTE: doors
+// values here are fixture/illustrative — they are NOT package consts and
+// every operator supplies their own via admin.services.apps in the active
+// context.
+func TestURL_WithDoors(t *testing.T) {
+	doors := AppsDoors{
+		PublicDomain:  "apps.example.com",
+		PrivateDoor:   "lan.example.org",
+		PrivateDoorIP: "10.0.0.1",
+	}
+	cases := []struct {
+		name   string
+		expose ExposePlanes
+		want   string
+	}{
+		{"public uses doors.PublicDomain",
+			ExposePlanes{ExposePublic}, "https://abc-platform-sucuri.apps.example.com"},
+		{"private uses doors.PrivateDoor",
+			ExposePlanes{ExposePrivate}, "https://lan.example.org/apps/abc-platform-sucuri/"},
+		{"shared falls back to PrivateDoor when SharedDoor empty",
+			ExposePlanes{ExposeShared}, "https://lan.example.org/apps/abc-platform-sucuri/"},
+		{"public+private — public wins",
+			ExposePlanes{ExposePublic, ExposePrivate}, "https://abc-platform-sucuri.apps.example.com"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := validSucuriSpec()
+			s.Expose = c.expose
+			s.Exposure = ""
+			s.ApplyDefaults()
+			if got := s.URL(doors); got != c.want {
+				t.Errorf("URL(doors) = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestURL_EmptyDoors falls through cleanly when the operator hasn't configured
+// the relevant door (the open-source default for non-seedling deployments).
+// Public still works via the build-time AppsDomain fallback for back-compat.
+func TestURL_EmptyDoors(t *testing.T) {
+	cases := []struct {
+		name   string
+		expose ExposePlanes
+		want   string
+	}{
+		{"public still uses build-time const fallback (back-compat)",
+			ExposePlanes{ExposePublic}, "https://abc-platform-sucuri." + AppsDomain},
+		{"private with no door → bare path",
+			ExposePlanes{ExposePrivate}, "/apps/abc-platform-sucuri/"},
+		{"shared with no door → bare path",
+			ExposePlanes{ExposeShared}, "/apps/abc-platform-sucuri/"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := validSucuriSpec()
+			s.Expose = c.expose
+			s.Exposure = ""
+			s.ApplyDefaults()
+			if got := s.URL(AppsDoors{}); got != c.want {
+				t.Errorf("URL(empty) = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestURLIP locks the IP-form composition for private/shared apps.
+func TestURLIP(t *testing.T) {
+	doors := AppsDoors{
+		PrivateDoor:   "lan.example.org",
+		PrivateDoorIP: "10.0.0.1",
+		SharedDoor:    "tail.example.ts.net",
+		SharedDoorIP:  "100.64.0.1",
+	}
+	cases := []struct {
+		name   string
+		expose ExposePlanes
+		want   string
+	}{
+		{"public only — no IP URL",
+			ExposePlanes{ExposePublic}, ""},
+		{"private — PrivateDoorIP",
+			ExposePlanes{ExposePrivate}, "https://10.0.0.1/apps/abc-platform-sucuri/"},
+		{"shared — SharedDoorIP",
+			ExposePlanes{ExposeShared}, "https://100.64.0.1/apps/abc-platform-sucuri/"},
+		{"private + shared — PrivateDoorIP (private wins)",
+			ExposePlanes{ExposePrivate, ExposeShared}, "https://10.0.0.1/apps/abc-platform-sucuri/"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := validSucuriSpec()
+			s.Expose = c.expose
+			s.Exposure = ""
+			s.ApplyDefaults()
+			if got := s.URLIP(doors); got != c.want {
+				t.Errorf("URLIP(doors) = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestURLIP_EmptyDoors: no IP URL when operator hasn't supplied one.
+func TestURLIP_EmptyDoors(t *testing.T) {
+	s := validSucuriSpec()
+	s.Expose = ExposePlanes{ExposePrivate}
+	s.Exposure = ""
+	s.ApplyDefaults()
+	if got := s.URLIP(AppsDoors{}); got != "" {
+		t.Errorf("URLIP(empty) = %q, want empty", got)
+	}
 }

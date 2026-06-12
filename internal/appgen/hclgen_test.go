@@ -376,3 +376,67 @@ func resolvedSucuriWithExpose(t *testing.T, expose []string) *Spec {
 	s.ApplyDefaults()
 	return s
 }
+
+// TestGenerate_MetaURLs_PrivateAppWithDoors: v0.1.57 meta block emits both
+// abc_url (full DNS URL) and abc_url_ip (bare-IP form) for private/shared
+// apps when the supplied JobParams.AppsDoors carries them.
+func TestGenerate_MetaURLs_PrivateAppWithDoors(t *testing.T) {
+	doors := AppsDoors{
+		PrivateDoor:   "lan.example.org",
+		PrivateDoorIP: "10.0.0.1",
+	}
+	s := &Spec{
+		Name: "docs", Image: "x/y:z", Project: "abc-platform", Framework: "custom",
+		Port: 8080, Health: "/",
+		Expose: ExposePlanes{ExposePrivate, ExposeShared},
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s.ApplyDefaults()
+	hcl := Generate(s, JobParams{Namespace: "abc-apps", AppsDoors: doors})
+	wantDNS := `abc_url       = "https://lan.example.org/apps/abc-platform-docs/"`
+	wantIP := `abc_url_ip    = "https://10.0.0.1/apps/abc-platform-docs/"`
+	if !strings.Contains(hcl, wantDNS) {
+		t.Errorf("expected meta abc_url DNS form %q:\n%s", wantDNS, hcl)
+	}
+	if !strings.Contains(hcl, wantIP) {
+		t.Errorf("expected meta abc_url_ip %q:\n%s", wantIP, hcl)
+	}
+}
+
+// TestGenerate_MetaURLs_PublicAppNoIP: public-only apps don't emit abc_url_ip.
+func TestGenerate_MetaURLs_PublicAppNoIP(t *testing.T) {
+	s := resolvedSucuri(t) // public default
+	hcl := Generate(s, JobParams{Namespace: "abc-apps"})
+	wantPub := `abc_url       = "https://abc-platform-sucuri.` + AppsDomain + `"`
+	if !strings.Contains(hcl, wantPub) {
+		t.Errorf("expected public abc_url:\n%s", hcl)
+	}
+	if strings.Contains(hcl, "abc_url_ip") {
+		t.Errorf("public-only app must NOT emit abc_url_ip:\n%s", hcl)
+	}
+}
+
+// TestGenerate_MetaURLs_PrivateAppNoDoorsBareFallback: when the operator has
+// not yet configured admin.services.apps in their context, the meta abc_url
+// falls back to the bare path (and abc_url_ip is omitted).
+func TestGenerate_MetaURLs_PrivateAppNoDoorsBareFallback(t *testing.T) {
+	s := &Spec{
+		Name: "docs", Image: "x/y:z", Project: "abc-platform", Framework: "custom",
+		Port: 8080, Health: "/",
+		Expose: ExposePlanes{ExposePrivate},
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s.ApplyDefaults()
+	hcl := Generate(s, JobParams{Namespace: "abc-apps"}) // empty AppsDoors
+	want := `abc_url       = "/apps/abc-platform-docs/"`
+	if !strings.Contains(hcl, want) {
+		t.Errorf("expected bare-path abc_url fallback %q:\n%s", want, hcl)
+	}
+	if strings.Contains(hcl, "abc_url_ip") {
+		t.Errorf("no doors configured → must NOT emit abc_url_ip:\n%s", hcl)
+	}
+}
