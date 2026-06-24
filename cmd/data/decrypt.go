@@ -32,7 +32,7 @@ func newDecryptCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "decrypt <path>",
 		Short: "Decrypt a file or folder produced by abc data encrypt",
-		Long: `Decrypt a local file or folder produced by rclone-compatible crypt encryption.
+		Long: `Decrypt a local file or folder produced by abc data encrypt (age envelope, ADR-0067).
 
 By default, decryption uses a key derived from your control-plane session token
 (matching the managed encryption path). This requires an authenticated session.
@@ -58,8 +58,8 @@ stored in ~/.abc/config.yaml for reuse in future encryption/decryption operation
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file decryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder decryption")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (stored in config for future use)")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (optional; only used with --crypt-password)")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for age decryption (stored in config for future use)")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "salt/password2 — retained for config/broker portability; NOT used by age decryption")
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false,

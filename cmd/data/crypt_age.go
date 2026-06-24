@@ -1,10 +1,12 @@
 package data
 
 // crypt_age.go — the age-envelope path (ADR-0067) for `abc data encrypt/decrypt`.
-// New encryption is always age; decrypt auto-detects age vs the retired
-// rclone-crypt format so existing `.encrypted` files still open. The crypto
-// itself lives in internal/abccrypt (over filippo.io/age) — this file only wires
-// it to the file paths + progress the commands already use.
+// Encryption is always age; decrypt is age-only (rclone-crypt back-compat was
+// dropped 2026-06-12 — no live users). DetectFormat replays the consumed header
+// bytes so age.Decrypt works on pipes/stdin; a legacy rclone-crypt file is no
+// longer decryptable. The crypto itself lives in internal/abccrypt (over
+// filippo.io/age) — this file only wires it to the file paths + progress the
+// commands already use.
 
 import (
 	"context"

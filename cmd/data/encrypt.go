@@ -29,8 +29,9 @@ func newEncryptCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "encrypt <path>",
-		Short: "Encrypt a file or folder with rclone-compatible crypt",
-		Long: `Encrypt a local file or folder using the rclone crypt format.
+		Short: "Encrypt a file or folder with the age envelope (ADR-0067)",
+		Long: `Encrypt a local file or folder using the age envelope format (ADR-0067).
+A passphrase produces an age scrypt recipient, so output is decryptable by stock age.
 
 By default, encryption uses a key derived from your control-plane session token,
 which provides managed key storage and recovery. This requires an authenticated session.
@@ -57,8 +58,8 @@ for reuse in future encryption/decryption operations.
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file encryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder encryption")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (stored in config for future use)")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (optional; only used with --crypt-password)")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for age encryption (stored in config for future use)")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "salt/password2 — retained for config/broker portability; NOT used by age encryption (age scrypt derives its own salt)")
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 	cmd.Flags().BoolVar(&opts.progress, "progress", true, "show live progress bars for encryption")
