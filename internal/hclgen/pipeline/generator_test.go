@@ -164,6 +164,22 @@ func TestGenerate_S5cmdBlock_SkipTLS(t *testing.T) {
 		}
 	})
 
+	t.Run("HEAD task also mounts abc-tools at /nxf-work for S3+s5cmd", func(t *testing.T) {
+		// Regression: the head's own nf-nomad-s5cmd input-sweep/publish shells out to
+		// /nxf-work/bin/s5cmd, so the head task — not just workers — must mount abc-tools.
+		// S3 runs set HostVolume="-" (no shared local disk), which previously left the
+		// head with no volume and its s5cmd calls failing rc=127.
+		spec := base
+		spec.HostVolume = "-"
+		hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "run-uuid-test")
+		if !strings.Contains(hcl, `volume "abc-tools"`) {
+			t.Fatalf("expected head group to declare host volume \"abc-tools\":\n%s", hcl)
+		}
+		if !strings.Contains(hcl, `destination = "/nxf-work"`) {
+			t.Fatalf("expected head task volume_mount destination /nxf-work:\n%s", hcl)
+		}
+	})
+
 	t.Run("s5cmd bucket and prefix extracted from work dir", func(t *testing.T) {
 		spec := base
 		cfg := buildNextflowConfig(spec)

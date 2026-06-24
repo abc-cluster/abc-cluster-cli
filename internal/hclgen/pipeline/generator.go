@@ -591,6 +591,18 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 		volBody.SetAttributeValue("source", cty.StringVal(hostVol))
 	}
 
+	// S3 work dir + nf-nomad-s5cmd: the HEAD task's own plugin steps (input-sweep,
+	// publish) shell out to /nxf-work/bin/s5cmd just like workers do, so the head
+	// must ALSO mount the abc-tools host volume at /nxf-work — not only the workers
+	// (ADR-0061). This is independent of useHostVol: an S3 run sets HostVolume="-",
+	// which leaves the head with no volume and its s5cmd calls failing rc=127.
+	headS5cmd := isS3URI(spec.WorkDir) && hasPlugin(spec.Plugins, "nf-nomad-s5cmd")
+	if headS5cmd && hostVol != "abc-tools" {
+		atBody := groupBody.AppendNewBlock("volume", []string{"abc-tools"}).Body()
+		atBody.SetAttributeValue("type", cty.StringVal("host"))
+		atBody.SetAttributeValue("source", cty.StringVal("abc-tools"))
+	}
+
 	taskBody := groupBody.AppendNewBlock("task", []string{"nextflow"}).Body()
 	taskBody.SetAttributeValue("driver", cty.StringVal("docker"))
 
@@ -605,6 +617,15 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 		mountBody.SetAttributeValue("volume", cty.StringVal(hostVol))
 		mountBody.SetAttributeValue("destination", cty.StringVal(spec.WorkDir))
 		mountBody.SetAttributeValue("read_only", cty.BoolVal(false))
+	}
+	// Mount abc-tools at /nxf-work on the head for S3 + nf-nomad-s5cmd runs so the
+	// head's own s5cmd input-sweep/publish resolves /nxf-work/bin/s5cmd (mirrors the
+	// worker volume emitted in buildNextflowConfig). Fixes the head-side rc=127.
+	if headS5cmd {
+		atMount := taskBody.AppendNewBlock("volume_mount", nil).Body()
+		atMount.SetAttributeValue("volume", cty.StringVal("abc-tools"))
+		atMount.SetAttributeValue("destination", cty.StringVal("/nxf-work"))
+		atMount.SetAttributeValue("read_only", cty.BoolVal(false))
 	}
 
 	// Plugin bundle artifact — pulled and unpacked into local/plugins-bundle/.
