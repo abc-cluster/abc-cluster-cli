@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"filippo.io/age"
 	"github.com/spf13/cobra"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/abccrypt"
 )
 
 type decryptOptions struct {
@@ -29,7 +32,7 @@ func newDecryptCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "decrypt <path>",
 		Short: "Decrypt a file or folder produced by abc data encrypt",
-		Long: `Decrypt a local file or folder produced by rclone-compatible crypt encryption.
+		Long: `Decrypt a local file or folder produced by abc data encrypt (age envelope, ADR-0067).
 
 By default, decryption uses a key derived from your control-plane session token
 (matching the managed encryption path). This requires an authenticated session.
@@ -55,8 +58,8 @@ stored in ~/.abc/config.yaml for reuse in future encryption/decryption operation
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file decryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder decryption")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password (stored in config for future use)")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt / password2 (optional; only used with --crypt-password)")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for age decryption (stored in config for future use)")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "salt/password2 — retained for config/broker portability; NOT used by age decryption")
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
 		"use locally-managed crypt credentials from config; if password/salt are provided, they are written to config if missing")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false,
@@ -177,20 +180,24 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		return fmt.Errorf("--output-dir can only be used when decrypting a directory")
 	}
 
-	cryptor, err := newCryptConfig(opts.cryptPassword, opts.cryptSalt, nil)
-	if err != nil {
-		return err
+	// Decrypt is age-only (rclone-crypt back-compat dropped 2026-06-12 — no live
+	// users). Gather the identities to try; age.Decrypt matches the right stanza
+	// (passphrase / managed abc / X25519). Passphrase identity from the resolved
+	// password. (The managed abc identity is added by the Phase-2 KEK wiring.)
+	var ageIDs []age.Identity
+	if id, ierr := abccrypt.PassphraseIdentity(opts.cryptPassword); ierr == nil {
+		ageIDs = []age.Identity{id}
 	}
 
 	if info.IsDir() {
-		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, cryptor, opts.force, opts.replace)
+		return decryptDirectory(cmd, opts.inputPath, opts.outputDir, ageIDs, opts.force, opts.replace)
 	}
-	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, cryptor, opts.force, opts.replace)
+	return decryptSingleFile(cmd, opts.inputPath, opts.outputPath, ageIDs, opts.force, opts.replace)
 }
 
 // resolveDecryptOutput chooses the output path for a decrypt:
 //   - if outputPath was passed explicitly → use it verbatim
-//   - else strip the .encrypted suffix from sourcePath → the clean restored name
+//   - else strip the .age suffix from sourcePath → the clean restored name
 //   - else error (no silent ".dec" fallback; devon B1)
 func resolveDecryptOutput(sourcePath, outputPath string) (string, error) {
 	if outputPath != "" {
@@ -201,18 +208,18 @@ func resolveDecryptOutput(sourcePath, outputPath string) (string, error) {
 		return "", fmt.Errorf(
 			"cannot determine output path: %q has no recognised crypt suffix (expected %q)\n"+
 				"  pass --output <path> to specify where to write the decrypted file",
-			sourcePath, rcloneDefaultSuffix)
+			sourcePath, abccrypt.Suffix)
 	}
 	return clean, nil
 }
 
-func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, cryptor *cryptConfig, force, replace bool) error {
+func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, ageIDs []age.Identity, force, replace bool) error {
 	outputPath, err := resolveDecryptOutput(sourcePath, outputPath)
 	if err != nil {
 		return err
 	}
 	err = writeWithCollisionCheck(outputPath, force, cmd.ErrOrStderr(),
-		func(p string) error { return cryptor.decryptToPath(sourcePath, p) })
+		func(p string) error { return ageDecryptToPath(cmd.Context(), sourcePath, p, ageIDs) })
 	if err != nil {
 		return fmt.Errorf("failed to decrypt %q: %w", sourcePath, err)
 	}
@@ -227,7 +234,7 @@ func decryptSingleFile(cmd *cobra.Command, sourcePath, outputPath string, crypto
 	return nil
 }
 
-func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *cryptConfig, force, replace bool) error {
+func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, ageIDs []age.Identity, force, replace bool) error {
 	files, err := collectFiles(sourceDir)
 	if err != nil {
 		return err
@@ -259,7 +266,7 @@ func decryptDirectory(cmd *cobra.Command, sourceDir, outputDir string, cryptor *
 			return fmt.Errorf("failed to create output directory %q: %w", filepath.Dir(destPath), err)
 		}
 		if err := writeWithCollisionCheck(destPath, force, cmd.ErrOrStderr(),
-			func(p string) error { return cryptor.decryptToPath(file.path, p) }); err != nil {
+			func(p string) error { return ageDecryptToPath(cmd.Context(), file.path, p, ageIDs) }); err != nil {
 			return fmt.Errorf("failed to decrypt %q: %w", relPath, err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Decrypted %s\n", relPath)
@@ -360,12 +367,10 @@ func sha256File(path string) (string, error) {
 // suffix — callers must require an explicit --output in that case rather than
 // invent one (no silent ".dec" fallback; devon B1).
 func defaultDecryptedPath(path string) (string, bool) {
-	if !strings.HasSuffix(path, rcloneDefaultSuffix) {
-		return "", false
+	if strings.HasSuffix(path, abccrypt.Suffix) {
+		if trimmed := strings.TrimSuffix(path, abccrypt.Suffix); trimmed != "" {
+			return trimmed, true
+		}
 	}
-	trimmed := strings.TrimSuffix(path, rcloneDefaultSuffix)
-	if trimmed == "" {
-		return "", false
-	}
-	return trimmed, true
+	return "", false
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/abccrypt"
 )
 
 // TestDataDecrypt_FileDefaultOutput: clean restoration to <name> (no .dec
@@ -27,7 +29,7 @@ func TestDataDecrypt_FileDefaultOutput(t *testing.T) {
 		t.Fatalf("encrypt failed: %v", err)
 	}
 
-	encryptedPath := sourcePath + rcloneDefaultSuffix
+	encryptedPath := sourcePath + abccrypt.Suffix
 
 	// Remove the original so decrypt's clean target doesn't collide. The
 	// no-collision case is the happy path the user sees most often.
@@ -81,7 +83,7 @@ func TestDataDecrypt_RefusesToClobber(t *testing.T) {
 	if _, err := executeDataCmd(encryptCmd, sourcePath, "--unsafe-local", "--crypt-password", "secret", "--crypt-salt", "pepper"); err != nil {
 		t.Fatalf("encrypt failed: %v", err)
 	}
-	encryptedPath := sourcePath + rcloneDefaultSuffix
+	encryptedPath := sourcePath + abccrypt.Suffix
 
 	// sample.txt still exists (we did NOT remove it). Decrypting now must
 	// refuse rather than overwrite or silently append ".dec".
@@ -175,11 +177,12 @@ func TestDefaultDecryptedPath(t *testing.T) {
 		wantPath string
 		wantOK   bool
 	}{
-		{"report.pdf" + rcloneDefaultSuffix, "report.pdf", true},
-		{"/tmp/x/report.pdf" + rcloneDefaultSuffix, "/tmp/x/report.pdf", true},
+		{"report.pdf" + abccrypt.Suffix, "report.pdf", true},
+		{"/tmp/x/report.pdf" + abccrypt.Suffix, "/tmp/x/report.pdf", true},
 		{"report.pdf", "", false},
-		{"report.bin", "", false},                  // wrong suffix
-		{rcloneDefaultSuffix, "", false},            // suffix-only → empty trim
+		{"report.bin", "", false},               // wrong suffix
+		{"report.pdf.encrypted", "", false},     // legacy rclone suffix no longer recognised
+		{abccrypt.Suffix, "", false},            // suffix-only → empty trim
 		{"", "", false},
 	}
 	for _, c := range cases {

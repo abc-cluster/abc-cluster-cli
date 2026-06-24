@@ -231,8 +231,8 @@ Examples:
 
 	cmd.Flags().StringVar(&opts.name, "name", "", "display name for the uploaded file")
 	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "upload endpoint URL (or set ABC_UPLOAD_ENDPOINT / context upload_endpoint; defaults to <url>/files/ from API --url or context endpoint)")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "rclone crypt password for client-side encryption")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "rclone crypt salt (password2) for client-side encryption")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for client-side age encryption")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "salt/password2 — retained for config/broker portability; NOT used by age encryption")
 	cmd.Flags().StringVar(&opts.compress, "compress", "", "zstd-compress raw files before upload (level: fast|default|better|best); already-compressed files pass through. Compression runs before encryption")
 	cmd.Flags().Lookup("compress").NoOptDefVal = "default"
 	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for uploads (or set ABC_UPLOAD_TOKEN / context upload_token; then ABC_TOKEN / context token; falls back to --access-token)")

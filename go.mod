@@ -32,6 +32,8 @@ require (
 )
 
 require (
+	filippo.io/age v1.3.1 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/agext/levenshtein v1.2.1 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
