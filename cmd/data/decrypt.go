@@ -89,17 +89,19 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 	brokerMode := !opts.unsafeLocal && isBrokerCredSource(cfg)
 	var ageIDs []age.Identity
 	if brokerMode {
-		// Managed abc identity — lazy (only calls /keys/get if the file carries an
-		// abc stanza). Always offered on a broker tier so managed-KEK files decrypt
-		// with no passphrase.
-		prov, perr := newKEKProvider(cmd, cfg)
+		// Managed group identity (native age X25519) — offered on a broker tier so
+		// managed files decrypt with no passphrase. Best-effort: if the group has no
+		// key (or the broker is unreachable) we don't add it; a passphrase/X25519
+		// file still opens, and a managed file then reports "no identity matched".
+		prov, perr := newGroupKeyProvider(cmd, cfg)
 		if perr != nil {
 			return perr
 		}
-		ageIDs = append(ageIDs, abccrypt.NewABCIdentity(prov))
+		if id, _, ierr := prov.Identity(); ierr == nil {
+			ageIDs = append(ageIDs, id)
+		}
 		// Also offer a broker-stored (or just-provided) passphrase if one exists —
-		// best effort; a managed-KEK or X25519 file simply won't need it, so a
-		// "no managed passphrase" result here is not an error.
+		// best effort; a managed or X25519 file simply won't need it.
 		if pw, _, perr := resolveCryptViaBroker(cmd, cfg, opts.cryptPassword, opts.cryptSalt); perr == nil {
 			if id, ierr := abccrypt.PassphraseIdentity(pw); ierr == nil {
 				ageIDs = append(ageIDs, id)

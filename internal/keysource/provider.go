@@ -4,100 +4,63 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"filippo.io/age"
 )
 
-// Provider adapts the broker /keys/get endpoint to abccrypt.KEKProvider.
-//
-// It fetches a group KEK at most once per distinct kek_id and caches the
-// (version, KEK) for the process lifetime — the seedling key-delivery model:
-// release K_G once, unwrap every file's DEK locally (N files = 1 round-trip).
+// Provider releases the caller's own group age key material from the broker
+// (POST /keys/get) — once, cached for the process lifetime (seedling tiering:
+// release the group key once, then encrypt/decrypt locally with native age).
 type Provider struct {
 	c   *Client
 	ctx context.Context
 
-	mu    sync.Mutex
-	cache map[string]cachedKEK // kek_id -> (version, kek)
-	own   string               // the caller's own kek_id, once discovered
+	mu sync.Mutex
+	gk *GroupKey // cached own-group key material
 }
 
-type cachedKEK struct {
-	version int
-	kek     []byte
-}
-
-// NewProvider builds a KEK provider bound to ctx (used for the broker calls).
+// NewProvider builds a key provider bound to ctx (used for the broker calls).
 func NewProvider(ctx context.Context, c *Client) *Provider {
-	return &Provider{c: c, ctx: ctx, cache: map[string]cachedKEK{}}
+	return &Provider{c: c, ctx: ctx}
 }
 
-// OwnKekID resolves the caller's own group kek_id (one /keys/get with no kek_id),
-// caching the released KEK so the subsequent WrapKEK is free. Used by encrypt to
-// label the abc recipient with the active group's kek_id.
-func (p *Provider) OwnKekID() (string, error) {
+// Fetch releases (once, cached) the caller's own group key material.
+func (p *Provider) Fetch() (*GroupKey, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.own != "" {
-		return p.own, nil
+	if p.gk != nil {
+		return p.gk, nil
 	}
-	kekID, version, kek, err := p.c.get(p.ctx, "")
-	if err != nil {
-		return "", err
-	}
-	p.own = kekID
-	p.cache[kekID] = cachedKEK{version: version, kek: kek}
-	return kekID, nil
-}
-
-// WrapKEK (encrypt side) returns the current KEK + version for kekID.
-func (p *Provider) WrapKEK(kekID string) ([]byte, int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if c, ok := p.cache[kekID]; ok {
-		return c.kek, c.version, nil
-	}
-	gotID, version, kek, err := p.c.get(p.ctx, kekID)
-	if err != nil {
-		return nil, 0, err
-	}
-	if gotID != kekID {
-		return nil, 0, fmt.Errorf("keys broker: released kek_id %q but %q was requested (not a member?)", gotID, kekID)
-	}
-	p.cache[kekID] = cachedKEK{version: version, kek: kek}
-	return kek, version, nil
-}
-
-// UnwrapKEK (decrypt side) returns the KEK for a SPECIFIC (kekID, version).
-//
-// The seedling broker releases only the CURRENT version of a group KEK. If the
-// file was wrapped under an older version (i.e. the KEK was rotated since), we
-// fail closed with a clear error rather than silently substitute the latest key
-// (G3) — which would just fail the AEAD unwrap with an opaque error anyway.
-func (p *Provider) UnwrapKEK(kekID string, version int) ([]byte, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if c, ok := p.cache[kekID]; ok {
-		if c.version != version {
-			return nil, versionMismatch(kekID, version, c.version)
-		}
-		return c.kek, nil
-	}
-	gotID, gotVer, kek, err := p.c.get(p.ctx, kekID)
+	gk, err := p.c.get(p.ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	if gotID != kekID {
-		return nil, fmt.Errorf("keys broker: released kek_id %q but the file names %q (not a member?)", gotID, kekID)
-	}
-	p.cache[kekID] = cachedKEK{version: gotVer, kek: kek}
-	if gotVer != version {
-		return nil, versionMismatch(kekID, version, gotVer)
-	}
-	return kek, nil
+	p.gk = gk
+	return gk, nil
 }
 
-func versionMismatch(kekID string, want, have int) error {
-	return fmt.Errorf(
-		"managed decrypt: this file was encrypted with %s version %d, but the broker now holds version %d "+
-			"(the group key was rotated). Recover version %d to decrypt this file.",
-		kekID, want, have, want)
+// Recipient parses the group's native age X25519 recipient (encrypt side).
+func (p *Provider) Recipient() (age.Recipient, *GroupKey, error) {
+	gk, err := p.Fetch()
+	if err != nil {
+		return nil, nil, err
+	}
+	r, err := age.ParseX25519Recipient(gk.Recipient)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse group recipient %q: %w", gk.KekID, err)
+	}
+	return r, gk, nil
+}
+
+// Identity parses the group's native age X25519 identity (decrypt side).
+func (p *Provider) Identity() (age.Identity, *GroupKey, error) {
+	gk, err := p.Fetch()
+	if err != nil {
+		return nil, nil, err
+	}
+	id, err := age.ParseX25519Identity(gk.Identity)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse group identity %q: %w", gk.KekID, err)
+	}
+	return id, gk, nil
 }

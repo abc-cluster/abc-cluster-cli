@@ -13,11 +13,6 @@ default:
 build:
     go build -trimpath -o ./abc .
 
-# age-plugin-abc — lets stock `age` open/produce abc managed files (ADR-0067).
-# Install on PATH (e.g. ~/bin or /usr/local/bin) so `age -j abc` / `age -R …` work.
-build-plugin out="./age-plugin-abc":
-    go build -trimpath -o "{{out}}" ./cmd/age-plugin-abc
-
 # Dev binary with git-derived version/commit (same -X wiring as release CI).
 build-release out="./abc":
     #!/usr/bin/env bash

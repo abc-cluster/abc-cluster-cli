@@ -98,24 +98,20 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	// ADR-0067). No passphrase to remember or lose. A BYO --crypt-password opts
 	// back into the portable-passphrase path below.
 	if managedMode := brokerMode && !passwordProvided; managedMode {
-		prov, perr := newKEKProvider(cmd, cfg)
+		prov, perr := newGroupKeyProvider(cmd, cfg)
 		if perr != nil {
 			return perr
 		}
-		kekID, perr := prov.OwnKekID()
+		rcpt, gk, perr := prov.Recipient()
 		if perr != nil {
 			return perr
-		}
-		rcpt, rerr := abccrypt.NewABCRecipient(kekID, prov)
-		if rerr != nil {
-			return rerr
 		}
 		rcpts := []age.Recipient{rcpt}
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"Managed encryption: key %s released by the control-plane broker (recoverable; no passphrase).\n", kekID)
-		// Keep ~/.abc/age/recipients.txt current so stock `age -e -R …` can target
-		// this group too (no `abc keys` command needed).
-		materializeAgeRecipient(cmd, kekID)
+			"Managed encryption: group %s (native age X25519; key recoverable via the broker, no passphrase).\n", gk.KekID)
+		// Materialize ~/.abc/age/{recipients,identity}.txt so stock `age` can target
+		// or open this group's files with no plugin (no `abc keys` command needed).
+		materializeAgeKeyFiles(cmd, gk)
 		if opts.outputPath != "" && info.IsDir() {
 			return fmt.Errorf("--output can only be used when encrypting a single file")
 		}

@@ -20,7 +20,6 @@ package keysource
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +32,16 @@ import (
 
 	abccfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 )
+
+// GroupKey is the broker's release of a group's native age key material
+// (ADR-0067 Amendment 2). Both strings are standard age artifacts, usable by
+// stock `age` with no plugin.
+type GroupKey struct {
+	KekID     string // "group:<g>" label (for messages/audit)
+	Version   int
+	Recipient string // age1… public recipient
+	Identity  string // AGE-SECRET-KEY-1… group private key
+}
 
 // ErrNotProvisioned is returned when the broker has no KEK for the caller's
 // group yet (HTTP 404 kek_not_provisioned) — the operator must mint it
@@ -68,29 +77,29 @@ type getReq struct {
 	KekID string `json:"kek_id,omitempty"`
 }
 type getResp struct {
-	KekID   string `json:"kek_id"`
-	Version int    `json:"version"`
-	Kek     string `json:"kek"` // base64 of the raw 32-byte group KEK
+	KekID     string `json:"kek_id"`
+	Version   int    `json:"version"`
+	Recipient string `json:"recipient"` // age1…
+	Identity  string `json:"identity"`  // AGE-SECRET-KEY-1…
 }
 
-// get fetches the caller's group KEK. kekID may be "" — the broker then derives
-// it from the slot's own group. Returns the canonical kek_id, version, and the
-// raw KEK bytes.
-func (c *Client) get(ctx context.Context, kekID string) (string, int, []byte, error) {
+// get fetches the caller's group key material. kekID may be "" — the broker then
+// derives it from the slot's own group. Returns the native age recipient +
+// identity.
+func (c *Client) get(ctx context.Context, kekID string) (*GroupKey, error) {
 	body, _ := json.Marshal(getReq{KekID: kekID})
 	raw, err := c.do(ctx, "/auth/keys/get", body)
 	if err != nil {
-		return "", 0, nil, err
+		return nil, err
 	}
 	var r getResp
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return "", 0, nil, fmt.Errorf("keys broker: parse response: %w", err)
+		return nil, fmt.Errorf("keys broker: parse response: %w", err)
 	}
-	kek, err := base64.StdEncoding.DecodeString(strings.TrimSpace(r.Kek))
-	if err != nil {
-		return "", 0, nil, fmt.Errorf("keys broker: decode kek: %w", err)
+	if strings.TrimSpace(r.Recipient) == "" || strings.TrimSpace(r.Identity) == "" {
+		return nil, fmt.Errorf("keys broker: response missing recipient/identity")
 	}
-	return r.KekID, r.Version, kek, nil
+	return &GroupKey{KekID: r.KekID, Version: r.Version, Recipient: r.Recipient, Identity: r.Identity}, nil
 }
 
 // do POSTs body to base+path with the opaque as Bearer.
