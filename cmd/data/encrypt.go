@@ -113,6 +113,9 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 		rcpts := []age.Recipient{rcpt}
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"Managed encryption: key %s released by the control-plane broker (recoverable; no passphrase).\n", kekID)
+		// Keep ~/.abc/age/recipients.txt current so stock `age -e -R …` can target
+		// this group too (no `abc keys` command needed).
+		materializeAgeRecipient(cmd, kekID)
 		if opts.outputPath != "" && info.IsDir() {
 			return fmt.Errorf("--output can only be used when encrypting a single file")
 		}

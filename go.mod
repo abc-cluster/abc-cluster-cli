@@ -3,6 +3,7 @@ module github.com/abc-cluster/abc-cluster-cli
 go 1.25.0
 
 require (
+	filippo.io/age v1.3.1
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/bdragon300/tusgo v0.1.2
 	github.com/charmbracelet/bubbles v0.20.0
@@ -32,7 +33,6 @@ require (
 )
 
 require (
-	filippo.io/age v1.3.1 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/agext/levenshtein v1.2.1 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
