@@ -401,6 +401,13 @@ func hasPlugin(plugins []PluginRef, id string) bool {
 	return false
 }
 
+// usesAbcTools reports whether any loaded plugin sources its CLI tool from the
+// abc-tools host volume (ADR-0061). Such runs MOUNT abc-tools at /nxf-work and put
+// /nxf-work/bin on PATH — the binaries are never downloaded as Nomad artifacts.
+func usesAbcTools(spec Spec) bool {
+	return hasPlugin(spec.Plugins, "nf-nomad-s5cmd") || hasPlugin(spec.Plugins, "nf-rclone")
+}
+
 // s5cmdBucketAndPrefix splits an S3 URI (e.g. "s3://bucket/prefix/path")
 // into the bucket root ("s3://bucket") and the first path segment ("prefix").
 // Used to populate s5cmd.workDir.bucket and s5cmd.workDir.prefix.
@@ -436,28 +443,36 @@ func s5cmdBucketAndPrefix(workDir string) (bucket, prefix string) {
 // skipTLS, when true, adds `useTLS = false` — required when the cluster's S3
 // endpoint uses a private CA that worker images don't trust (abc-seedling norm).
 func buildS5cmdBlock(workDir string, skipTLS bool) string {
-	bucket, prefix := s5cmdBucketAndPrefix(workDir)
-	prefixLine := ""
-	if prefix != "" {
-		prefixLine = fmt.Sprintf("\n      prefix  = %q", prefix)
+	// workDir staging applies only to an S3 work dir.
+	workDirBlock := ""
+	if isS3URI(workDir) {
+		bucket, prefix := s5cmdBucketAndPrefix(workDir)
+		prefixLine := ""
+		if prefix != "" {
+			prefixLine = fmt.Sprintf("\n      prefix  = %q", prefix)
+		}
+		workDirBlock = fmt.Sprintf(`    workDir {
+      enabled = true
+      bucket  = %q%s
+    }
+`, bucket, prefixLine)
 	}
 	tlsLine := ""
 	if skipTLS {
 		tlsLine = "\n      useTLS          = false   // private CA — disables cert verification"
 	}
+	// binary is always the abc-tools mount (ADR-0061): jobs use the mounted s5cmd,
+	// never a downloaded one. The mount is emitted in buildNextflowConfig's volumes.
 	return fmt.Sprintf(`  s5cmd {
-    workDir {
-      enabled = true
-      bucket  = %q%s
-    }
-    s3 {
+    binary = '/nxf-work/bin/s5cmd'
+%s    s3 {
       endpoint        = System.getenv("NF_MINIO_ENDPOINT") ?: ""
       accessKeyId     = System.getenv("AWS_ACCESS_KEY_ID") ?: ""
       secretAccessKey = System.getenv("AWS_SECRET_ACCESS_KEY") ?: ""
       usePathStyle    = true%s
     }
   }
-`, bucket, prefixLine, tlsLine)
+`, workDirBlock, tlsLine)
 }
 
 // EnvVarNames returns the head-task env var names whose values nf-nomad
@@ -599,11 +614,15 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	// must ALSO mount the abc-tools host volume at /nxf-work — not only the workers
 	// (ADR-0061). This is independent of useHostVol: an S3 run sets HostVolume="-",
 	// which leaves the head with no volume and its s5cmd calls failing rc=127.
-	headS5cmd := isS3URI(spec.WorkDir) && hasPlugin(spec.Plugins, "nf-nomad-s5cmd")
-	if headS5cmd && hostVol != "abc-tools" {
+	headAbcTools := usesAbcTools(spec)
+	if headAbcTools && hostVol != "abc-tools" {
 		atBody := groupBody.AppendNewBlock("volume", []string{"abc-tools"}).Body()
 		atBody.SetAttributeValue("type", cty.StringVal("host"))
 		atBody.SetAttributeValue("source", cty.StringVal("abc-tools"))
+		// read-only: the head only READS s5cmd from abc-tools, and the platform node
+		// (aither) registers abc-tools read-only — a RW request fails placement with
+		// "missing compatible host volumes". RO matches and is correct.
+		atBody.SetAttributeValue("read_only", cty.BoolVal(true))
 	}
 
 	taskBody := groupBody.AppendNewBlock("task", []string{"nextflow"}).Body()
@@ -621,14 +640,14 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 		mountBody.SetAttributeValue("destination", cty.StringVal(spec.WorkDir))
 		mountBody.SetAttributeValue("read_only", cty.BoolVal(false))
 	}
-	// Mount abc-tools at /nxf-work on the head for S3 + nf-nomad-s5cmd runs so the
-	// head's own s5cmd input-sweep/publish resolves /nxf-work/bin/s5cmd (mirrors the
-	// worker volume emitted in buildNextflowConfig). Fixes the head-side rc=127.
-	if headS5cmd {
+	// Mount abc-tools at /nxf-work on the head whenever a tools plugin is loaded so
+	// the head's own s5cmd input-sweep/publish resolves /nxf-work/bin/s5cmd (mirrors
+	// the worker volume in buildNextflowConfig). Jobs mount tools, never download them.
+	if headAbcTools {
 		atMount := taskBody.AppendNewBlock("volume_mount", nil).Body()
 		atMount.SetAttributeValue("volume", cty.StringVal("abc-tools"))
 		atMount.SetAttributeValue("destination", cty.StringVal("/nxf-work"))
-		atMount.SetAttributeValue("read_only", cty.BoolVal(false))
+		atMount.SetAttributeValue("read_only", cty.BoolVal(true))
 	}
 
 	// Plugin bundle artifact — pulled and unpacked into local/plugins-bundle/.
@@ -833,26 +852,31 @@ func buildNextflowConfig(spec Spec) string {
 	// regression: the parser now chokes on `type` as a bare identifier inside a list
 	// closure (it treats it as a reserved keyword). Map syntax is unambiguous to any
 	// Groovy/Nextflow parser version.
-	volumesLine := fmt.Sprintf(`volumes = [[type: "host", name: "%s", path: "%s"]]`, hostVol, spec.WorkDir)
-	if isS3URI(spec.WorkDir) || spec.HostVolume == "-" {
-		if isS3URI(spec.WorkDir) && hasPlugin(spec.Plugins, "nf-nomad-s5cmd") {
-			// ADR-0061: mount the tools-only `abc-tools` host volume (s5cmd only, no
-			// cross-group data — unlike `nf-work`, which members can't safely be granted).
-			// Mounted at /nxf-work so the s5cmd plugin bootstrap finds /nxf-work/bin/s5cmd
-			// unchanged (abc-tools uses a bin/ layout). readOnly omitted: nf-nomad's
-			// validate() rejects readOnly=true on the workDir volume, so the mount is RW;
-			// tamper-safety comes from the binaries being root-owned 0755 (a non-root worker
-			// UID cannot modify them), and the member host_volume grant is policy=write.
-			volumesLine = `volumes = [[type: "host", name: "abc-tools", path: "/nxf-work"]]`
-		} else {
-			volumesLine = `volumes = []`
-		}
+	// Worker host volumes, composed from up to two independent mounts:
+	//   (1) the shared work-dir host volume — only for a non-S3 work dir (an S3 work
+	//       dir needs no shared local disk; HostVolume="-" also disables it);
+	//   (2) the `abc-tools` tools volume at /nxf-work — whenever a tools plugin
+	//       (nf-nomad-s5cmd / nf-rclone) is loaded, so the worker bootstrap resolves
+	//       /nxf-work/bin/s5cmd from the MOUNT (ADR-0061), never an artifact download.
+	// abc-tools is RW (nf-nomad's validate() rejects readOnly on the workDir volume);
+	// tamper-safety comes from the binaries being root-owned 0755.
+	var vols []string
+	if !isS3URI(spec.WorkDir) && spec.HostVolume != "-" {
+		vols = append(vols, fmt.Sprintf(`[type: "host", name: "%s", path: "%s"]`, hostVol, spec.WorkDir))
+	}
+	if usesAbcTools(spec) {
+		vols = append(vols, `[type: "host", name: "abc-tools", path: "/nxf-work"]`)
+	}
+	volumesLine := "volumes = []"
+	if len(vols) > 0 {
+		volumesLine = "volumes = [" + strings.Join(vols, ", ") + "]"
 	}
 
-	// nf-nomad-s5cmd config block: emitted inside nomad { } when S3 work dir
-	// AND nf-nomad-s5cmd plugin is loaded. Derives bucket and prefix from WorkDir.
+	// nf-nomad-s5cmd config block: emitted whenever the plugin is loaded (S3 or not).
+	// Always pins binary = /nxf-work/bin/s5cmd (the abc-tools mount); the workDir
+	// staging sub-block is added only for an S3 work dir.
 	s5cmdBlock := ""
-	if isS3URI(spec.WorkDir) && hasPlugin(spec.Plugins, "nf-nomad-s5cmd") {
+	if hasPlugin(spec.Plugins, "nf-nomad-s5cmd") {
 		s5cmdBlock = buildS5cmdBlock(spec.WorkDir, spec.S5cmdSkipTLS)
 	}
 
@@ -1081,9 +1105,15 @@ func buildEntrypoint(spec Spec) string {
 		sb.WriteString("export PATH=\"/local/nextflow-dev:$PATH\"\n\n")
 	}
 
+	// abc-tools host volume (mounted at /nxf-work): put its bin/ on PATH so s5cmd,
+	// rclone, etc. resolve from the MOUNT — jobs never download tools (ADR-0061).
+	if usesAbcTools(spec) {
+		sb.WriteString("export PATH=\"/nxf-work/bin:$PATH\"\n\n")
+	}
+
 	// Make any tool binaries pulled by ExtraBinaries executable and on PATH.
-	// Each binary lives in its own parent dir (local/bin-<name>/<name>) — see
-	// the artifact-emission code above for the rationale.
+	// (ExtraBinaries is now reserved for explicit operator-custom binaries; the
+	// cluster tools s5cmd/rclone come from the abc-tools mount above, not artifacts.)
 	if len(spec.ExtraBinaries) > 0 {
 		sb.WriteString("for d in /local/bin-*/; do\n")
 		sb.WriteString("  [ -d \"$d\" ] || continue\n")

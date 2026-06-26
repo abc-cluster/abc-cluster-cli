@@ -586,28 +586,13 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Plugin-driven binary requirements — auto-add cluster tool binaries when
-	// the corresponding plugin is loaded, regardless of --dev-plugins. The
-	// head bootstrap shells out to these and the worker bootstrap probes
-	// PATH for them; without an artifact stanza pulling them into local/bin
-	// the head fails with "<tool>: command not found".
-	//
-	// Operators can still pin custom binaries via spec.ExtraBinaries; we
-	// only append, never replace.
-	pluginToBinary := map[string]string{
-		"nf-nomad-s5cmd": "s5cmd",
-		"nf-rclone":      "rclone",
-	}
-	have := map[string]bool{}
-	for _, b := range spec.ExtraBinaries {
-		have[b] = true
-	}
-	for _, p := range spec.Plugins {
-		if bin, ok := pluginToBinary[p.ID]; ok && !have[bin] {
-			spec.ExtraBinaries = append(spec.ExtraBinaries, bin)
-			have[bin] = true
-		}
-	}
+	// Plugin tool binaries (s5cmd, rclone) come from the abc-tools host volume
+	// (ADR-0061): the generator mounts abc-tools at /nxf-work and puts /nxf-work/bin
+	// on PATH for head + workers. Jobs MOUNT these tools, they never download them —
+	// so we no longer auto-add s5cmd/rclone to spec.ExtraBinaries (which emitted a
+	// per-job Nomad `artifact` stanza, the path that broke when the context endpoint
+	// was a MagicDNS host that nodes can't resolve). ExtraBinaries is now reserved for
+	// explicit operator-custom binaries not carried by abc-tools.
 
 	if spec.DevNextflow {
 		if spec.NextflowBinURL == "" {
