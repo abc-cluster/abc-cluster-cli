@@ -12,26 +12,31 @@ import (
 // (POST /keys/get) — once, cached for the process lifetime (seedling tiering:
 // release the group key once, then encrypt/decrypt locally with native age).
 type Provider struct {
-	c   *Client
-	ctx context.Context
+	c      *Client
+	ctx    context.Context
+	expect string // optional kek_id cross-check ("group:<g>"); "" = let the broker derive
 
 	mu sync.Mutex
-	gk *GroupKey // cached own-group key material
+	gk *GroupKey // cached group key material
 }
 
 // NewProvider builds a key provider bound to ctx (used for the broker calls).
-func NewProvider(ctx context.Context, c *Client) *Provider {
-	return &Provider{c: c, ctx: ctx}
+// expectKekID, when non-empty (e.g. "group:mbhg-tbgenomics"), is sent to the
+// broker as a cross-check: if the bound context's slot is NOT that group, the
+// broker answers 403 — so selecting the wrong group fails loudly rather than
+// silently encrypting to the wrong one.
+func NewProvider(ctx context.Context, c *Client, expectKekID string) *Provider {
+	return &Provider{c: c, ctx: ctx, expect: expectKekID}
 }
 
-// Fetch releases (once, cached) the caller's own group key material.
+// Fetch releases (once, cached) the bound context's group key material.
 func (p *Provider) Fetch() (*GroupKey, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.gk != nil {
 		return p.gk, nil
 	}
-	gk, err := p.c.get(p.ctx, "")
+	gk, err := p.c.get(p.ctx, p.expect)
 	if err != nil {
 		return nil, err
 	}
