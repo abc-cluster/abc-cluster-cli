@@ -87,12 +87,24 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 	// cred_source broker tier — fetch (or store, if a password is provided) the
 	// crypt password via the broker, unless --unsafe-local forces local.
 	brokerMode := !opts.unsafeLocal && isBrokerCredSource(cfg)
+	var ageIDs []age.Identity
 	if brokerMode {
-		pw, salt, err := resolveCryptViaBroker(cmd, cfg, opts.cryptPassword, opts.cryptSalt)
-		if err != nil {
-			return err
+		// Managed abc identity — lazy (only calls /keys/get if the file carries an
+		// abc stanza). Always offered on a broker tier so managed-KEK files decrypt
+		// with no passphrase.
+		prov, perr := newKEKProvider(cmd, cfg)
+		if perr != nil {
+			return perr
 		}
-		opts.cryptPassword, opts.cryptSalt = pw, salt
+		ageIDs = append(ageIDs, abccrypt.NewABCIdentity(prov))
+		// Also offer a broker-stored (or just-provided) passphrase if one exists —
+		// best effort; a managed-KEK or X25519 file simply won't need it, so a
+		// "no managed passphrase" result here is not an error.
+		if pw, _, perr := resolveCryptViaBroker(cmd, cfg, opts.cryptPassword, opts.cryptSalt); perr == nil {
+			if id, ierr := abccrypt.PassphraseIdentity(pw); ierr == nil {
+				ageIDs = append(ageIDs, id)
+			}
+		}
 	} else {
 		// ── local-config storage (today's behaviour; --unsafe-local forces this) ──
 		saltProvided := opts.cryptSalt != ""
@@ -171,22 +183,20 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		}
 	}
 
-	fmt.Fprintln(cmd.ErrOrStderr(),
-		"WARNING: local decryption active. Decrypting with locally-provided password (no key management).")
+	if !brokerMode {
+		fmt.Fprintln(cmd.ErrOrStderr(),
+			"WARNING: local decryption active. Decrypting with a passphrase (no key management).")
+		// age.Decrypt matches the right stanza; passphrase identity from the
+		// resolved password. (Managed abc + X25519 are handled in brokerMode above.)
+		if id, ierr := abccrypt.PassphraseIdentity(opts.cryptPassword); ierr == nil {
+			ageIDs = append(ageIDs, id)
+		}
+	}
 	if opts.outputPath != "" && info.IsDir() {
 		return fmt.Errorf("--output can only be used when decrypting a single file")
 	}
 	if opts.outputDir != "" && !info.IsDir() {
 		return fmt.Errorf("--output-dir can only be used when decrypting a directory")
-	}
-
-	// Decrypt is age-only (rclone-crypt back-compat dropped 2026-06-12 — no live
-	// users). Gather the identities to try; age.Decrypt matches the right stanza
-	// (passphrase / managed abc / X25519). Passphrase identity from the resolved
-	// password. (The managed abc identity is added by the Phase-2 KEK wiring.)
-	var ageIDs []age.Identity
-	if id, ierr := abccrypt.PassphraseIdentity(opts.cryptPassword); ierr == nil {
-		ageIDs = []age.Identity{id}
 	}
 
 	if info.IsDir() {
