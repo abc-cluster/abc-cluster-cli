@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func TestGenerate_DefaultHostVolumeIsNfWork(t *testing.T) {
+	// Regression: the default host volume must be a name registered on the nodes.
+	// "nextflow-work" is not registered (nodes have nf-work + abc-tools), so a
+	// non-S3 head declaring it hangs pending with "missing compatible host volumes".
+	spec := Spec{
+		Datacenters: []string{"dc1"}, WorkDir: "/work/nextflow-work",
+		CPU: 1000, MemoryMB: 2048, NfVersion: "25.10.4",
+		NfPluginVersion: "0.4.0-edge3", Repository: "nextflow-io/hello",
+	}
+	hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "u")
+	if strings.Contains(hcl, `volume "nextflow-work"`) {
+		t.Fatalf("default host volume must not be the unregistered nextflow-work:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, `volume "nf-work"`) {
+		t.Fatalf("expected default host volume nf-work:\n%s", hcl)
+	}
+}
+
 func TestGenerate_StaticEnvAndMonitoringMeta(t *testing.T) {
 	spec := Spec{
 		Datacenters:     []string{"dc1"},
@@ -161,6 +179,22 @@ func TestGenerate_S5cmdBlock_SkipTLS(t *testing.T) {
 		// the s5cmd plugin bootstrap still finds /nxf-work/bin/s5cmd.
 		if !strings.Contains(cfg, `name: "abc-tools"`) || !strings.Contains(cfg, `path: "/nxf-work"`) {
 			t.Fatalf("expected abc-tools volume at /nxf-work:\n%s", cfg)
+		}
+	})
+
+	t.Run("HEAD task also mounts abc-tools at /nxf-work for S3+s5cmd", func(t *testing.T) {
+		// Regression: the head's own nf-nomad-s5cmd input-sweep/publish shells out to
+		// /nxf-work/bin/s5cmd, so the head task — not just workers — must mount abc-tools.
+		// S3 runs set HostVolume="-" (no shared local disk), which previously left the
+		// head with no volume and its s5cmd calls failing rc=127.
+		spec := base
+		spec.HostVolume = "-"
+		hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "run-uuid-test")
+		if !strings.Contains(hcl, `volume "abc-tools"`) {
+			t.Fatalf("expected head group to declare host volume \"abc-tools\":\n%s", hcl)
+		}
+		if !strings.Contains(hcl, `destination = "/nxf-work"`) {
+			t.Fatalf("expected head task volume_mount destination /nxf-work:\n%s", hcl)
 		}
 	})
 
