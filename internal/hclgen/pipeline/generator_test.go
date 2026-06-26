@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func TestGenerate_DefaultHostVolumeIsNfWork(t *testing.T) {
+	// Regression: the default host volume must be a name registered on the nodes.
+	// "nextflow-work" is not registered (nodes have nf-work + abc-tools), so a
+	// non-S3 head declaring it hangs pending with "missing compatible host volumes".
+	spec := Spec{
+		Datacenters: []string{"dc1"}, WorkDir: "/work/nextflow-work",
+		CPU: 1000, MemoryMB: 2048, NfVersion: "25.10.4",
+		NfPluginVersion: "0.4.0-edge3", Repository: "nextflow-io/hello",
+	}
+	hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "u")
+	if strings.Contains(hcl, `volume "nextflow-work"`) {
+		t.Fatalf("default host volume must not be the unregistered nextflow-work:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, `volume "nf-work"`) {
+		t.Fatalf("expected default host volume nf-work:\n%s", hcl)
+	}
+}
+
 func TestGenerate_StaticEnvAndMonitoringMeta(t *testing.T) {
 	spec := Spec{
 		Datacenters:     []string{"dc1"},

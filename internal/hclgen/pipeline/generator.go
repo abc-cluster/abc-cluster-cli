@@ -582,7 +582,10 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	// Host volume for the shared work directory (optional; skip when using S3 work dir).
 	hostVol := spec.HostVolume
 	if hostVol == "" {
-		hostVol = "nextflow-work" // default
+		hostVol = "nf-work" // default: the host volume registered on every node
+		// (aither + compute). Was "nextflow-work", which no node advertises since the
+		// nf-work/abc-tools host-volume standardisation — caused non-S3 heads to hang
+		// pending with "missing compatible host volumes".
 	}
 	useHostVol := spec.HostVolume != "-" // "-" explicitly disables the host volume
 	if useHostVol {
@@ -823,7 +826,7 @@ func buildNextflowConfig(spec Spec) string {
 	// Otherwise omit the volume when S3 is the work dir (no shared local disk needed).
 	hostVol := spec.HostVolume
 	if hostVol == "" || hostVol == "-" {
-		hostVol = "nextflow-work"
+		hostVol = "nf-work" // registered on every node (was "nextflow-work")
 	}
 	// Use Groovy map literal syntax ([key: val, ...]) rather than the DSL closure form
 	// ({ type "host" name "nf-work" ... }) to avoid a Nextflow ≥26.04.2 config-parser
