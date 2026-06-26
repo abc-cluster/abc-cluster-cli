@@ -90,10 +90,42 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	}
 
 	passwordProvided := opts.cryptPassword != ""
+	brokerMode := !opts.unsafeLocal && isBrokerCredSource(cfg)
+
+	// Managed mode (default on a broker cred tier with no BYO passphrase): encrypt
+	// to the abc recipient — the per-file DEK is wrapped under the group KEK K_G
+	// that the control-plane broker holds and releases to members (recoverable;
+	// ADR-0067). No passphrase to remember or lose. A BYO --crypt-password opts
+	// back into the portable-passphrase path below.
+	if managedMode := brokerMode && !passwordProvided; managedMode {
+		prov, perr := newGroupKeyProvider(cmd, cfg)
+		if perr != nil {
+			return perr
+		}
+		rcpt, gk, perr := prov.Recipient()
+		if perr != nil {
+			return perr
+		}
+		rcpts := []age.Recipient{rcpt}
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"Managed encryption: group %s (native age X25519; key recoverable via the broker, no passphrase).\n", gk.KekID)
+		// Materialize ~/.abc/age/{recipients,identity}.txt so stock `age` can target
+		// or open this group's files with no plugin (no `abc keys` command needed).
+		materializeAgeKeyFiles(cmd, gk)
+		if opts.outputPath != "" && info.IsDir() {
+			return fmt.Errorf("--output can only be used when encrypting a single file")
+		}
+		if opts.outputDir != "" && !info.IsDir() {
+			return fmt.Errorf("--output-dir can only be used when encrypting a directory")
+		}
+		if info.IsDir() {
+			return encryptDirectory(cmd, opts.inputPath, opts.outputDir, rcpts, opts.progress, opts.force, opts.replace)
+		}
+		return encryptSingleFile(cmd, opts.inputPath, opts.outputPath, rcpts, opts.progress, opts.force, opts.replace)
+	}
 
 	// cred_source broker tier — store/fetch the crypt password portably via the
 	// broker (managed), unless --unsafe-local forces local storage for this run.
-	brokerMode := !opts.unsafeLocal && isBrokerCredSource(cfg)
 	if brokerMode {
 		pw, salt, err := resolveCryptViaBroker(cmd, cfg, opts.cryptPassword, opts.cryptSalt)
 		if err != nil {
