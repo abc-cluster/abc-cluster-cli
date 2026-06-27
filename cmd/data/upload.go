@@ -764,6 +764,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 		metadata["filename"] = metadata["filename"] + ageObjectSuffix
 		metadata["relativePath"] = metadata["relativePath"] + ageObjectSuffix
 	}
+	stampManagedMeta(metadata, cryptor)
 	if !checksumEnabled {
 		metadata["checksum"] = ""
 	}
@@ -891,6 +892,7 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 			metadata["name"] = metadata["name"] + ageObjectSuffix
 		}
 	}
+	stampManagedMeta(metadata, cryptor)
 	uploadInfo, err := os.Stat(uploadPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to access upload file: %w", err)

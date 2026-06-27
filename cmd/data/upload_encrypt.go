@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"filippo.io/age"
@@ -38,6 +39,7 @@ type uploadEncryptor struct {
 	recipients []age.Recipient
 	mode       string // "managed" | "passphrase"
 	group      string // managed only: the group name (== active context's group)
+	version    int    // managed only: the group key version used (for the object stamp)
 }
 
 // buildUploadEncryptor resolves the encryption mode for an upload:
@@ -91,7 +93,22 @@ func buildUploadEncryptor(cmd *cobra.Command, cfg *abccfg.Config, opts *uploadOp
 	materializeAgeKeyFiles(cmd, gk)
 	fmt.Fprintf(cmd.ErrOrStderr(),
 		"Upload encryption: managed, group %s (native age X25519; recoverable via the broker).\n", gk.KekID)
-	return &uploadEncryptor{recipients: []age.Recipient{rcpt}, mode: "managed", group: encGroup}, nil
+	return &uploadEncryptor{recipients: []age.Recipient{rcpt}, mode: "managed", group: encGroup, version: gk.Version}, nil
+}
+
+// stampManagedMeta records the group + key version on a managed-encrypted upload's
+// metadata. It flows as tusd metadata → the mover writes it as S3 user metadata
+// (x-amz-meta-abc-group / abc-key-version), so the STORE can answer "which group
+// key + version" per object WITHOUT the key. This is what lets an old file (after
+// a group key rotation) be matched to its specific — possibly backed-up — key
+// version. No-op for raw / passphrase uploads (native age files are anonymous).
+func stampManagedMeta(metadata map[string]string, enc *uploadEncryptor) {
+	if enc == nil || enc.mode != "managed" {
+		return
+	}
+	metadata["abc-enc"] = "age-x25519-managed"
+	metadata["abc-group"] = enc.group
+	metadata["abc-key-version"] = strconv.Itoa(enc.version)
 }
 
 // ageEncryptForUpload encrypts sourcePath to a temp .age file when enc is set,
