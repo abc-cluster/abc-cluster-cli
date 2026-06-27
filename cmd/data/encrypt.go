@@ -18,7 +18,6 @@ type encryptOptions struct {
 	outputDir     string
 	cryptPassword string
 	cryptSalt     string
-	group         string
 	unsafeLocal   bool
 	progress      bool
 	force         bool
@@ -59,7 +58,6 @@ for reuse in future encryption/decryption operations.
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file encryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder encryption")
-	cmd.Flags().StringVar(&opts.group, "group", "", "managed mode: encrypt to a specific group you have a context for (default: the active context's group)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for age encryption (stored in config for future use)")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "salt/password2 — retained for config/broker portability; NOT used by age encryption (age scrypt derives its own salt)")
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
@@ -100,7 +98,7 @@ func runEncrypt(cmd *cobra.Command, opts *encryptOptions) error {
 	// ADR-0067). No passphrase to remember or lose. A BYO --crypt-password opts
 	// back into the portable-passphrase path below.
 	if managedMode := brokerMode && !passwordProvided; managedMode {
-		prov, perr := newGroupKeyProvider(cmd, cfg, opts.group)
+		prov, perr := newGroupKeyProvider(cmd, cfg)
 		if perr != nil {
 			return perr
 		}

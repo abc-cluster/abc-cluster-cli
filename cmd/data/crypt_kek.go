@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,82 +11,24 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/keysource"
 )
 
-// groupOfContext derives the group name a context belongs to, from its namespace
-// (su-<group>) — the field that "mentions" the group in ~/.abc/config.yaml.
-func groupOfContext(c abccfg.Context) string {
-	return strings.TrimPrefix(strings.TrimSpace(c.Namespace), "su-")
-}
-
-// resolveManagedContext picks the context to use for a managed crypt op.
-//
-//   - group == ""  → the active context; kek_id "" lets the broker derive the group.
-//   - group != ""  → the context whose group (name or namespace su-<g>) matches, so a
-//     user who is a member of several groups (one context per group, ADR-0057) can
-//     target one per command without `abc context use`. kek_id "group:<g>" is sent as
-//     a cross-check (the broker 403s if that context's slot is a different group).
-func resolveManagedContext(cfg *abccfg.Config, group string) (name string, ctx abccfg.Context, kekID string, err error) {
-	group = strings.TrimSpace(group)
-	if group == "" {
-		n := cfg.ResolveContextName(cfg.ActiveContext)
-		c, ok := cfg.ContextNamed(n)
-		if !ok {
-			return "", abccfg.Context{}, "", fmt.Errorf("no active context — run 'abc auth login' or claim a slot first")
-		}
-		return n, c, "", nil
-	}
-	var matches []string
-	for n, c := range cfg.Contexts {
-		if n == group || groupOfContext(c) == group {
-			matches = append(matches, n)
-		}
-	}
-	sort.Strings(matches)
-	switch len(matches) {
-	case 1:
-		c, _ := cfg.ContextNamed(matches[0])
-		return matches[0], c, "group:" + group, nil
-	case 0:
-		return "", abccfg.Context{}, "", fmt.Errorf(
-			"no context found for group %q — each group is its own context (ADR-0057).\n"+
-				"  Available: %s\n  Claim a slot in %q, or pick one with: abc context use <name>",
-			group, contextGroupSummary(cfg), group)
-	default:
-		return "", abccfg.Context{}, "", fmt.Errorf(
-			"%d contexts match group %q (%s) — disambiguate with: abc context use <name>",
-			len(matches), group, strings.Join(matches, ", "))
-	}
-}
-
-// contextGroupSummary lists "ctx (group)" for error messages.
-func contextGroupSummary(cfg *abccfg.Config) string {
-	var out []string
-	for n, c := range cfg.Contexts {
-		if g := groupOfContext(c); g != "" {
-			out = append(out, fmt.Sprintf("%s (%s)", n, g))
-		} else {
-			out = append(out, n)
-		}
-	}
-	sort.Strings(out)
-	if len(out) == 0 {
-		return "(no contexts)"
-	}
-	return strings.Join(out, ", ")
-}
-
-// newGroupKeyProvider builds a managed-key provider for the context selected by
-// group ("" = active), backed by the broker's POST /keys/get. It performs NO
-// network call by itself — the provider releases (and caches) the key lazily.
-func newGroupKeyProvider(cmd *cobra.Command, cfg *abccfg.Config, group string) (*keysource.Provider, error) {
-	_, ctx, kekID, err := resolveManagedContext(cfg, group)
-	if err != nil {
-		return nil, err
+// newGroupKeyProvider builds a managed-key provider for the ACTIVE context,
+// backed by the broker's POST /keys/get. The active context is the single source
+// of truth for "which group am I operating as" — encryption uses that context's
+// group (the broker derives it from the token), so the encryption key can never
+// diverge from the context you upload/run under. To use a different group, switch
+// the whole context with `abc context use` (which switches creds + group together).
+// It performs NO network call by itself — the provider releases (and caches) the
+// key lazily on first use.
+func newGroupKeyProvider(cmd *cobra.Command, cfg *abccfg.Config) (*keysource.Provider, error) {
+	ctx, ok := cfg.ContextNamed(cfg.ResolveContextName(cfg.ActiveContext))
+	if !ok {
+		return nil, fmt.Errorf("no active context — run 'abc auth login' or claim a slot first")
 	}
 	cl, err := keysource.NewClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return keysource.NewProvider(cmd.Context(), cl, kekID), nil
+	return keysource.NewProvider(cmd.Context(), cl), nil
 }
 
 // materializeAgeKeyFiles writes the group's native age artifacts under ~/.abc/age

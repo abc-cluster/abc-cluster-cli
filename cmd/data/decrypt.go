@@ -21,7 +21,6 @@ type decryptOptions struct {
 	outputDir     string
 	cryptPassword string
 	cryptSalt     string
-	group         string
 	unsafeLocal   bool
 	force         bool
 	replace       bool
@@ -59,7 +58,6 @@ stored in ~/.abc/config.yaml for reuse in future encryption/decryption operation
 
 	cmd.Flags().StringVar(&opts.outputPath, "output", "", "output file path for single-file decryption")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", "", "output directory for folder decryption")
-	cmd.Flags().StringVar(&opts.group, "group", "", "managed mode: decrypt with a specific group's key you have a context for (default: the active context's group)")
 	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for age decryption (stored in config for future use)")
 	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "salt/password2 — retained for config/broker portability; NOT used by age decryption")
 	cmd.Flags().BoolVar(&opts.unsafeLocal, "unsafe-local", false,
@@ -95,7 +93,7 @@ func runDecrypt(cmd *cobra.Command, opts *decryptOptions) error {
 		// managed files decrypt with no passphrase. Best-effort: if the group has no
 		// key (or the broker is unreachable) we don't add it; a passphrase/X25519
 		// file still opens, and a managed file then reports "no identity matched".
-		prov, perr := newGroupKeyProvider(cmd, cfg, opts.group)
+		prov, perr := newGroupKeyProvider(cmd, cfg)
 		if perr != nil {
 			return perr
 		}
