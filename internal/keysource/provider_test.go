@@ -38,7 +38,7 @@ func newTestProvider(t *testing.T, hits *int) (*Provider, *age.X25519Identity) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	return NewProvider(context.Background(), cl, ""), id
+	return NewProvider(context.Background(), cl), id
 }
 
 func TestProviderRecipientAndIdentityCached(t *testing.T) {
@@ -71,7 +71,7 @@ func TestProviderFetchMissingFieldsFails(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("ABC_KEYS_BROKER_URL", srv.URL)
 	cl, _ := NewClient(abccfg.Context{AccessToken: "opaque-xyz"})
-	if _, err := NewProvider(context.Background(), cl, "").Fetch(); err == nil {
+	if _, err := NewProvider(context.Background(), cl).Fetch(); err == nil {
 		t.Fatal("expected an error when the broker omits recipient/identity")
 	}
 }
