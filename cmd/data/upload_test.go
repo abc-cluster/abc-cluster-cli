@@ -719,7 +719,10 @@ func TestDataUpload_UploaderError(t *testing.T) {
 	}
 }
 
-func TestDataUpload_CryptSaltWithoutPassword(t *testing.T) {
+// --crypt-salt is a deprecated no-op under the age envelope (age scrypt
+// self-salts). Supplying it alone — with neither --encrypt nor --crypt-password —
+// is tolerated and produces a raw (unencrypted) upload, not an error.
+func TestDataUpload_CryptSaltAloneIsDeprecatedNoop(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "payload.bin")
 	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
@@ -733,14 +736,11 @@ func TestDataUpload_CryptSaltWithoutPassword(t *testing.T) {
 
 	cmd := buildCmd(t, &serverURL, &accessToken, &workspace, recorder.factory)
 	_, err := executeCmd(t, cmd, "upload", tmpFile, "--crypt-salt", "pepper")
-	if err == nil {
-		t.Fatal("expected error for missing crypt password")
+	if err != nil {
+		t.Fatalf("--crypt-salt alone should be a tolerated no-op (raw upload), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "crypt-password") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if recorder.endpoint != "" {
-		t.Fatalf("factory should not be called on invalid encryption args")
+	if recorder.endpoint == "" {
+		t.Fatal("expected the (raw) upload to proceed when only --crypt-salt is given")
 	}
 }
 

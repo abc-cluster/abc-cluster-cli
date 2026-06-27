@@ -48,6 +48,7 @@ type uploadOptions struct {
 	endpoint      string
 	cryptPassword string
 	cryptSalt     string
+	encrypt       bool   // --encrypt: managed age encryption to the active context's group
 	compress      string // "" = off; set by --compress (NoOptDefVal "default"); compresses raw inputs before encryption
 	token         string
 	checksum      bool
@@ -231,8 +232,9 @@ Examples:
 
 	cmd.Flags().StringVar(&opts.name, "name", "", "display name for the uploaded file")
 	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "upload endpoint URL (or set ABC_UPLOAD_ENDPOINT / context upload_endpoint; defaults to <url>/files/ from API --url or context endpoint)")
-	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for client-side encryption (legacy rclone-crypt format — age migration pending, see ADR-0067)")
-	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "salt/password2 for client-side rclone-crypt encryption (legacy — age migration pending)")
+	cmd.Flags().BoolVar(&opts.encrypt, "encrypt", false, "managed client-side encryption to your active group's key (native age X25519; recoverable via the broker). Requires a broker context (cred_source: seedling/v1)")
+	cmd.Flags().StringVar(&opts.cryptPassword, "crypt-password", "", "passphrase for client-side encryption (age scrypt; stock-age decryptable; BYO — you must remember it). Alternative to --encrypt")
+	cmd.Flags().StringVar(&opts.cryptSalt, "crypt-salt", "", "(deprecated; unused by age encryption — age scrypt self-salts)")
 	cmd.Flags().StringVar(&opts.compress, "compress", "", "zstd-compress raw files before upload (level: fast|default|better|best); already-compressed files pass through. Compression runs before encryption")
 	cmd.Flags().Lookup("compress").NoOptDefVal = "default"
 	cmd.Flags().StringVar(&opts.token, "upload-token", "", "bearer token for uploads (or set ABC_UPLOAD_TOKEN / context upload_token; then ABC_TOKEN / context token; falls back to --access-token)")
@@ -330,7 +332,8 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 		return err
 	}
 
-	cryptor, err := uploadCryptConfig(opts.cryptPassword, opts.cryptSalt)
+	uploadCfg, _ := abccfg.Load()
+	cryptor, err := buildUploadEncryptor(cmd, uploadCfg, opts)
 	if err != nil {
 		return err
 	}
@@ -437,7 +440,7 @@ func runUpload(cmd *cobra.Command, opts *uploadOptions, serverURL, accessToken s
 // it in the registry and optionally staging it to the workbench. The shared
 // uploader / cryptor / registryFn are created once by runUpload and passed in,
 // so this is safe to call in a loop over many paths.
-func uploadOnePath(cmd *cobra.Command, uploader Uploader, path string, cryptor *cryptConfig,
+func uploadOnePath(cmd *cobra.Command, uploader Uploader, path string, cryptor *uploadEncryptor,
 	registryFn func(filename, originalPath, checksum string, sizeBytes int64),
 	opts *uploadOptions, extraMeta map[string]string) error {
 
@@ -611,7 +614,7 @@ type uploadResult struct {
 
 // uploadDirectory uploads all files in dir. onSuccess is called for each
 // file that uploads without error; it may be nil.
-func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *cryptConfig, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, jobs int, extraMeta map[string]string, onSuccess func(r uploadResult)) error {
+func uploadDirectory(cmd *cobra.Command, uploader Uploader, dir string, cryptor *uploadEncryptor, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, jobs int, extraMeta map[string]string, onSuccess func(r uploadResult)) error {
 	files, err := collectFiles(dir)
 	if err != nil {
 		return err
@@ -696,7 +699,7 @@ submitLoop:
 	return nil
 }
 
-func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, dir string, file uploadFile, cryptor *cryptConfig, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) uploadResult {
+func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, dir string, file uploadFile, cryptor *uploadEncryptor, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) uploadResult {
 	result := uploadResult{}
 	relPath, err := filepath.Rel(dir, file.path)
 	if err != nil {
@@ -744,7 +747,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 		}
 	}
 	encryptProgress := newProgressReporter(out, progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", relPath), encTotal)
-	uploadPath, cleanup, err := encryptForUpload(ctx, srcPath, cryptor, func(n int64) {
+	uploadPath, cleanup, err := ageEncryptForUpload(ctx, srcPath, cryptor, func(n int64) {
 		encryptProgress.Add(n)
 	})
 	encryptDoneErr := encryptProgress.Complete()
@@ -755,6 +758,11 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 	if err != nil {
 		result.err = localIOError("data encryption failed for %q: %w", relPath, err)
 		return result
+	}
+	if cryptor != nil {
+		// stored object is age-encrypted → .age suffix (after any .zst).
+		metadata["filename"] = metadata["filename"] + ageObjectSuffix
+		metadata["relativePath"] = metadata["relativePath"] + ageObjectSuffix
 	}
 	if !checksumEnabled {
 		metadata["checksum"] = ""
@@ -815,7 +823,7 @@ func uploadDirectoryFile(ctx context.Context, out io.Writer, uploader Uploader, 
 // uploadSingleFile uploads one file. Returns the checksum string (empty when
 // --checksum=false) and any error. Callers use the checksum to record the
 // upload in the local registry.
-func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *cryptConfig, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) (checksum string, err error) {
+func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name string, size int64, cryptor *uploadEncryptor, compressor *compressConfig, checksumEnabled bool, progressEnabled bool, extraMeta map[string]string) (checksum string, err error) {
 	metadata := make(map[string]string, len(extraMeta)+3)
 	for k, v := range extraMeta {
 		metadata[k] = v
@@ -866,7 +874,7 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 		}
 	}
 	encryptProgress := newProgressReporter(cmd.OutOrStdout(), progressEnabled && cryptor != nil, fmt.Sprintf("Encrypting %s", filepath.Base(filePath)), encTotal)
-	uploadPath, cleanup, err := encryptForUpload(cmd.Context(), srcPath, cryptor, func(n int64) {
+	uploadPath, cleanup, err := ageEncryptForUpload(cmd.Context(), srcPath, cryptor, func(n int64) {
 		encryptProgress.Add(n)
 	})
 	encryptDoneErr := encryptProgress.Complete()
@@ -875,6 +883,13 @@ func uploadSingleFile(cmd *cobra.Command, uploader Uploader, filePath, name stri
 	}
 	if err != nil {
 		return "", fmt.Errorf("data encryption failed: %w", err)
+	}
+	if cryptor != nil {
+		// stored object is age-encrypted → .age suffix (after any .zst).
+		metadata["filename"] = metadata["filename"] + ageObjectSuffix
+		if metadata["name"] != "" {
+			metadata["name"] = metadata["name"] + ageObjectSuffix
+		}
 	}
 	uploadInfo, err := os.Stat(uploadPath)
 	if err != nil {

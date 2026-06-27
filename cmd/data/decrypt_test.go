@@ -148,7 +148,7 @@ func TestDataDecrypt_RequiresPassword(t *testing.T) {
 	t.Setenv("ABC_CLI_CONFIG_FILE", cfgPath)
 
 	dir := t.TempDir()
-	encryptedPath := filepath.Join(dir, "sample.txt"+rcloneDefaultSuffix)
+	encryptedPath := filepath.Join(dir, "sample.txt.age")
 	if err := os.WriteFile(encryptedPath, []byte("not-real-encrypted-data"), 0600); err != nil {
 		t.Fatal(err)
 	}
