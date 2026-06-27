@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/credsource"
 	"github.com/abc-cluster/abc-cluster-cli/internal/envvars"
 	"github.com/spf13/cobra"
 )
@@ -88,6 +89,20 @@ func resolveUploadToken(cmd *cobra.Command, flagToken, accessToken string) strin
 		}
 		if v := strings.TrimSpace(actx.NomadToken()); v != "" {
 			return v
+		}
+		// Broker (seedling/v1 etc.) context: the real upload credential lives
+		// server-side behind the opaque access_token. Exchange it (Pattern A) and
+		// use the slot's NOMAD token — the credential the upload endpoint's
+		// forward-auth accepts (verified live: minio secret → 401, nomad token →
+		// 201). Without this the bare opaque is sent and tusd answers 401.
+		// Best-effort: fall through to the opaque on any error so non-broker /
+		// offline paths are unchanged.
+		if cs := strings.TrimSpace(actx.CredSource); cs != "" && !strings.EqualFold(cs, "local") {
+			if creds, cerr := credsource.ResolveFromContext(cmd.Context(), actx); cerr == nil {
+				if tok := strings.TrimSpace(creds.Nomad.Token); tok != "" {
+					return tok
+				}
+			}
 		}
 	}
 
