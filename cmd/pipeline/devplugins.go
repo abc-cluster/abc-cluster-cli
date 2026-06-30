@@ -45,7 +45,7 @@ func defaultDevPlugins() []PluginRef {
 // sync with the NfVersion defaults (pipeline + module spec) — keep the head
 // Nextflow at >=26.04.3 or the pinned plugin won't load.
 const (
-	stableNfNomadVersion      = "0.4.3"
+	stableNfNomadVersion      = "0.4.4"
 	stableNfNomadS5cmdVersion = "0.1.7"
 )
 
@@ -68,7 +68,7 @@ const (
 // nf-nomad 0.4.2+ requires Nextflow >=26.04.3, so the pinned nf-nomad here is
 // only loadable if the head Nextflow default (spec.NfVersion) is >=26.04.3 —
 // keep the two in sync. To override the nf-nomad version ad-hoc, use the general
-// `--plugin id@version` flag on `run` (e.g. --plugin nf-nomad@0.4.3) — there is
+// `--plugin id@version` flag on `run` (e.g. --plugin nf-nomad@0.4.4) — there is
 // no dedicated --nf-plugin-version flag on `run`. nfNomadVersion here carries a
 // saved-spec nf-nomad pin (spec.NfPluginVersion, set via `pipeline add/update`);
 // empty = the pinned stable default.

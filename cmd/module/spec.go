@@ -146,11 +146,11 @@ func (s *RunSpec) defaults() {
 	}
 	if s.NfVersion == "" {
 		// >=26.04.3 required by the pinned stable nf-nomad default below
-		// (0.4.3 declares `requires >=26.04.3`).
+		// (0.4.4 declares `requires >=26.04.3`).
 		s.NfVersion = "26.04.3"
 	}
 	if s.NfPluginVersion == "" {
-		s.NfPluginVersion = "0.4.3"
+		s.NfPluginVersion = "0.4.4"
 	}
 	if s.Namespace == "" {
 		s.Namespace = "default"

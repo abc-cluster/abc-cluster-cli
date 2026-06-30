@@ -302,7 +302,7 @@ func (s *PipelineSpec) defaults() {
 		s.HeadDiskMB = 4096
 	}
 	if s.NfVersion == "" {
-		// Must be >=26.04.3: the pinned stable nf-nomad default (0.4.3, see
+		// Must be >=26.04.3: the pinned stable nf-nomad default (0.4.4, see
 		// stableNfNomadVersion in devplugins.go) declares `requires >=26.04.3`.
 		s.NfVersion = "26.04.3"
 	}

@@ -137,7 +137,7 @@ EXAMPLES
 	// Head job resource overrides
 	cmd.Flags().String("nf-version", "", "Nextflow Docker image tag (default: 26.04.3)")
 	// nf-nomad defaults to a pinned stable release (see stableNfNomadVersion).
-	// To override it, use the general --plugin flag (e.g. --plugin nf-nomad@0.4.3);
+	// To override it, use the general --plugin flag (e.g. --plugin nf-nomad@0.4.4);
 	// there is no dedicated --nf-plugin-version on `run` — --plugin / --dev-plugins
 	// cover it.
 	cmd.Flags().Int("cpu", 0, "Head job CPU in MHz (default: 1000)")
@@ -191,7 +191,7 @@ EXAMPLES
 
 	// Pin specific published plugin versions — repeatable, format `id@version`.
 	// Use to test a published plugin release without --dev-plugins, e.g.
-	//   --plugin nf-nomad@0.4.3 --plugin nf-nomad-s5cmd@0.1.7
+	//   --plugin nf-nomad@0.4.4 --plugin nf-nomad-s5cmd@0.1.7
 	// Plugins listed here go directly into the generated plugins {} block;
 	// Nextflow resolves them from its standard registry. Mutually exclusive
 	// with --dev-plugins (validated below).
