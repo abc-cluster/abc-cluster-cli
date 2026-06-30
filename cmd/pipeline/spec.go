@@ -302,13 +302,16 @@ func (s *PipelineSpec) defaults() {
 		s.HeadDiskMB = 4096
 	}
 	if s.NfVersion == "" {
-		s.NfVersion = "26.04.2"
+		// Must be >=26.04.3: the pinned stable nf-nomad default (0.4.3, see
+		// stableNfNomadVersion in devplugins.go) declares `requires >=26.04.3`.
+		s.NfVersion = "26.04.3"
 	}
 	// NfPluginVersion is intentionally left empty by default. An empty version
-	// renders the bare `id "nf-nomad"` line, which Nextflow resolves to the
-	// newest published release. A pinned value (from --nf-plugin-version or a
-	// saved spec) overrides. Do NOT default to "latest" — that literal token is
-	// rejected by the plugin index ("Unknown plugin id: nf-nomad").
+	// flows through to defaultClusterPlugins(), which pins nf-nomad to the
+	// stable default (stableNfNomadVersion) — never an `-edge*` prerelease. A
+	// pinned value (from --nf-plugin-version or a saved spec) overrides. Do NOT
+	// default to "latest" — that literal token is rejected by the plugin index
+	// ("Unknown plugin id: nf-nomad").
 	if s.Namespace == "" {
 		s.Namespace = "default"
 	}

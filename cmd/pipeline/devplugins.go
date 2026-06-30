@@ -36,6 +36,19 @@ func defaultDevPlugins() []PluginRef {
 	}
 }
 
+// stableNfNomadVersion / stableNfNomadS5cmdVersion are the pinned stable
+// (non-prerelease) plugin versions this abc-cluster build defaults to. They are
+// explicit releases — never an `-edge*` prerelease — so a fresh run is
+// reproducible and never silently picks up a newly-published prerelease.
+//
+// nf-nomad 0.4.2+ declares `requires >=26.04.3`, so these defaults must stay in
+// sync with the NfVersion defaults (pipeline + module spec) — keep the head
+// Nextflow at >=26.04.3 or the pinned plugin won't load.
+const (
+	stableNfNomadVersion      = "0.4.3"
+	stableNfNomadS5cmdVersion = "0.1.7"
+)
+
 // defaultClusterPlugins is the baseline plugin set this abc-cluster build
 // assumes every Nextflow pipeline launched against this cluster needs. Merged
 // into spec.Plugins after spec defaults run, only for IDs not already pinned
@@ -44,17 +57,21 @@ func defaultDevPlugins() []PluginRef {
 // These are published Nextflow plugins (resolved via Nextflow's plugin
 // registry), distinct from the 99.99.99 dev bundle that flows via --dev-plugins.
 //
-// Both default to the newest published release. We express "newest" as the
-// bare `id "<name>"` form (empty Version) — NOT the literal `@latest` token.
-// Nextflow's plugin index resolves a version-less id to the highest available
-// version, but rejects a literal `@latest` with "Unknown plugin id: nf-nomad"
-// (verified live against seedling-prod, Nextflow 26.04.2). So a fresh run picks
-// up the newest nf-nomad / nf-nomad-s5cmd without the CLI chasing version
-// numbers, and without tripping the index. To pin a version, use the general
-// `--plugin id@version` flag on `run` (e.g. --plugin nf-nomad@0.4.0-edge8) —
-// there is no dedicated --nf-plugin-version flag on `run`. nfNomadVersion here
-// carries a saved-spec nf-nomad pin (spec.NfPluginVersion, set via
-// `pipeline add/update`); empty = newest.
+// Both default to PINNED stable releases (stableNfNomadVersion /
+// stableNfNomadS5cmdVersion) rather than a bare `id "<name>"`. A bare id makes
+// Nextflow resolve to the registry's NEWEST published version, which now
+// includes `-edge*` prereleases (e.g. 0.5.0-edge2) — runs must never pull a
+// prerelease, so we pin explicit stable versions instead. Pinning BOTH plugins
+// keeps the block all-pinned, which satisfies validatePluginVersionConsistency
+// (Nextflow only auto-resolves when ALL plugins are bare OR ALL are pinned).
+//
+// nf-nomad 0.4.2+ requires Nextflow >=26.04.3, so the pinned nf-nomad here is
+// only loadable if the head Nextflow default (spec.NfVersion) is >=26.04.3 —
+// keep the two in sync. To override the nf-nomad version ad-hoc, use the general
+// `--plugin id@version` flag on `run` (e.g. --plugin nf-nomad@0.4.3) — there is
+// no dedicated --nf-plugin-version flag on `run`. nfNomadVersion here carries a
+// saved-spec nf-nomad pin (spec.NfPluginVersion, set via `pipeline add/update`);
+// empty = the pinned stable default.
 //
 // TODO: move to cluster-capability config (contexts.<name>.cluster.plugins)
 // once a second deployment needs a different baseline. Hard-coded here keeps
@@ -63,14 +80,18 @@ func defaultDevPlugins() []PluginRef {
 // Precedence (highest → lowest):
 //  1. --plugin id@version (ad-hoc CLI override on `run`)
 //  2. saved-spec nf-nomad pin (spec.NfPluginVersion → nfNomadVersion)
-//  3. defaultClusterPlugins() (this function — both bare-id = newest)
+//  3. defaultClusterPlugins() (this function — both pinned to stable releases)
 //
 // --dev-plugins replaces the entire set with defaultDevPlugins() (99.99.99
 // versions), bypassing this baseline.
 func defaultClusterPlugins(nfNomadVersion string) []PluginRef {
+	nfNomad := strings.TrimSpace(nfNomadVersion)
+	if nfNomad == "" {
+		nfNomad = stableNfNomadVersion
+	}
 	return []PluginRef{
-		{ID: "nf-nomad", Version: strings.TrimSpace(nfNomadVersion)},
-		{ID: "nf-nomad-s5cmd", Version: ""},
+		{ID: "nf-nomad", Version: nfNomad},
+		{ID: "nf-nomad-s5cmd", Version: stableNfNomadS5cmdVersion},
 	}
 }
 

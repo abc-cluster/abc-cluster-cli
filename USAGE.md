@@ -655,7 +655,7 @@ abc pipeline run <name-or-url> [flags]
 | `--revision`          | Pipeline revision (branch, tag, or commit SHA)                      |         |
 | `--profile`           | Nextflow config profile(s), comma-separated                         |         |
 | `--config`            | Extra Nextflow config file to merge into the run                    |         |
-| `--plugin`            | Pin a Nextflow plugin to a version, `id@version` (repeatable), e.g. `--plugin nf-nomad@0.4.0-edge8`. Plugins otherwise resolve to the newest published release. | |
+| `--plugin`            | Pin a Nextflow plugin to a version, `id@version` (repeatable), e.g. `--plugin nf-nomad@0.4.3`. Plugins otherwise default to pinned stable releases (`nf-nomad` 0.4.3 / `nf-nomad-s5cmd` 0.1.7). | |
 | `--project`           | Override active project (slug or ID); `--no-project` disables       |         |
 | `--investigation`     | Override active investigation (slug or ID); `--no-investigation` disables | |
 | `--head-pool`         | Nomad node-pool for the pipeline head (defaults to context's `head_pool`, typically `platform`) | |
@@ -702,7 +702,7 @@ abc pipeline run https://github.com/nf-core/rnaseq --revision 3.14
 # Pin a plugin version and choose node pools for a large run
 abc pipeline run nf-core/rnaseq \
   --params-file params.yaml \
-  --plugin nf-nomad@0.4.0-edge8 \
+  --plugin nf-nomad@0.4.3 \
   --worker-pool compute \
   --profile test,docker \
   --wait

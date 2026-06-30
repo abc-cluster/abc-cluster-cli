@@ -74,7 +74,7 @@ subcommand locally or in CI; each abc module run still targets a single module.`
 	cmd.Flags().String("pipeline-gen-jar-url", "", "Complete JAR URL (overrides --pipeline-gen-url-base and GitHub). Auto-resolved from the active context's `abc admin tools push nf-pipeline-gen` artifact URL when unset.")
 	cmd.Flags().String("github-token", utils.EnvOrDefault("GITHUB_TOKEN", "GH_TOKEN"), "GitHub token for release API/download access (or set GITHUB_TOKEN/GH_TOKEN)")
 
-	cmd.Flags().String("nf-version", "", "Nextflow Docker image tag for generate/run tasks (default: 25.10.4)")
+	cmd.Flags().String("nf-version", "", "Nextflow Docker image tag for generate/run tasks (default: 26.04.3)")
 	cmd.Flags().String("nf-plugin-version", "", "nf-nomad plugin version for generated pipeline execution config")
 	cmd.Flags().Int("cpu", 0, "Main Nextflow task CPU in MHz (default: 1500)")
 	cmd.Flags().Int("memory", 0, "Main Nextflow task memory in MB (default: 4096)")
