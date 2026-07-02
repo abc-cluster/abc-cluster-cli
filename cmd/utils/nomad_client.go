@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1176,6 +1177,49 @@ func WatchJobLogsForTaskBoth(ctx context.Context, nc *NomadClient, jobID, namesp
 	return watchJobLogsInternalBoth(ctx, nc, jobID, namespace, task, w, delay, timeout)
 }
 
+// headTaskPreference lists the task names a Nextflow head allocation is known
+// to emit, in priority order. The pipeline HCL generator names the head task
+// "nf-task" (matching child jobs, so `abc job logs … --task nf-task` works);
+// "nextflow" is accepted as a forward-compatible alias. NOT "main" — Nomad
+// rejects a `main` task query on these jobs with 400 "unknown task name".
+var headTaskPreference = []string{"nextflow", "nf-task"}
+
+// resolveStreamTask picks the task name to stream logs from for the given
+// allocation. Resolution order:
+//
+//  1. a non-empty override (an explicit --task) is honoured verbatim;
+//  2. otherwise, if the alloc reports TaskStates, prefer a known head task
+//     name (nf-task / nextflow), then a lone single task, then the
+//     lexicographically-first task (deterministic, unlike a raw map range);
+//  3. otherwise (TaskStates not yet populated — the alloc is created but not
+//     running), fall back to the known head task name "nf-task".
+//
+// The previous implementation defaulted to "main" and only overrode it by a
+// non-deterministic `for t := range TaskStates` — which left "main" in place
+// whenever TaskStates was still empty, producing the 400 "unknown task name
+// \"main\"" that killed `abc pipeline run … --wait --logs`.
+func resolveStreamTask(override string, taskStates map[string]NomadTaskState) string {
+	if t := strings.TrimSpace(override); t != "" {
+		return t
+	}
+	if len(taskStates) > 0 {
+		for _, pref := range headTaskPreference {
+			if _, ok := taskStates[pref]; ok {
+				return pref
+			}
+		}
+		names := make([]string, 0, len(taskStates))
+		for n := range taskStates {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		return names[0]
+	}
+	// TaskStates not yet populated (alloc pending/starting). Use the known
+	// head task name rather than the invalid "main".
+	return "nf-task"
+}
+
 func findJobAllocByID(allocs []NomadAllocStub, id string) *NomadAllocStub {
 	for i := range allocs {
 		if allocs[i].ID == id {
@@ -1218,14 +1262,7 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 			continue
 		}
 
-		task := strings.TrimSpace(taskOverride)
-		if task == "" {
-			task = "main"
-			for t := range chosen.TaskStates {
-				task = t
-				break
-			}
-		}
+		task := resolveStreamTask(taskOverride, chosen.TaskStates)
 		allocID := chosen.ID
 		logOrigin := "start"
 		var logOff int64
@@ -1471,14 +1508,7 @@ func watchJobLogsInternalBoth(ctx context.Context, nc *NomadClient, jobID, names
 			continue
 		}
 
-		task := strings.TrimSpace(taskOverride)
-		if task == "" {
-			task = "main"
-			for t := range chosen.TaskStates {
-				task = t
-				break
-			}
-		}
+		task := resolveStreamTask(taskOverride, chosen.TaskStates)
 		allocID := chosen.ID
 
 		streamCtx, streamCancel := context.WithCancel(ctx)

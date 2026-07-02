@@ -1,6 +1,9 @@
 package pipeline
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDeriveCloudCachePath(t *testing.T) {
 	cases := []struct {
@@ -142,5 +145,78 @@ func TestDerivedWorkDirAndOutDir(t *testing.T) {
 	wantCache := "s3://su-demo/user/slate-sunbird/cache/slate-sunbird-123/"
 	if cache != wantCache {
 		t.Errorf("sibling invariant broken: deriveCloudCachePath(derivedWorkDir(...)) = %q want %q", cache, wantCache)
+	}
+}
+
+func TestPreflightWorkDirDerivation(t *testing.T) {
+	cases := []struct {
+		name            string
+		workDirExplicit bool
+		s3Context       bool
+		groupBucket     string
+		wantErr         bool
+	}{
+		{
+			// The reproduced bug: group-less user, S3 work-dir context, no
+			// bucket to derive from → must fail fast, not fall through to
+			// the inaccessible s3://nextflow-work/.
+			name:            "auto-derive + S3 context + empty bucket → error",
+			workDirExplicit: false,
+			s3Context:       true,
+			groupBucket:     "",
+			wantErr:         true,
+		},
+		{
+			name:            "auto-derive + S3 context + whitespace bucket → error",
+			workDirExplicit: false,
+			s3Context:       true,
+			groupBucket:     "   ",
+			wantErr:         true,
+		},
+		{
+			// Explicit --work-dir must always be honoured, even on an S3
+			// context with no group bucket.
+			name:            "explicit work-dir + S3 context + empty bucket → ok",
+			workDirExplicit: true,
+			s3Context:       true,
+			groupBucket:     "",
+			wantErr:         false,
+		},
+		{
+			// Genuine host-volume context (no S3 endpoint): /work/nextflow-work
+			// is valid, so an empty bucket must NOT error.
+			name:            "auto-derive + host-volume context + empty bucket → ok",
+			workDirExplicit: false,
+			s3Context:       false,
+			groupBucket:     "",
+			wantErr:         false,
+		},
+		{
+			// Normal S3 case: bucket present → derivation works, no error.
+			name:            "auto-derive + S3 context + real bucket → ok",
+			workDirExplicit: false,
+			s3Context:       true,
+			groupBucket:     "su-mbhg-bioinformatics",
+			wantErr:         false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := preflightWorkDirDerivation(tc.workDirExplicit, tc.s3Context, tc.groupBucket)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if tc.wantErr {
+				msg := err.Error()
+				for _, want := range []string{"cannot auto-derive an S3 work-dir", "--work-dir", "group"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("error message %q missing %q", msg, want)
+					}
+				}
+			}
+		})
 	}
 }

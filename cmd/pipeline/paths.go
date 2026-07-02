@@ -126,6 +126,57 @@ func deriveCloudCachePath(workDir string) string {
 	return fmt.Sprintf("s3://%s/%s/%s/cache/%s/", bucket, scope, user, runTag)
 }
 
+// errNoGroupBucketForS3WorkDir is returned by preflightWorkDirDerivation
+// when the command must auto-derive an S3 work-dir but the active context
+// yields no group bucket (a group-less user). The message is actionable:
+// the user either passes an explicit --work-dir or joins a group. Formatting
+// the group name as "none" (rather than the empty string) keeps the error
+// readable when bucket == "".
+func errNoGroupBucketForS3WorkDir(bucket string) error {
+	group := strings.TrimSpace(bucket)
+	if group == "" {
+		group = "none"
+	}
+	return fmt.Errorf(
+		"cannot auto-derive an S3 work-dir: your user has no group bucket (group: %s). "+
+			"Pass --work-dir s3://<accessible-bucket>/<path>/ explicitly, or join a group.",
+		group,
+	)
+}
+
+// preflightWorkDirDerivation gates the silent fall-through to the legacy
+// host-volume default (/work/nextflow-work → s3://nextflow-work/) that
+// happens when a group-less user runs a pipeline against an S3-work-dir
+// context. It returns a non-nil error ONLY for the specific broken
+// combination:
+//
+//   - workDirExplicit == false  (the user did NOT pass --work-dir), AND
+//   - contextUsesS3WorkDir == true  (the context's work-dir lives in S3 —
+//     i.e. an S3/MinIO/RustFS endpoint is configured), AND
+//   - groupBucket == ""  (auto-derivation has no bucket to root the path).
+//
+// In every other case it returns nil and leaves resolution untouched:
+//   - an explicit --work-dir (S3 or local) is always honoured;
+//   - a non-S3 / host-volume context (no S3 endpoint) legitimately falls
+//     back to /work/nextflow-work, so an empty bucket is fine there.
+//
+// This is a pure derivation check — no live S3 call. The failure is
+// deterministic from "auto-derive requested + S3 context + no group
+// bucket", which is more reliable than probing S3 credentials that may
+// differ between the CLI and the head job.
+func preflightWorkDirDerivation(workDirExplicit, contextUsesS3WorkDir bool, groupBucket string) error {
+	if workDirExplicit {
+		return nil
+	}
+	if !contextUsesS3WorkDir {
+		return nil
+	}
+	if strings.TrimSpace(groupBucket) != "" {
+		return nil
+	}
+	return errNoGroupBucketForS3WorkDir(groupBucket)
+}
+
 // validateExplicitWorkDir returns a warning string when the explicit
 // --work-dir bucket doesn't align with the active context's group
 // bucket. Empty warning + ok=true means the path is fine; non-empty

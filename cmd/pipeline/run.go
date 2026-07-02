@@ -512,6 +512,18 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		if spec.HeadNomadAddr == "" {
 			spec.HeadNomadAddr = "http://${attr.unique.network.ip-address}:4646"
 		}
+		// Preflight: fail fast when the work-dir would silently fall through
+		// to the legacy host-volume default (/work/nextflow-work →
+		// s3://nextflow-work/, which is Access Denied for a group-less user)
+		// on a context whose work-dir actually lives in S3. Only rejects the
+		// broken combination (no explicit --work-dir + S3-work-dir context +
+		// empty derived bucket); explicit --work-dir and genuine host-volume
+		// contexts pass through untouched. See paths.go.
+		contextUsesS3WorkDir := strings.TrimSpace(actx.MinioS3APIEndpoint()) != "" ||
+			strings.TrimSpace(actx.RustfsS3APIEndpoint()) != ""
+		if err := preflightWorkDirDerivation(spec.WorkDir != "", contextUsesS3WorkDir, groupBucket); err != nil {
+			return err
+		}
 		if spec.WorkDir == "" && groupBucket != "" && userSeg != "" {
 			spec.WorkDir = derivedWorkDir(groupBucket, scope, userSeg, runTag)
 		} else if spec.WorkDir != "" {
