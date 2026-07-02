@@ -4,6 +4,11 @@ All notable changes to `abc-cluster-cli` are documented here. Format loosely fol
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions before v0.1.40 are
 not individually documented — see `git tag` for the full history.
 
+## v0.1.66 — 2026-07-02
+- Pipeline workers now mount `abc-tools` read-only when a work-dir host volume is also
+  present (non-S3 pipelines), matching ADR-0061. S3-workdir pipelines still mount it
+  read-write (tracked as an open follow-up — see ADR-0061).
+
 ## v0.1.65 — 2026-06-30
 - Bump pinned nf-nomad `0.4.3` → `0.4.4` (fixes `restart-attempts-0` handling)
 
