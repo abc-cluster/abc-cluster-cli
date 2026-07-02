@@ -1,6 +1,6 @@
 # abc-cluster-cli
 
-`abc` is the command line interface for the [abc-cluster](https://abc-cluster.io)
+`abc` is the command line interface for the [abc-cluster](https://abc-cluster.cloud)
 platform — submit pipelines, run Nomad jobs, manage workspaces and contexts,
 and inspect cluster state from the terminal.
 
@@ -53,6 +53,7 @@ See **[docs/quickstart.md](./docs/quickstart.md)** for the full first-run walkth
   - [admin.md](./docs/reference/admin.md) — operator surfaces incl. `abc admin env` introspection
   - [jobs.md](./docs/reference/jobs.md), [pipeline.md](./docs/reference/pipeline.md), [data.md](./docs/reference/data.md), [secrets.md](./docs/reference/secrets.md), [cluster.md](./docs/reference/cluster.md), [report.md](./docs/reference/abc-report.md), …
 - **[DEMO.md](./DEMO.md)** — end-to-end demo scenario
+- **[CHANGELOG.md](./CHANGELOG.md)** — release notes
 
 ## Inspecting the env-var surface
 
