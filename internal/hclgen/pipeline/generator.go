@@ -858,14 +858,31 @@ func buildNextflowConfig(spec Spec) string {
 	//   (2) the `abc-tools` tools volume at /nxf-work — whenever a tools plugin
 	//       (nf-nomad-s5cmd / nf-rclone) is loaded, so the worker bootstrap resolves
 	//       /nxf-work/bin/s5cmd from the MOUNT (ADR-0061), never an artifact download.
-	// abc-tools is RW (nf-nomad's validate() rejects readOnly on the workDir volume);
-	// tamper-safety comes from the binaries being root-owned 0755.
+	//
+	// ADR-0061 readOnly status (verified against nf-nomad's JobBuilder.groovy /
+	// JobVolume.groovy): nf-nomad auto-promotes whichever volume is FIRST in the
+	// list to `workDir` when none is explicitly marked, and JobVolume.validate()
+	// rejects `workDir && readOnly`. Ordering here is load-bearing:
+	//   - Non-S3 work dir: the shared host volume is appended FIRST, so IT becomes
+	//     the implicit workDir; `abc-tools` is the SECOND entry and is therefore
+	//     safe to mount read-only (ADR-0061 option ii) — no plugin/validate conflict.
+	//   - S3 work dir: `abc-tools` is the ONLY entry, so it is itself auto-promoted
+	//     to workDir and MUST stay read-write (marking it readOnly here would make
+	//     every S3-workdir run fail validate()). Tamper-safety still comes from the
+	//     binaries being root-owned 0755. Making this RO too needs an nf-nomad-side
+	//     change (ADR-0061 option iii) — out of scope for abc-cluster-cli alone.
 	var vols []string
+	hasWorkDirVol := false
 	if !isS3URI(spec.WorkDir) && spec.HostVolume != "-" {
 		vols = append(vols, fmt.Sprintf(`[type: "host", name: "%s", path: "%s"]`, hostVol, spec.WorkDir))
+		hasWorkDirVol = true
 	}
 	if usesAbcTools(spec) {
-		vols = append(vols, `[type: "host", name: "abc-tools", path: "/nxf-work"]`)
+		if hasWorkDirVol {
+			vols = append(vols, `[type: "host", name: "abc-tools", path: "/nxf-work", readOnly: true]`)
+		} else {
+			vols = append(vols, `[type: "host", name: "abc-tools", path: "/nxf-work"]`)
+		}
 	}
 	volumesLine := "volumes = []"
 	if len(vols) > 0 {

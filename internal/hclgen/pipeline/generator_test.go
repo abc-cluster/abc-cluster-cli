@@ -182,6 +182,32 @@ func TestGenerate_S5cmdBlock_SkipTLS(t *testing.T) {
 		}
 	})
 
+	t.Run("S3 work dir: abc-tools is the sole volume and stays read-write", func(t *testing.T) {
+		// nf-nomad auto-promotes the sole/first unmarked volume to `workDir`
+		// (JobBuilder.groovy), and JobVolume.validate() rejects `workDir &&
+		// readOnly`. base.WorkDir is s3://..., so abc-tools is the only entry in
+		// the volumes list here and must NOT carry readOnly, or every S3-workdir
+		// pipeline run would fail nf-nomad's validate() at submission.
+		spec := base
+		cfg := buildNextflowConfig(spec)
+		if strings.Contains(cfg, `name: "abc-tools", path: "/nxf-work", readOnly: true`) {
+			t.Fatalf("abc-tools must stay read-write when it is the sole (S3 workdir) volume:\n%s", cfg)
+		}
+	})
+
+	t.Run("non-S3 work dir: abc-tools is the second volume and is read-only", func(t *testing.T) {
+		// ADR-0061 option (ii): when a local host volume is also mounted, it is
+		// appended first and becomes the implicit workDir, freeing abc-tools (the
+		// second entry) to be mounted read-only — no nf-nomad validate() conflict.
+		spec := base
+		spec.WorkDir = "/work/nextflow-work"
+		spec.HostVolume = "nf-work"
+		cfg := buildNextflowConfig(spec)
+		if !strings.Contains(cfg, `name: "abc-tools", path: "/nxf-work", readOnly: true`) {
+			t.Fatalf("expected abc-tools mounted readOnly when a work-dir host volume is also present:\n%s", cfg)
+		}
+	})
+
 	t.Run("HEAD task also mounts abc-tools at /nxf-work for S3+s5cmd", func(t *testing.T) {
 		// Regression: the head's own nf-nomad-s5cmd input-sweep/publish shells out to
 		// /nxf-work/bin/s5cmd, so the head task — not just workers — must mount abc-tools.
