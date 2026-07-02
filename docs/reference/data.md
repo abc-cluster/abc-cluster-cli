@@ -229,12 +229,31 @@ Commander, which shares the `mc` name on some systems).
 
 ## Encrypt / decrypt
 
-Encrypt or decrypt a local file without uploading:
+Encryption uses the [age](https://age-encryption.org) envelope format — output is
+decryptable by stock `age` as well as by `abc`. There are two independent ways to
+encrypt, depending on whether the key is yours alone or shared with your group:
+
+**Local file, your own passphrase** — encrypt/decrypt a file on disk without
+uploading, using a password only you know:
 
 ```bash
-abc data encrypt <file>           # → <file>.enc
-abc data decrypt <file>.enc       # → <file>
+abc data encrypt ./data.csv --crypt-password "my-secret"   # → data.csv.age
+abc data decrypt ./data.csv.age --crypt-password "my-secret"  # → data.csv
 ```
 
-Uses the crypt key material from the active context. Share your public key with
-collaborators who need to encrypt data for you.
+If you lose the password, the data cannot be recovered — `abc` never stores it
+server-side in this mode. (A control-plane-managed default for this local command is
+planned but not yet available; today `--crypt-password` is required, or use
+`--unsafe-local` to reuse credentials already saved in `~/.abc/config.yaml`.)
+
+**Managed, on upload, to your group's key** — `abc data upload --encrypt` encrypts
+client-side with your active context's group key (native age X25519), recoverable via
+the platform's key broker — no password to remember or lose:
+
+```bash
+abc data upload ./results/ --encrypt
+```
+
+Requires an authenticated broker context (`cred_source: seedling/v1`). The key is
+scoped to your active group — switch context (`abc auth context use <name>`) to
+encrypt against a different group's key; there is no separate `--group` flag.
