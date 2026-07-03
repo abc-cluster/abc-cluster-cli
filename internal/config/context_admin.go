@@ -39,6 +39,21 @@ type NomadService struct {
 	// as the head, regardless of pool).
 	WorkerPool string `yaml:"worker_pool,omitempty"`
 
+	// TokenType caches the Nomad ACL token's `Type` field (from GET
+	// /v1/acl/token/self — "management" or "client") the last time `abc
+	// auth whoami` ran with a reachable cluster. Informational only — the
+	// CLI always re-derives the live role from a fresh token lookup when
+	// the cluster is reachable; this field exists so the type is visible
+	// directly in config.yaml without a network call, for anyone reading
+	// the file cold. "management" tokens bypass ALL Nomad ACL policy
+	// checks (see Nomad's own docs) — a "group" field showing empty/none
+	// on a management-token context is expected and does not indicate a
+	// restricted or misconfigured identity. Written by `abc auth whoami`
+	// (mirrors the existing Admin.ID auto-generation pattern); never
+	// hand-edit this field, it's always overwritten on the next live
+	// whoami.
+	TokenType string `yaml:"token_type,omitempty"`
+
 	// Deprecated: prefixed forms accepted on read, migrated to short names on save.
 	DeprecatedAddr   string `yaml:"nomad_addr,omitempty"`
 	DeprecatedToken  string `yaml:"nomad_token,omitempty"`
