@@ -214,8 +214,14 @@ func TestDerivedNames(t *testing.T) {
 	if got, want := s.URL(AppsDoors{}), "https://"+wantHost; got != want {
 		t.Errorf("URL: got %q want %q", got, want)
 	}
-	if got, want := s.ServiceAccountName(), "abc-app-mtb-resistotyper-ml-tb-resistance-dashboard"; got != want {
-		t.Errorf("ServiceAccountName: got %q want %q", got, want)
+	// Deterministic (same Project+Name -> same key every time) and within
+	// MinIO's 3-20 char access-key length limit.
+	saName := s.ServiceAccountName()
+	if !strings.HasPrefix(saName, "sa-") || len(saName) != 19 {
+		t.Errorf("ServiceAccountName: got %q, want \"sa-\" + 16 hex chars (19 total)", saName)
+	}
+	if got := s.ServiceAccountName(); got != saName {
+		t.Errorf("ServiceAccountName: not deterministic, got %q then %q", saName, got)
 	}
 }
 

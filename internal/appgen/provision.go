@@ -2,6 +2,8 @@ package appgen
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -93,8 +95,19 @@ func (p *DataProvisioner) Provision(ctx context.Context, s *Spec) (*AppCredentia
 	if err != nil {
 		return nil, err
 	}
+	// MinIO only auto-generates a secret key when BOTH accessKey and
+	// secretKey are omitted. Since accessKey is always set here
+	// (deterministic, for idempotent re-deploys), the secret key must be
+	// supplied explicitly or some MinIO releases reject the request with
+	// "No secret key was provided" — verified against
+	// RELEASE.2025-09-07T16-13-09Z (2026-07-03).
+	secretKey, err := generateSecretKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate secret key for %q: %w", accessKey, err)
+	}
 	out, err := p.admin.AddServiceAccount(ctx, madmin.AddServiceAccountReq{
 		AccessKey:   accessKey,
+		SecretKey:   secretKey,
 		Policy:      policy,
 		Description: fmt.Sprintf("abc app %s/%s", s.Project, s.Name),
 	})
@@ -102,6 +115,17 @@ func (p *DataProvisioner) Provision(ctx context.Context, s *Spec) (*AppCredentia
 		return nil, fmt.Errorf("create MinIO service account %q: %w", accessKey, err)
 	}
 	return &AppCredentials{AccessKey: out.AccessKey, SecretKey: out.SecretKey}, nil
+}
+
+// generateSecretKey returns a cryptographically random 40-character secret,
+// matching the length MinIO itself generates for a fully auto-provisioned
+// service account.
+func generateSecretKey() (string, error) {
+	b := make([]byte, 30) // base64 (4/3 expansion): 30 bytes -> 40 chars
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // Revoke removes the per-app MinIO service account. Called by `abc app delete`
