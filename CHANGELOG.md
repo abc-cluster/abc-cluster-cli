@@ -4,6 +4,19 @@ All notable changes to `abc-cluster-cli` are documented here. Format loosely fol
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions before v0.1.40 are
 not individually documented — see `git tag` for the full history.
 
+## v0.1.67 — 2026-07-03
+- `abc auth whoami` now caches the Nomad ACL token type
+  (`admin.services.nomad.token_type`) and shows it alongside role/group —
+  a `management` token bypasses all Nomad ACL policy checks, so
+  `group: (none)` on such a context is now flagged as expected rather than
+  left ambiguous.
+- `abc pipeline run` fails fast with an actionable error when a group-less
+  user's S3 work-dir would silently derive an inaccessible
+  `s3://nextflow-work/` bucket, instead of a confusing Nextflow retry-storm.
+- `abc pipeline run --wait --logs` no longer dies with `400 unknown task
+  name "main"` when the alloc's task states aren't populated yet —
+  resolves the real head task name (`nf-task`/`nextflow`) deterministically.
+
 ## v0.1.66 — 2026-07-02
 - Pipeline workers now mount `abc-tools` read-only when a work-dir host volume is also
   present (non-S3 pipelines), matching ADR-0061. S3-workdir pipelines still mount it
