@@ -266,6 +266,23 @@ warning).`,
 				}
 			}
 
+			// Cache the token type (management/client) into
+			// admin.services.nomad.token_type — informational, so anyone
+			// reading config.yaml cold sees at a glance whether this
+			// context's token bypasses ACL policy checks entirely
+			// ("management") without needing a live cluster call. A
+			// "group: (none)" line below is expected and NOT a sign of
+			// restricted access when the token type is "management".
+			if nomadTok != nil && activeCtx.Admin.Services.Nomad != nil &&
+				strings.TrimSpace(nomadTok.Type) != "" &&
+				activeCtx.Admin.Services.Nomad.TokenType != nomadTok.Type {
+				activeCtx.Admin.Services.Nomad.TokenType = nomadTok.Type
+				cfg.Contexts[canon] = activeCtx
+				if saveErr := cfg.Save(); saveErr != nil {
+					fmt.Fprintf(os.Stderr, "[abc] Warning: could not save admin.services.nomad.token_type: %v\n", saveErr)
+				}
+			}
+
 			// Ensure admin.id is populated. Generated once per (context, user)
 			// on first whoami; never edited afterwards. Used as the canonical
 			// user identity in Job.Meta for cross-cluster correlation, audit
@@ -328,6 +345,16 @@ warning).`,
 				group = "(none)"
 			}
 
+			// Prefer the live token type; fall back to the cached value
+			// (set by a prior whoami run) when the cluster is unreachable.
+			tokenType := ""
+			if nomadTok != nil {
+				tokenType = strings.TrimSpace(nomadTok.Type)
+			}
+			if tokenType == "" && activeCtx.Admin.Services.Nomad != nil {
+				tokenType = strings.TrimSpace(activeCtx.Admin.Services.Nomad.TokenType)
+			}
+
 			fmt.Printf("You are   %s", persona)
 			if cached {
 				fmt.Printf("   (cached — cluster unreachable)")
@@ -335,6 +362,13 @@ warning).`,
 			fmt.Printf("\n")
 			fmt.Printf("  role      %s\n", role)
 			fmt.Printf("  group     %s\n", group)
+			if tokenType != "" {
+				note := ""
+				if strings.EqualFold(tokenType, "management") {
+					note = "  (bypasses all Nomad ACL policy checks — 'group: none' above is expected, not restricted)"
+				}
+				fmt.Printf("  token type %s%s\n", tokenType, note)
+			}
 			fmt.Printf("  cluster   %s\n", cfg.ActiveContext)
 
 			// --- Details (secondary) ---
