@@ -12,6 +12,8 @@
 package appgen
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
@@ -655,10 +657,18 @@ func (s *Spec) JobName() string {
 	return "app-" + s.Project + "-" + s.Name
 }
 
-// ServiceAccountName returns the Vault/MinIO service-account name for this app:
-// `abc-app-<project>-<name>`.
+// ServiceAccountName returns the Vault/MinIO service-account access key for
+// this app. MinIO enforces a 3-20 character access key length, which the
+// obvious `abc-app-<project>-<name>` scheme blows past for almost any
+// realistic project/app name (verified against RELEASE.2025-09-07T16-13-09Z,
+// 2026-07-03 — "access key length should be between 3 and 20"; no
+// data-bucket-backed app had ever successfully deployed before this fix, so
+// changing the scheme breaks no existing service account). Deterministic
+// (same project+name always yields the same key, so a re-deploy reuses the
+// identity) via a truncated SHA-256 digest rather than the literal name.
 func (s *Spec) ServiceAccountName() string {
-	return "abc-app-" + s.Project + "-" + s.Name
+	h := sha256.Sum256([]byte(s.Project + "/" + s.Name))
+	return "sa-" + hex.EncodeToString(h[:])[:16] // "sa-" (3) + 16 hex chars = 19
 }
 
 // looksLikeImageRef does a cheap structural check that an image string is a
