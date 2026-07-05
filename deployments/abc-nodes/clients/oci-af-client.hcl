@@ -28,12 +28,14 @@
 # aither's own binary (matches the cluster-pinned version exactly) at
 # bin/s5cmd — needed for the S3-workdir worker mount fix (abc-cluster-cli
 # PR #37, fix/s3-workdir-nf-work-carrier) to actually work on this node.
-# NOT populated: abc-tools (ADR-0061) — its provisioning mechanism is
-# undocumented cluster-wide (see brainstorms/abc-data-node/2026-07-04-aither-
-# abc-tools-rw-worker-mount-report.md's "abc-tools-sync is NOT verified in
-# code" finding) so it's left unregistered here rather than guessing at a
-# population step. Non-S3-workdir pipelines needing abc-tools RO will not
-# work on this node until that's addressed — flagged, not silently covered.
+# abc-tools (ADR-0061): manually populated 2026-07-05 by copying the same
+# s5cmd binary (bin/s5cmd, root:root 0755) from aither's own abc-tools dir —
+# there is still no automated abc-tools-sync mechanism anywhere in the
+# cluster (see brainstorms/abc-data-node/2026-07-04-aither-abc-tools-rw-
+# worker-mount-report.md's "abc-tools-sync is NOT verified in code" finding),
+# so this copy will silently drift from aither's/nomad01-03's if abc-tools'
+# contents ever change and this node isn't manually updated too. Registered
+# read-only, matching every other compute node.
 datacenter = "seedling-prod"
 data_dir   = "/opt/nomad"
 log_level  = "INFO"
@@ -101,6 +103,10 @@ client {
   host_volume "nf-work" {
     path      = "/home/ubuntu/abc-seedling/nf-work"
     read_only = false
+  }
+  host_volume "abc-tools" {
+    path      = "/home/ubuntu/abc-seedling/abc-tools"
+    read_only = true
   }
 }
 
