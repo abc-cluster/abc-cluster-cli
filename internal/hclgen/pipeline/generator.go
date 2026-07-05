@@ -840,7 +840,7 @@ func buildNextflowConfig(spec Spec) string {
 	var sb strings.Builder
 
 	// nf-nomad volumes block. When work dir is S3 and nf-nomad-s5cmd is in the
-	// plugin list, mount the `abc-tools` host volume as /nxf-work so workers can
+	// plugin list, mount a tools host volume as /nxf-work so workers can
 	// find the s5cmd binary at /nxf-work/bin/s5cmd (ADR-0061; was nf-work, see below).
 	// Otherwise omit the volume when S3 is the work dir (no shared local disk needed).
 	hostVol := spec.HostVolume
@@ -855,7 +855,7 @@ func buildNextflowConfig(spec Spec) string {
 	// Worker host volumes, composed from up to two independent mounts:
 	//   (1) the shared work-dir host volume — only for a non-S3 work dir (an S3 work
 	//       dir needs no shared local disk; HostVolume="-" also disables it);
-	//   (2) the `abc-tools` tools volume at /nxf-work — whenever a tools plugin
+	//   (2) the tools volume at /nxf-work — whenever a tools plugin
 	//       (nf-nomad-s5cmd / nf-rclone) is loaded, so the worker bootstrap resolves
 	//       /nxf-work/bin/s5cmd from the MOUNT (ADR-0061), never an artifact download.
 	//
@@ -866,11 +866,26 @@ func buildNextflowConfig(spec Spec) string {
 	//   - Non-S3 work dir: the shared host volume is appended FIRST, so IT becomes
 	//     the implicit workDir; `abc-tools` is the SECOND entry and is therefore
 	//     safe to mount read-only (ADR-0061 option ii) — no plugin/validate conflict.
-	//   - S3 work dir: `abc-tools` is the ONLY entry, so it is itself auto-promoted
-	//     to workDir and MUST stay read-write (marking it readOnly here would make
-	//     every S3-workdir run fail validate()). Tamper-safety still comes from the
-	//     binaries being root-owned 0755. Making this RO too needs an nf-nomad-side
-	//     change (ADR-0061 option iii) — out of scope for abc-cluster-cli alone.
+	//   - S3 work dir: the tools volume is the ONLY entry, so it is itself
+	//     auto-promoted to workDir and MUST stay read-write. `abc-tools` is
+	//     registered read-only on the `aither` platform node (a prior RW request
+	//     failed placement there — see the 2026-06-26 tool-distribution
+	//     brainstorm), so an S3-workdir worker landing on aither would fail to
+	//     register entirely if it tried to mount abc-tools here. A separate,
+	//     still-open issue (design/decided/nf-s5cmd-distributed-workdir.md
+	//     "Known gaps", 2026-06-24 live EVEREST failure) also saw workers get an
+	//     EMPTY /nxf-work from abc-tools even on nodes where it IS read-write,
+	//     suspected to be a workload-identity token grant issue independent of
+	//     the RO/RW registration. That doc's own recommended interim unblock —
+	//     never previously implemented — is to use `nf-work` (registered
+	//     read-write on every node, aither included, and the proven carrier
+	//     nf-s5cmd's v1 design validated end-to-end on `nextflow-io/rnaseq-nf`
+	//     before ADR-0061 introduced abc-tools) as the S3-workdir worker's tools
+	//     carrier instead. Applied here 2026-07-05 — see
+	//     brainstorms/abc-data-node/2026-07-04-aither-abc-tools-rw-worker-mount-report.md
+	//     in abc-universe for the live-incident writeup this responds to.
+	//     Tamper-safety for the binaries at that path still comes from them
+	//     being root/operator-owned 0755, not from the RO mount flag.
 	var vols []string
 	hasWorkDirVol := false
 	if !isS3URI(spec.WorkDir) && spec.HostVolume != "-" {
@@ -881,7 +896,8 @@ func buildNextflowConfig(spec Spec) string {
 		if hasWorkDirVol {
 			vols = append(vols, `[type: "host", name: "abc-tools", path: "/nxf-work", readOnly: true]`)
 		} else {
-			vols = append(vols, `[type: "host", name: "abc-tools", path: "/nxf-work"]`)
+			// S3 workdir: use nf-work, not abc-tools — see the comment block above.
+			vols = append(vols, `[type: "host", name: "nf-work", path: "/nxf-work"]`)
 		}
 	}
 	volumesLine := "volumes = []"

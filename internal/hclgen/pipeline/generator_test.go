@@ -172,26 +172,37 @@ func TestGenerate_S5cmdBlock_SkipTLS(t *testing.T) {
 		}
 	})
 
-	t.Run("abc-tools volume mounted at /nxf-work", func(t *testing.T) {
+	t.Run("S3 work dir: worker tools volume is nf-work, mounted at /nxf-work", func(t *testing.T) {
 		spec := base
 		cfg := buildNextflowConfig(spec)
-		// ADR-0061: tools volume is `abc-tools` (bin/ layout) mounted at /nxf-work so
-		// the s5cmd plugin bootstrap still finds /nxf-work/bin/s5cmd.
-		if !strings.Contains(cfg, `name: "abc-tools"`) || !strings.Contains(cfg, `path: "/nxf-work"`) {
-			t.Fatalf("expected abc-tools volume at /nxf-work:\n%s", cfg)
+		// 2026-07-05: S3-workdir workers use `nf-work`, not `abc-tools`, as the
+		// tools carrier — abc-tools is registered read-only on the `aither`
+		// platform node, and an S3-workdir worker's tools mount must be
+		// read-write (it's the sole/auto-promoted workDir volume), so a worker
+		// landing on aither would fail to register entirely if it tried to
+		// mount abc-tools here. See
+		// brainstorms/abc-data-node/2026-07-04-aither-abc-tools-rw-worker-mount-report.md
+		// and design/decided/nf-s5cmd-distributed-workdir.md's "Known gaps" in
+		// abc-universe. The HEAD's own mount is unaffected — it stays on
+		// abc-tools, read-only, which works fine on every node.
+		if !strings.Contains(cfg, `name: "nf-work"`) || !strings.Contains(cfg, `path: "/nxf-work"`) {
+			t.Fatalf("expected nf-work volume at /nxf-work:\n%s", cfg)
+		}
+		if strings.Contains(cfg, `name: "abc-tools"`) {
+			t.Fatalf("did not expect abc-tools as the worker's S3-workdir tools volume:\n%s", cfg)
 		}
 	})
 
-	t.Run("S3 work dir: abc-tools is the sole volume and stays read-write", func(t *testing.T) {
+	t.Run("S3 work dir: nf-work tools volume is the sole volume and stays read-write", func(t *testing.T) {
 		// nf-nomad auto-promotes the sole/first unmarked volume to `workDir`
 		// (JobBuilder.groovy), and JobVolume.validate() rejects `workDir &&
-		// readOnly`. base.WorkDir is s3://..., so abc-tools is the only entry in
+		// readOnly`. base.WorkDir is s3://..., so nf-work is the only entry in
 		// the volumes list here and must NOT carry readOnly, or every S3-workdir
 		// pipeline run would fail nf-nomad's validate() at submission.
 		spec := base
 		cfg := buildNextflowConfig(spec)
-		if strings.Contains(cfg, `name: "abc-tools", path: "/nxf-work", readOnly: true`) {
-			t.Fatalf("abc-tools must stay read-write when it is the sole (S3 workdir) volume:\n%s", cfg)
+		if strings.Contains(cfg, `name: "nf-work", path: "/nxf-work", readOnly: true`) {
+			t.Fatalf("nf-work must stay read-write when it is the sole (S3 workdir) volume:\n%s", cfg)
 		}
 	})
 
