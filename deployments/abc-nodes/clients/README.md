@@ -6,6 +6,7 @@ config for each named node in the abc-nodes fleet.
 | File | Host | Tailscale IP | Notes |
 |------|------|-------------|-------|
 | `aither-client.hcl` | aither | `100.70.185.46` | Single-node **server+client** (`bootstrap_expect = 1`), `node_pool = "platform"` — hosts MinIO/tusd/signup-svc/observability + Nextflow head jobs. Drivers: containerd-driver, docker, raw_exec, exec2, podman, singularity, qemu (built-in). |
+| `oci-af-client.hcl` | oci-af (af-ubuntu2404) | `100.89.64.44` | Pure Nomad **client** (no server stanza), `node_pool = "compute"` — joined 2026-07-05 to add pipeline-testing capacity. Commercial OCI VM (af-jhb/Johannesburg), 32 vCPU/31 GiB, Ubuntu 24.04. Drivers: docker, raw_exec only (no containerd-driver/exec2/podman/singularity plugins installed). `scratch` host_volume is a subdirectory of the attached mbovis 1 TB data disk, not the disk root (Docker's own daemon root lives on that disk — see the file's own header comment for why the path is scoped the way it is). `abc-tools` is deliberately NOT registered here — its provisioning mechanism is undocumented cluster-wide (see `brainstorms/abc-data-node/2026-07-04-aither-abc-tools-rw-worker-mount-report.md` in abc-universe); non-S3-workdir pipelines needing it won't work on this node yet. |
 
 ## How to use
 
