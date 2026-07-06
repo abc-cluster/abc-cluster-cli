@@ -83,9 +83,14 @@ type Spec struct {
 	// Set to "-" to skip the host volume block entirely (use with S3 work dirs).
 	HostVolume string
 
-	// NodeConstraint pins the head job to a specific Nomad node hostname.
-	// When set, a constraint { attribute = "${attr.unique.hostname}" value = "<node>" }
-	// block is added to the head group.
+	// NodeConstraint pins the head job to a specific Nomad node, identified by
+	// its Nomad `name` (the value `nomad node status` shows, and the `name = "..."`
+	// line in that node's client HCL) — NOT the OS-level hostname, which can differ
+	// (e.g. oci-af: Nomad name "oci-af", OS hostname "af-ubuntu2404"). When set, a
+	// constraint { attribute = "${node.unique.name}" value = "<node>" } block is
+	// added to the head group. This matches the attribute PinWorkers' per-process
+	// constraint and WorkerExcludeHost already use, so the same --node value pins
+	// both head and workers consistently.
 	NodeConstraint string
 
 	// PinWorkers, when true AND NodeConstraint is set, also emits the per-process
@@ -602,10 +607,16 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 		edBody.SetAttributeValue("size", cty.NumberIntVal(int64(spec.HeadDiskMB)))
 	}
 
-	// Node hostname constraint — pins the head job to a specific Nomad client.
+	// Node identity constraint — pins the head job to a specific Nomad client.
+	// Uses node.unique.name (Nomad's configured node identity, the same
+	// attribute --pin-workers' nf-nomad constraint and --worker-exclude-host
+	// already key off) rather than the OS-level hostname, so a single --node
+	// value pins both the head and (with --pin-workers) every worker task to
+	// the same node even when a node's OS hostname and its Nomad `name` differ
+	// (e.g. oci-af: hostname af-ubuntu2404, Nomad name oci-af).
 	if spec.NodeConstraint != "" {
 		cBody := groupBody.AppendNewBlock("constraint", nil).Body()
-		cBody.SetAttributeValue("attribute", cty.StringVal("${attr.unique.hostname}"))
+		cBody.SetAttributeValue("attribute", cty.StringVal("${node.unique.name}"))
 		cBody.SetAttributeValue("value", cty.StringVal(spec.NodeConstraint))
 	}
 

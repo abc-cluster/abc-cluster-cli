@@ -272,6 +272,39 @@ func TestBuildNextflowConfig_WorkerExcludeHostMultipleHosts(t *testing.T) {
 	}
 }
 
+// Regression: the head's --node constraint and the worker's --pin-workers
+// constraint must key off the SAME Nomad node attribute. Before this fix the
+// head used ${attr.unique.hostname} (the OS hostname) while --pin-workers'
+// nf-nomad constraint keyed off node.unique.name (Nomad's configured node
+// identity) — identical for most nodes (aither, nomad01-03) but different for
+// oci-af (OS hostname af-ubuntu2404, Nomad name oci-af), so no single --node
+// value could satisfy both and every placement failed. The head must now also
+// use node.unique.name.
+func TestGenerate_HeadNodeConstraintUsesNomadNodeName(t *testing.T) {
+	spec := Spec{
+		Datacenters:     []string{"dc1"},
+		WorkDir:         "/work/nextflow-work",
+		CPU:             1000,
+		MemoryMB:        2048,
+		NfVersion:       "25.10.4",
+		NfPluginVersion: "0.4.0-edge3",
+		Repository:      "nextflow-io/hello",
+		NodeConstraint:  "oci-af",
+		PinWorkers:      true,
+	}
+	hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "u")
+	if strings.Contains(hcl, `attr.unique.hostname`) {
+		t.Fatalf("head constraint must not use the OS hostname attribute:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, `attribute = "$${node.unique.name}"`) || !strings.Contains(hcl, `value     = "oci-af"`) {
+		t.Fatalf("expected head constraint on node.unique.name = oci-af:\n%s", hcl)
+	}
+	cfg := buildNextflowConfig(spec)
+	if !strings.Contains(cfg, `constraints = { node { unique = [name: 'oci-af'] } }`) {
+		t.Fatalf("expected worker pin-workers constraint on the same node name:\n%s", cfg)
+	}
+}
+
 // Regression: --pin-workers must not silently drop the `nodePool` line.
 // Live testing on seedling-prod found that omitting nodePool under
 // --pin-workers left the per-task Nomad job on the "default" pool (zero

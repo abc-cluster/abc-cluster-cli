@@ -44,15 +44,16 @@ type PipelineSpec struct {
 	// HostVolume is the Nomad host volume name for shared work storage.
 	// Use "-" to disable host volumes (e.g. when workDir is an S3 URI).
 	HostVolume string `json:"hostVolume,omitempty" yaml:"hostVolume,omitempty"`
-	// NodeConstraint pins the head job to a specific Nomad node hostname.
+	// NodeConstraint pins the head job to a specific Nomad node, identified by
+	// its Nomad node name (see 'nomad node status'), not the OS hostname.
 	NodeConstraint string `json:"nodeConstraint,omitempty" yaml:"nodeConstraint,omitempty"`
 	// PinWorkers, when true with NodeConstraint set, also pins every spawned
 	// Nextflow process to the same node (single-host run). Default false:
 	// `--node` only pins the head and workers spread across the cluster.
 	PinWorkers bool `json:"pinWorkers,omitempty" yaml:"pinWorkers,omitempty"`
 	// WorkerExcludeHost forces every spawned Nextflow process OFF the named
-	// hostname(s). Use with --node to enforce a true head≠worker distributed
-	// test (no accidental co-location that masks shared-FS assumptions).
+	// Nomad node name(s). Use with --node to enforce a true head≠worker
+	// distributed test (no accidental co-location that masks shared-FS assumptions).
 	WorkerExcludeHost []string `json:"workerExcludeHost,omitempty" yaml:"workerExcludeHost,omitempty"`
 
 	// HeadPool is the Nomad node-pool the head job must land in. Empty falls

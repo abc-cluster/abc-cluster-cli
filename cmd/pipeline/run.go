@@ -128,9 +128,9 @@ EXAMPLES
 		"NOMAD_ADDR the head uses to register worker jobs (the INTERNAL Nomad API; the head runs on-cluster). "+
 			"Empty = node-local agent via ${attr.unique.network.ip-address}:4646, so worker registers bypass the public ingress.")
 	cmd.Flags().String("host-volume", "", "Nomad host volume name for the work dir (default: nextflow-work; use \"-\" to disable)")
-	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (workers spread freely; combine with --pin-workers for single-host runs)")
+	cmd.Flags().String("node", "", "Pin the head job to this Nomad node (the Nomad node name shown by 'nomad node status', not the OS hostname; workers spread freely; combine with --pin-workers for single-host runs)")
 	cmd.Flags().Bool("pin-workers", false, "When --node is set, ALSO pin every spawned process to that node (single-host run; needed when there is no shared FS / nf-rclone)")
-	cmd.Flags().StringArray("worker-exclude-host", nil, "Force every spawned process OFF this hostname (repeatable; combine with --node to enforce a true head≠worker distributed test)")
+	cmd.Flags().StringArray("worker-exclude-host", nil, "Force every spawned process OFF this Nomad node name (repeatable; combine with --node to enforce a true head≠worker distributed test)")
 
 	// Nomad placement
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
