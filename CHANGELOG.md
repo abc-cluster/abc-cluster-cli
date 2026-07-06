@@ -4,6 +4,27 @@ All notable changes to `abc-cluster-cli` are documented here. Format loosely fol
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions before v0.1.40 are
 not individually documented — see `git tag` for the full history.
 
+## v0.1.69 — 2026-07-06
+- `abc pipeline run --node`: the head job's node constraint now uses
+  `node.unique.name` instead of the OS-level hostname, matching the attribute
+  `--pin-workers` and `--worker-exclude-host` already used. Previously a
+  single `--node` value couldn't place both head and workers on any node
+  whose OS hostname differs from its Nomad node name (e.g. oci-af).
+- `--worker-exclude-host` is now repeatable (previously a later value silently
+  replaced an earlier one).
+- `--pin-workers` no longer silently drops the worker job's `nodePool` line,
+  which left per-task Nomad jobs on the zero-node `default` pool.
+- S3-workdir pipeline workers now mount `nf-work` (RW on every node) instead
+  of `abc-tools` as the `/nxf-work` tools carrier, fixing worker registration
+  on nodes where `abc-tools` is registered read-only (e.g. aither, oci-af).
+- `deployments/abc-nodes/clients/aither-client.hcl` resynced with aither's
+  live single-node server+client config — the checked-in file had drifted
+  since a 2026-05-07 architecture change and was missing 7 of 8 registered
+  host volumes.
+- Fixed two `abc app deploy` bugs for data-bucket-backed apps: a missing
+  explicit secret key on MinIO service-account creation, and generated
+  access-key names exceeding MinIO's 20-character limit.
+
 ## v0.1.68 — 2026-07-03
 - `abc auth whoami` now caches the Nomad ACL token type
   (`admin.services.nomad.token_type`) and shows it alongside role/group —
