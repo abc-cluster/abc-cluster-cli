@@ -96,12 +96,12 @@ type Spec struct {
 	PinWorkers bool
 
 	// WorkerExcludeHost, when set, emits a per-process Nomad constraint
-	// `${node.unique.name} != <WorkerExcludeHost>`. Use it to force a true
+	// `${node.unique.name} != <host>` for each entry. Use it to force a true
 	// head≠worker distributed test — workers cannot accidentally co-locate on
 	// the head's node and bypass the no-shared-FS code path (rclone bootstrap,
 	// .exitcode upload via remote, etc.). Typically set to the same host as
 	// NodeConstraint for the canonical "head pinned, workers excluded" pattern.
-	WorkerExcludeHost string
+	WorkerExcludeHost []string
 
 	// HeadPool is the Nomad node-pool name the head job must land in.
 	// On seedling: "platform". When empty, no `node_pool = …` attribute
@@ -113,10 +113,10 @@ type Spec struct {
 	// WorkerPool is the Nomad node-pool name nf-nomad-spawned worker jobs
 	// (per-process) should land in. On seedling: "compute". When empty,
 	// no `nomad.jobs.nodePool = …` line is emitted in the generated
-	// nextflow.headjob.config; workers go to Nomad's default pool. The
-	// per-process `--pin-workers` constraint overrides this — workers
-	// pinned to a specific node by hostname are not subject to the pool
-	// constraint.
+	// nextflow.headjob.config; workers go to Nomad's default pool. Still
+	// emitted even when PinWorkers is set — see workerNodePoolLine's doc
+	// comment for why the two must combine, not conflict, on any cluster
+	// that uses named pools (i.e. every real seedling-prod node).
 	WorkerPool string
 
 	// PluginBundleURL, when non-empty, makes the head job pull this artifact zip
@@ -361,14 +361,29 @@ func identityPassthroughLine(id Identity, extra ...string) string {
 // generated nomad.jobs { ... } config block, which routes every
 // nf-nomad-spawned worker job to the named Nomad node-pool.
 //
-// Skipped (empty string) when `pinWorkers` is true — the --pin-workers
-// path uses a per-process node-name constraint, and a pool restriction
-// on top of it would either be redundant (head's node is in the pool)
-// or contradictory (head's node is NOT in the pool → placement fails).
-// Also skipped when workerPool is empty (operator/cluster doesn't use
+// Emitted whenever workerPool is non-empty, REGARDLESS of pinWorkers.
+// Previously this was skipped whenever `--pin-workers` was set, on the
+// theory that the per-process node-name constraint alone was sufficient
+// to place workers. Live testing (see
+// brainstorms/abc-data-node/2026-07-04-aither-abc-tools-rw-worker-mount-report.md,
+// "2026-07-05 (later)", in abc-universe) showed nf-nomad's per-task job
+// submission (NomadService.submitTask) sets NodePool from
+// `this.config.jobOpts().nodePool` independently of the per-process
+// `constraints` directive — omitting nodePool here left every worker job
+// on Nomad's "default" pool, which on seedling-prod (and any cluster that
+// uses named pools) has zero registered nodes: a guaranteed, silent
+// "No nodes were eligible for evaluation" scheduling failure.
+//
+// Emitting nodePool alongside the per-process node-name constraint is
+// safe: Nomad first narrows placement to the named pool, then the
+// constraint narrows further to the specific node. As long as the pinned
+// --node host is actually a member of workerPool, both agree. If it is
+// NOT a member, the run now fails fast with a clear placement error
+// instead of the previous silent, always-broken "default pool" failure.
+// Still skipped when workerPool is empty (operator/cluster doesn't use
 // pools — Nomad's default is fine).
-func workerNodePoolLine(workerPool string, pinWorkers bool) string {
-	if pinWorkers || workerPool == "" {
+func workerNodePoolLine(workerPool string) string {
+	if workerPool == "" {
 		return ""
 	}
 	return fmt.Sprintf(`nodePool                 = %q`, workerPool)
@@ -927,16 +942,22 @@ process {
   constraints = { node { unique = [name: '%s'] } }
 }
 `, spec.NodeConstraint)
-	case spec.WorkerExcludeHost != "":
-		// Exclude workers from a specific node (forces head≠worker placement).
-		// Uses nf-nomad's JobConstraintsNode.raw() which accepts arbitrary
-		// operators (the typed DSL methods only emit '=', not '!=').
+	case len(spec.WorkerExcludeHost) > 0:
+		// Exclude workers from one or more specific nodes (forces head≠worker
+		// placement). Uses nf-nomad's JobConstraintsNode.raw() which accepts
+		// arbitrary operators (the typed DSL methods only emit '=', not '!=').
+		// Multiple `raw` calls inside one `node { }` closure accumulate as
+		// independent (AND'ed) constraints, so excluding N hosts emits N lines.
+		var raws []string
+		for _, host := range spec.WorkerExcludeHost {
+			raws = append(raws, fmt.Sprintf(`raw 'unique.name', '!=', '%s'`, host))
+		}
 		processConstraint = fmt.Sprintf(`
 
 process {
-  constraints = { node { raw 'unique.name', '!=', '%s' } }
+  constraints = { node { %s } }
 }
-`, spec.WorkerExcludeHost)
+`, strings.Join(raws, "; "))
 	}
 
 	// Build the plugins { ... } block. Default (no spec.Plugins) keeps the
@@ -1085,7 +1106,7 @@ nomad {
     ]
   }
 %s}
-%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), secretPassthroughLine(spec.SecretPassthroughEnvKeys), workerNodePoolLine(spec.WorkerPool, spec.PinWorkers), s5cmdBlock, waveBlock, processConstraint)
+%s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), secretPassthroughLine(spec.SecretPassthroughEnvKeys), workerNodePoolLine(spec.WorkerPool), s5cmdBlock, waveBlock, processConstraint)
 
 	if spec.ExtraConfig != "" {
 		sb.WriteString("\n")
