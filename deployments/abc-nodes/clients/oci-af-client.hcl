@@ -1,41 +1,56 @@
-# oci-af (af-ubuntu2404) — joining seedling-prod as a compute-pool client.
+# oci-af — REPLACEMENT box, provisioned 2026-07-06, superseding the original oci-af
+# (af-ubuntu2404, decommissioned after an operator error wiped ~/home including
+# ~/.ssh on that host, breaking SSH access irrecoverably). Same Tailscale identity
+# carried over (oci-af-client-01 @ 100.89.64.44), same mbovis 1TB data disk
+# attached at the same host path, but the disk contents themselves are a clean
+# slate — nothing from the old box's directory layout survived, and nothing
+# should be assumed to.
 #
-# Previously configured (2026-03-04, add-oci-af-nomad-client.ps1) as a client of a
-# now-dead cluster ("oci-nomadlab": nomad00/nomad01/oci-abhi-phd-arm-sa as servers,
-# all offline per `tailscale status`). Re-pointed 2026-07-05 to seedling-prod
-# (servers = aither's Tailscale IP, matching every other compute node's client
-# config) to add extra compute capacity for pipeline-scale testing.
-#
-# Host: OCI VM af-ubuntu2404, 32 vCPU / 31 GiB RAM, Ubuntu 24.04, af-jhb
-# (Johannesburg, South Africa) region — same jurisdiction as the SU-hosted
-# physical fleet (aither/nomad01-03, Stellenbosch), hence popia=true below,
-# but this is a commercial cloud VM, not a university-audited HPC node — no
-# separate data-processor agreement has been reviewed. Flag before routing any
+# Host specs differ from the original: 8 vCPU / 62 GiB RAM (was 32 vCPU / 31 GiB),
+# Ubuntu 24.04, OCI af-jhb (Johannesburg, South Africa) — same jurisdiction as the
+# SU-hosted physical fleet (aither/nomad01-03, Stellenbosch), hence popia=true
+# below, but this is a commercial cloud VM, not a university-audited HPC node —
+# no separate data-processor agreement has been reviewed. Flag before routing any
 # real (non-test) POPIA-governed data here; fine for pipeline-capacity testing.
 #
-# node_pool = "compute" (joins nomad01/02/03, not a separate pool) — decided
-# 2026-07-05. Scratch host_volume backed by the mbovis disk
-# (/home/ubuntu/data-volumes/data-mbovis-1tb-01, 1 TB, 623G free at setup time)
-# per the same request.
+# node_pool = "compute" (joins nomad01/02/03), node `name` kept as "oci-af" for
+# continuity with existing docs/PRs even though the OS hostname is now
+# "oci-af-replacement-20260706194142" — be aware abc-cluster-cli's --node flag
+# uses INCONSISTENT attributes for head vs. --pin-workers placement (OS hostname
+# vs. this configured name); see brainstorms/abc-data-node/2026-07-04-aither-
+# abc-tools-rw-worker-mount-report.md in abc-universe and the open follow-up
+# task for that bug. Use the node-eligibility-toggle method for single-node
+# testing until it's fixed, not --node/--pin-workers.
 #
-# No apptainer/singularity, no nomad-driver-exec2, no containerd Nomad plugin,
-# no podman installed on this host (verified live) — only docker + raw_exec
-# capabilities are enabled below; don't copy capability flags from other nodes
-# without verifying what's actually installed here.
+# Docker data-root: ALREADY on the mbovis disk on this box out of the gate
+# (`Docker Root Dir: .../data-mbovis-1tb-01/DOCKER_ROOT/docker`, verified via
+# `docker info` — apparently baked into the provisioning image/snapshot this
+# replacement came from) — for longevity/capacity, per 2026-07-06 request.
+# Left as-is; not reconfigured here.
 #
-# nf-work host_volume: freshly created at /home/ubuntu/abc-seedling/nf-work
-# (this host has no /opt/abc-seedling), with s5cmd v2.3.0-991c9fb copied from
-# aither's own binary (matches the cluster-pinned version exactly) at
-# bin/s5cmd — needed for the S3-workdir worker mount fix (abc-cluster-cli
-# PR #37, fix/s3-workdir-nf-work-carrier) to actually work on this node.
-# abc-tools (ADR-0061): manually populated 2026-07-05 by copying the same
-# s5cmd binary (bin/s5cmd, root:root 0755) from aither's own abc-tools dir —
-# there is still no automated abc-tools-sync mechanism anywhere in the
-# cluster (see brainstorms/abc-data-node/2026-07-04-aither-abc-tools-rw-
-# worker-mount-report.md's "abc-tools-sync is NOT verified in code" finding),
-# so this copy will silently drift from aither's/nomad01-03's if abc-tools'
-# contents ever change and this node isn't manually updated too. Registered
-# read-only, matching every other compute node.
+# Host-volume layout: everything Nomad-managed lives under a fresh
+# abc-nomad/{scratch,nf-work,abc-tools} tree, as a SIBLING of DOCKER_ROOT/ on the
+# same disk — NOT nested inside or an ancestor of it. This is deliberate: on the
+# original oci-af, Docker's daemon root was nested INSIDE the registered
+# `scratch` host_volume's path, and bind-mounting an ancestor of Docker's own
+# storage root failed ("must use either propagation mode rslave or rshared").
+# Keeping Nomad's tree and DOCKER_ROOT as siblings avoids that class of bug
+# entirely, rather than working around it with a deeper subdirectory.
+#
+# nf-work/abc-tools populated 2026-07-06 by copying the same s5cmd binary
+# (v2.3.0-991c9fb, root:root 0755) from aither's own copy — there is still no
+# automated abc-tools-sync mechanism anywhere in the cluster (see the report
+# above, "abc-tools-sync is NOT verified in code"), so these copies will
+# silently drift from aither's/nomad01-03's if abc-tools' contents ever change
+# and this node isn't manually updated too.
+#
+# The docker0->host-Tailscale-IP iptables ACCEPT rule (needed for nf-nomad's
+# worker-registration callback to the node-local Nomad agent) was ALREADY
+# present on this box at first boot (verified via `iptables -L INPUT -v`) —
+# presumably baked into the same provisioning image/snapshot as the Docker
+# data-root setting. Left as-is; not reapplied here. If a future replacement
+# doesn't have it, see the report above for the exact rule
+# (`-i docker0 -p tcp --dport 4646 -j ACCEPT`, persisted via iptables-persistent).
 datacenter = "seedling-prod"
 data_dir   = "/opt/nomad"
 log_level  = "INFO"
@@ -65,8 +80,8 @@ client {
     "node.locality.site"          = "johannesburg"
     "node.locality.network"       = "tailscale"
     "node.locality.datacenter"    = "seedling-prod"
-    "node.hardware.cpus"          = "32"
-    "node.hardware.mem_gb"        = "31"
+    "node.hardware.cpus"          = "8"
+    "node.hardware.mem_gb"        = "62"
     "node.hardware.gpus"          = "0"
     "node.hardware.infiniband"    = "false"
     "node.os.name"                = "ubuntu"
@@ -85,27 +100,16 @@ client {
     "node.workload.groups"        = "open"
   }
 
-  # mbovis disk (1 TB block volume, /dev/sdb) as pipeline worker scratch space,
-  # per 2026-07-05 request. NOT the vinotype disk (/dev/sdc) — that's a
-  # separate, unrelated dataset, left untouched. Scoped to a fresh
-  # _scratch/nomad-pipeline-scratch/ subdirectory, not the disk root, for two
-  # reasons found live: (1) Docker's own daemon root is nested at
-  # <disk>/DOCKER_ROOT/docker — bind-mounting an ancestor of Docker's storage
-  # root fails ("must use either propagation mode rslave or rshared"); (2) the
-  # disk root and its existing _scratch/ dir already hold 17G+ of the owner's
-  # own prior manual mbovis pipeline runs (work/, .nextflow.log*, TBtypeR/,
-  # _deleteme/) — a fresh subdirectory keeps Nomad-submitted job scratch from
-  # comingling with that pre-existing research data.
   host_volume "scratch" {
-    path      = "/home/ubuntu/data-volumes/data-mbovis-1tb-01/_scratch/nomad-pipeline-scratch"
+    path      = "/home/ubuntu/data-volumes/data-mbovis-1tb-01/abc-nomad/scratch"
     read_only = false
   }
   host_volume "nf-work" {
-    path      = "/home/ubuntu/abc-seedling/nf-work"
+    path      = "/home/ubuntu/data-volumes/data-mbovis-1tb-01/abc-nomad/nf-work"
     read_only = false
   }
   host_volume "abc-tools" {
-    path      = "/home/ubuntu/abc-seedling/abc-tools"
+    path      = "/home/ubuntu/data-volumes/data-mbovis-1tb-01/abc-nomad/abc-tools"
     read_only = true
   }
 }
