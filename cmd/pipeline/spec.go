@@ -51,9 +51,9 @@ type PipelineSpec struct {
 	// `--node` only pins the head and workers spread across the cluster.
 	PinWorkers bool `json:"pinWorkers,omitempty" yaml:"pinWorkers,omitempty"`
 	// WorkerExcludeHost forces every spawned Nextflow process OFF the named
-	// hostname. Use with --node to enforce a true head≠worker distributed test
-	// (no accidental co-location that masks shared-FS assumptions).
-	WorkerExcludeHost string `json:"workerExcludeHost,omitempty" yaml:"workerExcludeHost,omitempty"`
+	// hostname(s). Use with --node to enforce a true head≠worker distributed
+	// test (no accidental co-location that masks shared-FS assumptions).
+	WorkerExcludeHost []string `json:"workerExcludeHost,omitempty" yaml:"workerExcludeHost,omitempty"`
 
 	// HeadPool is the Nomad node-pool the head job must land in. Empty falls
 	// through to the active context's admin.services.nomad.head_pool, then to
@@ -62,7 +62,9 @@ type PipelineSpec struct {
 	// WorkerPool is the Nomad node-pool nf-nomad workers should land in.
 	// Empty falls through to the active context's admin.services.nomad.
 	// worker_pool, then to the CLI's build-time default ("compute" on
-	// seedling). Bypassed when PinWorkers is true.
+	// seedling). Still applied when PinWorkers is true — the pinned --node
+	// host must be a member of WorkerPool, or the run will fail placement
+	// (see internal/hclgen/pipeline.workerNodePoolLine).
 	WorkerPool string `json:"workerPool,omitempty" yaml:"workerPool,omitempty"`
 	// HeadNomadAddr is the NOMAD_ADDR injected into the head task so nf-nomad
 	// registers worker jobs against the cluster's INTERNAL Nomad API rather than
@@ -227,8 +229,8 @@ func mergeSpec(base, override *PipelineSpec) *PipelineSpec {
 	if override.PinWorkers {
 		base.PinWorkers = true
 	}
-	if override.WorkerExcludeHost != "" {
-		base.WorkerExcludeHost = override.WorkerExcludeHost
+	if len(override.WorkerExcludeHost) > 0 {
+		base.WorkerExcludeHost = append([]string(nil), override.WorkerExcludeHost...)
 	}
 	if override.HeadPool != "" {
 		base.HeadPool = override.HeadPool

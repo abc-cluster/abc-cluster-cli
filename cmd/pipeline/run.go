@@ -122,14 +122,15 @@ EXAMPLES
 			"Empty = use the active context's default (typically 'platform').")
 	cmd.Flags().String("worker-pool", "",
 		"Nomad node-pool nf-nomad workers should land in. Overrides the active context's admin.services.nomad.worker_pool. "+
-			"Bypassed when --pin-workers is set. Empty = use the active context's default (typically 'compute').")
+			"Still applied when --pin-workers is set — the --node host must belong to this pool, or the run fails placement. "+
+			"Empty = use the active context's default (typically 'compute').")
 	cmd.Flags().String("head-nomad-addr", "",
 		"NOMAD_ADDR the head uses to register worker jobs (the INTERNAL Nomad API; the head runs on-cluster). "+
 			"Empty = node-local agent via ${attr.unique.network.ip-address}:4646, so worker registers bypass the public ingress.")
 	cmd.Flags().String("host-volume", "", "Nomad host volume name for the work dir (default: nextflow-work; use \"-\" to disable)")
 	cmd.Flags().String("node", "", "Pin the head job to this Nomad node hostname (workers spread freely; combine with --pin-workers for single-host runs)")
 	cmd.Flags().Bool("pin-workers", false, "When --node is set, ALSO pin every spawned process to that node (single-host run; needed when there is no shared FS / nf-rclone)")
-	cmd.Flags().String("worker-exclude-host", "", "Force every spawned process OFF this hostname (combine with --node to enforce a true head≠worker distributed test)")
+	cmd.Flags().StringArray("worker-exclude-host", nil, "Force every spawned process OFF this hostname (repeatable; combine with --node to enforce a true head≠worker distributed test)")
 
 	// Nomad placement
 	cmd.Flags().StringSlice("datacenter", nil, "Nomad datacenter(s) (default: dc1)")
@@ -275,8 +276,8 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if pin, _ := cmd.Flags().GetBool("pin-workers"); pin {
 		override.PinWorkers = true
 	}
-	if v, _ := cmd.Flags().GetString("worker-exclude-host"); v != "" {
-		override.WorkerExcludeHost = v
+	if hosts, _ := cmd.Flags().GetStringArray("worker-exclude-host"); len(hosts) > 0 {
+		override.WorkerExcludeHost = hosts
 	}
 	if v, _ := cmd.Flags().GetString("head-pool"); v != "" {
 		override.HeadPool = v

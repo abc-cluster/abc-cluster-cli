@@ -246,3 +246,58 @@ func TestGenerate_S5cmdBlock_SkipTLS(t *testing.T) {
 		}
 	})
 }
+
+// Regression: --worker-exclude-host must be repeatable. A live-observed bug
+// showed the CLI flag silently kept only the last of several repeated
+// values; the generator must fan every entry out to its own `raw` constraint
+// inside one `node { }` closure (see the processConstraint switch in
+// generator.go).
+func TestBuildNextflowConfig_WorkerExcludeHostMultipleHosts(t *testing.T) {
+	spec := Spec{
+		Datacenters:       []string{"dc1"},
+		WorkDir:           "/work/nextflow-work",
+		CPU:               1000,
+		MemoryMB:          2048,
+		NfVersion:         "25.10.4",
+		NfPluginVersion:   "0.4.0-edge3",
+		Repository:        "nextflow-io/hello",
+		WorkerExcludeHost: []string{"nomad01", "nomad02"},
+	}
+	cfg := buildNextflowConfig(spec)
+	if !strings.Contains(cfg, `raw 'unique.name', '!=', 'nomad01'`) {
+		t.Fatalf("expected exclusion constraint for nomad01:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, `raw 'unique.name', '!=', 'nomad02'`) {
+		t.Fatalf("expected exclusion constraint for nomad02:\n%s", cfg)
+	}
+}
+
+// Regression: --pin-workers must not silently drop the `nodePool` line.
+// Live testing on seedling-prod found that omitting nodePool under
+// --pin-workers left the per-task Nomad job on the "default" pool (zero
+// registered nodes there) — a guaranteed, silent scheduling failure — even
+// though the generated config's process.constraints block looked correct.
+// nf-nomad's NomadService.submitTask sets NodePool from
+// config.jobOpts().nodePool independently of the per-process constraints
+// directive, so both must be emitted together.
+func TestBuildNextflowConfig_WorkerPoolEmittedEvenWhenPinWorkers(t *testing.T) {
+	spec := Spec{
+		Datacenters:     []string{"dc1"},
+		WorkDir:         "/work/nextflow-work",
+		CPU:             1000,
+		MemoryMB:        2048,
+		NfVersion:       "25.10.4",
+		NfPluginVersion: "0.4.0-edge3",
+		Repository:      "nextflow-io/hello",
+		NodeConstraint:  "nomad01",
+		PinWorkers:      true,
+		WorkerPool:      "compute",
+	}
+	cfg := buildNextflowConfig(spec)
+	if !strings.Contains(cfg, `nodePool                 = "compute"`) {
+		t.Fatalf("expected nodePool line to survive --pin-workers:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, `constraints = { node { unique = [name: 'nomad01'] } }`) {
+		t.Fatalf("expected pin-workers node constraint:\n%s", cfg)
+	}
+}

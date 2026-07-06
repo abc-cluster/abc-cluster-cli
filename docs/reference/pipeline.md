@@ -50,8 +50,8 @@ abc pipeline run <pipeline> [flags]
 | Flag | Default | Description |
 |---|---|---|
 | `--node HOSTNAME` | *(any)* | Pin head job to a specific Nomad node |
-| `--pin-workers` | `false` | Also pin every process to the same node as `--node` (single-host run) |
-| `--worker-exclude-host HOSTNAME` | *(none)* | Force every process off this hostname (use with `--node` for a true head≠worker distributed test) |
+| `--pin-workers` | `false` | Also pin every process to the same node as `--node` (single-host run). The `--node` host must belong to the effective `--worker-pool` (context default or override) — a pinned node outside that pool fails placement. |
+| `--worker-exclude-host HOSTNAME` | *(none)* | _(repeatable)_ Force every process off this hostname (use with `--node` for a true head≠worker distributed test) |
 | `--datacenter LIST` | `dc1` | Nomad datacenter(s) |
 | `--nf-version TAG` | `25.10.4` | Nextflow Docker image tag |
 | `--plugin id@version` | _(repeatable)_ | Pin a Nextflow plugin to a specific version. By default `nf-nomad` and `nf-nomad-s5cmd` resolve to the newest published release (bare `id "<name>"`); use this to pin one, e.g. `--plugin nf-nomad@0.4.0-edge8`. |
