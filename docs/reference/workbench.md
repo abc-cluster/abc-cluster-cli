@@ -64,7 +64,7 @@ Start an admin Docker or VM workbench session.
 
 ```bash
 abc workbench start --backend=docker   # Nomad service job (container)
-abc workbench start --backend=vm       # Multipass VM (grove-tier precursor)
+abc workbench start --backend=vm       # Multipass VM
 ```
 
 | Flag | Default | Description |
@@ -158,14 +158,3 @@ browser → HTTPS (GCP Caddy) → workbench.seedling.abc-cluster.cloud
 JupyterHub runs as a Nomad `raw_exec` job (`abc-jupyterhub`) pinned to aither.
 NomadSpawner (`jupyterhub-nomad-spawner`) submits and stops per-user Nomad jobs.
 See `abc-deployments/abc-seedling-prod/jupyterhub/` for all deployment files.
-
----
-
-## Grove-tier roadmap
-
-The full IDE workbench (code-server, Positron Remote SSH) backed by the Nomad
-Multipass task driver is the grove-tier target. At grove, each user gets a persistent
-Multipass VM (`wb-<user>`) that suspends on stop and resumes in ~8 seconds.
-
-Design: `brainstorms/nomad-driver-multipass/2026-05-27-concrete-use-case-and-design.md`
-in abc-universe.

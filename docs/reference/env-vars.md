@@ -175,7 +175,7 @@ The CLI constructs these for child processes from the active context. You do not
 | `AWS_ENDPOINT_URL` | constructed for rclone/s5cmd/nextflow/mc subprocesses from active context | — | — | — | — |
 | `AWS_REGION` | constructed for rclone/s5cmd/nextflow/mc subprocesses from active context | — | — | — | — |
 | `AWS_DEFAULT_REGION` | older vendor variant of AWS_REGION; some tools (older aws-cli, boto) only read this | — | — | — | — |
-| `AWS_SESSION_TOKEN` 🔒 | session token for grove+ short-lived credentials (STS-style) | — | — | — | — |
+| `AWS_SESSION_TOKEN` 🔒 | session token for short-lived STS-style credentials, when the backend issues them | — | — | — | — |
 | `AWS_CA_BUNDLE` | custom CA cert path for self-signed S3 endpoints (lab deployments) | — | — | — | — |
 | `AWS_S3_FORCE_PATH_STYLE` | force path-style addressing; required for MinIO and RustFS | — | — | — | — |
 | `S3_FORCE_PATH_STYLE` | older vendor variant of AWS_S3_FORCE_PATH_STYLE | — | — | — | — |

@@ -293,9 +293,6 @@ latency degrades job throughput significantly.
 | `--dry-run` | false | Show what would be done without changing anything |
 | `--node` | from config | SSH alias for the platform node |
 
-**Grove/garden upgrade path:** replace geesefs with JuiceFS backed by
-Redis/PostgreSQL for full POSIX semantics across multiple compute nodes.
-
 ---
 
 ### Pool slot layout

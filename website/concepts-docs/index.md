@@ -5,18 +5,16 @@ title: Cluster Setup
 
 # Cluster Setup
 
-Operator documentation for deploying and running a private **abc-cluster** instance.
+Operator documentation for deploying and running a private **abc-cluster** instance
+on the **seedling** tier — a single Linux server (or small cluster) with no
+control plane: CLI, Nomad, Tailscale, MinIO/RustFS, and tusd.
 
-abc-cluster is available in three tiers that describe the scale and feature surface
-of a deployment:
+Seedling has two sub-tiers:
 
-| Tier | Scale | Access management | Object storage |
-|---|---|---|---|
-| **Seedling** | Single node or small cluster | Claim-code pool (SQLite) | MinIO |
-| **Grove** | Multi-node, multi-institution | Managed accounts | MinIO / S3 |
-| **Garden** | Federation, cloud-hybrid | Full IAM | Cloud-native |
-
-This documentation covers the **seedling tier**. Grove and garden are in progress.
+| Sub-tier | What it adds |
+|---|---|
+| **Seedling** | Floor automation only — CLI, Nomad, Tailscale, MinIO/RustFS, tusd |
+| **Seedling-enhanced** | Production hardening — Traefik, observability stack, ntfy, Boundary worker, abc-backups |
 
 ## Seedling tier pages
 

@@ -1,10 +1,9 @@
 # `abc doctor`
 
 Verifies that the CLI is correctly configured and can reach **and submit
-work to** the active cluster. Where `abc cluster status` (grove+ tiers)
-asks the server "are your services healthy?", `abc doctor` starts from
-your `~/.abc/config.yaml` and proves the full client→alloc path end to
-end — the check you run first when something isn't working.
+work to** the active cluster. `abc doctor` starts from your
+`~/.abc/config.yaml` and proves the full client→alloc path end to end —
+the check you run first when something isn't working.
 
 ## Usage
 
@@ -43,16 +42,6 @@ groups run (so you see the full picture, not just the first error).
 | `0` | All run checks passed. |
 | `1` | One or more checks failed. |
 
-## `abc doctor` vs `abc cluster status`
-
-| | `abc doctor` | `abc cluster status` |
-|---|---|---|
-| Starting point | your local `config.yaml` | the cluster's service registry |
-| Proves | the full client → Nomad → alloc submission path | server-side service health |
-| Submits a job? | yes (the workload probe) unless `--skip-job` | no |
-| Use when | "my CLI can't talk to the cluster — why?" | "is the cluster itself healthy?" |
-
 ## See also
 
-- `abc cluster status` (grove+ tiers) — server-side service health table
 - [Global flags](./global-flags) — `--context`, `--json`, `--quiet`
