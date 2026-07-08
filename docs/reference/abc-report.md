@@ -101,9 +101,7 @@ abc report --since=… --until=…
 ```
 
 produces spend, emissions, and postdoc-hours-returned together, with
-per-investigation rollups. For namespace-budget management (the
-write-side, admission-gate surface), see
-[`abc accounting`](./abc-accounting.md).
+per-investigation rollups.
 
 ### Subcommands
 
@@ -119,7 +117,7 @@ folded in from former top-level verbs on 2026-06-05:
 
 All share the same Layer-0/1/2 rate-card resolver, so energy/cost/CO₂e/water
 figures stay consistent. Rate-card inputs are configured under
-[`abc config emissions`](./abc-accounting.md) (coefficients) and
+`abc config emissions` (coefficients) and
 `abc config accounting` (cost rates) — distinct from the read-side reports here.
 
 ## Sample output
@@ -293,7 +291,5 @@ map.
 
 ## See also
 
-- [`abc accounting`](./abc-accounting) — write-side namespace budget caps and
-  admission-gate thresholds (grove tier and above).
 - [`abc localdb status`](./local-state) — schema version, applied migrations,
   feature flags.

@@ -1271,8 +1271,8 @@ block so the script can read the value at execution time.
 > (a vendor-namespace concept). For the abc-cluster API itself, use
 > `--address` / `ABC_API_ADDRESS` and `--access-token` / `ABC_API_TOKEN`.
 > In seedling-tier contexts the two pairs typically resolve to the same
-> values via the active context; in grove+ the controller mediates the
-> mapping. See [tier semantics](./docs/reference/env-vars.md) for details.
+> values via the active context. See [tier semantics](./docs/reference/env-vars.md)
+> for details.
 
 ### Directive precedence
 
