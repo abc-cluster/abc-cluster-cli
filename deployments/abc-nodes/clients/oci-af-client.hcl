@@ -56,6 +56,16 @@ data_dir   = "/opt/nomad"
 log_level  = "INFO"
 name       = "oci-af"
 
+# nomad-driver-exec2 plugin binary (copied from nomad01's own copy, x86-64,
+# 2026-07-08) — added because abc-cluster-cli's `exec` driver was found to
+# hang indefinitely on nomad01/02/03 (kernel 5.15/landlock v1 suspected —
+# see brainstorms/abc-data-node/2026-07-08-exec-driver-hang-nomad01-03-
+# kernel-5.15.md in abc-universe); exec2 is the safer default anyway
+# (capability-dropped, landlock-confined, dynamic non-root UID) and this
+# node's own newer kernel (6.17, landlock v7) isn't expected to hit the
+# same issue, but exec2 wasn't fingerprinted here at all until now.
+plugin_dir = "/opt/nomad/plugins"
+
 bind_addr = "100.89.64.44"
 advertise {
   http = "100.89.64.44"
@@ -89,7 +99,7 @@ client {
     "node.software.apptainer"     = ""
     "node.software.cuda"          = ""
     "node.software.s5cmd"         = "2.3.0"
-    "node.capability.exec2"       = "false"
+    "node.capability.exec2"       = "true"
     "node.capability.podman"      = "false"
     "node.capability.singularity" = "false"
     "node.capability.docker"      = "true"
@@ -128,4 +138,15 @@ plugin "docker" {
 }
 plugin "raw_exec" {
   config { enabled = true }
+}
+
+# See plugin_dir comment above. Config mirrors aither's own exec2 stanza —
+# unveil_defaults grants the task its normal filesystem view (cwd, alloc
+# dir, etc.) via landlock rather than requiring per-task allow-listing.
+plugin "nomad-driver-exec2" {
+  config {
+    unveil_defaults = true
+    unveil_paths    = []
+    unveil_by_task  = false
+  }
 }
