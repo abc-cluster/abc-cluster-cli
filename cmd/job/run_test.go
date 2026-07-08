@@ -593,6 +593,71 @@ python -c "print(\"hello\")"
 	}
 }
 
+func TestJobRun_NodePoolDefaultsToCompute(t *testing.T) {
+	// No admin.services.nomad.worker_pool in the active context -> the
+	// build-time fallback ("compute") applies. This is the direct
+	// analog of a pipeline's WORKER pool, not its HEAD pool ("platform")
+	// — an ad-hoc script IS the workload, not an orchestrator. See the
+	// comment in applyCLIFlags for the incident this fixed.
+	script := "#!/bin/bash\n#ABC --name=default-pool\necho hi\n"
+	p := writeTempScript(t, "default-pool.sh", script)
+	out, err := executeCmd(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !regexp.MustCompile(`node_pool\s*=\s*"compute"`).MatchString(out) {
+		t.Errorf("expected node_pool = \"compute\" by default, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NodePoolFromContextWorkerPool(t *testing.T) {
+	// admin.services.nomad.worker_pool in the active context wins over the
+	// build-time fallback.
+	yaml := `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cloud
+    admin:
+      services:
+        nomad:
+          worker_pool: gpu-pool
+`
+	script := "#!/bin/bash\n#ABC --name=context-pool\necho hi\n"
+	p := writeTempScript(t, "context-pool.sh", script)
+	out, err := executeCmdWithABCYAML(t, yaml, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !regexp.MustCompile(`node_pool\s*=\s*"gpu-pool"`).MatchString(out) {
+		t.Errorf("expected node_pool = \"gpu-pool\" from context worker_pool, got:\n%s", out)
+	}
+}
+
+func TestJobRun_NodePoolFlagOverridesContext(t *testing.T) {
+	// --node-pool wins over both the context's worker_pool and the
+	// build-time fallback.
+	yaml := `version: 1.0
+active_context: isolated
+contexts:
+  isolated:
+    cluster_type: abc-cloud
+    admin:
+      services:
+        nomad:
+          worker_pool: gpu-pool
+`
+	script := "#!/bin/bash\n#ABC --name=flag-pool\necho hi\n"
+	p := writeTempScript(t, "flag-pool.sh", script)
+	out, err := executeCmdWithABCYAML(t, yaml, p, "--node-pool", "transient")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !regexp.MustCompile(`node_pool\s*=\s*"transient"`).MatchString(out) {
+		t.Errorf("expected node_pool = \"transient\" from --node-pool flag, got:\n%s", out)
+	}
+}
+
 func TestJobRun_RegionAndDCScheduler(t *testing.T) {
 	script := `#!/bin/bash
 #ABC --name=regional-job
