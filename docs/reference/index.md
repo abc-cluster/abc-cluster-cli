@@ -9,7 +9,7 @@ Complete flag and option documentation for every `abc` command.
 | Command group | Description |
 |---|---|
 | [Global flags](./global-flags) | Flags available on every command |
-| [context / config](./context) | Manage cluster contexts and local config |
+| [context / config](./auth-context) | Manage cluster contexts and local config |
 | [auth](./auth) | Login, logout, token management |
 | [secrets](./secrets) | Encrypted local and remote secrets |
 | [job run](./jobs) | Submit shell scripts as Nomad jobs |

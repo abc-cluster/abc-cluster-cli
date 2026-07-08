@@ -123,7 +123,7 @@ abc workbench token revoke <token-name>
 
 The workbench requires TLJH (The Littlest JupyterHub) with SystemdSpawner
 and the abc-auth-svc forward-auth stack deployed on the platform node. See
-the [seedling deployment guide](index) for the full installation record.
+the [seedling deployment guide](./) for the full installation record.
 
 You need a JupyterHub admin service token in your `config.yaml`:
 

@@ -11,8 +11,8 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://abc-cluster.io',
-  baseUrl: '/',
+  url: 'https://seedling.abc-cluster.cloud',
+  baseUrl: '/docs/',
 
   organizationName: 'abc-cluster',
   projectName: 'abc-cluster-cli',
@@ -40,7 +40,7 @@ const config: Config = {
       attributes: {
         rel: 'icon',
         type: 'image/svg+xml',
-        href: '/img/favicon.svg',
+        href: '/docs/img/favicon.svg',
         media: '(prefers-color-scheme: light)',
       },
     },
@@ -49,7 +49,7 @@ const config: Config = {
       attributes: {
         rel: 'icon',
         type: 'image/svg+xml',
-        href: '/img/favicon-dark.svg',
+        href: '/docs/img/favicon-dark.svg',
         media: '(prefers-color-scheme: dark)',
       },
     },
@@ -58,7 +58,7 @@ const config: Config = {
       attributes: {
         rel: 'apple-touch-icon',
         sizes: '180x180',
-        href: '/img/apple-touch-icon.png',
+        href: '/docs/img/apple-touch-icon.png',
       },
     },
   ],
