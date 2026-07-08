@@ -207,7 +207,7 @@ EXAMPLES
 	cmd.Flags().String("namespace", "", "Nomad namespace")
 	cmd.Flags().String("region", "", "Nomad region")
 	cmd.Flags().StringSlice("dc", nil, "Target datacenter(s) — overrides active context's admin.services.nomad.datacenters")
-	cmd.Flags().String("node-pool", "", "Nomad node-pool the job must land in — overrides active context's admin.services.nomad.head_pool")
+	cmd.Flags().String("node-pool", "", "Nomad node-pool the job must land in — overrides active context's admin.services.nomad.worker_pool")
 	cmd.Flags().Int("priority", 0, "Scheduler priority (1-100)")
 	cmd.Flags().Int("nodes", 0, "Number of group instances")
 	cmd.Flags().Int("cores", 0, "CPU cores per task")
@@ -434,8 +434,23 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 	}
 	// Context fallback: when neither flag nor spec carries datacenters /
 	// node-pool, infer from the active context's admin.services.nomad
-	// configuration. Mirrors cmd/pipeline/run.go's analogous fallback.
-	// On seedling-prod: datacenters=["seedling-prod"], node_pool="platform".
+	// configuration. On seedling-prod: datacenters=["seedling-prod"],
+	// node_pool="compute".
+	//
+	// Uses worker_pool, not head_pool, despite cmd/pipeline/run.go having
+	// both knobs available. A `abc job run` script IS the workload — the
+	// direct analog of a pipeline's WORKER tasks (the actual compute),
+	// not its HEAD (a lightweight Nextflow orchestrator process that
+	// itself just submits worker jobs). Defaulting an ad-hoc script to
+	// head_pool/"platform" meant every unconstrained `abc job run`
+	// landed only on whichever single node hosts the platform pool
+	// (aither, on seedling-prod) instead of the compute pool where
+	// general compute capacity actually lives — found live 2026-07-08
+	// investigating a "every job pends except on aither" report; see
+	// abc-universe brainstorms/abc-data-node/2026-07-08-exec-driver-hang-
+	// nomad01-03-kernel-5.15.md for the full incident (a separate exec-
+	// driver/kernel issue was the proximate cause there, but this default
+	// was a real, independent bug found along the way).
 	if c, err := config.Load(); err == nil {
 		actx := c.ActiveCtx()
 		if len(spec.Datacenters) == 0 {
@@ -444,11 +459,11 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 			}
 		}
 		if spec.NodePool == "" {
-			if hp := actx.NomadHeadPool(); hp != "" {
-				spec.NodePool = hp
+			if wp := actx.NomadWorkerPool(); wp != "" {
+				spec.NodePool = wp
 			} else {
-				// Build-time fallback, same as the pipeline path.
-				spec.NodePool = "platform"
+				// Build-time fallback, same as the pipeline worker-pool path.
+				spec.NodePool = "compute"
 			}
 		}
 	}
