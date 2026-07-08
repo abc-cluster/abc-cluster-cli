@@ -4,6 +4,31 @@ All notable changes to `abc-cluster-cli` are documented here. Format loosely fol
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions before v0.1.40 are
 not individually documented — see `git tag` for the full history.
 
+## v0.1.70 — 2026-07-08
+- `abc job run`: unconstrained runs now default `node_pool` to `worker_pool`
+  ("compute") instead of `head_pool` ("platform") — an ad-hoc job script is
+  the workload itself (the analog of a pipeline's worker tasks), not a
+  lightweight orchestrator, so it belongs on the compute pool. Previously
+  every unconstrained `abc job run` on seedling-prod landed only on aither
+  (the sole platform-pool node) instead of the compute pool
+  (nomad01/02/03, oci-af).
+- Fixed the generated `docs/` site's `url`/`baseUrl` (`docusaurus.config.ts`)
+  — hardcoded a domain that has never resolved, so every canonical link,
+  Open Graph tag, and Twitter card on the live docs site pointed at a dead
+  host instead of `seedling.abc-cluster.cloud`.
+- Public seedling docs no longer mention the grove/garden tiers — neither
+  is shipped, and referencing them (a comparison table, a "Grove-tier
+  roadmap" section, dangling links to already tier-hidden pages) leaked
+  unshipped roadmap content to seedling-tier readers.
+- Removed the compiled-in default API endpoint (`https://api.abc-cluster.io`,
+  also never resolved) that `EnsureDefaultContext()` seeded into every fresh
+  `config.yaml`, `abc auth login`'s prompt fell back to, and the `data` API
+  client would attempt to hit. Real onboarded users are unaffected (the
+  seedling claim-code flow stamps a working endpoint directly and never
+  touches this path); a cold `abc config init`/`abc auth login` with no
+  prior config now gets a clear "required"/"empty" error instead of a DNS
+  failure against a domain that was never registered.
+
 ## v0.1.69 — 2026-07-06
 - `abc pipeline run --node`: the head job's node constraint now uses
   `node.unique.name` instead of the OS-level hostname, matching the attribute
