@@ -18,8 +18,8 @@
 //	contexts:
 //	  primary: aither              # optional top-level redirect (alias name -> target context name)
 //	  org-a-za-cpt:
-//	    endpoint:        "https://api.abc-cluster.io"
-//	    upload_endpoint: "https://api.abc-cluster.io/files/"  // defaults from endpoint + /files/
+//	    endpoint:        "https://your-cluster.example.com"
+//	    upload_endpoint: "https://your-cluster.example.com/files/"  // defaults from endpoint + /files/
 //	    upload_token:    "s.abc123..."
 //	    access_token:    "eyJ..."
 //	    organization_id: "org-dev"
@@ -77,9 +77,6 @@ const CurrentVersion = "1.0"
 
 // DefaultContextName is the placeholder context created by config init for first-time users.
 const DefaultContextName = "default"
-
-// DefaultPublicAPIEndpoint matches the auth login prompt default (ABC control plane).
-const DefaultPublicAPIEndpoint = "https://api.abc-cluster.io"
 
 // DefaultConfigPath returns the path to the config file, honouring the
 // ABC_CLI_CONFIG_FILE environment variable.
@@ -231,6 +228,13 @@ func Create() (string, error) {
 // EnsureDefaultContext guarantees contexts.default exists (placeholder). It does
 // not replace an existing default definition.
 //
+// The placeholder is seeded with an empty endpoint — there is no compiled-in
+// public API host to fall back to (the ABC control-plane API is a grove+/cloud
+// concept; seedling deployments hand out a real endpoint via the claim-code
+// config.yaml, which never goes through this path). Callers that need an
+// endpoint surface a clear "not configured" error instead of silently
+// defaulting to a host that may not exist.
+//
 // If active_context is empty, it is set to DefaultContextName only when there were
 // no contexts before this call (typical first-time init), or when the only defined
 // context is DefaultContextName (repair hand-edited files).
@@ -240,11 +244,7 @@ func (c *Config) EnsureDefaultContext() {
 	}
 	hadAny := len(c.Contexts) > 0
 	if _, ok := c.Contexts[DefaultContextName]; !ok {
-		ctx := Context{Endpoint: DefaultPublicAPIEndpoint}
-		if up, err := DeriveUploadEndpointFromAPI(DefaultPublicAPIEndpoint); err == nil {
-			ctx.UploadEndpoint = up
-		}
-		c.Contexts[DefaultContextName] = ctx
+		c.Contexts[DefaultContextName] = Context{}
 	}
 	if strings.TrimSpace(c.ActiveContext) != "" {
 		return

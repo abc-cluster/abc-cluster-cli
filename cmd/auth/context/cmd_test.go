@@ -28,8 +28,8 @@ func TestContextAddAndUse(t *testing.T) {
 	cmd := NewCmd()
 	out, err := executeContextCmd(cmd,
 		"add", "org-a-za-cpt",
-		"--endpoint", "https://api.abc-cluster.io",
-		"--upload-endpoint", "https://uploads.abc-cluster.io/files/",
+		"--endpoint", "https://api.example.com",
+		"--upload-endpoint", "https://uploads.example.com/files/",
 		"--access-token", "token-value",
 		"--organization-id", "org-dev",
 		"--workspace-id", "ws-org-a-01",
