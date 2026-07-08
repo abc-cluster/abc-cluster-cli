@@ -56,6 +56,10 @@ type PipelineRunResponse struct {
 
 // SubmitPipelineRun submits a pipeline run to the abc-cluster API.
 func (c *Client) SubmitPipelineRun(req *PipelineRunRequest) (*PipelineRunResponse, error) {
+	if strings.TrimSpace(c.baseURL) == "" {
+		return nil, fmt.Errorf("API base URL is empty")
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)

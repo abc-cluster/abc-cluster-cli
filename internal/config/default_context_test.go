@@ -13,11 +13,11 @@ func TestEnsureDefaultContext(t *testing.T) {
 		t.Fatalf("active_context: got %q want %q", c.ActiveContext, DefaultContextName)
 	}
 	ctx := c.Contexts[DefaultContextName]
-	if ctx.Endpoint != DefaultPublicAPIEndpoint {
-		t.Fatalf("endpoint: got %q want %q", ctx.Endpoint, DefaultPublicAPIEndpoint)
+	if ctx.Endpoint != "" {
+		t.Fatalf("endpoint: got %q want empty (no compiled-in default)", ctx.Endpoint)
 	}
-	if ctx.UploadEndpoint == "" {
-		t.Fatal("expected derived upload_endpoint")
+	if ctx.UploadEndpoint != "" {
+		t.Fatalf("upload_endpoint: got %q want empty (nothing to derive from)", ctx.UploadEndpoint)
 	}
 }
 

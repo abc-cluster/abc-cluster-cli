@@ -82,11 +82,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	r := bufio.NewReader(os.Stdin)
 
 	// Prompt for endpoint
-	fmt.Fprintf(os.Stderr, "API endpoint [https://api.abc-cluster.io]: ")
+	fmt.Fprintf(os.Stderr, "API endpoint: ")
 	endpoint, _ := r.ReadString('\n')
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
-		endpoint = "https://api.abc-cluster.io"
+		return fmt.Errorf("API endpoint is required")
 	}
 
 	// Prompt for token

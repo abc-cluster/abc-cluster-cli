@@ -218,9 +218,10 @@ func init() {
 		serverURL = v
 	} else if activeCtx.Endpoint != "" {
 		serverURL = activeCtx.Endpoint
-	} else {
-		serverURL = "https://api.abc-cluster.io"
 	}
+	// No compiled-in fallback: there is no public ABC control-plane API to
+	// default to. Commands that actually need serverURL (the "data" API
+	// client) surface a clear error when it's still empty at call time.
 
 	if v := envvars.Get("ABC_API_TOKEN"); v != "" {
 		accessToken = v
