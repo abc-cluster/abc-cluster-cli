@@ -41,10 +41,15 @@
 #
 # Single 46 GB root disk only (no separate large data disk like oci-af's
 # mbovis attachment) — host volumes live under /opt/abc-seedling/ on that
-# disk, not a dedicated mount. nf-work/abc-tools populated 2026-07-09 by
-# copying the s5cmd binary directly from aither's own copy — no automated
-# abc-tools-sync mechanism exists cluster-wide (same gap noted on every
-# other node's reference config).
+# disk, not a dedicated mount. nf-work/abc-tools populated 2026-07-09: the
+# full 7-tool set (b3sum, croc, rclone, restic, rustic, s5cmd, unison),
+# copied directly from nomad01's own compute-node copies (initially only
+# s5cmd was copied — matching aither's minimal set — then brought up to
+# the full compute-node parity the same day, per ADR-0061's intent). No
+# automated abc-tools-sync mechanism exists cluster-wide (same gap noted
+# on every other node's reference config), so this is a manual snapshot,
+# not a live sync — it will drift if nomad01's copies are ever updated
+# and this node isn't refreshed too.
 plugin_dir = "/opt/nomad/plugins"
 datacenter = "seedling-prod"
 data_dir   = "/opt/nomad"
