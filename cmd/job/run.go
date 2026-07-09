@@ -200,6 +200,8 @@ EXAMPLES
 	cmd.Flags().StringArray("in", nil, "Stage this input onto the node before the run (repeatable; relative to project root, or an s3:// URI). Default in staging mode: data/ (only if it exists).")
 	cmd.Flags().StringArray("out", nil, "Stage this output off the node after the run (repeatable; relative to project root).")
 	cmd.Flags().String("stage-bucket", "", "S3 bucket for --in/--out staging (default: the su-<group> Nomad namespace; set this when the run namespace is not an su-<group> bucket)")
+	cmd.Flags().StringArray("volume", nil, "Mount a registered Nomad host volume into the job: --volume <name>[:<dest>][:ro] (default dest /mnt/<name>; repeatable). An exec task cannot see host paths without this.")
+	cmd.Flags().Bool("tools", false, "Mount the abc-tools host volume (s5cmd, mc, …) read-only at /opt/abc-tools so the job can use node-provided CLI tools (shorthand for --volume abc-tools:/opt/abc-tools:ro)")
 	cmd.Flags().Bool("notify", false, "Print ntfy subscription URL after submit (requires capabilities.notifications)")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
 
@@ -805,6 +807,33 @@ func stageS3Creds() (endpoint, accessKey, secretKey string) {
 	return datacmd.ResolveS3Creds(c.ActiveCtx())
 }
 
+// abc-tools is the ADR-0061 host volume carrying node-side CLI tools (s5cmd, mc,
+// …). --tools mounts it at this conventional path (the staging path uses the same
+// volume name + mount for its s5cmd tasks).
+const (
+	abcToolsVolumeName = "abc-tools"
+	abcToolsMountPath  = "/opt/abc-tools"
+)
+
+// applyMountFlags parses --tools and --volume into spec.Mounts — host-volume
+// mounts attached to the main task. Without a mount an exec task is chrooted to
+// its alloc dir and cannot reach host paths (so node tools like s5cmd are
+// invisible). --tools is shorthand for the abc-tools volume, read-only.
+func applyMountFlags(cmd *cobra.Command, spec *jobSpec) error {
+	if tools, _ := cmd.Flags().GetBool("tools"); tools {
+		spec.Mounts = append(spec.Mounts, mountSpec{Volume: abcToolsVolumeName, Dest: abcToolsMountPath, ReadOnly: true})
+	}
+	vols, _ := cmd.Flags().GetStringArray("volume")
+	for _, v := range vols {
+		m, err := parseVolumeFlag(v)
+		if err != nil {
+			return err
+		}
+		spec.Mounts = append(spec.Mounts, m)
+	}
+	return nil
+}
+
 // resolveStageBucket picks the S3 bucket for staged --in/--out. On the
 // abc-cluster tier the Nomad namespace IS the group bucket (su-<group>), so
 // that is the default. A run can override the Nomad namespace (e.g.
@@ -1061,6 +1090,9 @@ func runJob(cmd *cobra.Command, args []string) error {
 	spec = mergeSpec(spec, scriptSpec)
 
 	if err := applyCLIFlags(cmd, spec); err != nil {
+		return err
+	}
+	if err := applyMountFlags(cmd, spec); err != nil {
 		return err
 	}
 	if err := applySpecDefaults(spec, defaultName, useSBATCH); err != nil {

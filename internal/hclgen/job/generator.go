@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -188,6 +189,20 @@ type Spec struct {
 	// (uploads declared outputs after the main task succeeds). The main task is
 	// expected to run with CWD = DestRoot so the script's relative paths resolve.
 	Staging StagingSpec
+
+	// Mounts are host-volume mounts attached to the MAIN task (from --volume /
+	// --tools). Each declares a group-level `volume` (deduped with the staging
+	// volume) and a task `volume_mount`, making node-provided tools (the
+	// `abc-tools` volume: s5cmd, mc, …) or data volumes reachable from an
+	// otherwise-chrooted exec task — which cannot see host paths without a mount.
+	Mounts []VolumeMount
+}
+
+// VolumeMount attaches a registered Nomad host volume to the main task.
+type VolumeMount struct {
+	Volume   string // registered host_volume NAME (e.g. "abc-tools")
+	Dest     string // in-task mount path (e.g. "/opt/abc-tools")
+	ReadOnly bool
 }
 
 // StagingSpec configures the s5cmd stage-in / stage-out lifecycle tasks.
@@ -353,20 +368,60 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 	// host volume carrying s5cmd and emit the prestart stage-in + poststop
 	// stage-out s5cmd tasks. Nomad orders tasks by lifecycle hook, not HCL
 	// position, so emitting stage-out here (before "main" in the file) is fine.
+	// Declare the host volumes needed by staging and/or --volume/--tools mounts,
+	// deduped by name (the same volume — e.g. abc-tools — can back both the
+	// staging s5cmd tasks and a main-task tool mount; declaring it twice is
+	// invalid HCL). `source` is the client-registered host_volume NAME (the host
+	// path lives only in the Nomad client config). A volume is read_only only when
+	// every consumer is read-only, otherwise a RW mount of it would be rejected.
+	volRO := map[string]bool{}
+	addVol := func(name string, ro bool) {
+		if name == "" {
+			return
+		}
+		if cur, ok := volRO[name]; ok {
+			volRO[name] = cur && ro
+			return
+		}
+		volRO[name] = ro
+	}
 	if spec.Staging.Enabled {
-		vol := groupBody.AppendNewBlock("volume", []string{spec.Staging.HostVolumeName}).Body()
-		vol.SetAttributeValue("type", cty.StringVal("host"))
-		// `source` is the client-registered host_volume NAME, not its host path
-		// (the path lives only in the Nomad client config). HostVolumeSource is
-		// retained for documentation but must not be emitted here.
-		vol.SetAttributeValue("source", cty.StringVal(spec.Staging.HostVolumeName))
-		vol.SetAttributeValue("read_only", cty.BoolVal(true))
+		addVol(spec.Staging.HostVolumeName, true)
+	}
+	for _, m := range spec.Mounts {
+		addVol(m.Volume, m.ReadOnly)
+	}
+	if len(volRO) > 0 {
+		names := make([]string, 0, len(volRO))
+		for n := range volRO {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			vol := groupBody.AppendNewBlock("volume", []string{name}).Body()
+			vol.SetAttributeValue("type", cty.StringVal("host"))
+			vol.SetAttributeValue("source", cty.StringVal(name))
+			vol.SetAttributeValue("read_only", cty.BoolVal(volRO[name]))
+		}
+	}
+	if spec.Staging.Enabled {
 		appendStageTask(groupBody, "stage-in", "prestart", spec.Staging.StageInManifest, "stage-in.txt", spec.Staging)
 		appendStageTask(groupBody, "stage-out", "poststop", spec.Staging.StageOutManifest, "stage-out.txt", spec.Staging)
 	}
 
 	mainBody := groupBody.AppendNewBlock("task", []string{"main"}).Body()
 	mainBody.SetAttributeValue("driver", cty.StringVal(spec.Driver))
+
+	// Attach --volume / --tools host-volume mounts to the main task, so the user's
+	// job can reach node-provided tools (abc-tools: s5cmd, mc, …) or data volumes.
+	// Without this an exec task is chrooted to its alloc dir and cannot see the
+	// host path where the volume's binaries live.
+	for _, m := range spec.Mounts {
+		vm := mainBody.AppendNewBlock("volume_mount", nil).Body()
+		vm.SetAttributeValue("volume", cty.StringVal(m.Volume))
+		vm.SetAttributeValue("destination", cty.StringVal(m.Dest))
+		vm.SetAttributeValue("read_only", cty.BoolVal(m.ReadOnly))
+	}
 
 	cfgBody := mainBody.AppendNewBlock("config", nil).Body()
 	appendTaskConfig(cfgBody, spec, scriptName, scriptContent)
