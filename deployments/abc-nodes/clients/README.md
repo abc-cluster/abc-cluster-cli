@@ -6,6 +6,7 @@ config for each named node in the abc-nodes fleet.
 | File | Host | Tailscale IP | Notes |
 |------|------|-------------|-------|
 | `aither-client.hcl` | aither | `100.70.185.46` | Single-node **server+client** (`bootstrap_expect = 1`), `node_pool = "platform"` — hosts MinIO/tusd/signup-svc/observability + Nextflow head jobs. Drivers: containerd-driver, docker, raw_exec, exec2, podman, singularity, qemu (built-in). |
+| `oci-eu-client.hcl` | oci-eu (`oci-eu-lowspec-*`) | `100.113.83.114` | Pure Nomad **client**, `node_pool = "compute"` — joined 2026-07-09, cluster's **first non-South-African node** (OCI eu-frankfurt-1, GDPR jurisdiction). Provisioned from a fully bare VM (no Tailscale/Docker/Nomad pre-installed). Drivers: docker, exec, exec2, raw_exec (exec2 installed proactively this time — see the exec-driver-hang report below). Single 46 GB root disk (no separate data-disk attachment like oci-af); host volumes live under `/opt/abc-seedling/`. **⚠ Sovereignty gap, decided-not-mitigated**: shares the `compute` pool with the SA-context nodes; no automated Nomad/Jurist enforcement yet exists to keep POPIA-governed workloads off this GDPR-jurisdiction node — see the file's own header comment and `brainstorms/abc-data-node/2026-07-09-oci-eu-node-join-and-sovereignty-gap.md` in abc-universe. |
 
 ## How to use
 
