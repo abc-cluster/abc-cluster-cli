@@ -221,8 +221,66 @@ func runShow(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(out, "  %-12s %s\n", r.allocShort, r.slurmID)
 			}
 		}
+
+		// Surface WHY failed/lost allocs failed — the last task-event message
+		// (e.g. "failed to launch: ...", "Exit Code: 1", OOM). Without this,
+		// `job show` reported "N failed" with no cause, making a fast-failing
+		// driver (e.g. exec2) undebuggable remotely (B1).
+		type failRow struct{ allocShort, task, reason string }
+		var failRows []failRow
+		for _, a := range shown {
+			if a.ClientStatus != "failed" && a.ClientStatus != "lost" {
+				continue
+			}
+			task, reason := allocFailureReason(a)
+			if reason == "" {
+				continue
+			}
+			shortID := a.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			failRows = append(failRows, failRow{shortID, task, reason})
+		}
+		if len(failRows) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintf(out, "  FAILURE DETAIL\n")
+			fmt.Fprintf(out, "  %-12s %-12s %s\n", "ALLOC ID", "TASK", "LAST EVENT")
+			fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 60))
+			for _, r := range failRows {
+				fmt.Fprintf(out, "  %-12s %-12s %s\n", r.allocShort, r.task, r.reason)
+			}
+		}
+	}
+
+	// Nothing placed → explain why (blocked eval / failed task-group), so a job
+	// stuck "pending, 0 allocs" is actionable instead of silent (B9).
+	if len(allocs) == 0 && (job.Status == "pending" || job.Status == "") {
+		if evals, eerr := nc.GetJobEvals(cmd.Context(), jobID, ns); eerr == nil {
+			if reason := placementFailureReason(evals); reason != "" {
+				fmt.Fprintln(out)
+				fmt.Fprintf(out, "  PLACEMENT BLOCKED\n")
+				fmt.Fprintf(out, "  %s\n", strings.Repeat("─", 60))
+				fmt.Fprintf(out, "  %s\n", reason)
+				fmt.Fprintf(out, "  Hint: check --node-pool and --constraint — the job may target a pool with no eligible nodes.\n")
+			}
+		}
 	}
 
 	fmt.Fprintln(out)
 	return nil
+}
+
+// allocFailureReason returns the most recent non-empty task-event message for an
+// allocation (the cause of a failure — driver error, non-zero exit, OOM) plus
+// the task it came from. Returns empty strings when no event carries a message.
+func allocFailureReason(a NomadAllocStub) (task, reason string) {
+	for t, ts := range a.TaskStates {
+		for _, ev := range ts.Events {
+			if strings.TrimSpace(ev.DisplayMessage) != "" {
+				task, reason = t, ev.DisplayMessage
+			}
+		}
+	}
+	return task, reason
 }

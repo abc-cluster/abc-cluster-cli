@@ -254,6 +254,20 @@ func runCapabilitiesSync(cmd *cobra.Command, _ []string) error {
 		}
 		existing, ok := config.GetAdminFloorField(&ctx.Admin.Services, m.adminSvc, m.field)
 		if ok && existing != "" {
+			// Non-empty values are treated as operator-set and not overwritten.
+			// EXCEPTION: a MinIO S3 endpoint pointing at the console port is a
+			// common misconfiguration (e.g. abc-bootstrap) that makes `abc data`
+			// fail with "must be made to API port" (B5). Don't clobber it, but if
+			// a fresh resolve disagrees, warn with the exact command to fix it.
+			if m.adminSvc == "minio" && m.field == "endpoint" {
+				if fresh := resolveServiceEndpoint(bg, nc, m.svcName, ""); fresh != "" && !sameHostPort(fresh, existing) {
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"  ⚠ admin.services.minio.endpoint is %s, but the running MinIO S3 API is at %s.\n"+
+							"    If `abc data` fails with \"must be made to API port\", update it:\n"+
+							"      abc config set admin.services.minio.endpoint %s\n",
+						existing, fresh, fresh)
+				}
+			}
 			continue
 		}
 		if url := resolveServiceEndpoint(bg, nc, m.svcName, ""); url != "" {
@@ -517,8 +531,47 @@ func serviceNameToJobID(svcName string) string {
 	return ""
 }
 
+// preferredServicePort selects the port most likely to be a service's API
+// endpoint: it de-prioritises console/ui/dashboard/admin ports (never the port
+// we want for programmatic access) and prefers an api/s3-labelled port, falling
+// back to the first non-zero port. Returns nil when no usable port exists.
+func preferredServicePort(ports []utils.NomadDynamicPort) *utils.NomadDynamicPort {
+	var best *utils.NomadDynamicPort
+	bestRank := -1
+	for i := range ports {
+		if ports[i].Value == 0 {
+			continue
+		}
+		label := strings.ToLower(ports[i].Label)
+		rank := 1 // neutral
+		switch {
+		case strings.Contains(label, "console"), strings.Contains(label, "ui"),
+			strings.Contains(label, "dashboard"), strings.Contains(label, "admin"):
+			rank = 0 // avoid — not an API port
+		case strings.Contains(label, "s3"), strings.Contains(label, "api"):
+			rank = 2 // prefer
+		}
+		if rank > bestRank {
+			bestRank, best = rank, &ports[i]
+		}
+	}
+	return best
+}
+
+// sameHostPort reports whether two endpoint URLs point at the same host:port,
+// ignoring scheme and a trailing slash.
+func sameHostPort(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.TrimRight(strings.TrimSpace(s), "/")
+		s = strings.TrimPrefix(s, "http://")
+		s = strings.TrimPrefix(s, "https://")
+		return s
+	}
+	return norm(a) == norm(b)
+}
+
 // endpointFromJobAlloc finds the first running alloc for jobID and extracts
-// the first reserved or dynamic port to build an endpoint URL.
+// the best-labelled reserved or dynamic port to build an endpoint URL.
 func endpointFromJobAlloc(ctx context.Context, nc *utils.NomadClient, jobID, namespace string) string {
 	allocs, err := nc.GetJobAllocs(ctx, jobID, namespace, false)
 	if err != nil {
@@ -533,19 +586,22 @@ func endpointFromJobAlloc(ctx context.Context, nc *utils.NomadClient, jobID, nam
 			continue
 		}
 		for _, net := range alloc.AllocatedResources.Shared.Networks {
-			// Prefer reserved (static) ports, fall back to dynamic.
-			for _, p := range append(net.ReservedPorts, net.DynamicPorts...) {
-				if p.Value == 0 {
-					continue
-				}
-				ip := p.HostIP
-				if ip == "" || ip == "0.0.0.0" {
-					// Host-mode jobs: resolve the node's primary IP.
-					ip = nodeIP(ctx, nc, stub.NodeID)
-				}
-				if ip != "" {
-					return fmt.Sprintf("http://%s:%d", ip, p.Value)
-				}
+			// Pick the best port by label rather than the first one: never a
+			// console/ui port, prefer an api/s3 port. MinIO registers BOTH an S3
+			// API port and a console port; returning the console port produced an
+			// endpoint the S3 SDK rejects with "must be made to API port" (B5).
+			ports := append(append([]utils.NomadDynamicPort{}, net.ReservedPorts...), net.DynamicPorts...)
+			p := preferredServicePort(ports)
+			if p == nil {
+				continue
+			}
+			ip := p.HostIP
+			if ip == "" || ip == "0.0.0.0" {
+				// Host-mode jobs: resolve the node's primary IP.
+				ip = nodeIP(ctx, nc, stub.NodeID)
+			}
+			if ip != "" {
+				return fmt.Sprintf("http://%s:%d", ip, p.Value)
 			}
 		}
 	}

@@ -22,7 +22,7 @@ The positional accepts either a bare job ID or a full Nomad Web UI URL
 	}
 	cmd.Flags().Bool("purge", false, "Remove job definition from Nomad after stopping")
 	cmd.Flags().Bool("detach", false, "Return immediately without waiting")
-	cmd.Flags().Bool("yes", false, "Skip confirmation prompt")
+	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().String("namespace", "", "Nomad namespace")
 	return cmd
 }

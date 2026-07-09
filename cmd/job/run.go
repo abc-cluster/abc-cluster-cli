@@ -197,8 +197,9 @@ EXAMPLES
 	// supplying --in or --out turns a plain `abc job run <script>` into a staged
 	// run — inputs are staged onto the node before the script and outputs staged
 	// back after. Paths are relative to the project root (PROJECT_ROOT.txt / .git).
-	cmd.Flags().StringArray("in", nil, "Stage this input onto the node before the run (repeatable; relative to project root, or an s3:// URI). Default in staging mode: data/.")
-	cmd.Flags().StringArray("out", nil, "Stage this output off the node after the run (repeatable; relative to project root). Required when --in is used.")
+	cmd.Flags().StringArray("in", nil, "Stage this input onto the node before the run (repeatable; relative to project root, or an s3:// URI). Default in staging mode: data/ (only if it exists).")
+	cmd.Flags().StringArray("out", nil, "Stage this output off the node after the run (repeatable; relative to project root).")
+	cmd.Flags().String("stage-bucket", "", "S3 bucket for --in/--out staging (default: the su-<group> Nomad namespace; set this when the run namespace is not an su-<group> bucket)")
 	cmd.Flags().Bool("notify", false, "Print ntfy subscription URL after submit (requires capabilities.notifications)")
 	cmd.Flags().String("output-file", "", "Write generated HCL to file instead of stdout")
 
@@ -713,7 +714,13 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 		return nil, fmt.Errorf("data staging: %w", err)
 	}
 	if len(ins) == 0 {
-		ins = []string{filepath.Join(root, "data")} // convention default within staging mode
+		// Only stage a default data/ dir when it actually exists. Most repos
+		// have no top-level data/, and unconditionally injecting it aborted
+		// --out-only runs with "given object .../data not found" before submit
+		// (B4). With no --in and no data/, there is simply nothing to stage in.
+		if def := filepath.Join(root, "data"); dirExists(def) {
+			ins = []string{def}
+		}
 	}
 	// FIX 2: use the same full-length, path-safe whoami segment that upload
 	// and the pipeline path use (WhoamiPathSegment → "solar-civet"), NOT the
@@ -724,9 +731,9 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 	if slot == "" {
 		return nil, fmt.Errorf("data staging: cannot resolve slot — run `abc auth whoami`")
 	}
-	bucket := spec.Namespace
-	if bucket == "" {
-		return nil, fmt.Errorf("data staging: no bucket/namespace resolved for this run")
+	bucket, err := resolveStageBucket(cmd, spec.Namespace)
+	if err != nil {
+		return nil, err
 	}
 	if runID == "" {
 		runID = "run"
@@ -796,6 +803,43 @@ func stageS3Creds() (endpoint, accessKey, secretKey string) {
 		return "", "", ""
 	}
 	return datacmd.ResolveS3Creds(c.ActiveCtx())
+}
+
+// resolveStageBucket picks the S3 bucket for staged --in/--out. On the
+// abc-cluster tier the Nomad namespace IS the group bucket (su-<group>), so
+// that is the default. A run can override the Nomad namespace (e.g.
+// --namespace=default) without changing where the member's data lives, which
+// used to point staging at a bucket literally named "default" → NoSuchBucket
+// after submit (B3). Prefer an explicit --stage-bucket, then an su-<group>
+// namespace, then the context's claim-time group; fail fast (before submit)
+// with guidance when none resolves to a real group bucket.
+func resolveStageBucket(cmd *cobra.Command, nomadNS string) (string, error) {
+	if b, _ := cmd.Flags().GetString("stage-bucket"); strings.TrimSpace(b) != "" {
+		return strings.TrimSpace(b), nil
+	}
+	if strings.HasPrefix(nomadNS, "su-") {
+		return nomadNS, nil
+	}
+	if c, err := config.Load(); err == nil && c != nil {
+		if ns := c.ActiveCtx().NomadNamespace(); strings.HasPrefix(ns, "su-") {
+			return ns, nil
+		}
+	}
+	shown := nomadNS
+	if shown == "" {
+		shown = "(none)"
+	}
+	return "", fmt.Errorf(
+		"data staging: cannot resolve a group bucket for --in/--out — the run namespace %q is not an su-<group> bucket.\n"+
+			"  Pass --stage-bucket su-<group> (e.g. --stage-bucket su-mtb-resistotyper-ml),\n"+
+			"  or run in your group's namespace so staged data lands in su-<group>.",
+		shown)
+}
+
+// dirExists reports whether p exists and is a directory.
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 // inferNotebookRuntime picks the env runtime from the env-file name when
@@ -1453,9 +1497,15 @@ func runJobNativeHCL(cmd *cobra.Command, path string) error {
 	if resp.Warnings != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ Warnings: %s\n", resp.Warnings)
 	}
+	// Include --namespace in the hints (from the HCL body) so follow-up
+	// commands find the job instead of 404ing against the context default (B6).
+	nsFlag := ""
+	if ns := extractNamespaceFromJSON(jobJSON); ns != "" {
+		nsFlag = " --namespace " + ns
+	}
 	fmt.Fprintf(out, "\n  Track progress:\n")
-	fmt.Fprintf(out, "    abc job logs %s --follow\n", jobID)
-	fmt.Fprintf(out, "    abc job show %s\n", jobID)
+	fmt.Fprintf(out, "    abc job logs %s%s --follow\n", jobID, nsFlag)
+	fmt.Fprintf(out, "    abc job show %s%s\n", jobID, nsFlag)
 
 	// Spawn run-watcher (spec abc-investigation §E + OQ-6).
 	if rid := runIDFrom(ctx); rid != "" {
@@ -1583,7 +1633,14 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 	if region == "" {
 		region = "default"
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting to Nomad (%s)...\n", region)
+	nsDisplay := spec.Namespace
+	if nsDisplay == "" {
+		nsDisplay = "default"
+	}
+	// Show the NAMESPACE (not just region) — the parenthetical used to print
+	// only the region, which users read as the namespace, then couldn't find
+	// their job with `job show` (B6). Namespace is what show/logs/status query.
+	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting to Nomad (namespace %s, region %s)...\n", nsDisplay, region)
 	t = time.Now()
 	resp, err := nc.RegisterJob(ctx, jobJSON)
 	if err != nil {
@@ -1620,9 +1677,16 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 		return watchJobLogs(ctx, nc, spec.Name, spec.Namespace, out, watchDelay, watchTimeout)
 	}
 
+	// Include --namespace in the hints so the follow-up commands actually find
+	// the job — without it they default to the context namespace (abc-services)
+	// and 404 on a job submitted into another namespace like `default` (B6).
+	nsFlag := ""
+	if spec.Namespace != "" {
+		nsFlag = " --namespace " + spec.Namespace
+	}
 	fmt.Fprintf(out, "\n  Track progress:\n")
-	fmt.Fprintf(out, "    abc job logs %s --follow\n", spec.Name)
-	fmt.Fprintf(out, "    abc job show %s\n", spec.Name)
+	fmt.Fprintf(out, "    abc job logs %s%s --follow\n", spec.Name, nsFlag)
+	fmt.Fprintf(out, "    abc job show %s%s\n", spec.Name, nsFlag)
 
 	if notify, _ := cmd.Flags().GetBool("notify"); notify {
 		printNtfySubscriptionHint(out)
