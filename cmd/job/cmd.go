@@ -1,6 +1,7 @@
 package job
 
 import (
+	"os"
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
@@ -104,15 +105,22 @@ func sleepCh(n int) <-chan struct{} { return utils.SleepCh(n) }
 
 // namespaceFromCmd returns the Nomad namespace to use for a command:
 //  1. --namespace flag (explicit, highest priority)
-//  2. credsource resolver (broker-routed when cred_source=seedling/v1, falls
+//  2. NOMAD_NAMESPACE env var — honored the same way `abc job run` honors it at
+//     submit (jobspec.go), so a job submitted into `default` can be read back
+//     with `NOMAD_NAMESPACE=default abc job show/logs/status <id>`. Without this,
+//     reads fell through to the context default (abc-services) and 404'd (B6).
+//  3. credsource resolver (broker-routed when cred_source=seedling/v1, falls
 //     through to ctx.NomadNamespace() for local) — covers both abc-nodes
 //     (derived from whoami/config) and abc-cluster (flat namespace field
 //     stamped into config.yaml at claim time, or returned by the broker)
-//  3. Empty string — let Nomad use its server default
+//  4. Empty string — let Nomad use its server default
 func namespaceFromCmd(cmd *cobra.Command) string {
 	ns, _ := cmd.Flags().GetString("namespace")
 	if strings.TrimSpace(ns) != "" {
 		return ns
+	}
+	if env := strings.TrimSpace(os.Getenv("NOMAD_NAMESPACE")); env != "" {
+		return env
 	}
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {

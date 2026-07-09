@@ -15,6 +15,12 @@ func newNomadClient(addr, token, region string) *nomadClient {
 	return utils.NewNomadClient(addr, token, region)
 }
 
+// placementFailureReason re-exports the shared eval → reason summarizer so job
+// commands can explain a blocked/pending placement without importing cmd/utils.
+func placementFailureReason(evals []NomadEvaluation) string {
+	return utils.PlacementFailureReason(evals)
+}
+
 // Re-export wire types so other packages (tests, etc.) that import cmd/job
 // can still reference them without importing cmd/utils directly.
 type (

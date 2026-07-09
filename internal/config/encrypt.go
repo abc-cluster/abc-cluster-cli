@@ -357,9 +357,21 @@ func EncryptionStatus() (enabled bool, reason string) {
 	return false, "no encryption configured (set ABC_CRYPT_PASSWORD for local encryption)"
 }
 
-// RedactSensitiveFields redacts tokens for display purposes.
+// sensitiveKeySubstrings are lower-cased substrings of a config key path whose
+// value is credential material and must never be echoed to a terminal (it can
+// land in scrollback, screen-shares, or shell history). Matched case-insensitively.
+var sensitiveKeySubstrings = []string{
+	"secret", "password", "passwd", "token",
+	"access_key", "secret_key", "private_key", "credential", "api_key",
+}
+
+// RedactSensitiveFields returns a display-safe rendering of a config value and
+// whether it was redacted. Access tokens keep a recognizable 8-char prefix (so
+// `config list` can still identify which token is set); all other credential
+// material (secrets, passwords, keys) is fully replaced with "<redacted>".
 func RedactSensitiveFields(key, value string) (string, bool) {
-	if strings.Contains(key, "access_token") {
+	lk := strings.ToLower(key)
+	if strings.Contains(lk, "access_token") {
 		if value == "" {
 			return "", true
 		}
@@ -367,6 +379,14 @@ func RedactSensitiveFields(key, value string) (string, bool) {
 			return strings.Repeat("•", len(value)), true
 		}
 		return value[:8] + strings.Repeat("•", len(value)-8), true
+	}
+	for _, pat := range sensitiveKeySubstrings {
+		if strings.Contains(lk, pat) {
+			if value == "" {
+				return "", true
+			}
+			return "<redacted>", true
+		}
 	}
 	return value, false
 }

@@ -165,7 +165,8 @@ Example:
 
 			quiet, _ := cmd.Root().PersistentFlags().GetBool("quiet")
 			if !quiet {
-				fmt.Fprintf(os.Stderr, "✓ Set %s = %s\n", key, value)
+				display, _ := cfg.RedactSensitiveFields(key, value)
+				fmt.Fprintf(os.Stderr, "✓ Set %s = %s\n", key, display)
 			}
 
 			return nil
@@ -228,7 +229,8 @@ Access tokens are masked for security (only first 8 characters shown).`,
 				if value == "" {
 					continue // Skip empty values for readability
 				}
-				fmt.Fprintf(w, "%s\t%s\n", key, value)
+				display, _ := cfg.RedactSensitiveFields(key, value)
+				fmt.Fprintf(w, "%s\t%s\n", key, display)
 			}
 			w.Flush()
 

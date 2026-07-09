@@ -32,8 +32,12 @@ in the URL is ignored (it varies by tier — nomad.seedling.<…>, nomad.grove.<
 nomad.cloud.<…> — but the path-and-query schema is identical), so URLs
 pasted from any tier's Nomad UI work the same way:
 
-    abc job logs https://nomad.seedling.abc-cluster.cloud/ui/jobs/<job>@<ns>/allocations?activeTask=<alloc-uuid>-<task>`,
-		Args: cobra.ExactArgs(1),
+    abc job logs https://nomad.seedling.abc-cluster.cloud/ui/jobs/<job>@<ns>/allocations?activeTask=<alloc-uuid>-<task>
+
+A job id is optional when --alloc <id> is given: logs are then read directly
+from that allocation (useful when the job record is gone but the alloc is
+still live on its client).`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: runLogs,
 	}
 	cmd.Flags().BoolP("follow", "f", false, "Stream logs in real time (nomad source only)")
@@ -90,6 +94,17 @@ func resolveAllocTask(cmd *cobra.Command, target *NomadAllocStub, requested stri
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
+	// Allow `abc job logs --alloc <id>` with no job positional. Previously
+	// Args=ExactArgs(1) rejected it as "accepts 1 arg(s), received 0" (B2);
+	// now an alloc-only invocation streams straight from that allocation.
+	if len(args) == 0 {
+		allocOnly, _ := cmd.Flags().GetString("alloc")
+		if strings.TrimSpace(allocOnly) == "" {
+			return fmt.Errorf("provide a job id, or --alloc <id> to read a specific allocation")
+		}
+		return runLogsByAlloc(cmd, strings.TrimSpace(allocOnly))
+	}
+
 	// Accept either a bare job ID or a Nomad Web UI URL. When a URL is
 	// given, --namespace / --alloc / --task are seeded from it unless the
 	// user passed those flags explicitly. See resolveJobArg in url.go.
@@ -233,6 +248,48 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	_, err = nc.StreamLogs(cmd.Context(), target.ID, task, logType, origin, 0, follow, out)
+	return err
+}
+
+// runLogsByAlloc streams logs for a single allocation supplied via --alloc with
+// no job id. The Nomad fs log API is client-local, so this works whenever the
+// alloc dir still survives on its node — even if the job record is gone or the
+// caller doesn't know the job id (B2).
+func runLogsByAlloc(cmd *cobra.Command, allocID string) error {
+	logType, _ := cmd.Flags().GetString("type")
+	if logType != "stdout" && logType != "stderr" {
+		return fmt.Errorf("--type must be stdout or stderr, got %q", logType)
+	}
+	task, _ := cmd.Flags().GetString("task")
+	follow, _ := cmd.Flags().GetBool("follow")
+	ns := namespaceFromCmd(cmd)
+	nc := nomadClientFromCmd(cmd)
+
+	// Resolve the real task name against the alloc's tasks when we can read it;
+	// otherwise fall through with the requested/default task and let StreamLogs
+	// report the valid task names.
+	if alloc, err := nc.GetAllocation(cmd.Context(), allocID, ns); err == nil && alloc != nil {
+		stub := &NomadAllocStub{ID: alloc.ID, ClientStatus: alloc.ClientStatus, TaskStates: alloc.TaskStates}
+		resolved, terr := resolveAllocTask(cmd, stub, task)
+		if terr != nil {
+			return terr
+		}
+		task = resolved
+		if follow && utils.AllocClientTerminalStatus(alloc.ClientStatus) {
+			sid := allocID
+			if len(sid) > 8 {
+				sid = sid[:8]
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "  Allocation %s is %s; showing completed logs and exiting.\n\n", sid, alloc.ClientStatus)
+			follow = false
+		}
+	}
+
+	origin := "end"
+	if follow {
+		origin = "start"
+	}
+	_, err := nc.StreamLogs(cmd.Context(), allocID, task, logType, origin, 0, follow, cmd.OutOrStdout())
 	return err
 }
 

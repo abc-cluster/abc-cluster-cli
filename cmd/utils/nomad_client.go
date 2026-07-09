@@ -282,9 +282,10 @@ type nomadAllocNetwork struct {
 
 // NomadAllocation is a partial allocation payload for reading published ports.
 type NomadAllocation struct {
-	ID                 string `json:"ID"`
-	JobID              string `json:"JobID"`
-	ClientStatus       string `json:"ClientStatus"`
+	ID                 string                    `json:"ID"`
+	JobID              string                    `json:"JobID"`
+	ClientStatus       string                    `json:"ClientStatus"`
+	TaskStates         map[string]NomadTaskState `json:"TaskStates"`
 	AllocatedResources *struct {
 		Shared *struct {
 			Networks []nomadAllocNetwork `json:"Networks"`
@@ -323,8 +324,54 @@ func (ts *NomadTaskState) SlurmJobID() string {
 }
 
 type NomadEvaluation struct {
-	ID     string `json:"ID"`
-	Status string `json:"Status"`
+	ID                string                      `json:"ID"`
+	Status            string                      `json:"Status"`
+	StatusDescription string                      `json:"StatusDescription"`
+	BlockedEval       string                      `json:"BlockedEval"`
+	FailedTGAllocs    map[string]NomadAllocMetric `json:"FailedTGAllocs"`
+}
+
+// NomadAllocMetric is the subset of Nomad's allocation-scheduling metric that
+// explains WHY a task group could not be placed (constraints, resources, class).
+type NomadAllocMetric struct {
+	NodesEvaluated     int            `json:"NodesEvaluated"`
+	NodesFiltered      int            `json:"NodesFiltered"`
+	ClassFiltered      map[string]int `json:"ClassFiltered"`
+	ConstraintFiltered map[string]int `json:"ConstraintFiltered"`
+	DimensionExhausted map[string]int `json:"DimensionExhausted"`
+}
+
+// PlacementFailureReason returns a human-readable explanation of why a job's
+// allocations could not be placed, drawn from the evaluations' FailedTGAllocs
+// metrics, or "" if no evaluation records a placement failure. It turns a job
+// that would otherwise sit "pending, 0 allocs" forever into an actionable
+// message (constraint filtered N nodes / resources exhausted / class filtered).
+func PlacementFailureReason(evals []NomadEvaluation) string {
+	for _, e := range evals {
+		if len(e.FailedTGAllocs) == 0 {
+			continue
+		}
+		var parts []string
+		for tg, m := range e.FailedTGAllocs {
+			var reasons []string
+			for k, n := range m.ConstraintFiltered {
+				reasons = append(reasons, fmt.Sprintf("constraint %q filtered %d node(s)", k, n))
+			}
+			for dim, n := range m.DimensionExhausted {
+				reasons = append(reasons, fmt.Sprintf("%s exhausted on %d node(s)", dim, n))
+			}
+			for cls, n := range m.ClassFiltered {
+				reasons = append(reasons, fmt.Sprintf("node class %q filtered %d node(s)", cls, n))
+			}
+			detail := strings.Join(reasons, "; ")
+			if detail == "" {
+				detail = fmt.Sprintf("no eligible nodes (evaluated %d, filtered %d)", m.NodesEvaluated, m.NodesFiltered)
+			}
+			parts = append(parts, fmt.Sprintf("task group %q: %s", tg, detail))
+		}
+		return strings.Join(parts, " | ")
+	}
+	return ""
 }
 
 type NomadRegisterResponse struct {
@@ -1254,6 +1301,15 @@ func watchJobLogsInternal(ctx context.Context, nc *NomadClient, jobID, namespace
 			}
 		}
 		if chosen == nil {
+			// No placement yet. Distinguish "still scheduling" from "will never
+			// place": a blocked eval / FailedTGAllocs means the scheduler could
+			// not satisfy constraints or resources. Surface that reason and stop,
+			// instead of waiting forever with no message (B9).
+			if evals, eerr := nc.GetJobEvals(ctx, jobID, namespace); eerr == nil {
+				if reason := PlacementFailureReason(evals); reason != "" {
+					return fmt.Errorf("job %q could not be placed: %s\n  (adjust --node-pool / --constraint; see `abc job show %s`)", jobID, reason, jobID)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return nil
@@ -1500,6 +1556,15 @@ func watchJobLogsInternalBoth(ctx context.Context, nc *NomadClient, jobID, names
 			}
 		}
 		if chosen == nil {
+			// No placement yet. Distinguish "still scheduling" from "will never
+			// place": a blocked eval / FailedTGAllocs means the scheduler could
+			// not satisfy constraints or resources. Surface that reason and stop,
+			// instead of waiting forever with no message (B9).
+			if evals, eerr := nc.GetJobEvals(ctx, jobID, namespace); eerr == nil {
+				if reason := PlacementFailureReason(evals); reason != "" {
+					return fmt.Errorf("job %q could not be placed: %s\n  (adjust --node-pool / --constraint; see `abc job show %s`)", jobID, reason, jobID)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return nil
