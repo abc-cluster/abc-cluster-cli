@@ -128,6 +128,11 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		}
 	}
 
+	mounts := make([]jobhcl.VolumeMount, 0, len(spec.Mounts))
+	for _, m := range spec.Mounts {
+		mounts = append(mounts, jobhcl.VolumeMount{Volume: m.Volume, Dest: m.Dest, ReadOnly: m.ReadOnly})
+	}
+
 	hclSpec := jobhcl.Spec{
 		Name:                spec.Name,
 		Namespace:           spec.Namespace,
@@ -193,6 +198,7 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		ExtraTemplates:      extraTemplates,
 		Wave:                waveSpec,
 		Staging:             stagingSpec,
+		Mounts:              mounts,
 	}
 	return jobhcl.Generate(hclSpec, scriptName, scriptContent)
 }

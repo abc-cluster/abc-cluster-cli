@@ -1,6 +1,7 @@
 package job
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -182,6 +183,11 @@ type jobSpec struct {
 	// resolved endpoint being HTTPS (mirrors cmd/pipeline/hcl_adapter.go).
 	StageS5cmdSkipTLS bool
 
+	// Mounts are host-volume mounts attached to the main task (from --volume /
+	// --tools). They let a job reach node-provided tools (the abc-tools volume:
+	// s5cmd, mc, …) or data volumes, which an exec task cannot otherwise see.
+	Mounts []mountSpec
+
 	// ── Debug / interactive directives ───────────────────────────────────────
 	// DebugSleepSecs injects a `sleep N` at the start of the job script so the
 	// user can exec into the running allocation to inspect state or attach a
@@ -214,6 +220,44 @@ type jobSpec struct {
 	// Artifacts lists remote files Nomad should fetch before the task starts.
 	// Populated by the --artifact CLI flag (data download path only).
 	Artifacts []artifactSpec
+}
+
+// mountSpec is one host-volume mount request for the main task (--volume/--tools).
+type mountSpec struct {
+	Volume   string // registered host_volume name (e.g. "abc-tools")
+	Dest     string // in-task mount path (e.g. "/opt/abc-tools")
+	ReadOnly bool
+}
+
+// parseVolumeFlag parses a --volume value of the form
+// "<name>[:<dest>][:ro|:rw]" into a mountSpec. When <dest> is omitted it
+// defaults to "/mnt/<name>"; the mount is read-write unless ":ro" is given.
+func parseVolumeFlag(s string) (mountSpec, error) {
+	parts := strings.Split(strings.TrimSpace(s), ":")
+	name := strings.TrimSpace(parts[0])
+	if name == "" {
+		return mountSpec{}, fmt.Errorf("--volume %q: empty volume name (use <name>[:<dest>][:ro])", s)
+	}
+	m := mountSpec{Volume: name, Dest: "/mnt/" + name}
+	rest := parts[1:]
+	if n := len(rest); n > 0 {
+		switch strings.ToLower(strings.TrimSpace(rest[n-1])) {
+		case "ro":
+			m.ReadOnly = true
+			rest = rest[:n-1]
+		case "rw":
+			rest = rest[:n-1]
+		}
+	}
+	if len(rest) > 0 {
+		if dest := strings.TrimSpace(rest[0]); dest != "" {
+			if !strings.HasPrefix(dest, "/") {
+				return mountSpec{}, fmt.Errorf("--volume %q: mount dest %q must be an absolute path", s, dest)
+			}
+			m.Dest = dest
+		}
+	}
+	return m, nil
 }
 
 // readNomadEnvVars seeds a jobSpec from NOMAD_* environment variables present
