@@ -107,6 +107,20 @@ Examples:
 				}
 			}
 
+			// Directory sources upload recursively via s5cmd. Normalize a dir push
+			// to the documented "contents into prefix" form (dir/ → prefix/) by
+			// appending trailing slashes to both sides. Without this, pushing a dir
+			// without exact trailing slashes either errored ("target must be a
+			// bucket or a prefix") or silently nested the dir name under itself —
+			// the footgun that made directory push look unsupported (B15). Now
+			// `abc data push ./results s3://.../results` recursively uploads the
+			// contents into .../results/ predictably.
+			if info, statErr := os.Stat(localPath); statErr == nil && info.IsDir() {
+				orig := localPath
+				localPath, s3URI = normalizePushDir(localPath, s3URI)
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: %s is a directory — uploading its contents recursively into %s\n", strings.TrimRight(orig, "/"), s3URI)
+			}
+
 			// Build s5cmd invocation. --numworkers is a global flag (before the
 			// subcommand); cp flags are built by buildPushCpArgs and precede the
 			// positionals (see that function for why ordering matters).
@@ -128,6 +142,22 @@ Examples:
 	cmd.Flags().Lookup("compress").NoOptDefVal = "default"
 
 	return cmd
+}
+
+// normalizePushDir returns the (src, dst) for pushing a local *directory*: it
+// uploads the directory's CONTENTS into the destination prefix (rsync-style) by
+// ensuring both paths end with "/". This gives predictable recursive directory
+// push regardless of how the user wrote the trailing slashes — instead of the
+// s5cmd "target must be a bucket or a prefix" error, or silently nesting the
+// directory name under itself (B15).
+func normalizePushDir(localPath, s3URI string) (string, string) {
+	if !strings.HasSuffix(localPath, "/") {
+		localPath += "/"
+	}
+	if !strings.HasSuffix(s3URI, "/") {
+		s3URI += "/"
+	}
+	return localPath, s3URI
 }
 
 // buildPushCpArgs builds the s5cmd `cp` argument list (everything after the
