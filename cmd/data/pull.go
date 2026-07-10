@@ -28,7 +28,7 @@ func newPullCmd() *cobra.Command {
 	var decompress bool
 
 	cmd := &cobra.Command{
-		Use:   "pull <s3-uri>",
+		Use:   "pull <s3-uri> [<local-dest>]",
 		Short: "Download a file or prefix from cluster storage to your local machine",
 		Long: `Download data from your cluster MinIO bucket to the local machine using s5cmd.
 
@@ -45,24 +45,31 @@ Examples:
   # Download a single file to the current directory:
   abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/results.csv
 
-  # Download to a specific local directory:
-  abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/results.csv \
-    --destination ~/downloads/
+  # Download to a specific local directory (positional, symmetric with push):
+  abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/results.csv ~/downloads/
+
+  # Equivalent, via the flag:
+  abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/results.csv -d ~/downloads/
 
   # Download an entire prefix (trailing / triggers recursive copy):
-  abc data pull s3://su-mbhg-hostgen/user/calm-dassie/results/ \
-    --destination ./run-outputs/
+  abc data pull s3://su-mbhg-hostgen/user/calm-dassie/results/ ./run-outputs/
 
   # Use more parallel workers for large transfers:
-  abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/ \
-    --destination ./data/ --parallel 8`,
-		Args: cobra.ExactArgs(1),
+  abc data pull s3://su-mbhg-hostgen/user/calm-dassie/data/ ./data/ --parallel 8`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			src := strings.TrimSpace(args[0])
 			if !strings.HasPrefix(strings.ToLower(src), "s3://") {
 				return fmt.Errorf("source must be an S3 URI (s3://...); got %q\n"+
 					"  To download from the internet, use: abc data fetch <url>", src)
 			}
+			// Accept the destination positionally too, for symmetry with
+			// `push <local> <s3>` (B15). --destination stays supported.
+			dest, err := resolvePullDest(args, destination)
+			if err != nil {
+				return err
+			}
+			destination = dest
 			if err := LocalFetchFromS3(cmd, src, destination, parallel); err != nil {
 				return err
 			}
@@ -81,6 +88,21 @@ Examples:
 		"after download, expand any .zst artifacts locally (integrity-verified); non-zstd files are left untouched")
 
 	return cmd
+}
+
+// resolvePullDest picks the local download destination from an optional second
+// positional arg and the --destination flag. The positional form makes pull
+// symmetric with `push <local> <s3>`. Supplying both is an error unless they
+// agree; supplying neither returns "" (LocalFetchFromS3 defaults to cwd).
+func resolvePullDest(args []string, flagDest string) (string, error) {
+	if len(args) < 2 {
+		return flagDest, nil
+	}
+	pos := strings.TrimSpace(args[1])
+	if flagDest != "" && flagDest != pos {
+		return "", fmt.Errorf("destination given both positionally (%q) and via --destination (%q) — use one", pos, flagDest)
+	}
+	return pos, nil
 }
 
 // decompressPulled expands .zst artifacts after a pull. For a single-object pull
