@@ -3,6 +3,8 @@ package pipeline
 import (
 	"strings"
 	"testing"
+
+	"github.com/abc-cluster/abc-cluster-cli/internal/shellcheck"
 )
 
 func TestGenerate_DefaultHostVolumeIsNfWork(t *testing.T) {
@@ -333,4 +335,83 @@ func TestBuildNextflowConfig_WorkerPoolEmittedEvenWhenPinWorkers(t *testing.T) {
 	if !strings.Contains(cfg, `constraints = { node { unique = [name: 'nomad01'] } }`) {
 		t.Fatalf("expected pin-workers node constraint:\n%s", cfg)
 	}
+}
+
+// TestGenerate_NxfTempOnObjectStoreWorkDir covers the collectFile trap: with an
+// object-store work dir, collectFile() without a storeDir tries to mkdir its
+// temp directory under the work dir, which fails on the head and kills the run
+// before a single task is submitted. NXF_TEMP must be redirected to node-local
+// scratch. Verified empirically (MTBseq-nf: 0 tasks -> 95 completed).
+// See brainstorms/abc-cluster-cli/2026-08-11-pipeline-command-objectstore-preflight.md
+//
+// Assertions run against the EXTRACTED entrypoint rather than the raw HCL:
+// cty.StringVal escapes `${` to `$${`, so the raw job spec never contains the
+// literal the shell will see. ExtractHCLHeredoc reverses that, matching what
+// Nomad writes to disk.
+func TestGenerate_NxfTempOnObjectStoreWorkDir(t *testing.T) {
+	base := Spec{
+		Datacenters:     []string{"dc1"},
+		CPU:             1000,
+		MemoryMB:        2048,
+		NfVersion:       "25.10.4",
+		NfPluginVersion: "99.99.99",
+		Repository:      "nextflow-io/hello",
+		Plugins: []PluginRef{
+			{ID: "nf-nomad", Version: "99.99.99"},
+			{ID: "nf-nomad-s5cmd", Version: "99.99.99"},
+		},
+	}
+
+	entrypoint := func(t *testing.T, spec Spec) string {
+		t.Helper()
+		script := shellcheck.ExtractHCLHeredoc(Generate(spec, "http://127.0.0.1:4646", "tok", "u"), "entrypoint.sh")
+		if script == "" {
+			t.Fatal("could not extract entrypoint.sh from HCL")
+		}
+		return script
+	}
+
+	t.Run("s3 work dir redirects NXF_TEMP to node-local scratch", func(t *testing.T) {
+		spec := base
+		spec.WorkDir = "s3://su-mbhg-hostgen/work"
+		script := entrypoint(t, spec)
+		if !strings.Contains(script, `export NXF_TEMP="${NXF_TEMP:-/local/nxf-temp}"`) {
+			t.Fatalf("expected NXF_TEMP redirected to node-local scratch for an S3 work dir:\n%s", script)
+		}
+		if !strings.Contains(script, `mkdir -p "$NXF_TEMP"`) {
+			t.Fatalf("expected NXF_TEMP to be created before nextflow runs:\n%s", script)
+		}
+		// The S3 branch adds new bash the existing shellcheck test never reaches
+		// (its spec uses a host-volume work dir).
+		if perr := shellcheck.Parse(script); perr != nil {
+			t.Fatalf("entrypoint.sh fails bash parse: %v\n--- script ---\n%s", perr, script)
+		}
+	})
+
+	t.Run("explicit --env NXF_TEMP wins", func(t *testing.T) {
+		spec := base
+		spec.WorkDir = "s3://su-mbhg-hostgen/work"
+		spec.StaticEnv = map[string]string{"NXF_TEMP": "/mnt/scratch/tmp"}
+		hcl := Generate(spec, "http://127.0.0.1:4646", "tok", "u")
+		// The task env block carries the user's value; the entrypoint defers to it
+		// via ${NXF_TEMP:-...} rather than overwriting.
+		if !strings.Contains(hcl, "/mnt/scratch/tmp") {
+			t.Fatalf("expected user-supplied NXF_TEMP in the task env:\n%s", hcl)
+		}
+		if strings.Contains(shellcheck.ExtractHCLHeredoc(hcl, "entrypoint.sh"), "export NXF_TEMP=/local/nxf-temp") {
+			t.Fatal("entrypoint must not hard-override a user-set NXF_TEMP")
+		}
+	})
+
+	t.Run("host-volume work dir leaves NXF_TEMP alone", func(t *testing.T) {
+		// /local carries Nomad ephemeral_disk quota. Host-volume work dirs already
+		// have a working temp with more headroom, so redirecting them would trade a
+		// non-problem for a disk-quota failure.
+		spec := base
+		spec.WorkDir = "/work/nextflow-work"
+		spec.Plugins = []PluginRef{{ID: "nf-nomad", Version: "99.99.99"}}
+		if strings.Contains(entrypoint(t, spec), "NXF_TEMP") {
+			t.Fatal("did not expect NXF_TEMP for a host-volume work dir")
+		}
+	})
 }

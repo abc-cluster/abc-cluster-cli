@@ -1152,7 +1152,36 @@ func buildEntrypoint(spec Spec) string {
 	// (e.g. nextflow-io/rnaseq-nf v2.3's Azure block). Nextflow 25+ defaults to
 	// the strict v2 parser which rejects undefined identifiers at parse time.
 	// Setting v1 is a no-op for pipelines that already use env('VAR') / params.
-	sb.WriteString("export NXF_SYNTAX_PARSER=v1\n\n")
+	sb.WriteString("export NXF_SYNTAX_PARSER=v1\n")
+
+	// NXF_TEMP must be node-local when the work dir lives in an object store.
+	//
+	// collectFile() without a storeDir assembles its output in a temp directory
+	// Nextflow creates UNDER the work directory. On an S3 work dir that mkdir
+	// fails on the head and the run dies before submitting a single task:
+	//
+	//   ERROR ~ Unable to create temporary directory: /<bucket>/<prefix>/tmp/ee/358d...
+	//
+	// The message names a directory, so it reads as a bucket-permissions
+	// problem. It is not. This is not pipeline-specific: collectFile without
+	// storeDir is the standard nf-core template idiom for the workflow-summary
+	// and methods-description YAMLs, so any nf-core pipeline on an object-store
+	// work dir is exposed. Verified empirically: MTBseq-nf went from 0 tasks
+	// submitted to 95 completed with this variable and no other change
+	// (brainstorms/abc-cluster-cli/2026-08-11-pipeline-command-objectstore-preflight.md).
+	//
+	// Scoped to remote work dirs deliberately. /local is the alloc's ephemeral
+	// task dir and carries Nomad's ephemeral_disk quota; host-volume work dirs
+	// already have a working temp with more headroom, so redirecting those
+	// would trade a non-problem for a disk-quota failure.
+	//
+	// ${NXF_TEMP:-...} so an explicit `--env NXF_TEMP=...` (which lands in the
+	// task env block) still wins.
+	if isS3URI(spec.WorkDir) {
+		sb.WriteString("export NXF_TEMP=\"${NXF_TEMP:-/local/nxf-temp}\"\n")
+		sb.WriteString("mkdir -p \"$NXF_TEMP\"\n")
+	}
+	sb.WriteString("\n")
 
 	// Move the auto-extracted plugin bundle into NXF_HOME/plugins before
 	// invoking nextflow. Nomad's artifact stanza (with ?archive=zip) unpacks
