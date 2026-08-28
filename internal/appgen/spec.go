@@ -57,6 +57,7 @@ const (
 //   - public:  Host(<app>.apps.seedling…)  on entrypoint `web`     → GCP edge (internet)
 //   - private: PathPrefix(/apps/<app>)      on entrypoint `private` → campus-IP:443 door
 //   - shared:  PathPrefix(/apps/<app>)      on entrypoint `shared`  → overlay-VPN (Tailscale Serve)
+//
 // Changing `expose:` re-points routers; it never renames the app. See abc-universe
 // brainstorms/abc-scientific-apps/2026-06-10-lan-only-app-reverse-proxy-port-constraint.md.
 const (
@@ -123,17 +124,17 @@ type DataMount struct {
 // config.yaml. The descriptor is parsed with KnownFields(true), so every field
 // the user may set must appear here.
 type Spec struct {
-	Version       string            `yaml:"version,omitempty"`
-	Name          string            `yaml:"name"`
-	Image         string            `yaml:"image"`
-	Project       string            `yaml:"project"`
-	Framework     string            `yaml:"framework"`
-	Port          int               `yaml:"port,omitempty"`
-	Health        string            `yaml:"health,omitempty"`
-	HealthTimeout string            `yaml:"health_timeout,omitempty"` // e.g. "3m"; overrides the deploy default
-	Access        string            `yaml:"access,omitempty"`
-	Expose        ExposePlanes      `yaml:"expose,omitempty"`   // network-reach planes: [public|shared|private]
-	Exposure      string            `yaml:"exposure,omitempty"` // DEPRECATED legacy scalar (public|internal|both); maps to Expose
+	Version       string       `yaml:"version,omitempty"`
+	Name          string       `yaml:"name"`
+	Image         string       `yaml:"image"`
+	Project       string       `yaml:"project"`
+	Framework     string       `yaml:"framework"`
+	Port          int          `yaml:"port,omitempty"`
+	Health        string       `yaml:"health,omitempty"`
+	HealthTimeout string       `yaml:"health_timeout,omitempty"` // e.g. "3m"; overrides the deploy default
+	Access        string       `yaml:"access,omitempty"`
+	Expose        ExposePlanes `yaml:"expose,omitempty"`   // network-reach planes: [public|shared|private]
+	Exposure      string       `yaml:"exposure,omitempty"` // DEPRECATED legacy scalar (public|internal|both); maps to Expose
 	// StripPrefix controls whether Traefik strips the `/apps/<project>-<name>`
 	// PathPrefix before forwarding to the container, for apps using the private
 	// or shared planes. Defaults are framework-derived in ApplyDefaults:
@@ -143,11 +144,11 @@ type Spec struct {
 	//                    / ABC_APP_URL and need the prefix to remain).
 	// Set explicitly to override the framework default. No effect on apps using
 	// only the public plane (Host-rule routing, no prefix).
-	StripPrefix   *bool             `yaml:"strip_prefix,omitempty"`
-	Replicas      int               `yaml:"replicas,omitempty"`
-	Env           map[string]string `yaml:"env,omitempty"`
-	Data          []DataMount       `yaml:"data,omitempty"`
-	Resources     Resources         `yaml:"resources,omitempty"`
+	StripPrefix *bool             `yaml:"strip_prefix,omitempty"`
+	Replicas    int               `yaml:"replicas,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty"`
+	Data        []DataMount       `yaml:"data,omitempty"`
+	Resources   Resources         `yaml:"resources,omitempty"`
 
 	// Source is rejected in phase 1 (no cluster-side build path). Declared so a
 	// stray `source:` produces a clear error instead of being ignored.
@@ -244,9 +245,13 @@ var frameworkDefaults = map[string]frameworkDefault{
 	"streamlit": {port: 8501, health: "/_stcore/health", stateful: true, supported: true},
 	"shiny":     {port: 3838, health: "/", stateful: true, supported: true},
 	"pode":      {port: 8085, health: "/health/live", stateful: false, supported: true},
-	"dash":      {port: 8050, health: "/", stateful: true, supported: false},
-	"panel":     {port: 5006, health: "/", stateful: true, supported: false},
-	"voila":     {port: 8866, health: "/", stateful: true, supported: false},
+	// static: no application process of its own, just a web server in front of
+	// pre-built assets. stateful:false because there is no session or WebSocket
+	// to pin, so any replica can serve any request.
+	"static": {port: 8080, health: "/", stateful: false, supported: true},
+	"dash":   {port: 8050, health: "/", stateful: true, supported: false},
+	"panel":  {port: 5006, health: "/", stateful: true, supported: false},
+	"voila":  {port: 8866, health: "/", stateful: true, supported: false},
 	// custom has no defaults — port + health are mandatory.
 	"custom": {supported: true},
 }

@@ -128,6 +128,21 @@ func ScaffoldDockerfile(o ScaffoldOptions) string {
 			fmt.Sprintf("CMD [\"R\", \"-e\", \"options(shiny.host='0.0.0.0', shiny.port=%d); shiny::runApp('.')\"]", port),
 			"",
 		}, "\n")
+	case "static":
+		return strings.Join([]string{
+			"# Static asset app — no application process, just a web server in front of",
+			"# pre-built files (abc app init --with-dockerfile).",
+			"#",
+			"# nginx-unprivileged listens on 8080 as a non-root user, which matches the",
+			"# platform's bind contract without editing nginx.conf or running as root.",
+			"FROM nginxinc/nginx-unprivileged:alpine",
+			"# Copy your built assets. A self-contained report (MultiQC, a rendered",
+			"# notebook, a Quarto site) can be copied straight in as index.html.",
+			"COPY . /usr/share/nginx/html/",
+			fmt.Sprintf("EXPOSE %d", port),
+			"# Bind contract: the image already listens on 0.0.0.0:8080.",
+			"",
+		}, "\n")
 	case "pode":
 		return strings.Join([]string{
 			"# Pode/Pode.Web app — minimal starter (abc app init --with-dockerfile)",
