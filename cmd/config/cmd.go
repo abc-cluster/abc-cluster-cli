@@ -30,7 +30,7 @@ func NewCmd() *cobra.Command {
 Configuration is stored at ~/.abc/config.yaml (or ABC_CLI_CONFIG_FILE).
 This is where cli-managed fields like default region, output format, and
 saved authentication contexts are stored. First-time "abc config init" writes
-a "default" context entry you can fill with "abc auth login" or "abc context add".
+a "default" context entry you can fill with "abc auth login" or "abc auth context add".
 
 Sensitive fields (access_token) can be encrypted with mozilla/sops.
 See 'abc config encryption' for details.
@@ -66,7 +66,7 @@ func newInitCmd() *cobra.Command {
 
 Ensures the file exists and seeds a placeholder context named "default" (public
 API endpoint preset) with active_context set to "default" when none is set.
-Use "abc auth login" or "abc context add" to fill in tokens and workspace fields.`,
+Use "abc auth login" or "abc auth context add" to fill in tokens and workspace fields.`,
 		Args: cobra.NoArgs,
 		RunE: runConfigInit,
 	}
@@ -83,7 +83,7 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Config ready at %s\n", cfgFile)
 	if ac := strings.TrimSpace(c.ActiveContext); ac != "" {
-		fmt.Fprintf(os.Stderr, "✓ Active context: %s (edit with: abc auth login  or  abc context add ...)\n", ac)
+		fmt.Fprintf(os.Stderr, "✓ Active context: %s (edit with: abc auth login  or  abc auth context add ...)\n", ac)
 	} else {
 		fmt.Fprintf(os.Stderr, "✓ Placeholder context %q added; pick active with: abc context use <name>\n", cfg.DefaultContextName)
 	}

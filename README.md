@@ -29,15 +29,20 @@ go install github.com/abc-cluster/abc-cluster-cli@latest
 abc config init
 
 # 2. Add a context for your cluster
-abc auth context add lab \
-  --address https://nomad.mylab.example:4646 \
-  --access-token <your-nomad-acl-token> \
-  --workspace default
+# Preferred: import the context file your workspace lead gave you
+abc auth context add lab --from-file ./lab-context.yaml
 abc auth context use lab
 
+# Confirm the CLI can reach and run work on the cluster
+abc doctor
+
 # 3. Run something
-abc job run hello.sh --submit --watch
+abc job run hello-cluster            # built-in workload, no script file needed
+abc job run hello.sh                 # your own #ABC-annotated script
 abc pipeline run https://github.com/nf-core/rnaseq --revision 3.14.0
+
+# Follow a running job
+abc job logs <job-id> --follow
 ```
 
 See **[docs/quickstart.md](./docs/quickstart.md)** for the full first-run walkthrough.

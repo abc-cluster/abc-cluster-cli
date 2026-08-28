@@ -271,7 +271,7 @@ func checkConfig(ctxName string) (groupResult, *config.Config, *config.Context) 
 		g.Checks = append(g.Checks, checkResult{
 			Name:   "active context",
 			Status: statusFail,
-			Detail: "no active_context set — run 'abc auth login' or 'abc context add'",
+			Detail: "no active_context set — run 'abc auth login' or 'abc auth context add'",
 		})
 		return g, cfg, nil
 	}
@@ -289,7 +289,7 @@ func checkConfig(ctxName string) (groupResult, *config.Config, *config.Context) 
 		g.Checks = append(g.Checks, checkResult{
 			Name:   "nomad address",
 			Status: statusFail,
-			Detail: "not set — run 'abc context add <name> --endpoint http://<ip>:4646'",
+			Detail: "not set — import a context with 'abc auth context add <name> --from-file <context.yaml>', or set contexts.<name>.admin.services.nomad.addr",
 		})
 	} else {
 		g.Checks = append(g.Checks, checkResult{
