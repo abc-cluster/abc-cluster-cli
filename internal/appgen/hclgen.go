@@ -36,6 +36,9 @@ type JobParams struct {
 	// ContentDigest is the sha256 of an uploaded `content:` payload, resolved
 	// by the deploy command after upload. Empty for image-based apps.
 	ContentDigest string
+	// ContentIsFile records that the payload was a single file, which is
+	// fetched as one object rather than as a prefix.
+	ContentIsFile bool
 }
 
 // Generate produces the Nomad HCL for an app `service` job from a resolved Spec
@@ -217,7 +220,10 @@ func Generate(s *Spec, p JobParams) string {
 		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
 			cty.StringVal("file-server"),
 			cty.StringVal("--root"),
-			cty.StringVal("local"),
+			// Absolute: the docker driver mounts the allocation's task directory
+			// at /local inside the container, and caddy's working directory is
+			// not that path, so a relative "local" resolves to nothing.
+			cty.StringVal("/local"),
 			cty.StringVal("--listen"),
 			cty.StringVal(fmt.Sprintf(":%d", s.Port)),
 		}))
@@ -232,11 +238,20 @@ func Generate(s *Spec, p JobParams) string {
 	// artifact — Nomad fetches the content payload onto the node before the task
 	// starts, into local/ where the file server is rooted. Credentials come from
 	// the AWS_* vars platformEnv injects below.
-	if strings.TrimSpace(s.Content) != "" && strings.TrimSpace(p.ContentDigest) != "" {
+	if src := contentArtifactSource(s, p); src != "" {
 		artBody := taskBody.AppendNewBlock("artifact", nil).Body()
-		artBody.SetAttributeValue("source", cty.StringVal(
-			ContentArtifactSource(p.MinIOEndpoint, s.Project, s.Name, p.ContentDigest)))
+		artBody.SetAttributeValue("source", cty.StringVal(src))
 		artBody.SetAttributeValue("destination", cty.StringVal("local/"))
+		// The artifact getter runs as a separate subprocess and does NOT inherit
+		// the task's env, so the AWS_* vars in the env block below are invisible
+		// to it. Without credentials here it falls back to EC2 IMDS and fails
+		// with "no EC2 IMDS role found". These are the same credentials already
+		// present in the env block, so this exposes nothing new.
+		if p.AWSAccessKey != "" {
+			optBody := artBody.AppendNewBlock("options", nil).Body()
+			optBody.SetAttributeValue("aws_access_key_id", cty.StringVal(p.AWSAccessKey))
+			optBody.SetAttributeValue("aws_access_key_secret", cty.StringVal(p.AWSSecretKey))
+		}
 	}
 
 	// env — platform-injected vars merged with the user's env. Platform wins
@@ -319,4 +334,22 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// contentArtifactSource resolves where a static app's content is fetched from.
+// A remote `content: s3://…` is served straight from that prefix — typically
+// the results prefix a pipeline just wrote — so nothing is downloaded and
+// re-uploaded. A local path is served from the digest the CLI uploaded.
+func contentArtifactSource(s *Spec, p JobParams) string {
+	c := strings.TrimSpace(s.Content)
+	if c == "" {
+		return ""
+	}
+	if IsRemoteContent(c) {
+		return RemoteArtifactSource(p.MinIOEndpoint, c)
+	}
+	if strings.TrimSpace(p.ContentDigest) == "" {
+		return ""
+	}
+	return ContentArtifactSource(p.MinIOEndpoint, s.Project, s.Name, p.ContentDigest, p.ContentIsFile)
 }

@@ -100,9 +100,41 @@ func TestValidate_ContentRules(t *testing.T) {
 }
 
 func TestContentArtifactSource(t *testing.T) {
-	got := ContentArtifactSource("http://minio:9000/", "demo", "rep", "abc123")
+	got := ContentArtifactSource("http://minio:9000/", "demo", "rep", "abc123", false)
 	want := "s3::http://minio:9000/abc-reserved/app-content/demo/rep/abc123/"
 	if got != want {
 		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+// content: may name a prefix that already exists in the object store — the
+// results prefix a pipeline just wrote — in which case nothing is uploaded.
+func TestIsRemoteContent(t *testing.T) {
+	for in, want := range map[string]bool{
+		"s3://nf-work/demo-results/multiqc/": true,
+		"s3://bucket/report.html":            true,
+		"./multiqc_report.html":              false,
+		"/abs/path/site":                     false,
+		"":                                   false,
+	} {
+		if got := IsRemoteContent(in); got != want {
+			t.Errorf("IsRemoteContent(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestRemoteArtifactSource(t *testing.T) {
+	got := RemoteArtifactSource("http://minio:9000/", "s3://nf-work/demo-results/multiqc/")
+	if want := "s3::http://minio:9000/nf-work/demo-results/multiqc/"; got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+// A remote content spec must validate without touching the filesystem.
+func TestValidate_RemoteContentNeedsNoLocalFile(t *testing.T) {
+	s := &Spec{Version: CurrentSpecVersion, Name: "rep", Project: "demo",
+		Framework: "static", Content: "s3://nf-work/demo-results/multiqc/", Access: "team"}
+	if err := s.Validate(); err != nil {
+		t.Errorf("remote content should validate with no local file: %v", err)
 	}
 }
