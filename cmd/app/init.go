@@ -16,6 +16,7 @@ var initFrameworks = map[string]bool{
 	"streamlit": true,
 	"shiny":     true,
 	"pode":      true,
+	"static":    true,
 	"custom":    true,
 }
 
@@ -34,7 +35,7 @@ Refuses to overwrite an existing abc-app.yaml (or Dockerfile) without --force.`,
 		Args: cobra.NoArgs,
 		RunE: runInit,
 	}
-	cmd.Flags().String("framework", "streamlit", "App framework: streamlit|shiny|pode|custom")
+	cmd.Flags().String("framework", "streamlit", "App framework: streamlit|shiny|pode|static|custom")
 	cmd.Flags().String("name", "", "App name (default: a framework-flavoured placeholder)")
 	cmd.Flags().String("project", "", "Project/group you deploy as")
 	cmd.Flags().Bool("with-dockerfile", false, "Also write a minimal framework Dockerfile starter")
@@ -47,7 +48,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	fw := strings.ToLower(strings.TrimSpace(mustString(cmd, "framework")))
 	if !initFrameworks[fw] {
-		return fmt.Errorf("framework %q is not scaffoldable; use one of: streamlit, shiny, pode, custom", fw)
+		return fmt.Errorf("framework %q is not scaffoldable; use one of: streamlit, shiny, pode, static, custom", fw)
 	}
 	opts := appgen.ScaffoldOptions{
 		Framework: fw,

@@ -89,6 +89,12 @@ func ScaffoldYAML(o ScaffoldOptions) string {
 	b.WriteString("# env:              # plain (non-secret) env vars injected into the container.\n")
 	b.WriteString("#   LOG_LEVEL: info # ABC_*/AWS_* are platform-injected and cannot be set here.\n")
 	b.WriteString("\n")
+	if o.Framework == "static" {
+		b.WriteString("\n# content: ./report.html   # a local file or directory to publish. With this set,\n")
+		b.WriteString("#                          # omit `image`: the platform serves your files and\n")
+		b.WriteString("#                          # nothing is baked into an image. A single file is\n")
+		b.WriteString("#                          # served as index.html. Limit " + fmt.Sprintf("%d", MaxContentBytes>>20) + " MiB.\n")
+	}
 	b.WriteString("# data:             # MinIO buckets the app reads/writes (Vault-minted AWS_* creds).\n")
 	b.WriteString("#   - bucket: my-bucket\n")
 	b.WriteString("#     access: read  # read (default) or read-write\n")
@@ -126,6 +132,21 @@ func ScaffoldDockerfile(o ScaffoldOptions) string {
 			"# Bind contract: standalone Shiny defaults to 127.0.0.1 + a random port,",
 			"# so host/port MUST be pinned to 0.0.0.0:<port> or Traefik can't reach it.",
 			fmt.Sprintf("CMD [\"R\", \"-e\", \"options(shiny.host='0.0.0.0', shiny.port=%d); shiny::runApp('.')\"]", port),
+			"",
+		}, "\n")
+	case "static":
+		return strings.Join([]string{
+			"# Static asset app — no application process, just a web server in front of",
+			"# pre-built files (abc app init --with-dockerfile).",
+			"#",
+			"# nginx-unprivileged listens on 8080 as a non-root user, which matches the",
+			"# platform's bind contract without editing nginx.conf or running as root.",
+			"FROM nginxinc/nginx-unprivileged:alpine",
+			"# Copy your built assets. A self-contained report (MultiQC, a rendered",
+			"# notebook, a Quarto site) can be copied straight in as index.html.",
+			"COPY . /usr/share/nginx/html/",
+			fmt.Sprintf("EXPOSE %d", port),
+			"# Bind contract: the image already listens on 0.0.0.0:8080.",
 			"",
 		}, "\n")
 	case "pode":

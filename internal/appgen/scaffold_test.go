@@ -122,3 +122,31 @@ func TestResolvedSummary(t *testing.T) {
 		}
 	}
 }
+
+// static must scaffold a Dockerfile whose server already binds 0.0.0.0:8080,
+// so the platform's bind contract holds without editing nginx.conf.
+func TestScaffoldDockerfile_Static(t *testing.T) {
+	got := ScaffoldDockerfile(ScaffoldOptions{Framework: "static", Name: "report"})
+	for _, frag := range []string{"nginx-unprivileged", "/usr/share/nginx/html/", "EXPOSE 8080"} {
+		if !strings.Contains(got, frag) {
+			t.Errorf("static Dockerfile missing %q:\n%s", frag, got)
+		}
+	}
+}
+
+// A static app has no session to pin, so it must not be marked stateful.
+func TestFrameworkDefaults_StaticIsStateless(t *testing.T) {
+	def, ok := frameworkDefaults["static"]
+	if !ok {
+		t.Fatal("static missing from frameworkDefaults")
+	}
+	if !def.supported {
+		t.Error("static should be supported")
+	}
+	if def.stateful {
+		t.Error("static has no session or WebSocket, so it must not be stateful")
+	}
+	if def.port != 8080 || def.health != "/" {
+		t.Errorf("unexpected defaults: port=%d health=%q", def.port, def.health)
+	}
+}
