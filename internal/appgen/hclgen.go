@@ -33,6 +33,9 @@ type JobParams struct {
 	// the bare /apps/<app>/ path and omits abc_url_ip — back-compat for callers
 	// that don't populate this field yet.
 	AppsDoors AppsDoors
+	// ContentDigest is the sha256 of an uploaded `content:` payload, resolved
+	// by the deploy command after upload. Empty for image-based apps.
+	ContentDigest string
 }
 
 // Generate produces the Nomad HCL for an app `service` job from a resolved Spec
@@ -202,11 +205,39 @@ func Generate(s *Spec, p JobParams) string {
 	taskBody.SetAttributeValue("driver", cty.StringVal("docker"))
 
 	cfgBody := taskBody.AppendNewBlock("config", nil).Body()
-	cfgBody.SetAttributeValue("image", cty.StringVal(s.Image))
+
+	// A `content:` app runs no application of its own: the platform supplies a
+	// file server and Nomad fetches the content as an artifact before start, so
+	// nothing is ever baked into an image. Caddy takes its root as an argument,
+	// which is why it is used here — nginx would need a mounted config, and a
+	// mounted config would reintroduce the image build this avoids.
+	if strings.TrimSpace(s.Content) != "" {
+		cfgBody.SetAttributeValue("image", cty.StringVal(StaticServerImage))
+		cfgBody.SetAttributeValue("command", cty.StringVal("caddy"))
+		cfgBody.SetAttributeValue("args", cty.ListVal([]cty.Value{
+			cty.StringVal("file-server"),
+			cty.StringVal("--root"),
+			cty.StringVal("local"),
+			cty.StringVal("--listen"),
+			cty.StringVal(fmt.Sprintf(":%d", s.Port)),
+		}))
+	} else {
+		cfgBody.SetAttributeValue("image", cty.StringVal(s.Image))
+	}
 	// Bridge networking: Nomad maps the allocated dynamic host port to the
 	// container's declared port via the group `network` port "http" (`to = s.Port`).
 	// The app binds 0.0.0.0:s.Port inside its own namespace; no host-port collision.
 	cfgBody.SetAttributeValue("ports", cty.ListVal([]cty.Value{cty.StringVal("http")}))
+
+	// artifact — Nomad fetches the content payload onto the node before the task
+	// starts, into local/ where the file server is rooted. Credentials come from
+	// the AWS_* vars platformEnv injects below.
+	if strings.TrimSpace(s.Content) != "" && strings.TrimSpace(p.ContentDigest) != "" {
+		artBody := taskBody.AppendNewBlock("artifact", nil).Body()
+		artBody.SetAttributeValue("source", cty.StringVal(
+			ContentArtifactSource(p.MinIOEndpoint, s.Project, s.Name, p.ContentDigest)))
+		artBody.SetAttributeValue("destination", cty.StringVal("local/"))
+	}
 
 	// env — platform-injected vars merged with the user's env. Platform wins
 	// on key collision (the reserved ABC_*/AWS_* names below take precedence).

@@ -11,6 +11,9 @@ import (
 	madmin "github.com/minio/madmin-go/v3"
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"os"
+	"sort"
+	"time"
 )
 
 // DataProvisioner creates and revokes the per-app MinIO service account that
@@ -188,4 +191,98 @@ func bucketPolicy(data []DataMount) (json.RawMessage, error) {
 		return nil, fmt.Errorf("build bucket policy: %w", err)
 	}
 	return json.RawMessage(b), nil
+}
+
+// UploadContent publishes a `content:` payload to the reserved content bucket
+// under its digest, then prunes older digests for the same app.
+//
+// The digest is the key: identical content re-resolves to the same prefix, so
+// redeploying unchanged content uploads nothing and a rollback is a matter of
+// pointing at an earlier digest. KeepContentVersions of them are retained.
+func (p *DataProvisioner) UploadContent(ctx context.Context, s *Spec) (string, error) {
+	files, total, err := WalkContent(s.Content)
+	if err != nil {
+		return "", err
+	}
+	if total > MaxContentBytes {
+		return "", fmt.Errorf("`content` is %.1f MiB; the limit is %d MiB",
+			float64(total)/(1<<20), MaxContentBytes>>20)
+	}
+	digest, err := ContentDigest(files)
+	if err != nil {
+		return "", fmt.Errorf("hashing content: %w", err)
+	}
+
+	ok, err := p.s3.BucketExists(ctx, ContentBucket)
+	if err != nil {
+		return "", fmt.Errorf("checking %s: %w", ContentBucket, err)
+	}
+	if !ok {
+		if err := p.s3.MakeBucket(ctx, ContentBucket, minio.MakeBucketOptions{}); err != nil {
+			return "", fmt.Errorf("creating %s: %w", ContentBucket, err)
+		}
+	}
+
+	prefix := ContentKeyPrefix(s.Project, s.Name, digest)
+	for _, f := range files {
+		key := prefix + "/" + f.Rel
+		fh, err := os.Open(f.Abs)
+		if err != nil {
+			return "", err
+		}
+		_, err = p.s3.PutObject(ctx, ContentBucket, key, fh, f.Size, minio.PutObjectOptions{})
+		fh.Close()
+		if err != nil {
+			return "", fmt.Errorf("uploading %s: %w", f.Rel, err)
+		}
+	}
+
+	if err := p.pruneContent(ctx, s, digest); err != nil {
+		// Pruning is housekeeping; a failure must not fail the deploy.
+		return digest, nil
+	}
+	return digest, nil
+}
+
+// pruneContent keeps the newest KeepContentVersions digests for an app,
+// always retaining the one just uploaded.
+func (p *DataProvisioner) pruneContent(ctx context.Context, s *Spec, keep string) error {
+	base := fmt.Sprintf("%s/%s/%s/", ContentPrefix, s.Project, s.Name)
+	seen := map[string]time.Time{}
+	for obj := range p.s3.ListObjects(ctx, ContentBucket, minio.ListObjectsOptions{Prefix: base, Recursive: true}) {
+		if obj.Err != nil {
+			return obj.Err
+		}
+		rest := strings.TrimPrefix(obj.Key, base)
+		d, _, ok := strings.Cut(rest, "/")
+		if !ok || d == "" {
+			continue
+		}
+		if t, exists := seen[d]; !exists || obj.LastModified.After(t) {
+			seen[d] = obj.LastModified
+		}
+	}
+	digests := make([]string, 0, len(seen))
+	for d := range seen {
+		digests = append(digests, d)
+	}
+	sort.Slice(digests, func(i, j int) bool { return seen[digests[i]].After(seen[digests[j]]) })
+
+	kept := 0
+	for _, d := range digests {
+		if d == keep {
+			continue
+		}
+		kept++
+		if kept < KeepContentVersions {
+			continue
+		}
+		for obj := range p.s3.ListObjects(ctx, ContentBucket, minio.ListObjectsOptions{Prefix: base + d + "/", Recursive: true}) {
+			if obj.Err != nil {
+				continue
+			}
+			_ = p.s3.RemoveObject(ctx, ContentBucket, obj.Key, minio.RemoveObjectOptions{})
+		}
+	}
+	return nil
 }

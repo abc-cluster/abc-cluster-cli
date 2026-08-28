@@ -150,6 +150,12 @@ type Spec struct {
 	Data        []DataMount       `yaml:"data,omitempty"`
 	Resources   Resources         `yaml:"resources,omitempty"`
 
+	// Content is a local file or directory published as a static app. Valid
+	// only for `framework: static`, and mutually exclusive with `image`: the
+	// platform supplies the server, so bringing an image means owning the
+	// content too. A single file is served as index.html.
+	Content string `yaml:"content,omitempty"`
+
 	// Source is rejected in phase 1 (no cluster-side build path). Declared so a
 	// stray `source:` produces a clear error instead of being ignored.
 	Source string `yaml:"source,omitempty"`
@@ -297,11 +303,30 @@ func (s *Spec) Validate() error {
 		return fmt.Errorf("`source:` is not yet supported (use `image:`); there is no cluster-side build path in phase 1")
 	}
 
-	// image
-	if strings.TrimSpace(s.Image) == "" {
-		return fmt.Errorf("`image` is required and must be a fully-qualified OCI image reference (e.g. ghcr.io/org/app:tag); there is no source-based or script-based deploy path")
+	// content — an alternative to image, static only. Checked before image so
+	// the "one or the other" rule reads in the right order.
+	hasContent := strings.TrimSpace(s.Content) != ""
+	if hasContent {
+		if strings.ToLower(strings.TrimSpace(s.Framework)) != "static" {
+			return fmt.Errorf("`content` is only valid with `framework: static` (got %q); other frameworks run an application, so they need an `image`", s.Framework)
+		}
+		if strings.TrimSpace(s.Image) != "" {
+			return fmt.Errorf("`content` and `image` are mutually exclusive; with `content` the platform serves your files from %s, so remove `image`", StaticServerImage)
+		}
+		files, total, err := WalkContent(s.Content)
+		if err != nil {
+			return err
+		}
+		if total > MaxContentBytes {
+			return fmt.Errorf("`content` is %.1f MiB across %d file(s); the limit is %d MiB", float64(total)/(1<<20), len(files), MaxContentBytes>>20)
+		}
 	}
-	if !looksLikeImageRef(s.Image) {
+
+	// image
+	if !hasContent && strings.TrimSpace(s.Image) == "" {
+		return fmt.Errorf("`image` is required and must be a fully-qualified OCI image reference (e.g. ghcr.io/org/app:tag); there is no source-based or script-based deploy path. For a static app you may set `content:` to a local file or directory instead")
+	}
+	if !hasContent && !looksLikeImageRef(s.Image) {
 		return fmt.Errorf("`image` %q does not look like a fully-qualified OCI image reference (expected registry/repo[:tag])", s.Image)
 	}
 

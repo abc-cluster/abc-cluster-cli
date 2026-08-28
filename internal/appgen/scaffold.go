@@ -89,6 +89,12 @@ func ScaffoldYAML(o ScaffoldOptions) string {
 	b.WriteString("# env:              # plain (non-secret) env vars injected into the container.\n")
 	b.WriteString("#   LOG_LEVEL: info # ABC_*/AWS_* are platform-injected and cannot be set here.\n")
 	b.WriteString("\n")
+	if o.Framework == "static" {
+		b.WriteString("\n# content: ./report.html   # a local file or directory to publish. With this set,\n")
+		b.WriteString("#                          # omit `image`: the platform serves your files and\n")
+		b.WriteString("#                          # nothing is baked into an image. A single file is\n")
+		b.WriteString("#                          # served as index.html. Limit " + fmt.Sprintf("%d", MaxContentBytes>>20) + " MiB.\n")
+	}
 	b.WriteString("# data:             # MinIO buckets the app reads/writes (Vault-minted AWS_* creds).\n")
 	b.WriteString("#   - bucket: my-bucket\n")
 	b.WriteString("#     access: read  # read (default) or read-write\n")
