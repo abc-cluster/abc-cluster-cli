@@ -114,7 +114,10 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		provisioner *appgen.DataProvisioner
 		minioCreds  *appgen.MinIOCreds
 	)
-	if len(spec.Data) > 0 {
+	// A `content:` app needs the object store too: the payload is uploaded there
+	// and fetched back by Nomad as an artifact.
+	needsMinIO := len(spec.Data) > 0 || strings.TrimSpace(spec.Content) != ""
+	if needsMinIO {
 		minioCreds, err = appgen.ResolveMinIOCreds(activeCtx)
 		if err != nil {
 			return err
@@ -125,9 +128,29 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		// Bucket existence — fail before any side effect.
-		if err := provisioner.CheckBuckets(ctx, spec); err != nil {
+		if len(spec.Data) > 0 {
+			if err := provisioner.CheckBuckets(ctx, spec); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Content digest is a pure hash of local files, so it is computed before the
+	// dry-run guard: --dry-run then renders the job that would actually be
+	// submitted, artifact stanza included, while still uploading nothing.
+	if strings.TrimSpace(spec.Content) != "" && !appgen.IsRemoteContent(spec.Content) {
+		files, _, err := appgen.WalkContent(spec.Content)
+		if err != nil {
 			return err
 		}
+		digest, err := appgen.ContentDigest(files)
+		if err != nil {
+			return fmt.Errorf("hashing content: %w", err)
+		}
+		params.ContentDigest = digest
+		// A one-file payload is fetched as a single object rather than as a
+		// prefix; go-getter reads a digest-named directory as a key and 404s.
+		params.ContentIsFile = len(files) == 1
 	}
 
 	// ── dry-run: render HCL and stop (no side effects) ──────────────────────
@@ -154,6 +177,16 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// ── Upload content (step 1b) ────────────────────────────────────────────
+	// After the dry-run guard, so --dry-run stays free of side effects.
+	if strings.TrimSpace(spec.Content) != "" && !appgen.IsRemoteContent(spec.Content) && provisioner != nil {
+		digest, err := provisioner.UploadContent(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("upload content: %w", err)
+		}
+		params.ContentDigest = digest
+	}
+
 	// ── Provision data SA (step 2) ──────────────────────────────────────────
 	var appCreds *appgen.AppCredentials = &appgen.AppCredentials{}
 	if provisioner != nil {
@@ -164,6 +197,18 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 	params.AWSAccessKey = appCreds.AccessKey
 	params.AWSSecretKey = appCreds.SecretKey
+
+	// A `content:` app has no `data:` block, so no service account is minted and
+	// appCreds is empty. Its artifact still has to authenticate to the object
+	// store: the Nomad getter runs as a separate subprocess and inherits neither
+	// the task env nor any instance role, so without credentials it falls back
+	// to EC2 IMDS and fails with "no EC2 IMDS role found". The content lives in
+	// a platform-reserved bucket, so the platform's own credentials are the
+	// right ones to use.
+	if strings.TrimSpace(spec.Content) != "" && params.AWSAccessKey == "" && minioCreds != nil {
+		params.AWSAccessKey = minioCreds.AccessKey
+		params.AWSSecretKey = minioCreds.SecretKey
+	}
 
 	// ── Submit the Nomad job (step 3) ───────────────────────────────────────
 	nc := nomadClientFromCmd(cmd)

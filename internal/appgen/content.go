@@ -35,6 +35,26 @@ const (
 	StaticServerImage = "caddy:alpine"
 )
 
+// IsRemoteContent reports whether `content:` names an object-store prefix that
+// already exists, rather than a local path to upload. A pipeline that wrote its
+// report to MinIO can be served straight from there: no download, no re-upload,
+// and the app tracks the run's own output prefix.
+func IsRemoteContent(content string) bool {
+	c := strings.TrimSpace(content)
+	return strings.HasPrefix(c, "s3://")
+}
+
+// RemoteArtifactSource converts an s3:// content reference into a Nomad
+// artifact source against the platform's object store.
+func RemoteArtifactSource(endpoint, content string) string {
+	ep := strings.TrimSuffix(strings.TrimSpace(endpoint), "/")
+	path := strings.TrimPrefix(strings.TrimSpace(content), "s3://")
+	if !strings.HasSuffix(path, "/") && !strings.Contains(filepath.Base(path), ".") {
+		path += "/"
+	}
+	return fmt.Sprintf("s3::%s/%s", ep, path)
+}
+
 // ContentFile is one file in a content payload, with its path relative to the
 // content root.
 type ContentFile struct {
@@ -114,7 +134,16 @@ func ContentKeyPrefix(project, name, digest string) string {
 // ContentArtifactSource is the Nomad artifact source for a content digest.
 // go-getter's s3 scheme is used so Nomad fetches straight from MinIO on the
 // node, rather than the content being baked into an image.
-func ContentArtifactSource(endpoint, project, name, digest string) string {
+// singleFile selects a direct object fetch. go-getter's S3 getter issues a
+// GetObject for a path it reads as a key and a ListObjectsV2 for one it reads as
+// a prefix, and it treats a digest-named directory as a key — so a prefix URL
+// for a one-file payload 404s with NoSuchKey. Naming the object directly avoids
+// the guess entirely, which is the common case: one self-contained HTML file.
+func ContentArtifactSource(endpoint, project, name, digest string, singleFile bool) string {
 	ep := strings.TrimSuffix(endpoint, "/")
-	return fmt.Sprintf("s3::%s/%s/%s/", ep, ContentBucket, ContentKeyPrefix(project, name, digest))
+	base := fmt.Sprintf("s3::%s/%s/%s", ep, ContentBucket, ContentKeyPrefix(project, name, digest))
+	if singleFile {
+		return base + "/index.html"
+	}
+	return base + "/"
 }
