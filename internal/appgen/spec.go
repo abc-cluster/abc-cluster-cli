@@ -313,12 +313,17 @@ func (s *Spec) Validate() error {
 		if strings.TrimSpace(s.Image) != "" {
 			return fmt.Errorf("`content` and `image` are mutually exclusive; with `content` the platform serves your files from %s, so remove `image`", StaticServerImage)
 		}
-		files, total, err := WalkContent(s.Content)
-		if err != nil {
-			return err
-		}
-		if total > MaxContentBytes {
-			return fmt.Errorf("`content` is %.1f MiB across %d file(s); the limit is %d MiB", float64(total)/(1<<20), len(files), MaxContentBytes>>20)
+		// A remote `content:` already lives in the object store, so there is
+		// nothing local to size-check or upload; the app is served straight from
+		// the prefix the pipeline wrote to.
+		if !IsRemoteContent(s.Content) {
+			files, total, err := WalkContent(s.Content)
+			if err != nil {
+				return err
+			}
+			if total > MaxContentBytes {
+				return fmt.Errorf("`content` is %.1f MiB across %d file(s); the limit is %d MiB", float64(total)/(1<<20), len(files), MaxContentBytes>>20)
+			}
 		}
 	}
 

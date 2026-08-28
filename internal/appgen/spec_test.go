@@ -265,7 +265,7 @@ func TestExposure_Hosts(t *testing.T) {
 		wantURL   string
 	}{
 		{"public", []string{pub}, pub, "https://" + pub},
-		{"", []string{pub}, pub, "https://" + pub}, // default
+		{"", []string{pub}, pub, "https://" + pub},                               // default
 		{"internal", []string{internal}, internal, "/apps/abc-platform-sucuri/"}, // path-routed now
 		{"both", []string{pub, internal}, pub, "https://" + pub},
 	}
@@ -343,17 +343,17 @@ access: team
 		fragment string
 		want     []string // canonical (normalised) plane order
 	}{
-		{"scalar private",       "expose: private",                   []string{ExposePrivate}},
-		{"scalar shared",        "expose: shared",                    []string{ExposeShared}},
-		{"scalar public",        "expose: public",                    []string{ExposePublic}},
-		{"scalar with quotes",   "expose: \"private\"",               []string{ExposePrivate}},
-		{"flow sequence two",    "expose: [private, shared]",         []string{ExposeShared, ExposePrivate}},
-		{"flow sequence one",    "expose: [private]",                 []string{ExposePrivate}},
-		{"flow sequence three",  "expose: [public, shared, private]", []string{ExposePublic, ExposeShared, ExposePrivate}},
-		{"block sequence",       "expose:\n  - public\n  - shared",   []string{ExposePublic, ExposeShared}},
+		{"scalar private", "expose: private", []string{ExposePrivate}},
+		{"scalar shared", "expose: shared", []string{ExposeShared}},
+		{"scalar public", "expose: public", []string{ExposePublic}},
+		{"scalar with quotes", "expose: \"private\"", []string{ExposePrivate}},
+		{"flow sequence two", "expose: [private, shared]", []string{ExposeShared, ExposePrivate}},
+		{"flow sequence one", "expose: [private]", []string{ExposePrivate}},
+		{"flow sequence three", "expose: [public, shared, private]", []string{ExposePublic, ExposeShared, ExposePrivate}},
+		{"block sequence", "expose:\n  - public\n  - shared", []string{ExposePublic, ExposeShared}},
 		// empty scalar → field is cleared by UnmarshalYAML; ApplyDefaults then
 		// applies the "default to public" rule (no expose AND no exposure).
-		{"empty scalar defaults", "expose: \"\"",                     []string{ExposePublic}},
+		{"empty scalar defaults", "expose: \"\"", []string{ExposePublic}},
 	}
 
 	for _, c := range cases {

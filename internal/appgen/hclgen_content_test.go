@@ -34,7 +34,7 @@ func TestGenerate_ContentUsesServerImageAndArtifact(t *testing.T) {
 		`command = "caddy"`,
 		`"file-server"`,
 		`"--root"`,
-		`"local"`,
+		`"/local"`,
 		`artifact {`,
 		`s3::http://minio:9000/abc-reserved/app-content/demo/rep/deadbeef/`,
 		`destination = "local/"`,
@@ -74,5 +74,32 @@ func TestGenerate_ImageAppUnaffected(t *testing.T) {
 	}
 	if strings.Contains(got, "artifact {") || strings.Contains(got, "caddy") {
 		t.Errorf("image app must not gain artifact/caddy:\n%s", got)
+	}
+}
+
+// Remote content is served straight from its prefix, with no digest involved.
+func TestGenerate_RemoteContentUsesPrefixDirectly(t *testing.T) {
+	s := &Spec{
+		Version: CurrentSpecVersion, Name: "rep", Project: "demo",
+		Framework: "static", Content: "s3://nf-work/demo-results/multiqc/",
+		Port: 8080, Health: "/", Access: "team",
+		Expose: ExposePlanes{"private"}, Replicas: 1,
+		Resources: Resources{CPU: 200, Memory: 128},
+	}
+	got := normaliseWS(Generate(s, JobParams{
+		Namespace: "abc-apps", MinIOEndpoint: "http://minio:9000",
+		AWSAccessKey: "AK", AWSSecretKey: "SK",
+	}))
+	for _, want := range []string{
+		`s3::http://minio:9000/nf-work/demo-results/multiqc/`,
+		`aws_access_key_id = "AK"`,
+		`aws_access_key_secret = "SK"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "app-content") {
+		t.Error("remote content must not be routed through the upload prefix")
 	}
 }
