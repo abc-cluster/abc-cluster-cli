@@ -160,7 +160,8 @@ func runClusterStatusLocal(cmd *cobra.Command) error {
 	nomadToken := ctx.NomadToken()
 	if nomadAddr == "" {
 		return fmt.Errorf("no Nomad address configured\n" +
-			"  Run: abc context add <name> --endpoint http://<ip>:4646")
+			"  Run: abc auth context add <name> --from-file <context.yaml>\n" +
+			"       (or set contexts.<name>.admin.services.nomad.addr to http://<ip>:4646)")
 	}
 
 	nc := nomadClientFromCmd(cmd)
