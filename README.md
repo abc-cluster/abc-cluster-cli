@@ -80,3 +80,7 @@ just ci             # full pre-PR gate (fmt-check + check + gen-check)
 
 Run `just --list` for the full task surface.
 
+## Licence
+
+Eclipse Public License 2.0. See [LICENSE](LICENSE); copyright holders are listed
+in [NOTICE](NOTICE).
