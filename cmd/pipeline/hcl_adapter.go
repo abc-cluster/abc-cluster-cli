@@ -145,6 +145,33 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 			}
 		}
 	}
+	// The head passes a fixed `-name` (RunTag, or the resume-lineage name), so
+	// Nextflow's run-name uniqueness check can only ever fire on a restart of
+	// the same submission — a false positive by construction:
+	//
+	//     Run name `<tag>` has been already used -- Specify a different one
+	//
+	// Nomad restarts the head into the SAME allocation, so /local persists and
+	// the history file written by the first attempt is still there. The restart
+	// then fails on the name, and keeps failing, so a head that is restarted for
+	// any reason can never come back. That defeats the point of a preemptible
+	// head.
+	//
+	// CmdRun.checkRunName skips the check when HistoryFile.disabled(), which is
+	// exactly NXF_IGNORE_RESUME_HISTORY=true. It was already being set, but only
+	// inside the S3-cloudcache branch above, so shared-POSIX and operator-supplied
+	// work dirs were left exposed. Set it wherever we emit a fixed name.
+	//
+	// Set unconditionally rather than mirroring the generator's `-name`
+	// condition, so the two cannot drift apart. Safe: the head is not an
+	// interactive shell, its history file is per-allocation scratch that no one
+	// reads, and `-resume` here is always driven by an explicit session UUID
+	// rather than by the local run index. Its only observable effect is to break
+	// restarts.
+	if staticEnv == nil {
+		staticEnv = map[string]string{}
+	}
+	staticEnv["NXF_IGNORE_RESUME_HISTORY"] = "true"
 	if spec.S5cmdSkipTLS {
 		// Explicit override on the spec wins (e.g. saved pipeline or test).
 		s5cmdSkipTLS = true
