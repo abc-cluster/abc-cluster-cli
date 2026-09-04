@@ -1126,9 +1126,13 @@ contexts:
 // relative to package dir cmd/job (go test cwd for this package).
 func committedWorkloadScript(t *testing.T, name string) string {
 	t.Helper()
-	p := filepath.Join("..", "..", "deployments", "abc-nodes", "nomad", "tests", "workloads", name)
+	// Fixtures live in this package's testdata. They were previously read from
+	// deployments/abc-nodes/, which 66471dc extracted into its own repo,
+	// leaving these tests pointing at a path that no longer exists. See
+	// testdata/workloads/README.md.
+	p := filepath.Join("testdata", "workloads", name)
 	if _, err := os.Stat(p); err != nil {
-		t.Fatalf("missing committed workload script %q: %v", p, err)
+		t.Fatalf("missing workload script fixture %q: %v", p, err)
 	}
 	return p
 }
