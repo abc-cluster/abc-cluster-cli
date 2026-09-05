@@ -74,7 +74,12 @@ func TestGenerate_StagingEnabled(t *testing.T) {
 		`volume_mount {`,
 		`destination = "/nxf-work"`,
 		`command = "/bin/sh"`,
-		`/nxf-work/bin/s5cmd run`,  // s5cmd invoked inside the sh wrapper
+		`/nxf-work/bin/s5cmd `, // s5cmd invoked inside the sh wrapper
+		// The endpoint is passed explicitly, not left to the environment:
+		// s5cmd reads S3_ENDPOINT_URL and ignores AWS_ENDPOINT_URL, so an
+		// env-only contract is one variable name away from addressing real
+		// AWS S3 and failing as InvalidAccessKeyId.
+		`--endpoint-url https://s3.seedling run`,
 		`$NOMAD_ALLOC_DIR/data/r1`, // cd into the alloc-shared DestRoot
 		// B12: the manifest lands at local/<file> = $NOMAD_TASK_DIR/<file>; the run
 		// path must NOT double the "local/" (was /local/local/stage-in.txt → 404).

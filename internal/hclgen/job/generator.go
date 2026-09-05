@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
-	shellquote "github.com/kballard/go-shellquote"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	shellquote "github.com/kballard/go-shellquote"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -88,20 +88,20 @@ type TemplateSpec struct {
 }
 
 type Spec struct {
-	Name               string
-	Namespace          string
-	Region             string
-	Datacenters        []string
-	NodePool           string // Nomad node-pool; emits `node_pool = "..."` at job scope when non-empty.
-	Priority           int
-	Nodes              int
-	Cores              int
-	MemoryMB           int
-	GPUs               int
-	WalltimeSecs       int
-	ChDir              string
-	Depend             string
-	Driver             string
+	Name         string
+	Namespace    string
+	Region       string
+	Datacenters  []string
+	NodePool     string // Nomad node-pool; emits `node_pool = "..."` at job scope when non-empty.
+	Priority     int
+	Nodes        int
+	Cores        int
+	MemoryMB     int
+	GPUs         int
+	WalltimeSecs int
+	ChDir        string
+	Depend       string
+	Driver       string
 	// Shell overrides the script interpreter. "" (default) picks per
 	// `pickTaskScriptShell`. Accepted forms:
 	//   - "" (default) → driver-default (/bin/sh for OCI drivers, /bin/bash for host drivers)
@@ -121,14 +121,14 @@ type Spec struct {
 	Constraints        []Constraint
 	Affinities         []Affinity
 
-	SlurmPartition  string
-	SlurmAccount    string
-	SlurmWorkDir    string
-	SlurmStdoutFile string
-	SlurmStderrFile string
-	SlurmNTasks     int
+	SlurmPartition   string
+	SlurmAccount     string
+	SlurmWorkDir     string
+	SlurmStdoutFile  string
+	SlurmStderrFile  string
+	SlurmNTasks      int
 	SlurmReservation string
-	SlurmExtraArgs  []string
+	SlurmExtraArgs   []string
 
 	// Spread emits a Nomad spread stanza requesting at-most-one allocation per node.
 	Spread bool
@@ -270,7 +270,8 @@ func nomadHCLOperator(op string) string {
 // a literal string that never matches any node property.
 //
 // Examples: "node.unique.name" → "${node.unique.name}"
-//           "${attr.cpu.arch}" → "${attr.cpu.arch}"  (already wrapped, no-op)
+//
+//	"${attr.cpu.arch}" → "${attr.cpu.arch}"  (already wrapped, no-op)
 func nomadConstraintAttr(attr string) string {
 	if strings.HasPrefix(attr, "${") {
 		return attr
@@ -948,9 +949,10 @@ func appendStageTask(groupBody *hclwrite.Body, name, hook, manifest, manifestFil
 
 	cfgBody := taskBody.AppendNewBlock("config", nil).Body()
 	// Wrap s5cmd in a shell that creates + cd's into the alloc-shared DestRoot
-	// (shell-expands $NOMAD_ALLOC_DIR at runtime; the manifest's local paths are
-	// relative to it) then runs the manifest from the task dir. Bare $NOMAD_* (no
-	// braces) avoids hclwrite's ${...} escaping and is expanded by /bin/sh.
+	// (the manifest's local paths are relative to it) then runs the manifest from
+	// the task dir. DestRoot uses ${NOMAD_ALLOC_DIR}: Nomad interpolates it, which
+	// this shell and the main task's work_dir both need — work_dir reaches the
+	// driver with no shell to expand a bare $NAME.
 	cfgBody.SetAttributeValue("command", cty.StringVal("/bin/sh"))
 	// --no-verify-ssl is a global s5cmd flag (must precede the `run` subcommand);
 	// set on private-CA deployments (abc-seedling) where the stage task container
@@ -958,6 +960,15 @@ func appendStageTask(groupBody *hclwrite.Body, name, hook, manifest, manifestFil
 	s5cmdGlobal := ""
 	if s.SkipTLS {
 		s5cmdGlobal = "--no-verify-ssl "
+	}
+	// Pass the endpoint explicitly rather than relying on the environment.
+	// s5cmd reads S3_ENDPOINT_URL and ignores AWS_ENDPOINT_URL, so an env-only
+	// contract is one variable name away from silently addressing real AWS S3
+	// and failing as InvalidAccessKeyId. Every other s5cmd invocation in this
+	// CLI, and nf-nomad-s5cmd itself, passes the flag; this is the last one that
+	// did not. The env keeps carrying it too, for anything else in the task.
+	if ep := strings.TrimSpace(s.Env["S3_ENDPOINT_URL"]); ep != "" {
+		s5cmdGlobal += "--endpoint-url " + shellQuote(ep) + " "
 	}
 	// The manifest template lands at <task-dir>/local/<file>, which is exactly
 	// $NOMAD_TASK_DIR/<file> — NOMAD_TASK_DIR already points at the task's local/
