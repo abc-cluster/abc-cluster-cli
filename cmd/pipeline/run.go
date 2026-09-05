@@ -308,6 +308,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("reading --config %q: %w", configPath, err)
 		}
+		if err := checkEnforcedOverrides(string(data), fmt.Sprintf("--config %s", configPath)); err != nil {
+			return err
+		}
 		override.ExtraConfig = string(data)
 	}
 	if paramsFile, _ := cmd.Flags().GetString("params-file"); paramsFile != "" {
