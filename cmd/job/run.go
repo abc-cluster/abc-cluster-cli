@@ -1318,10 +1318,17 @@ func uploadStageInputs(cmd *cobra.Command, plan *jobstage.Plan) error {
 // (outputs are durable in MinIO and recoverable via `abc data pull`).
 func finalizeStaging(cmd *cobra.Command, spec *jobSpec, plan *jobstage.Plan, runID, scriptPath string) {
 	errw := cmd.ErrOrStderr()
+	// Do NOT default the region to "default". That is the default NAMESPACE
+	// name; Nomad's default REGION is "global", and asking for a region that
+	// does not exist fails every request:
+	//
+	//   nomad API 500 Internal Server Error: No path to region
+	//
+	// terminalOnce treats any error as "not terminal yet", so the wait below
+	// never ended — `abc job run --out` sat past a completed job until its 24h
+	// cap. Empty is right: the client omits the query parameter and Nomad
+	// answers for its own region.
 	region := spec.Region
-	if region == "" {
-		region = "default"
-	}
 	target := runner.WatchTarget{RunID: runID, JobID: spec.Name, Namespace: spec.Namespace}
 
 	fmt.Fprintf(errw, "[abc] staging: waiting for job %s to finish before pulling outputs...\n", spec.Name)
@@ -1685,18 +1692,22 @@ func runWithNomad(ctx context.Context, cmd *cobra.Command, spec *jobSpec, hcl st
 		return nil
 	}
 
+	// Empty region means "whatever region this agent serves" — see the note in
+	// finalizeStaging. Coercing it to "default" made every request through the
+	// run-watcher below fail with "No path to region".
 	region := spec.Region
-	if region == "" {
-		region = "default"
-	}
 	nsDisplay := spec.Namespace
 	if nsDisplay == "" {
 		nsDisplay = "default"
 	}
+	regionDisplay := region
+	if regionDisplay == "" {
+		regionDisplay = "agent default"
+	}
 	// Show the NAMESPACE (not just region) — the parenthetical used to print
 	// only the region, which users read as the namespace, then couldn't find
 	// their job with `job show` (B6). Namespace is what show/logs/status query.
-	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting to Nomad (namespace %s, region %s)...\n", nsDisplay, region)
+	fmt.Fprintf(cmd.ErrOrStderr(), "  Submitting to Nomad (namespace %s, region %s)...\n", nsDisplay, regionDisplay)
 	t = time.Now()
 	resp, err := nc.RegisterJob(ctx, jobJSON)
 	if err != nil {
