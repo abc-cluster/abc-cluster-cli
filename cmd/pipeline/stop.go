@@ -90,16 +90,35 @@ func runPipelineStop(cmd *cobra.Command, args []string) error {
 	// Partition into head and workers. Only jobs that are still doing something
 	// need stopping; a job Nomad already considers dead is left alone so its
 	// record stays queryable.
+	//
+	// The name prefix narrows the candidates server-side, but it does not decide
+	// membership: nf-nomad stamps the correlation onto each worker's job meta
+	// (nf_head_job_id / nf_session_name / abc_run_name), and that is what is
+	// actually authoritative. Confirming against it rejects a neighbouring run
+	// whose id merely shares a prefix, and identifies the head by what it says
+	// it is rather than by the "-nf-head-" substring in its name.
+	//
+	// The job LIST stub carries no Meta, so this costs one fetch per candidate.
+	// That is bounded by the size of one run.
 	var head []string
 	var workers []string
 	for _, j := range jobs {
-		if runTagOf(j.ID) != tag {
-			continue // prefix match that is not this run, e.g. a longer runid
-		}
 		if strings.EqualFold(j.Status, "dead") {
 			continue
 		}
-		if strings.Contains(j.ID, "-nf-head-") {
+		if runTagOf(j.ID) != tag {
+			continue // prefix match from a different run, e.g. a longer runid
+		}
+		isHead := strings.Contains(j.ID, "-nf-head-")
+		if d, err := nc.GetJob(cmd.Context(), j.ID, ns); err == nil && d != nil && len(d.Meta) > 0 {
+			if !metaBelongsToRun(d.Meta, tag) {
+				continue
+			}
+			if hj := strings.TrimSpace(d.Meta["nf_head_job_id"]); hj != "" {
+				isHead = hj == j.ID
+			}
+		}
+		if isHead {
 			head = append(head, j.ID)
 		} else {
 			workers = append(workers, j.ID)
@@ -157,4 +176,25 @@ func runPipelineStop(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%d job(s) could not be stopped", failed)
 	}
 	return nil
+}
+
+// metaBelongsToRun reports whether a job's Nomad meta identifies it as part of
+// the given run. nf-nomad stamps these onto every worker it submits; any one of
+// them is sufficient, and a job carrying none of them is left to the caller's
+// name-based judgement.
+func metaBelongsToRun(meta map[string]string, tag string) bool {
+	if len(meta) == 0 {
+		return true // nothing to contradict the name match
+	}
+	for _, k := range []string{"nf_session_name", "nf_head_job_id", "abc_run_name"} {
+		v := strings.TrimSpace(meta[k])
+		if v == "" {
+			continue
+		}
+		if v == tag || runTagOf(v) == tag {
+			return true
+		}
+	}
+	// Meta is present and none of it names this run.
+	return false
 }

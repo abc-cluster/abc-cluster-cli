@@ -34,3 +34,34 @@ func TestRunTagOf_DoesNotMatchScriptJobs(t *testing.T) {
 		}
 	}
 }
+
+// nf-nomad stamps the run correlation onto each worker's job meta. That is what
+// decides membership; the name prefix only narrows the candidates cheaply.
+func TestMetaBelongsToRun(t *testing.T) {
+	const tag = "abhinav-1788623348"
+	cases := []struct {
+		name string
+		meta map[string]string
+		want bool
+	}{
+		{"session name", map[string]string{"nf_session_name": tag}, true},
+		{"head job id", map[string]string{"nf_head_job_id": tag + "-nf-head-nf-core-demo"}, true},
+		{"abc run name", map[string]string{"abc_run_name": tag + "-nf-head-nf-core-demo"}, true},
+		{"no meta at all", map[string]string{}, true}, // name match stands unopposed
+		{
+			"a different run that shares a name prefix",
+			map[string]string{"nf_session_name": "abhinav-17886233480", "nf_head_job_id": "abhinav-17886233480-nf-head-other"},
+			false,
+		},
+		{
+			"unrelated job carrying meta",
+			map[string]string{"nf_session_name": "abhinav-1700000000"},
+			false,
+		},
+	}
+	for _, c := range cases {
+		if got := metaBelongsToRun(c.meta, tag); got != c.want {
+			t.Errorf("%s: metaBelongsToRun(%v, %q) = %v, want %v", c.name, c.meta, tag, got, c.want)
+		}
+	}
+}
