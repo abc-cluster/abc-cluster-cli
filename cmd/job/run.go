@@ -743,7 +743,18 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 	plan := &jobstage.Plan{
 		ProjectRoot: root,
 		RunPrefix:   fmt.Sprintf("s3://%s/user/%s/%s/jobs/%s", bucket, slot, filepath.Base(root), runID),
-		DestRoot:    "$NOMAD_ALLOC_DIR/data/" + runID,
+		// Braced form on purpose. The staging sidecars run under `sh -c`, so a
+		// bare $NOMAD_ALLOC_DIR would be expanded by the shell there — but this
+		// same value becomes the main task's work_dir, which is handed to the
+		// driver with no shell in between. Docker then rejects it verbatim:
+		//
+		//   failed to create container: the working directory
+		//   '$NOMAD_ALLOC_DIR/data/<run>' is invalid, it needs to be absolute
+		//
+		// ${...} is interpolated by Nomad itself, which covers both callers.
+		// hclwrite escapes it to $${...} on the way out, and Nomad parses that
+		// back to a literal ${...} for runtime substitution.
+		DestRoot: "${NOMAD_ALLOC_DIR}/data/" + runID,
 	}
 	common := commonMountFromEnv()
 	for _, in := range ins {
@@ -779,8 +790,21 @@ func resolveStaging(cmd *cobra.Command, scriptPath, runID string, spec *jobSpec)
 		spec.StageEnv = map[string]string{
 			"AWS_ACCESS_KEY_ID":     ak,
 			"AWS_SECRET_ACCESS_KEY": sk,
-			"AWS_ENDPOINT_URL":      endpoint,
-			"AWS_REGION":            "us-east-1",
+			// s5cmd reads the endpoint from S3_ENDPOINT_URL. It does NOT read
+			// AWS_ENDPOINT_URL (that is the AWS SDK v2 convention), so setting
+			// only the AWS_ name left s5cmd pointed at real AWS S3, where the
+			// member's MinIO access key does not exist:
+			//
+			//   ERROR "cp s3://…": InvalidAccessKeyId: The AWS Access Key Id
+			//   you provided does not exist in our records. status code: 403
+			//
+			// which reads as a credentials problem rather than a routing one.
+			// Both names are set: S3_ENDPOINT_URL is the one s5cmd uses, and
+			// AWS_ENDPOINT_URL keeps any AWS-SDK-based tooling in the same task
+			// pointed at the same place.
+			"S3_ENDPOINT_URL":  endpoint,
+			"AWS_ENDPOINT_URL": endpoint,
+			"AWS_REGION":       "us-east-1",
 		}
 		// Private CA: mirror the pipeline path — an HTTPS MinIO endpoint here
 		// always means a private deployment with a private CA (public cloud

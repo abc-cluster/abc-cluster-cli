@@ -92,6 +92,35 @@ contexts:
       whoami: calm_dassie
 `
 
+func TestResolveStaging_DestRootIsNomadInterpolatable(t *testing.T) {
+	// DestRoot becomes both the staging sidecars' shell cwd and the main
+	// task's work_dir. The sidecars run under `sh -c`, so a bare
+	// $NOMAD_ALLOC_DIR would be expanded there — but work_dir is handed to the
+	// driver with no shell in between, and docker rejects it verbatim:
+	//
+	//   failed to create container: the working directory
+	//   '$NOMAD_ALLOC_DIR/data/<run>' is invalid, it needs to be absolute
+	//
+	// Only the braced form is interpolated by Nomad itself, which covers both.
+	setStagingConfig(t, stagingConfigWithMinio)
+	root, scriptPath := writeStagingProject(t)
+
+	cmd := stagingTestCmd(t, []string{filepath.Join(root, "data", "in.csv")}, []string{"results/"})
+	spec := &jobSpec{Namespace: "su-mbhg-hostgen"}
+
+	plan, err := resolveStaging(cmd, scriptPath, "r-123", spec)
+	if err != nil {
+		t.Fatalf("resolveStaging: %v", err)
+	}
+	if !strings.HasPrefix(plan.DestRoot, "${NOMAD_ALLOC_DIR}/") {
+		t.Errorf("DestRoot = %q, want a ${NOMAD_ALLOC_DIR}/… prefix; the bare $NAME form "+
+			"is not interpolated for the main task's work_dir", plan.DestRoot)
+	}
+	if spec.ChDir != plan.DestRoot {
+		t.Errorf("ChDir = %q, want it to match DestRoot %q", spec.ChDir, plan.DestRoot)
+	}
+}
+
 func TestResolveStaging_PopulatesStageEnvWithCreds(t *testing.T) {
 	setStagingConfig(t, stagingConfigWithMinio)
 	root, scriptPath := writeStagingProject(t)
@@ -113,7 +142,12 @@ func TestResolveStaging_PopulatesStageEnvWithCreds(t *testing.T) {
 	wants := map[string]string{
 		"AWS_ACCESS_KEY_ID":     "AKIA_TEST",
 		"AWS_SECRET_ACCESS_KEY": "SECRET_TEST",
-		"AWS_ENDPOINT_URL":      "https://minio.seedling.example:9000",
+		// s5cmd reads S3_ENDPOINT_URL and ignores AWS_ENDPOINT_URL (the AWS
+		// SDK v2 name). Asserting only the AWS_ name is why the sidecars
+		// shipped pointed at real AWS S3, failing with InvalidAccessKeyId on
+		// a task whose logs the CLI does not surface.
+		"S3_ENDPOINT_URL":  "https://minio.seedling.example:9000",
+		"AWS_ENDPOINT_URL": "https://minio.seedling.example:9000",
 	}
 	for k, want := range wants {
 		if got := spec.StageEnv[k]; got != want {
@@ -170,7 +204,7 @@ func TestResolveStaging_RunPrefixUsesPathSegmentSlug(t *testing.T) {
 	}
 
 	pathSeg := utils.WhoamiPathSegment("calm_dassie") // "calm-dassie"
-	shortSlug := utils.WhoamiSlug("calm_dassie")       // "calda"
+	shortSlug := utils.WhoamiSlug("calm_dassie")      // "calda"
 	if pathSeg == "" || shortSlug == "" || pathSeg == shortSlug {
 		t.Fatalf("test precondition broken: pathSeg=%q shortSlug=%q", pathSeg, shortSlug)
 	}
