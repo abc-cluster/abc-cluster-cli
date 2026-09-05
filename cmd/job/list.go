@@ -2,6 +2,7 @@ package job
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,7 +41,12 @@ func runList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("listing jobs: %w", err)
 	}
 
-	// Filter and limit.
+	// Filter, then sort, then limit — in that order. Truncating Nomad's own
+	// ID-ascending order meant `abhinav-<runid>-…` pipeline jobs sorted after
+	// `abc-…` and `abhin-script-job-…` and so were never visible at the default
+	// limit, no matter how recent. `abc job show` found jobs `abc job list`
+	// appeared not to have, which reads as an inconsistency between the two
+	// commands rather than as truncation.
 	var filtered []NomadJobStub
 	for _, j := range jobs {
 		// Match against both the raw Nomad status and the friendly display
@@ -61,9 +67,17 @@ func runList(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		filtered = append(filtered, j)
-		if len(filtered) >= limit {
-			break
-		}
+	}
+
+	// Newest first, so a truncated view shows the runs a user is most likely
+	// looking for. Nomad returns jobs ordered by ID.
+	sort.SliceStable(filtered, func(a, b int) bool {
+		return filtered[a].SubmitTime > filtered[b].SubmitTime
+	})
+
+	matched := len(filtered)
+	if limit > 0 && matched > limit {
+		filtered = filtered[:limit]
 	}
 
 	if len(filtered) == 0 {
@@ -114,6 +128,15 @@ func runList(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(out, "  %-30s %-10s %-12s %-20s %-18s %-10s\n",
 				j.ID, displayStatus(j), region, dcs, submitted, jobDuration(j, now))
 		}
+	}
+
+	// Say so when the view is partial. Silently cutting the list made it look
+	// like the missing jobs did not exist — a pipeline's worker jobs could be
+	// running and greppable via `abc job show` while `abc job list | grep`
+	// returned nothing.
+	if matched > len(filtered) {
+		fmt.Fprintf(out, "\n  Showing %d of %d matching jobs. Use --limit %d (or a larger value) to see the rest.\n",
+			len(filtered), matched, matched)
 	}
 	return nil
 }
