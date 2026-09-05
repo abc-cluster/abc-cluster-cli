@@ -156,6 +156,24 @@ abc data remove s3://su-mbhg-hostgen/user/calm-dassie/tmp/ --recursive --yes
 
 Flags: `--yes` (skip prompt), `--recursive`, `--dry-run`.
 
+**`--recursive` is required for a prefix.** A target ending in `/` names a prefix,
+and removing one is opt-in: without `--recursive` the command stops and says so.
+With it, the prefix is expanded to the glob s5cmd needs (`…/tmp/` → `…/tmp/*`),
+anchored so it cannot reach a sibling — `…/tmp/*` never matches `…/tmp-old/`.
+
+A path with no trailing slash (`…/tmp`) is ambiguous — object or prefix — and is
+left alone even under `--recursive`. Add the slash to mean the prefix; a delete
+should not widen on a guess.
+
+**Preview first with `--dry-run`.** It lists the exact objects that would be
+removed and deletes nothing:
+
+```bash
+abc data remove s3://su-mbhg-hostgen/user/calm-dassie/tmp/ --recursive --dry-run
+# rm s3://su-mbhg-hostgen/user/calm-dassie/tmp/a.bam
+# rm s3://su-mbhg-hostgen/user/calm-dassie/tmp/b.bam
+```
+
 ### purge — complete erasure, all versions
 
 Removes **all** versions of an object (or prefix), including delete markers — the
@@ -168,7 +186,8 @@ abc data purge s3://su-mbhg-hostgen/user/calm-dassie/cohort-a/sample01.vcf
 # WARNING: purge permanently erases ALL versions … Type 'purge' to confirm:
 ```
 
-Flags: `--yes` (skip the typed confirmation), `--dry-run`.
+Flags: `--yes` (skip the typed confirmation), `--dry-run` (lists what would be
+purged, erases nothing).
 
 ### trash — manage soft-deleted objects
 

@@ -8,22 +8,24 @@ import (
 // TestBuildPushCpArgs guards bugs G-D / G-E: s5cmd `cp` flags must precede the
 // source/destination positionals, and the skip-if-unchanged flag must be the
 // real s5cmd flag `--if-size-differ` (NOT the non-existent `--if-checksum-differ`).
+//
+// --dry-run is deliberately absent here: it is a GLOBAL s5cmd flag and is added
+// before the subcommand by the caller. Emitting it among the `cp` flags made
+// s5cmd reject it as undefined ("flag provided but not defined: -dry-run").
 func TestBuildPushCpArgs(t *testing.T) {
 	const src, dst = "/tmp/a.bin", "s3://bucket/key"
 
 	cases := []struct {
-		name             string
-		checksum, dryRun bool
-		want             []string
+		name     string
+		checksum bool
+		want     []string
 	}{
-		{"plain", false, false, []string{src, dst}},
-		{"checksum", true, false, []string{"--if-size-differ", src, dst}},
-		{"dryrun", false, true, []string{"--dry-run", src, dst}},
-		{"both", true, true, []string{"--if-size-differ", "--dry-run", src, dst}},
+		{"plain", false, []string{src, dst}},
+		{"checksum", true, []string{"--if-size-differ", src, dst}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := buildPushCpArgs(c.checksum, c.dryRun, src, dst)
+			got := buildPushCpArgs(c.checksum, src, dst)
 			if strings.Join(got, " ") != strings.Join(c.want, " ") {
 				t.Fatalf("got %q want %q", got, c.want)
 			}

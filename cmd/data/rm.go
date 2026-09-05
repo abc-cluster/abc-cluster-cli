@@ -67,26 +67,36 @@ Examples:
 				return err
 			}
 
-			rmArgs := make([]string, 0, len(args)+1)
-			if dryRun {
-				rmArgs = append(rmArgs, "--dry-run")
+			// --recursive turns a prefix into the glob s5cmd requires, and a bare
+			// prefix without it is refused here so the error names --recursive
+			// rather than surfacing s5cmd's "forgot wildcard character?".
+			rmArgs, err := expandRecursiveTargets(args, recursive)
+			if err != nil {
+				return err
 			}
-			rmArgs = append(rmArgs, args...)
+
+			// s5cmd's --dry-run is a GLOBAL flag: it must precede the subcommand.
+			// Passing it after "rm" made it "flag provided but not defined", so the
+			// preview — the safety mechanism on an irreversible verb — always failed.
+			var globalFlags []string
+			if dryRun {
+				globalFlags = append(globalFlags, "--dry-run")
+			}
 
 			if !yes && !dryRun {
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"Permanently remove %d target(s)? This cannot be undone (use 'abc data delete' for a recoverable delete).\n",
-					len(args))
+					len(rmArgs))
 				if !confirmYesNo(cmd.ErrOrStderr(), "Type 'y' to confirm: ") {
 					return fmt.Errorf("aborted")
 				}
 			}
 
-			return execTool(s5, s5cmdArgs(actx, "rm", rmArgs), s3Env(actx))
+			return execTool(s5, s5cmdArgs(actx, "rm", rmArgs, globalFlags...), s3Env(actx))
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
-	cmd.Flags().BoolVar(&recursive, "recursive", false, "remove all objects under a prefix (use a trailing /* with s5cmd globbing)")
+	cmd.Flags().BoolVar(&recursive, "recursive", false, "remove every object under a prefix (required for a prefix target)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be removed without removing")
 	return cmd
 }

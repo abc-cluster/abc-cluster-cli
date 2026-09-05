@@ -128,8 +128,14 @@ Examples:
 			if parallel > 0 {
 				globalFlags = append(globalFlags, "--numworkers", fmt.Sprintf("%d", parallel))
 			}
+			// --dry-run is GLOBAL in s5cmd: after the subcommand it is rejected as
+			// an undefined flag, so the preview never ran and the command errored
+			// out with s5cmd's usage instead.
+			if dryRun {
+				globalFlags = append(globalFlags, "--dry-run")
+			}
 
-			cpArgs := buildPushCpArgs(checksum, dryRun, localPath, s3URI)
+			cpArgs := buildPushCpArgs(checksum, localPath, s3URI)
 
 			return execTool(bin, s5cmdArgs(cfg.ActiveCtx(), "cp", cpArgs, globalFlags...), s3Env(cfg.ActiveCtx()))
 		},
@@ -173,13 +179,10 @@ func normalizePushDir(localPath, s3URI string) (string, string) {
 // skip flag (`--if-checksum-differ` does not exist; that was the root cause of
 // bugs G-D and G-E). `--if-size-differ` gives idempotent, resumable re-pushes for
 // immutable objects and matches LocalPushToS3 / LocalFetchFromS3.
-func buildPushCpArgs(checksum, dryRun bool, localPath, s3URI string) []string {
+func buildPushCpArgs(checksum bool, localPath, s3URI string) []string {
 	var cpArgs []string
 	if checksum {
 		cpArgs = append(cpArgs, "--if-size-differ")
-	}
-	if dryRun {
-		cpArgs = append(cpArgs, "--dry-run")
 	}
 	cpArgs = append(cpArgs, localPath, s3URI)
 	return cpArgs

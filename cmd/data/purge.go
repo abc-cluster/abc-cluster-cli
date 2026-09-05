@@ -77,11 +77,14 @@ Examples:
 			// --all-versions is a flag on the rm subcommand (it follows "rm"),
 			// not a global flag — so it goes into rmArgs, not globalFlags.
 			rmArgs := []string{"--all-versions"}
-			if dryRun {
-				rmArgs = append(rmArgs, "--dry-run")
-			}
 			rmArgs = append(rmArgs, args...)
-			full := s5cmdArgs(actx, "rm", rmArgs)
+			// --dry-run is GLOBAL in s5cmd and must precede the subcommand;
+			// after "rm" it is rejected as an undefined flag.
+			var globalFlags []string
+			if dryRun {
+				globalFlags = append(globalFlags, "--dry-run")
+			}
+			full := s5cmdArgs(actx, "rm", rmArgs, globalFlags...)
 
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"purging all versions of %d target(s)...\n", len(args))
