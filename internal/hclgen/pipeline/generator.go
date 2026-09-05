@@ -27,8 +27,8 @@ type Spec struct {
 	// generator falls back to the CLI's nomadAddr (legacy behaviour).
 	HeadNomadAddr string
 
-	CPU             int
-	MemoryMB        int
+	CPU      int
+	MemoryMB int
 	// HeadDiskMB is the head group's ephemeral_disk size in MB. The head needs
 	// real scratch when Nextflow stages foreign input files (e.g. ftp:// FASTQs
 	// pulled into the workdir at workflow init) — Nomad's 300MB default is far
@@ -740,6 +740,22 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 	nfCfgTmpl.SetAttributeValue("destination", cty.StringVal("local/nextflow.headjob.config"))
 	nfCfgTmpl.SetAttributeValue("data", cty.StringVal(buildNextflowConfig(spec)))
 
+	// Template: abc's overridable defaults. The entrypoint copies this to
+	// $NXF_HOME/config, which Nextflow reads below the pipeline's own
+	// nextflow.config — so the pipeline can override any of it.
+	nfDefTmpl := taskBody.AppendNewBlock("template", nil).Body()
+	nfDefTmpl.SetAttributeValue("destination", cty.StringVal("local/nextflow.defaults.config"))
+	nfDefTmpl.SetAttributeValue("data", cty.StringVal(buildOverridableDefaults(spec)))
+
+	// Template: the user's --config, as its own file so it can sit between the
+	// repository and the enforced values rather than being concatenated onto
+	// the end of the enforced ones.
+	if strings.TrimSpace(spec.ExtraConfig) != "" {
+		nfUserTmpl := taskBody.AppendNewBlock("template", nil).Body()
+		nfUserTmpl.SetAttributeValue("destination", cty.StringVal("local/nextflow.user.config"))
+		nfUserTmpl.SetAttributeValue("data", cty.StringVal(spec.ExtraConfig))
+	}
+
 	// Template: AWS credentials from Nomad Variables.
 	//
 	// Single source of truth shared with the per-process secrets directive that
@@ -975,21 +991,19 @@ process {
 	// historical single nf-nomad line. An empty NfPluginVersion renders the
 	// bare `id "nf-nomad"` form (Nextflow resolves it to the newest published
 	// release); a literal `@` suffix would be rejected by the plugin index.
-	pluginsBody := `  id "nf-nomad"`
-	if spec.NfPluginVersion != "" {
-		pluginsBody = fmt.Sprintf(`  id "nf-nomad@%s"`, spec.NfPluginVersion)
+	// abc's own executor plugins are enforced: they are how the run reaches the
+	// cluster at all, and a pipeline replacing them has no working executor.
+	// Everything else in the list is the pipeline's business and is emitted into
+	// the overridable defaults instead, where a repository pin wins — which is
+	// what nf-core/viralrecon needs when it pins nf-schema@2.5.1.
+	//
+	// Note this also repairs a swallow: a non-empty spec.Plugins used to REPLACE
+	// the whole block, so supplying any plugin silently dropped nf-nomad.
+	var enforcedPlugins []string
+	for _, p := range abcEnforcedPlugins(spec) {
+		enforcedPlugins = append(enforcedPlugins, p)
 	}
-	if len(spec.Plugins) > 0 {
-		var lines []string
-		for _, p := range spec.Plugins {
-			if p.Version != "" {
-				lines = append(lines, fmt.Sprintf(`  id "%s@%s"`, p.ID, p.Version))
-			} else {
-				lines = append(lines, fmt.Sprintf(`  id "%s"`, p.ID))
-			}
-		}
-		pluginsBody = strings.Join(lines, "\n")
-	}
+	pluginsBody := strings.Join(enforcedPlugins, "\n")
 
 	// Container runtime block: docker (default), singularity, apptainer, or podman.
 	// For singularity/apptainer with Wave, ociAutoPull lets the local runtime convert
@@ -1062,22 +1076,14 @@ fusion {
 
 process {
   executor      = "nomad"
-  errorStrategy = "retry"
-  // Bumped 1→3: concurrent pipelines briefly overwhelm the single Nomad
-  // server's per-client HTTP connection budget (all heads co-locate on the
-  // platform node, sharing one client IP), surfacing as empty
-  // io.nomadproject.client.ApiException on worker submit. More retries ride
-  // out the transient burst. See abc-universe ADR (nf-nomad concurrent submit).
-  maxRetries    = 3
 }
 
 executor {
-  // Cap concurrent in-flight tasks + submission rate so a single pipeline
-  // doesn't open an unbounded number of connections to the Nomad server.
-  // With heads co-located on the platform node, several pipelines share the
-  // server's per-client-IP connection budget (Nomad default
-  // http_max_conns_per_client = 100), so each pipeline must stay modest.
-  queueSize       = 50
+  // Submission rate is enforced, not advisory: heads co-locate on the platform
+  // node and share the Nomad server's per-client-IP connection budget
+  // (http_max_conns_per_client, default 100). A pipeline raising this harms
+  // every other run on the node, so it is not the pipeline's to set.
+  // queueSize is the pipeline's business and lives in the defaults tier.
   submitRateLimit = "10/1sec"
 }
 
@@ -1102,27 +1108,19 @@ nomad {
   }
   jobs {
     namespace                = "%s"
-    deleteOnCompletion       = false
-    cpuMode                  = "cores"
     privileged               = false
-    failOnPlacementFailure   = true
-    placementFailureTimeout  = "5m"
     %s
     %s
     %s
     %s
-    failures = [
-      restart   : [attempts: 1, mode: "fail"],
-      reschedule: [attempts: 1]
-    ]
   }
 %s}
 %s%s`, pluginsBody, containerBlock, spec.WorkDir, spec.Namespace, volumesLine, identityPassthroughLine(spec.Identity, spec.ExtraPassthroughEnvKeys...), secretPassthroughLine(spec.SecretPassthroughEnvKeys), workerNodePoolLine(spec.WorkerPool), s5cmdBlock, waveBlock, processConstraint)
 
-	if spec.ExtraConfig != "" {
-		sb.WriteString("\n")
-		sb.WriteString(spec.ExtraConfig)
-	}
+	// spec.ExtraConfig (the user's --config) is deliberately NOT appended here
+	// any more. It is emitted as its own file and passed as an earlier -c, so it
+	// still overrides the repository and abc's defaults, but no longer silently
+	// overrides the enforced values it is concatenated after today.
 	return sb.String()
 }
 
@@ -1147,6 +1145,12 @@ func buildEntrypoint(spec Spec) string {
 	// bundle) is dwarfed by image-pull time.
 	nxfHome := "/local/.nxf-home"
 	fmt.Fprintf(&sb, "export NXF_ANSI_LOG=false\nexport NXF_HOME=%s\n", nxfHome)
+	// abc's overridable defaults go to $NXF_HOME/config, the lowest rung of
+	// Nextflow's config chain, so the pipeline's own nextflow.config outranks
+	// them. Written before the plugin bundle is unpacked into $NXF_HOME/plugins
+	// so neither clobbers the other.
+	fmt.Fprintf(&sb, "mkdir -p %s\n", nxfHome)
+	fmt.Fprintf(&sb, "cp /local/nextflow.defaults.config %s/config\n", nxfHome)
 	// NXF_SYNTAX_PARSER=v1 forces the legacy (pre-25) config parser. Required
 	// for pipelines that use bareword "$ENV_VAR" interpolation in nextflow.config
 	// (e.g. nextflow-io/rnaseq-nf v2.3's Azure block). Nextflow 25+ defaults to
@@ -1217,6 +1221,12 @@ func buildEntrypoint(spec Spec) string {
 	}
 
 	fmt.Fprintf(&sb, "nextflow run %s \\\n", spec.Repository)
+	// Order is the whole design: a later -c wins. The user's --config comes
+	// first so it beats the repository and abc's defaults; the enforced file is
+	// last so nothing can displace the values abc must guarantee.
+	if strings.TrimSpace(spec.ExtraConfig) != "" {
+		sb.WriteString("  -c /local/nextflow.user.config \\\n")
+	}
 	sb.WriteString("  -c /local/nextflow.headjob.config")
 	// Explicit Nextflow run name. Required because the head sets
 	// NXF_IGNORE_RESUME_HISTORY=true for S3-cloudcache work dirs (so
@@ -1260,5 +1270,119 @@ func buildEntrypoint(spec Spec) string {
 		sb.WriteString(" \\\n  -params-file /local/params.json")
 	}
 	sb.WriteString("\n")
+	return sb.String()
+}
+
+// isEnforcedPluginID reports whether a plugin id is one abc owns. These are the
+// executor and its work-dir provider: without them the run has no way to reach
+// Nomad, so a pipeline cannot be allowed to replace or unpin them.
+func isEnforcedPluginID(id string) bool {
+	switch strings.TrimSpace(strings.SplitN(id, "@", 2)[0]) {
+	case "nf-nomad", "nf-nomad-s5cmd":
+		return true
+	}
+	return false
+}
+
+// abcEnforcedPlugins returns the `id "..."` lines for the plugins abc owns,
+// honouring an explicit version pin from the spec where one is given.
+func abcEnforcedPlugins(spec Spec) []string {
+	nomadLine := `  id "nf-nomad"`
+	if spec.NfPluginVersion != "" {
+		nomadLine = fmt.Sprintf(`  id "nf-nomad@%s"`, spec.NfPluginVersion)
+	}
+	out := []string{nomadLine}
+	// A spec-supplied pin for one of abc's own plugins replaces the default
+	// line rather than being dropped into the overridable tier.
+	for _, p := range spec.Plugins {
+		if !isEnforcedPluginID(p.ID) {
+			continue
+		}
+		if p.ID == "nf-nomad" {
+			if p.Version != "" {
+				out[0] = fmt.Sprintf(`  id "nf-nomad@%s"`, p.Version)
+			}
+			continue
+		}
+		if p.Version != "" {
+			out = append(out, fmt.Sprintf(`  id "%s@%s"`, p.ID, p.Version))
+		} else {
+			out = append(out, fmt.Sprintf(`  id "%s"`, p.ID))
+		}
+	}
+	return out
+}
+
+// pipelinePlugins returns the `id "..."` lines for plugins that are NOT abc's,
+// which belong in the overridable tier so a repository pin can win.
+func pipelinePlugins(spec Spec) []string {
+	var out []string
+	for _, p := range spec.Plugins {
+		if isEnforcedPluginID(p.ID) {
+			continue
+		}
+		if p.Version != "" {
+			out = append(out, fmt.Sprintf(`  id "%s@%s"`, p.ID, p.Version))
+		} else {
+			out = append(out, fmt.Sprintf(`  id "%s"`, p.ID))
+		}
+	}
+	return out
+}
+
+// buildOverridableDefaults returns abc's opinion about the shape of this run:
+// concurrency, resources and retry behaviour. It is written to $NXF_HOME/config,
+// which Nextflow reads BELOW the repository's own nextflow.config — so a
+// pipeline that sets any of these wins, silently and correctly.
+//
+// Everything abc must guarantee (endpoint, credentials, tenancy, data layout,
+// and the shared Nomad server's connection budget) stays in the enforced config
+// passed as the final -c. See
+// design/exploring/abc-cluster-cli-config-precedence-tiers.md.
+func buildOverridableDefaults(spec Spec) string {
+	var sb strings.Builder
+	sb.WriteString("// abc overridable defaults. Loaded from $NXF_HOME/config, which\n")
+	sb.WriteString("// Nextflow reads BELOW your pipeline's nextflow.config: anything you\n")
+	sb.WriteString("// set in the pipeline, or pass with --config, replaces these.\n\n")
+
+	if plugins := pipelinePlugins(spec); len(plugins) > 0 {
+		sb.WriteString("plugins {\n")
+		sb.WriteString(strings.Join(plugins, "\n"))
+		sb.WriteString("\n}\n\n")
+	}
+
+	sb.WriteString(`process {
+  errorStrategy = "retry"
+  // Concurrent pipelines briefly overwhelm the Nomad server's per-client HTTP
+  // connection budget on worker submit. Retries ride out that burst; lower it
+  // only if your tasks are not safe to re-run.
+  maxRetries    = 3
+}
+
+executor {
+  // Concurrent in-flight tasks. 50 suits a multi-node cluster; a single-node
+  // deployment usually wants far fewer, and the pipeline is the right place to
+  // say so.
+  queueSize = 50
+}
+
+nomad {
+  jobs {
+    deleteOnCompletion = false
+    // "cores" reserves whole physical cores exclusively; "cpu" shares MHz and
+    // raises achievable concurrency on I/O-bound work.
+    cpuMode = "cores"
+    // Left at the plugin's own default. Setting this true fails tasks that are
+    // merely queued behind a saturated node, which on a single-node cluster is
+    // the normal case rather than an error.
+    failOnPlacementFailure  = false
+    placementFailureTimeout = "5m"
+    failures = [
+      restart   : [attempts: 1, mode: "fail"],
+      reschedule: [attempts: 1]
+    ]
+  }
+}
+`)
 	return sb.String()
 }
