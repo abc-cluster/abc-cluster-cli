@@ -6,8 +6,8 @@
 package pipeline
 
 import (
-	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
+	cfg "github.com/abc-cluster/abc-cluster-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -41,6 +41,7 @@ repository URL directly for ad-hoc runs.
 	cmd.AddCommand(
 		newRunCmd(),
 		newRunsCmd(),
+		newStopCmd(),
 		newLogsCmd(),
 		newAddCmd(),
 		newListCmd(),
