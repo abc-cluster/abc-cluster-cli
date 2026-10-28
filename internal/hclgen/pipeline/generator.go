@@ -429,8 +429,15 @@ func usesAbcTools(spec Spec) bool {
 }
 
 // s5cmdBucketAndPrefix splits an S3 URI (e.g. "s3://bucket/prefix/path")
-// into the bucket root ("s3://bucket") and the first path segment ("prefix").
+// into the bucket root ("s3://bucket") and EVERYTHING after it ("prefix/path").
 // Used to populate s5cmd.workDir.bucket and s5cmd.workDir.prefix.
+//
+// The prefix must be the FULL remainder, not just the first segment: nf-nomad-s5cmd
+// writes a task's files to <bucket>/<prefix>/<NN>/<HASH>/ where <NN>/<HASH> is
+// relative to the Nextflow work dir, so <bucket>/<prefix> has to equal the work dir.
+// Keeping only the first segment sent staging for
+// s3://b/users/alice/workdir/run/NN/HASH to s3://b/users/NN/HASH — outside the
+// member's own users/<name>/ prefix, so MinIO denied the write (403 AccessDenied).
 func s5cmdBucketAndPrefix(workDir string) (bucket, prefix string) {
 	// Strip s3:// or s3a:// scheme
 	rest := workDir
@@ -446,12 +453,8 @@ func s5cmdBucketAndPrefix(workDir string) (bucket, prefix string) {
 	}
 	bucketName := rest[:slash]
 	remainder := strings.TrimPrefix(rest[slash:], "/")
-	// Take only the first path segment as the prefix
-	if next := strings.Index(remainder, "/"); next >= 0 {
-		prefix = remainder[:next]
-	} else {
-		prefix = remainder
-	}
+	// The whole remainder is the prefix (trailing slashes trimmed).
+	prefix = strings.TrimRight(remainder, "/")
 	return "s3://" + bucketName, prefix
 }
 

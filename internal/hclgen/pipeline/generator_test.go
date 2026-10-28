@@ -249,6 +249,27 @@ func TestGenerate_S5cmdBlock_SkipTLS(t *testing.T) {
 	})
 }
 
+// Regression: a nested S3 work dir must become the FULL s5cmd.workDir prefix.
+// nf-nomad-s5cmd stages to <bucket>/<prefix>/<NN>/<HASH>/; with only the first
+// segment, s3://b/users/alice/workdir/dev staged to s3://b/users/NN/HASH —
+// outside the member's users/alice/ prefix (403 AccessDenied on MinIO).
+func TestS5cmdBucketAndPrefix(t *testing.T) {
+	cases := []struct{ in, bucket, prefix string }{
+		{"s3://b", "s3://b", ""},
+		{"s3://b/", "s3://b", ""},
+		{"s3://b/work", "s3://b", "work"},
+		{"s3://b/work/", "s3://b", "work"},
+		{"s3://su-sdsct-ceri/users/ottovan/workdir/dev", "s3://su-sdsct-ceri", "users/ottovan/workdir/dev"},
+		{"s3a://b/a/b/c/", "s3://b", "a/b/c"},
+	}
+	for _, c := range cases {
+		b, p := s5cmdBucketAndPrefix(c.in)
+		if b != c.bucket || p != c.prefix {
+			t.Errorf("s5cmdBucketAndPrefix(%q) = (%q, %q), want (%q, %q)", c.in, b, p, c.bucket, c.prefix)
+		}
+	}
+}
+
 // Regression: --worker-exclude-host must be repeatable. A live-observed bug
 // showed the CLI flag silently kept only the last of several repeated
 // values; the generator must fan every entry out to its own `raw` constraint
