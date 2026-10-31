@@ -80,6 +80,10 @@ type dataNomadScriptOpts struct {
 	// ExtraConstraints are additional Nomad placement constraints in "<attr><op><val>"
 	// format, passed as --constraint flags to abc job run.
 	ExtraConstraints []string
+	// NodePool, when set, is passed as --node-pool to abc job run.
+	NodePool string
+	// Tools mounts the abc-tools host volume read-only (abc job run --tools).
+	Tools bool
 }
 
 // placementConstraintExpr returns the Nomad constraint expression for a node UUID or name.
@@ -126,12 +130,28 @@ func submitDataNomadScript(cmd *cobra.Command, opts dataNomadScriptOpts, taskBod
 		image = img
 	}
 
-	jobArgs := buildDataDownloadJobRunArgs(opts.Driver, image, opts.RunName, opts.Artifacts, tmpScript.Name())
+	jobArgs := dataJobRunArgv(opts, image, tmpScript.Name())
+
+	task := exec.Command(execPath, jobArgs...)
+	task.Stdout = cmd.OutOrStdout()
+	task.Stderr = cmd.ErrOrStderr()
+	return task.Run()
+}
+
+// dataJobRunArgv is the full `abc job run` argv for a data-* wrapper job.
+func dataJobRunArgv(opts dataNomadScriptOpts, image, scriptPath string) []string {
+	jobArgs := buildDataDownloadJobRunArgs(opts.Driver, image, opts.RunName, opts.Artifacts, scriptPath)
 
 	// Add placement constraints as CLI flags (before the script-path positional arg).
 	// We cannot rely on #ABC preamble directives because set -euo pipefail in the
 	// script header stops the preamble scanner before reaching any #ABC lines.
 	var constraintArgs []string
+	if p := strings.TrimSpace(opts.NodePool); p != "" {
+		constraintArgs = append(constraintArgs, "--node-pool", p)
+	}
+	if opts.Tools {
+		constraintArgs = append(constraintArgs, "--tools")
+	}
 	if expr := placementConstraintExpr(opts.PlacementNode); expr != "" {
 		constraintArgs = append(constraintArgs, "--constraint", expr)
 	}
@@ -142,13 +162,8 @@ func submitDataNomadScript(cmd *cobra.Command, opts dataNomadScriptOpts, taskBod
 	}
 	if len(constraintArgs) > 0 {
 		// Insert before the last element (the script path positional arg).
-		scriptPath := jobArgs[len(jobArgs)-1]
 		jobArgs = append(jobArgs[:len(jobArgs)-1], constraintArgs...)
 		jobArgs = append(jobArgs, scriptPath)
 	}
-
-	task := exec.Command(execPath, jobArgs...)
-	task.Stdout = cmd.OutOrStdout()
-	task.Stderr = cmd.ErrOrStderr()
-	return task.Run()
+	return jobArgs
 }
