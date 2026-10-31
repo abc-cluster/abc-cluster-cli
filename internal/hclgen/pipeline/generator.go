@@ -1138,6 +1138,15 @@ func buildEntrypoint(spec Spec) string {
 	sb.WriteString("DEBUG_LOG=\"" + spec.WorkDir + "/.head-debug-${NOMAD_ALLOC_ID:-noalloc}.log\"\n")
 	sb.WriteString("mkdir -p \"$(dirname \"$DEBUG_LOG\")\" 2>/dev/null || true\n")
 	sb.WriteString("exec > >(tee -a \"$DEBUG_LOG\") 2>&1\n")
+	// This script is PID 1 in the container, and when PID 1 exits the kernel
+	// kills everything else in the namespace at once — including this tee,
+	// before it has drained the pipe. Whatever was printed last (Nextflow's
+	// final error, or the out-of-memory message) was silently dropped. An EXIT
+	// trap covers every way out, including set -e aborts: close our ends of the
+	// pipe so tee sees EOF, then wait for it. The wait is bounded, because a
+	// stray child still holding the pipe would otherwise keep tee — and this
+	// exit — waiting forever. bash keeps the original exit status through it.
+	sb.WriteString(headTeeDrainTrap)
 	sb.WriteString("echo \"[head] start $(date -u +%Y-%m-%dT%H:%M:%SZ) alloc=${NOMAD_ALLOC_ID:-} job=${NOMAD_JOB_ID:-}\"\n\n")
 	// NXF_HOME is task-local (under /local, the alloc's ephemeral task dir).
 	// This avoids cross-run pollution of the plugins/ tree on shared host
@@ -1223,6 +1232,16 @@ func buildEntrypoint(spec Spec) string {
 		sb.WriteString("done\n\n")
 	}
 
+	// A head the kernel OOM-killed would otherwise be restarted into the same
+	// allocation by Nomad, -resume from cache, reach the same step and die
+	// again — while `abc job status` reports "running" throughout. The retry is
+	// deterministic, so after a CONFIRMED OOM-kill the next attempt stops
+	// immediately and says why. The marker lives in the alloc dir, so it does
+	// not outlive the allocation, and nothing writes it on preemption (the
+	// whole task dies then, including this script), so legitimate restarts
+	// still resume.
+	sb.WriteString(headOOMPreamble)
+	sb.WriteString("set +e\n")
 	fmt.Fprintf(&sb, "nextflow run %s \\\n", spec.Repository)
 	// Order is the whole design: a later -c wins. The user's --config comes
 	// first so it beats the repository and abc's defaults; the enforced file is
@@ -1273,8 +1292,58 @@ func buildEntrypoint(spec Spec) string {
 		sb.WriteString(" \\\n  -params-file /local/params.json")
 	}
 	sb.WriteString("\n")
+	sb.WriteString(headOOMEpilogue)
 	return sb.String()
 }
+
+// headTeeDrainTrap is installed straight after the entrypoint redirects its
+// output through tee; see the call site for why.
+const headTeeDrainTrap = `_abc_tee_pid=$!
+_abc_drain_tee() {
+  exec 1>&- 2>&-
+  _abc_i=0
+  while [ "$_abc_i" -lt 50 ] && kill -0 "$_abc_tee_pid" 2>/dev/null; do
+    sleep 0.1
+    _abc_i=$((_abc_i + 1))
+  done
+}
+trap _abc_drain_tee EXIT
+`
+
+// headOOMPreamble refuses to retry a head whose previous attempt in this
+// allocation was OOM-killed.
+const headOOMPreamble = `_abc_oom_marker="${NOMAD_ALLOC_DIR:-/alloc}/.abc-head-oom-killed"
+if [ -f "$_abc_oom_marker" ]; then
+  echo "[head] FATAL: the previous attempt of this head was OOM-killed ($(cat "$_abc_oom_marker"))." >&2
+  echo "[head]        A retry reaches the same step and fails the same way, so this attempt stops here." >&2
+  echo "[head]        Rerun with a larger head: abc pipeline run ... --memory <MB>" >&2
+  exit 1
+fi
+`
+
+// headOOMEpilogue turns a SIGKILLed nextflow into a message that names the
+// cause and the fix. Exit 137 alone is not proof of an OOM — a manual kill -9
+// looks the same — so the cgroup's own oom_kill counter decides whether to
+// say "out of memory" outright and whether to block the retry.
+const headOOMEpilogue = `_abc_rc=$?
+set -e
+if [ "$_abc_rc" -eq 137 ]; then
+  _abc_limit="${NOMAD_MEMORY_LIMIT:-unknown}"
+  _abc_oom=0
+  if [ -r /sys/fs/cgroup/memory.events ]; then
+    while read -r _k _v; do [ "$_k" = oom_kill ] && _abc_oom="$_v"; done < /sys/fs/cgroup/memory.events
+  fi
+  if [ "${_abc_oom:-0}" -gt 0 ] 2>/dev/null; then
+    echo "[head] FATAL: the Nextflow head ran out of memory and was killed by the kernel (limit ${_abc_limit} MB)." >&2
+    echo "[head]        Rerun with a larger head, e.g. abc pipeline run ... --memory $(( ${NOMAD_MEMORY_LIMIT:-2048} * 2 ))" >&2
+    echo "limit ${_abc_limit} MB at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$_abc_oom_marker" 2>/dev/null || true
+  else
+    echo "[head] FATAL: Nextflow was killed with SIGKILL (exit 137). This is usually the kernel's OOM killer;" >&2
+    echo "[head]        if so, rerun with a larger head via --memory (current limit ${_abc_limit} MB)." >&2
+  fi
+fi
+exit "$_abc_rc"
+`
 
 // isEnforcedPluginID reports whether a plugin id is one abc owns. These are the
 // executor and its work-dir provider: without them the run has no way to reach

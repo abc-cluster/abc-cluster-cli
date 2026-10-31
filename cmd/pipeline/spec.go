@@ -278,6 +278,9 @@ func isS3URI(path string) bool {
 }
 
 // defaults fills in zero-value fields with sensible defaults.
+// defaultHeadMemoryMB is the head job's memory when --memory is not given.
+const defaultHeadMemoryMB = 4096
+
 func (s *PipelineSpec) defaults() {
 	if s.WorkDir == "" {
 		s.WorkDir = "/work/nextflow-work"
@@ -290,7 +293,10 @@ func (s *PipelineSpec) defaults() {
 		s.CPU = 1000
 	}
 	if s.MemoryMB == 0 {
-		s.MemoryMB = 2048
+		// 2048 OOM-killed real pipelines: the head JVM runs Nextflow, holds the
+		// DAG and cache index, and hosts the S3 plugin. CERI-KRISP/CholeraSeq
+		// peaked at 2.28 GiB resident at its clustering stage.
+		s.MemoryMB = defaultHeadMemoryMB
 	}
 	// Head ephemeral disk: this is a Nomad *scheduling reservation* (bin-packing
 	// feasibility), NOT an enforced cap — the docker/exec drivers don't quota the
