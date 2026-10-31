@@ -30,6 +30,8 @@ type downloadOptions struct {
 
 	// placementNode is a Nomad node ID (UUID) or node name; adds a placement constraint.
 	placementNode string
+	// nodePool overrides the context's worker pool for the job (abc job run --node-pool).
+	nodePool string
 
 	// legacy fields kept for backwards compatibility with buildToolScript
 	tool     string
@@ -356,7 +358,10 @@ func buildToolCommand(opts *downloadOptions) (string, error) {
 		// extra is placed between "s5cmd" and "--numworkers" so --tool-args are treated as global flags.
 		// s5cmd uses --numworkers (not --jobs) to control parallelism.
 		if opts.urlFile != "" {
-			cmd = fmt.Sprintf("s5cmd%s --numworkers %d cp --from-file %s %s", extra, parallel, shellEscape(opts.urlFile), shellEscape(dest))
+			// s5cmd cp has no list input; `s5cmd run` reads one command per line.
+			target := strings.TrimRight(dest, "/") + "/"
+			cmd = fmt.Sprintf("while IFS= read -r _u; do if [ -n \"$_u\" ]; then printf 'cp %%s %%s\\n' \"$_u\" %s; fi; done < %s | s5cmd%s --numworkers %d run",
+				shellEscape(target), shellEscape(opts.urlFile), extra, parallel)
 		} else {
 			cmd = fmt.Sprintf("s5cmd%s --numworkers %d cp %s %s", extra, parallel, shellEscape(opts.source), shellEscape(dest))
 		}
@@ -365,19 +370,6 @@ func buildToolCommand(opts *downloadOptions) (string, error) {
 	}
 
 	return cmd, nil
-}
-
-func isClusterOrBucketTarget(dest string) bool {
-	if dest == "" {
-		return false
-	}
-	if strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "./") || strings.HasPrefix(dest, "../") {
-		return false
-	}
-	if strings.Contains(dest, "://") {
-		return false
-	}
-	return true
 }
 
 // storageDestInfo holds the resolved S3 backend connection details and target path
@@ -402,8 +394,17 @@ func resolveStorageDestInfo(storagePath string) (*storageDestInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	ctx := cfg.ActiveCtx()
+	return resolveStorageDestInfoFor(cfg.ActiveCtx(), storagePath)
+}
 
+// resolveStorageDestInfoFor is resolveStorageDestInfo against an explicit context.
+//
+// The keys come from the operator-side admin.services blocks when they are
+// set. A member context has none of those (its cred_source is a broker and its
+// on-disk fields are empty by design), so the keys then come from
+// ResolveS3Creds, the CLI's one broker-aware resolver, which also supplies the
+// endpoint. The keys may still be empty here; callers that upload must check.
+func resolveStorageDestInfoFor(ctx config.Context, storagePath string) (*storageDestInfo, error) {
 	// Prefer rustfs, fall back to minio.
 	endpoint := ctx.RustfsS3APIEndpoint()
 	var envMap map[string]string
@@ -413,13 +414,22 @@ func resolveStorageDestInfo(storagePath string) (*storageDestInfo, error) {
 		endpoint = ctx.MinioS3APIEndpoint()
 		envMap = ctx.AbcNodesMinioStorageCLIEnv()
 	}
+	ak := strings.TrimSpace(envMap["AWS_ACCESS_KEY_ID"])
+	sk := strings.TrimSpace(envMap["AWS_SECRET_ACCESS_KEY"])
+	if ak == "" || sk == "" {
+		// Endpoint and keys are taken together so an operator endpoint is never
+		// paired with a member's keys.
+		if ep, rak, rsk := ResolveS3Creds(ctx); rak != "" && rsk != "" {
+			if ep != "" {
+				endpoint = ep
+			}
+			ak, sk = rak, rsk
+		}
+	}
 	if strings.TrimSpace(endpoint) == "" {
 		return nil, fmt.Errorf("no S3 endpoint configured in active context " +
 			"(set admin.services.rustfs.endpoint or admin.services.minio.endpoint)")
 	}
-
-	ak := strings.TrimSpace(envMap["AWS_ACCESS_KEY_ID"])
-	sk := strings.TrimSpace(envMap["AWS_SECRET_ACCESS_KEY"])
 
 	var bucketPath string
 	sp := strings.TrimSpace(storagePath)
@@ -487,12 +497,28 @@ func buildStorageScript(opts *downloadOptions) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("--destination storage: %w", err)
 	}
+	return buildStorageScriptFor(opts, info)
+}
+
+func buildStorageScriptFor(opts *downloadOptions, info *storageDestInfo) (string, error) {
+	// Without keys s5cmd falls back to the EC2 instance-metadata endpoint,
+	// retries it for minutes and then fails, so an upload with no credentials
+	// looks like a hang rather than an error. Refuse it here instead.
+	if info.accessKey == "" || info.secretKey == "" {
+		return "", fmt.Errorf("--destination storage: no S3 credentials for %s in the active context; "+
+			"a member context gets them from its credential broker (check `abc auth whoami`), "+
+			"an operator context from admin.services.minio or admin.services.rustfs", info.endpoint)
+	}
 
 	const tmpDir = "/tmp/abc-data-dl-tmp"
 
 	// Build the download command pointing at the local temp dir.
 	localOpts := *opts
 	localOpts.destination = tmpDir
+	urlPrelude, err := embedURLFile(&localOpts)
+	if err != nil {
+		return "", err
+	}
 	localCmd, err := buildToolCommand(&localOpts)
 	if err != nil {
 		return "", err
@@ -510,15 +536,15 @@ func buildStorageScript(opts *downloadOptions) (string, error) {
 	sb.WriteString(fmt.Sprintf("echo '│ staging   : %s'\n", tmpDir))
 	sb.WriteString(fmt.Sprintf("echo '│ s3 endpoint : %s'\n", info.endpoint))
 	sb.WriteString(fmt.Sprintf("echo '│ s3 destination : %s'\n", info.bucketPath))
-	if info.accessKey != "" {
-		sb.WriteString(fmt.Sprintf("echo '│ s3 user   : %s (key from active context)'\n", info.accessKey))
-	}
+	sb.WriteString(fmt.Sprintf("echo '│ s3 user   : %s'\n", info.accessKey))
 	sb.WriteString(fmt.Sprintf("echo '│ workers   : %d'\n", parallel))
 	sb.WriteString("echo '│ alloc     : '${NOMAD_ALLOC_ID:-?}'  task: '${NOMAD_TASK_NAME:-?}\n")
 	sb.WriteString("echo '│ namespace : '${NOMAD_NAMESPACE:-?}'  node: '${NOMAD_NODE_NAME:-?}\n")
 	sb.WriteString("echo '╰──────────────────────────────────────────────────────────────╯'\n")
 	sb.WriteString("echo\n")
 
+	sb.WriteString(toolPreflight(opts.tool, "s5cmd"))
+	sb.WriteString(urlPrelude)
 	sb.WriteString(fmt.Sprintf("mkdir -p %s\n", shellEscape(tmpDir)))
 	sb.WriteString("echo '── [1/2] downloading from source ──'\n")
 	sb.WriteString("_t0=$(date +%s)\n")
@@ -529,12 +555,8 @@ func buildStorageScript(opts *downloadOptions) (string, error) {
 	sb.WriteString("echo\n")
 
 	sb.WriteString(fmt.Sprintf("echo '── [2/2] uploading to %s ──'\n", info.bucketPath))
-	if info.accessKey != "" {
-		sb.WriteString(fmt.Sprintf("export AWS_ACCESS_KEY_ID=%s\n", shellEscape(info.accessKey)))
-	}
-	if info.secretKey != "" {
-		sb.WriteString(fmt.Sprintf("export AWS_SECRET_ACCESS_KEY=%s\n", shellEscape(info.secretKey)))
-	}
+	sb.WriteString(fmt.Sprintf("export AWS_ACCESS_KEY_ID=%s\n", shellEscape(info.accessKey)))
+	sb.WriteString(fmt.Sprintf("export AWS_SECRET_ACCESS_KEY=%s\n", shellEscape(info.secretKey)))
 	sb.WriteString("export AWS_REGION=\"${AWS_REGION:-us-east-1}\"\n")
 	sb.WriteString("_t0=$(date +%s)\n")
 	sb.WriteString(fmt.Sprintf("s5cmd --endpoint-url %s --numworkers %d cp '%s/*' %s\n",
@@ -546,43 +568,122 @@ func buildStorageScript(opts *downloadOptions) (string, error) {
 	return sb.String(), nil
 }
 
+// toolBinary maps a --tool name to the executable it runs.
+func toolBinary(tool string) string {
+	if strings.EqualFold(tool, "aria2") {
+		return "aria2c"
+	}
+	return strings.ToLower(tool)
+}
+
+// toolPreflight returns a script fragment that stops the job with a clear
+// message when a needed executable is not on the node, instead of letting the
+// download fail later as "command not found" (exit 127).
+func toolPreflight(tools ...string) string {
+	var sb strings.Builder
+	seen := map[string]bool{}
+	for _, t := range tools {
+		bin := toolBinary(t)
+		if bin == "" || seen[bin] {
+			continue
+		}
+		seen[bin] = true
+		sb.WriteString(fmt.Sprintf("if ! command -v %s >/dev/null 2>&1; then\n", bin))
+		sb.WriteString(fmt.Sprintf("  echo \"[abc data] FATAL: %s is not installed on node ${NOMAD_NODE_NAME:-?} (PATH=$PATH).\" >&2\n", bin))
+		sb.WriteString("  echo \"[abc data]        Pick another --tool, or pin a node that has it with --node / --node-pool.\" >&2\n")
+		sb.WriteString("  exit 127\n")
+		sb.WriteString("fi\n")
+	}
+	return sb.String()
+}
+
+// maxEmbeddedURLFileBytes bounds the URL list embedded in the job spec.
+const maxEmbeddedURLFileBytes = 512 << 10
+
+// embeddedURLFilePath is where the job writes the embedded URL list.
+const embeddedURLFilePath = "/tmp/abc-data-url-list.txt"
+
+// embedURLFile reads --url-file on the submitting machine and returns a script
+// fragment that recreates it inside the task, pointing opts.urlFile at the copy.
+// The path the user passed is local; the job runs elsewhere and cannot read it.
+func embedURLFile(opts *downloadOptions) (string, error) {
+	if opts.urlFile == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(opts.urlFile)
+	if err != nil {
+		return "", fmt.Errorf("--url-file: %w (the list is read on this machine and sent with the job)", err)
+	}
+	if len(data) > maxEmbeddedURLFileBytes {
+		return "", fmt.Errorf("--url-file %s is %d bytes; at most %d can be sent with the job",
+			opts.urlFile, len(data), maxEmbeddedURLFileBytes)
+	}
+	const eof = "ABC_URL_LIST_EOF"
+	var lines []string
+	for _, l := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if l == eof {
+			return "", fmt.Errorf("--url-file %s contains the reserved line %q", opts.urlFile, eof)
+		}
+		lines = append(lines, l)
+	}
+	if len(lines) == 0 {
+		return "", fmt.Errorf("--url-file %s contains no URLs", opts.urlFile)
+	}
+	opts.urlFile = embeddedURLFilePath
+	return fmt.Sprintf("cat > %s <<'%s'\n%s\n%s\n", embeddedURLFilePath, eof, strings.Join(lines, "\n"), eof), nil
+}
+
 func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, uploadEndpoint, uploadToken string) (string, error) {
+	// An s3:// destination is an upload. Only the storage path carries the
+	// credentials and the s5cmd push; anything else handed the URI treats it as
+	// a local directory name (wget -P 's3://…' creates ./s3:/…) and exits 0.
+	if d := opts.destination; strings.HasPrefix(d, "s3://") || strings.HasPrefix(d, "S3://") {
+		if strings.TrimSpace(opts.storagePath) != "" {
+			return "", fmt.Errorf("--destination %s and --storage-path both name the upload target; pass one", d)
+		}
+		routed := *opts
+		routed.destination = "storage"
+		routed.storagePath = d
+		opts = &routed
+	}
 	if opts.destination == "storage" {
 		return buildStorageScript(opts)
-	}
-
-	cmdLine, err := buildToolCommand(opts)
-	if err != nil {
-		return "", err
 	}
 
 	dest := opts.destination
 	if dest == "" {
 		dest = "/tmp/abc-data-download"
 	}
-
-	isS3Dest := strings.HasPrefix(dest, "s3://") || strings.HasPrefix(dest, "S3://")
-
-	var sb strings.Builder
-	if !isS3Dest {
-		sb.WriteString(fmt.Sprintf("mkdir -p %s\n", shellEscape(dest)))
+	if opts.destination != "" && opts.destination != "abc-bucket" && !strings.HasPrefix(dest, "/") {
+		return "", fmt.Errorf("unsupported --destination %q: use storage, s3://bucket/prefix/, or an absolute path on the node", opts.destination)
 	}
 
+	localOpts := *opts
+	urlPrelude, err := embedURLFile(&localOpts)
+	if err != nil {
+		return "", err
+	}
+	cmdLine, err := buildToolCommand(&localOpts)
+	if err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	sb.WriteString(toolPreflight(opts.tool))
+	sb.WriteString(urlPrelude)
+	sb.WriteString(fmt.Sprintf("mkdir -p %s\n", shellEscape(dest)))
+
 	// s5cmd on non-AWS hosts needs a default region.
-	if strings.ToLower(opts.tool) == "s5cmd" && !isS3Dest {
+	if strings.ToLower(opts.tool) == "s5cmd" {
 		sb.WriteString("export AWS_DEFAULT_REGION=us-east-1\n")
 	}
 
 	sb.WriteString("echo '=== Downloading files ==='\n")
 	sb.WriteString(cmdLine + "\n")
-
-	if isS3Dest {
-		return sb.String(), nil
-	}
-
-	if opts.destination == "" {
-		return sb.String(), nil
-	}
 
 	if opts.destination == "abc-bucket" {
 		if strings.TrimSpace(uploadEndpoint) == "" {
@@ -595,15 +696,6 @@ func buildToolScript(opts *downloadOptions, serverURL, accessToken, workspace, u
 		uploadCmd += fmt.Sprintf(" --access-token=%s --workspace=%s", shellEscape(accessToken), shellEscape(workspace))
 		sb.WriteString("echo '=== Uploading to TUS (abc-bucket) ==='\n")
 		sb.WriteString(fmt.Sprintf("find %s -type f -print0 | while IFS= read -r -d '' f; do %s \"$f\"; done\n", shellEscape(dest), uploadCmd))
-		return sb.String(), nil
-	}
-
-	if isClusterOrBucketTarget(opts.destination) {
-		sb.WriteString("echo '=== Uploading via rclone dynamic target ==='\n")
-		sb.WriteString("cat > /tmp/rclone.conf <<'EOF'\n")
-		sb.WriteString("[target]\ntype = s3\nendpoint = https://example-s3-endpoint\naccess_key_id = $RCLONE_ACCESS_KEY\nsecret_access_key = $RCLONE_SECRET_KEY\nregion = us-east-1\n\nEOF\n")
-		sb.WriteString(fmt.Sprintf("rclone --config /tmp/rclone.conf copy %s target:%s --progress\n", shellEscape(dest), shellEscape(opts.destination)))
-		return sb.String(), nil
 	}
 
 	return sb.String(), nil
@@ -695,64 +787,42 @@ func submitJobWithDriver(cmd *cobra.Command, opts *downloadOptions, taskBody, dr
 	submitOpts := dataNomadScriptOpts{
 		RunName:       runName,
 		PlacementNode: opts.placementNode,
+		NodePool:      opts.nodePool,
 		Driver:        driver,
 		Tool:          opts.tool,
 	}
 
-	tool := strings.ToLower(opts.tool)
-
-	if driver == "exec" || driver == "raw_exec" {
-		var artifacts []downloadArtifact
-		type stagedTool struct{ tool, basename string }
-		var staged []stagedTool
-
-		addArtifact := func(toolName, artURL string) {
-			basename := artURL
-			if i := strings.LastIndex(artURL, "/"); i >= 0 {
-				basename = artURL[i+1:]
-			}
-			artifacts = append(artifacts, downloadArtifact{
-				URL:  artURL,
-				Dest: "local/",
-			})
-			staged = append(staged, stagedTool{tool: toolName, basename: basename})
-		}
-
-		if tool != "wget" {
-			if artURL := toolNomadArtifactURL(tool); artURL != "" {
-				addArtifact(tool, artURL)
-			}
-		}
-
-		if opts.destination == "storage" && tool != "s5cmd" {
-			if artURL := toolNomadArtifactURL("s5cmd"); artURL != "" {
-				addArtifact("s5cmd", artURL)
-			}
-		}
-
-		if len(artifacts) > 0 {
-			submitOpts.Artifacts = artifacts
-			var prelude strings.Builder
-			prelude.WriteString("export PATH=\"${NOMAD_TASK_DIR}:${PATH}\"\n")
-			for _, st := range staged {
-				if st.basename == "" || st.tool == "" {
-					continue
-				}
-				prelude.WriteString(fmt.Sprintf(
-					"if [ -f \"${NOMAD_TASK_DIR}/%s\" ] && [ \"%s\" != \"%s\" ]; then mv \"${NOMAD_TASK_DIR}/%s\" \"${NOMAD_TASK_DIR}/%s\"; fi\n",
-					st.basename, st.basename, st.tool, st.basename, st.tool))
-				prelude.WriteString(fmt.Sprintf("chmod +x \"${NOMAD_TASK_DIR}/%s\" 2>/dev/null || true\n", st.tool))
-			}
-			taskBody = prelude.String() + taskBody
-		} else if needsS5cmdBootstrap(driver, tool, opts.destination) {
+	switch driver {
+	case "exec":
+		// ADR-0061: node-side tools come from the read-only abc-tools host
+		// volume, which members may mount. Mounting it also restricts placement
+		// to nodes that carry it, which is what an upload needs: an exec task is
+		// chrooted and cannot see a binary installed anywhere else.
+		//
+		// This replaces staging binaries as Nomad artifacts from
+		// abc-reserved/binary_tools. That needed the operator-local
+		// ~/.abc/binaries/tools.toml, so it never applied to a member, and the
+		// bucket refuses anonymous reads, so where it did apply the artifact
+		// fetch failed the task.
+		submitOpts.Tools = true
+		taskBody = "export PATH=\"" + abcToolsBinDir + ":${PATH}\"\n" + taskBody
+	case "raw_exec":
+		if needsS5cmdBootstrap(driver, opts.tool, opts.destination) {
 			if snippet := s5cmdBootstrapSnippet(rustfsPublicBase()); snippet != "" {
 				taskBody = snippet + taskBody
 			}
 		}
 	}
 
-	return submitDataNomadScript(cmd, submitOpts, taskBody)
+	return submitDataNomadScriptFn(cmd, submitOpts, taskBody)
 }
+
+// submitDataNomadScriptFn is the submit step, replaceable in tests.
+var submitDataNomadScriptFn = submitDataNomadScript
+
+// abcToolsBinDir is where the abc-tools volume's executables appear inside a
+// task that mounts it (`abc job run --tools`).
+const abcToolsBinDir = "/opt/abc-tools/bin"
 
 // toolNomadArtifactURL returns the Nomad artifact source URL for toolName.
 func toolNomadArtifactURL(toolName string) string {
