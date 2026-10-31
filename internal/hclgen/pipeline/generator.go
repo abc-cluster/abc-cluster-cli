@@ -1314,33 +1314,48 @@ trap _abc_drain_tee EXIT
 // allocation was OOM-killed.
 const headOOMPreamble = `_abc_oom_marker="${NOMAD_ALLOC_DIR:-/alloc}/.abc-head-oom-killed"
 if [ -f "$_abc_oom_marker" ]; then
-  echo "[head] FATAL: the previous attempt of this head was OOM-killed ($(cat "$_abc_oom_marker"))." >&2
+  echo "[head] FATAL: the previous attempt of this head ran out of memory ($(cat "$_abc_oom_marker"))." >&2
   echo "[head]        A retry reaches the same step and fails the same way, so this attempt stops here." >&2
   echo "[head]        Rerun with a larger head: abc pipeline run ... --memory <MB>" >&2
   exit 1
 fi
 `
 
-// headOOMEpilogue turns a SIGKILLed nextflow into a message that names the
-// cause and the fix. Exit 137 alone is not proof of an OOM — a manual kill -9
-// looks the same — so the cgroup's own oom_kill counter decides whether to
-// say "out of memory" outright and whether to block the retry.
+// headOOMEpilogue turns an out-of-memory head into a message that names the
+// cause and the fix. There are two ways to run out:
+//
+//   - the kernel kills the container at its limit (exit 137). Exit 137 alone
+//     is not proof — a manual kill -9 looks the same — so the cgroup's own
+//     oom_kill counter decides whether to say "out of memory" outright and
+//     whether to block the retry.
+//   - the JVM exhausts its heap first. With the heap sized below the limit
+//     this is the common case: Nextflow prints "ERROR ~ Java heap space" and
+//     exits 1, which looks like any other failure. The OutOfMemoryError in
+//     this attempt's .nextflow.log (Nextflow rotates the previous one to
+//     .nextflow.log.1) identifies it.
+//
+// Either way the retry is deterministic, so both write the marker.
 const headOOMEpilogue = `_abc_rc=$?
 set -e
+_abc_limit="${NOMAD_MEMORY_LIMIT:-unknown}"
+_abc_bigger="$(( ${NOMAD_MEMORY_LIMIT:-2048} * 2 ))"
 if [ "$_abc_rc" -eq 137 ]; then
-  _abc_limit="${NOMAD_MEMORY_LIMIT:-unknown}"
   _abc_oom=0
   if [ -r /sys/fs/cgroup/memory.events ]; then
     while read -r _k _v; do [ "$_k" = oom_kill ] && _abc_oom="$_v"; done < /sys/fs/cgroup/memory.events
   fi
   if [ "${_abc_oom:-0}" -gt 0 ] 2>/dev/null; then
     echo "[head] FATAL: the Nextflow head ran out of memory and was killed by the kernel (limit ${_abc_limit} MB)." >&2
-    echo "[head]        Rerun with a larger head, e.g. abc pipeline run ... --memory $(( ${NOMAD_MEMORY_LIMIT:-2048} * 2 ))" >&2
-    echo "limit ${_abc_limit} MB at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$_abc_oom_marker" 2>/dev/null || true
+    echo "[head]        Rerun with a larger head, e.g. abc pipeline run ... --memory ${_abc_bigger}" >&2
+    echo "killed by the kernel at the ${_abc_limit} MB limit, $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$_abc_oom_marker" 2>/dev/null || true
   else
     echo "[head] FATAL: Nextflow was killed with SIGKILL (exit 137). This is usually the kernel's OOM killer;" >&2
     echo "[head]        if so, rerun with a larger head via --memory (current limit ${_abc_limit} MB)." >&2
   fi
+elif [ "$_abc_rc" -ne 0 ] && grep -qF 'java.lang.OutOfMemoryError' .nextflow.log 2>/dev/null; then
+  echo "[head] FATAL: the Nextflow head ran out of Java heap (container limit ${_abc_limit} MB)." >&2
+  echo "[head]        Rerun with a larger head, e.g. abc pipeline run ... --memory ${_abc_bigger}" >&2
+  echo "Java heap exhausted under the ${_abc_limit} MB limit, $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$_abc_oom_marker" 2>/dev/null || true
 fi
 exit "$_abc_rc"
 `
