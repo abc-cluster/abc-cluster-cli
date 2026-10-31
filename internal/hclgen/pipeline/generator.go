@@ -201,7 +201,7 @@ type Spec struct {
 
 	// SkipNomadVarCreds, when true, omits the `secrets/aws.env` Nomad
 	// template that reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from
-	// `nomad/jobs/secrets/*` Nomad Variables. Set this when the credentials
+	// the namespace-root `nomad/jobs` Nomad Variable (nomadVarCredsPath). Set this when the credentials
 	// are already injected via StaticEnv (e.g. from admin.services.minio.*
 	// in the active context). Without this flag, the template blocks task
 	// startup on clusters where the Nomad Variable doesn't exist.
@@ -228,6 +228,10 @@ type Spec struct {
 	// path (SkipNomadVarCreds = false).
 	SecretPassthroughEnvKeys []string
 }
+
+// nomadVarCredsPath is the Nomad Variable the head reads its S3 credentials
+// from when they are not baked in (see the secrets/aws.env template).
+const nomadVarCredsPath = "nomad/jobs"
 
 // PluginRef is one entry in a Nextflow plugins { ... } block.
 type PluginRef struct {
@@ -761,26 +765,33 @@ func Generate(spec Spec, nomadAddr, nomadToken, runUUID string) string {
 
 	// Template: AWS credentials from Nomad Variables.
 	//
-	// Single source of truth shared with the per-process secrets directive that
-	// nf-nomad uses for child tasks (see `nomad.jobs.secrets.path` in extra
-	// configs). Both head and workers read AWS_ACCESS_KEY_ID /
-	// AWS_SECRET_ACCESS_KEY from `nomad/jobs/secrets/<NAME>` — the operator
-	// seeds these once, no per-job-name var seeding required.
+	// Reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the namespace-root
+	// variable `nomad/jobs`. A task's workload identity can read only
+	// `nomad/jobs`, `nomad/jobs/<job>` and `nomad/jobs/<job>/<group>/<task>`
+	// (verified on Nomad 1.11.2). The previous path, `nomad/jobs/secrets/<NAME>`,
+	// is readable only by a job whose ID is "secrets", so every real head blocked
+	// on "Missing: nomad.var.block". Workers do not read it: nf-nomad mirrors the
+	// head's AWS_* onto them (SecretPassthroughEnvKeys).
+	//
+	// The root is readable by every job in the namespace, so seed it only where
+	// every submitter may hold the credential (abc-universe
+	// brainstorms/abc-data-platform/2026-10-31-workload-identity-credential-
+	// delivery-evaluation.md).
 	//
 	// Skipped when SkipNomadVarCreds is set (credentials already injected via
 	// StaticEnv). Without this guard the template blocks task startup on
-	// clusters where the Nomad Variable doesn't exist or isn't accessible to
-	// the task's workload identity.
+	// clusters where the Nomad Variable doesn't exist.
 	if !spec.SkipNomadVarCreds {
 		awsTmpl := taskBody.AppendNewBlock("template", nil).Body()
 		awsTmpl.SetAttributeValue("destination", cty.StringVal("secrets/aws.env"))
 		awsTmpl.SetAttributeValue("env", cty.BoolVal(true))
 		awsTmpl.SetAttributeValue("data", cty.StringVal(
-			"{{- with nomadVar \"nomad/jobs/secrets/AWS_ACCESS_KEY_ID\" -}}\n"+
-				"AWS_ACCESS_KEY_ID={{ .AWS_ACCESS_KEY_ID }}\n"+
-				"{{- end }}\n"+
-				"{{- with nomadVar \"nomad/jobs/secrets/AWS_SECRET_ACCESS_KEY\" -}}\n"+
-				"AWS_SECRET_ACCESS_KEY={{ .AWS_SECRET_ACCESS_KEY }}\n"+
+			// Each line is guarded: the root variable often exists for other
+			// keys (wave_token), and an unguarded line would export a junk
+			// value instead of leaving the key unset for the preflight below.
+			"{{- with nomadVar \""+nomadVarCredsPath+"\" -}}\n"+
+				"{{- if .AWS_ACCESS_KEY_ID }}\nAWS_ACCESS_KEY_ID={{ .AWS_ACCESS_KEY_ID }}\n{{- end }}\n"+
+				"{{- if .AWS_SECRET_ACCESS_KEY }}\nAWS_SECRET_ACCESS_KEY={{ .AWS_SECRET_ACCESS_KEY }}\n{{- end }}\n"+
 				"{{- end }}\n",
 		))
 	}
@@ -1148,6 +1159,13 @@ func buildEntrypoint(spec Spec) string {
 	// exit — waiting forever. bash keeps the original exit status through it.
 	sb.WriteString(headTeeDrainTrap)
 	sb.WriteString("echo \"[head] start $(date -u +%Y-%m-%dT%H:%M:%SZ) alloc=${NOMAD_ALLOC_ID:-} job=${NOMAD_JOB_ID:-}\"\n\n")
+	// Without baked credentials an S3 work dir depends on the nomad/jobs
+	// variable. When it lacks the keys, Nextflow's own error ("Cannot create
+	// work-dir … make sure you have write permissions") points at permissions
+	// rather than at the missing variable, so name it here.
+	if !spec.SkipNomadVarCreds && strings.HasPrefix(spec.WorkDir, "s3://") {
+		sb.WriteString(headCredsPreflight)
+	}
 	// NXF_HOME is task-local (under /local, the alloc's ephemeral task dir).
 	// This avoids cross-run pollution of the plugins/ tree on shared host
 	// volumes — observed empirically when an older bundle dropped a now-stale
@@ -1295,6 +1313,15 @@ func buildEntrypoint(spec Spec) string {
 	sb.WriteString(headOOMEpilogue)
 	return sb.String()
 }
+
+// headCredsPreflight stops a head whose S3 credentials were expected from the
+// namespace-root nomad/jobs variable but are not there.
+const headCredsPreflight = `if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+  echo "[head] FATAL: no S3 credentials. They are read from the Nomad variable nomad/jobs in namespace ${NOMAD_NAMESPACE:-?}," >&2
+  echo "[head]        which has no AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. Seed it, or submit from a context that carries MinIO keys." >&2
+  exit 1
+fi
+`
 
 // headTeeDrainTrap is installed straight after the entrypoint redirects its
 // output through tee; see the call site for why.

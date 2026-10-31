@@ -51,7 +51,7 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 		// Inject MinIO / S3 env vars from admin.services.minio.* so the
 		// Nextflow aws { } block can reach the cluster's MinIO instance.
 		// When credentials are present here, skip the nomadVar template that
-		// reads from nomad/jobs/secrets — that template blocks task startup
+		// reads the namespace-root nomad/jobs variable — that template blocks task startup
 		// on clusters where the Nomad Variable doesn't exist.
 		if ep := actx.MinioS3APIEndpoint(); ep != "" {
 			if staticEnv == nil {
