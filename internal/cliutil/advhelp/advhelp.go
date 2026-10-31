@@ -60,7 +60,10 @@ func Register(cmd *cobra.Command, advancedFlagNames []string) {
 		}
 
 		orig(c, args)
-		fmt.Fprint(c.OutOrStderr(), footer)
+		// Same stream as the help text above it. On stderr the pointer to the
+		// hidden flags vanished whenever help was piped (`--help | grep memory`),
+		// which made advanced flags look undocumented rather than tucked away.
+		fmt.Fprint(c.OutOrStdout(), footer)
 	})
 }
 

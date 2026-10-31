@@ -172,6 +172,19 @@ func generateHeadJobHCL(spec *PipelineSpec, nomadAddr, nomadToken, runUUID strin
 		staticEnv = map[string]string{}
 	}
 	staticEnv["NXF_IGNORE_RESUME_HISTORY"] = "true"
+	// Size the head JVM's heap as a share of the container rather than leaving
+	// it at the JVM default of 25%. A percentage, not a fixed -Xmx, so it tracks
+	// the real limit even when the HCL is edited by hand after generation.
+	//
+	// 50% leaves the other half for metaspace, threads, GC structures and the
+	// S3 plugin's direct buffers. Measured on CholeraSeq that non-heap share was
+	// about 550 MB, and a 2 GiB container with -Xmx1500m (73%) was OOM-killed at
+	// 2.07 GB resident — a percentage above about 70% trades a diagnosable
+	// "Java heap space" for a kernel OOM-kill.
+	//
+	// It is the run's shape, not a platform invariant, so --env NXF_JVM_ARGS
+	// (applied below) replaces it.
+	staticEnv["NXF_JVM_ARGS"] = "-XX:MaxRAMPercentage=50"
 	if spec.S5cmdSkipTLS {
 		// Explicit override on the spec wins (e.g. saved pipeline or test).
 		s5cmdSkipTLS = true

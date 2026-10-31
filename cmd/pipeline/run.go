@@ -142,7 +142,7 @@ EXAMPLES
 	// there is no dedicated --nf-plugin-version on `run` — --plugin / --dev-plugins
 	// cover it.
 	cmd.Flags().Int("cpu", 0, "Head job CPU in MHz (default: 1000)")
-	cmd.Flags().Int("memory", 0, "Head job memory in MB (default: 2048)")
+	cmd.Flags().Int("memory", 0, "Head job memory in MB (default: 4096). Raise this if the head is OOM-killed")
 	cmd.Flags().Int("disk", 0, "Head job ephemeral disk in MB for foreign-input staging (default: 4096)")
 	cmd.Flags().Float64("scratch-gb", 0, "Scratch storage reservation (GB) for accounting/emissions reporting")
 
