@@ -85,6 +85,13 @@ type TemplateSpec struct {
 	Data        string
 	Destination string
 	Perms       string // e.g. "0644"; empty uses Nomad's default
+	// Env makes Nomad parse the rendered file as KEY=value lines and export
+	// them into the task environment (template `env = true`).
+	Env bool
+	// ChangeMode is the template change_mode; empty uses Nomad's default
+	// ("restart"). Secret templates use "noop" so a rotated value never
+	// restarts a running batch task.
+	ChangeMode string
 }
 
 type Spec struct {
@@ -443,6 +450,12 @@ func Generate(spec Spec, scriptName, scriptContent string) string {
 		tmplBody.SetAttributeValue("destination", cty.StringVal(t.Destination))
 		if t.Perms != "" {
 			tmplBody.SetAttributeValue("perms", cty.StringVal(t.Perms))
+		}
+		if t.Env {
+			tmplBody.SetAttributeValue("env", cty.BoolVal(true))
+		}
+		if t.ChangeMode != "" {
+			tmplBody.SetAttributeValue("change_mode", cty.StringVal(t.ChangeMode))
 		}
 	}
 

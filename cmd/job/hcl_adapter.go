@@ -94,6 +94,8 @@ func generateHCLFromSpec(spec *jobSpec, scriptName, scriptContent string, static
 		})
 	}
 
+	extraTemplates = append(extraTemplates, secretTemplates(spec, secretsBackendFromConfig())...)
+
 	constraints := make([]jobhcl.Constraint, 0, len(spec.Constraints))
 	for _, c := range spec.Constraints {
 		constraints = append(constraints, jobhcl.Constraint{

@@ -31,6 +31,8 @@ Pass `--dry-run` to print the generated HCL without submitting.
 | `--pixi-cleanup` | Remove the pixi environment from disk after the job finishes |
 | `--mamba-cleanup` | Remove the micromamba environment from disk after the job finishes |
 | `--meta key=value` | Pass Nomad task metadata (repeatable) |
+| `--secret ENV=name` | Export an abc secret as `$ENV` at alloc start (repeatable) |
+| `--secret-file [file=]name` | Write an abc secret to `$NOMAD_SECRETS_DIR/<file>` at alloc start (repeatable) |
 | `--dry-run` | Print Nomad HCL without submitting |
 | `--detach` | Return immediately after submit; do not tail logs |
 | `--namespace NS` | Nomad namespace (default: from config) |
@@ -104,6 +106,8 @@ All flags available on the command line can also be embedded directly in the scr
 | Directive | Example | Description |
 |---|---|---|
 | `--meta=key=value` | `--meta=sample=SRR001` | Nomad task metadata (repeatable) |
+| `--secret=ENV=name` | `--secret=TOKEN=api-token` | Export abc secret `name` (or `secret://name`) as `$ENV`; rendered at alloc start, never stored in the job |
+| `--secret-file=[file=]name` | `--secret-file=rclone.conf=lab-rclone` | Write abc secret `name` to `$NOMAD_SECRETS_DIR/<file>` (mode 0400); for multi-line values |
 | `--port=LABEL` | `--port=http` | Expose a dynamic port |
 
 #### Logging & I/O

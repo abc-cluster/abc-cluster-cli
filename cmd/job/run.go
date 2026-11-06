@@ -132,6 +132,18 @@ CLASS 3 — META  (Nomad meta block → NOMAD_META_<KEY> in the task)
                                Example: --meta=sample_id=S001
                                         → NOMAD_META_SAMPLE_ID=S001
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECRETS  (abc secrets → rendered by Nomad at alloc start; never in the job)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  --secret=<ENV>=<name>        Repeatable. Export abc secret <name> as $ENV.
+                               <name> may be written secret://<name>.
+  --secret-file=[<file>=]<name>
+                               Repeatable. Write the secret to
+                               $NOMAD_SECRETS_DIR/<file> (default <file> = <name>);
+                               use this for multi-line values (rclone.conf, keys).
+                               Reads abc/secrets/<namespace>/<name>; needs a one-time
+                               'abc secrets backend setup --backend nomad' per namespace.
+
 ABC-NODES ENHANCED FLOOR  (automatic env injection)
   For contexts with cluster_type abc-nodes, when capabilities (or synced
   admin.services URLs) indicate Loki / Prometheus / Grafana Alloy, generated
@@ -263,6 +275,10 @@ EXAMPLES
 
 	// Meta + params
 	cmd.Flags().StringToString("meta", nil, "Meta key=value (repeatable)")
+	cmd.Flags().StringArray("secret", nil,
+		"Export an abc secret as an env var at alloc start: ENV_VAR=<name> or ENV_VAR=secret://<name> (repeatable)")
+	cmd.Flags().StringArray("secret-file", nil,
+		"Write an abc secret to $NOMAD_SECRETS_DIR at alloc start: <name> or <file>=<name> (repeatable)")
 	cmd.Flags().StringToString("driver.config", nil, "Driver config key=value (repeatable)")
 	cmd.Flags().String("params-file", "", "YAML params file path")
 
@@ -535,6 +551,20 @@ func applyCLIFlags(cmd *cobra.Command, spec *jobSpec) error {
 			spec.Meta = map[string]string{}
 		}
 		spec.Meta["abc_conda"] = v
+	}
+	if vals, _ := cmd.Flags().GetStringArray("secret"); len(vals) > 0 {
+		for _, v := range vals {
+			if err := parseSecretEnv(spec, v, "flag"); err != nil {
+				return err
+			}
+		}
+	}
+	if vals, _ := cmd.Flags().GetStringArray("secret-file"); len(vals) > 0 {
+		for _, v := range vals {
+			if err := parseSecretFile(spec, v, "flag"); err != nil {
+				return err
+			}
+		}
 	}
 	if m, _ := cmd.Flags().GetStringToString("meta"); len(m) > 0 {
 		if spec.Meta == nil {
@@ -1133,6 +1163,9 @@ func runJob(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := resolveAutoDriver(cmd, spec); err != nil {
+		return err
+	}
+	if err := validateSecretDriver(spec); err != nil {
 		return err
 	}
 

@@ -701,6 +701,22 @@ func applyDirective(spec *jobSpec, directive, marker string) error {
 			}
 			spec.Affinities = append(spec.Affinities, a)
 
+		// ── Secret directives ────────────────────────────────────────────────
+		case "secret":
+			if !hasValue {
+				return fmt.Errorf("#%s --secret requires ENV_VAR=<secret-name>", marker)
+			}
+			if err := parseSecretEnv(spec, val, "#"+marker); err != nil {
+				return err
+			}
+		case "secret-file":
+			if !hasValue {
+				return fmt.Errorf("#%s --secret-file requires [<file>=]<secret-name>", marker)
+			}
+			if err := parseSecretFile(spec, val, "#"+marker); err != nil {
+				return err
+			}
+
 		// ── Meta directive ───────────────────────────────────────────────────
 		case "meta":
 			if !hasValue {

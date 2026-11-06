@@ -19,6 +19,7 @@ import (
 	"github.com/abc-cluster/abc-cluster-cli/internal/debuglog"
 	"github.com/abc-cluster/abc-cluster-cli/internal/floor"
 	"github.com/abc-cluster/abc-cluster-cli/internal/runner"
+	"github.com/abc-cluster/abc-cluster-cli/internal/secretref"
 	"github.com/abc-cluster/abc-cluster-cli/internal/state"
 	"github.com/abc-cluster/abc-cluster-cli/internal/wave"
 	"github.com/spf13/cobra"
@@ -1034,14 +1035,9 @@ func translateSecretParams(spec *PipelineSpec) {
 	ctx := c.ActiveCtx()
 	caps := ctx.Capabilities
 
-	ns := spec.Namespace
-	if ns == "" {
-		ns = "default"
-	}
-
-	backend := "nomad"
-	if caps != nil && (caps.Secrets == "vault" || caps.Secrets == "vault+sealed") {
-		backend = "vault"
+	backend := secretref.BackendFor("")
+	if caps != nil {
+		backend = secretref.BackendFor(caps.Secrets)
 	}
 
 	for k, v := range spec.Params {
@@ -1049,25 +1045,11 @@ func translateSecretParams(spec *PipelineSpec) {
 		if !ok {
 			continue
 		}
-		name, found := strings.CutPrefix(s, "secret://")
+		name, found := secretref.ParseURI(s)
 		if !found {
 			continue
 		}
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if backend == "vault" {
-			spec.Params[k] = fmt.Sprintf(
-				`{{ with secret "secret/data/abc/%s/%s" }}{{ .Data.data.value }}{{ end }}`,
-				ns, name,
-			)
-		} else {
-			spec.Params[k] = fmt.Sprintf(
-				`{{ with nomadVar "abc/secrets/%s/%s" }}{{ index . "value" }}{{ end }}`,
-				ns, name,
-			)
-		}
+		spec.Params[k] = secretref.TemplateRef(backend, spec.Namespace, name)
 	}
 }
 
