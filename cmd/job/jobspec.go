@@ -108,6 +108,15 @@ type jobSpec struct {
 	// ── HPC compatibility env layer ───────────────────────────────────────────
 	IncludeHPCCompatEnv bool
 
+	// ── Secret directives ─────────────────────────────────────────────────────
+	// SecretEnv maps a task env var name to an abc secret name
+	// (#ABC --secret=ENV=name). SecretFiles maps a file name under
+	// $NOMAD_SECRETS_DIR to an abc secret name (#ABC --secret-file=[file=]name).
+	// Both render via Nomad templates at alloc start; the job definition only
+	// ever carries the reference.
+	SecretEnv   map[string]string
+	SecretFiles map[string]string
+
 	// ── Meta directives ───────────────────────────────────────────────────────
 	Meta  map[string]string
 	Conda string
@@ -427,6 +436,18 @@ func mergeSpec(base, override *jobSpec) *jobSpec {
 		for k, v := range override.DriverConfig {
 			base.DriverConfig[k] = v
 		}
+	}
+	for k, v := range override.SecretEnv {
+		if base.SecretEnv == nil {
+			base.SecretEnv = map[string]string{}
+		}
+		base.SecretEnv[k] = v
+	}
+	for k, v := range override.SecretFiles {
+		if base.SecretFiles == nil {
+			base.SecretFiles = map[string]string{}
+		}
+		base.SecretFiles[k] = v
 	}
 	if override.Meta != nil {
 		if base.Meta == nil {

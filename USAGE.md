@@ -598,15 +598,19 @@ $ abc secrets ref my-key --backend vault
 {{ with secret "secret/data/abc/default/my-key" }}{{ .Data.data.value }}{{ end }}
 ```
 
-Use these snippets in job template blocks, or pass `secret://name` in pipeline params (see [`pipeline run`](#pipeline-run) below — the translation is automatic).
+Use these snippets in hand-written job template blocks, `#ABC --secret` / `--secret-file` in [`job run`](#job-run), or `secret://name` in pipeline params (see [`pipeline run`](#pipeline-run) below) — the last two translate automatically.
+
+`secrets list` shows only the secrets your own token may read: Nomad silently filters
+variables by ACL, so a secret written with an admin token may exist even when the list is empty.
 
 ### `secrets backend setup`
 
-Create the Nomad ACL policy that lets job allocations read secrets at runtime (nomad backend only). Requires a token with ACL policy write permissions.
+Create the Nomad ACL policy that lets job allocations read secrets at runtime (nomad backend only). Run once per namespace. Requires a token with `acl:write` (management).
 
 ```bash
-abc secrets backend setup --backend nomad
-# Creates policy "abc-secrets-alloc-read" granting namespace:read on abc/secrets/<namespace>/*
+abc secrets backend setup --backend nomad --namespace su-everest-nf
+# Creates policy "abc-secrets-alloc-read-su-everest-nf": read on abc/secrets/su-everest-nf/*,
+# attached (JobACL) to every job in that namespace
 ```
 
 **Local backend encryption details:**
@@ -1252,6 +1256,36 @@ block so the script can read the value at execution time.
 | Flag / Directive       | Description                                                          |
 |------------------------|----------------------------------------------------------------------|
 | `--meta=<key>=<value>` | Nomad meta block entry (repeatable). Key is uppercased for env access as `NOMAD_META_<KEY>`. |
+
+### Secret flags
+
+| Flag / Directive | Description |
+|------------------|-------------|
+| `--secret=<ENV>=<name>` | Export the abc secret `<name>` (or `secret://<name>`) as `$ENV` in the task (repeatable). |
+| `--secret-file=[<file>=]<name>` | Write the secret to `$NOMAD_SECRETS_DIR/<file>` (default `<file>` = `<name>`, mode `0400`, repeatable). Use for multi-line values such as an `rclone.conf`. |
+
+Both read `abc/secrets/<namespace>/<name>` (the job's namespace) through a Nomad template when the
+allocation starts, so the value never passes through the CLI and never appears in the submitted job
+definition — `abc job run --no-submit` shows only the `nomadVar` reference. Env secrets are rendered
+JSON-quoted into `secrets/abc-secrets.env`, so spaces, `#`, quotes and newlines survive; templates use
+`change_mode = "noop"` so a rotated secret never restarts a running task. Not available with the
+`slurm`/`pbs` drivers (they render no Nomad templates).
+
+```bash
+#!/bin/sh
+#ABC --namespace=su-everest-nf
+#ABC --driver=docker
+#ABC --driver.config.image=rclone/rclone:1.68.2
+#ABC --secret-file=rclone.conf=acacia-rclone-conf
+#ABC --secret=RCLONE_S3_SECRET_ACCESS_KEY=acacia-sk
+export RCLONE_CONFIG="$NOMAD_SECRETS_DIR/rclone.conf"
+rclone lsd acacia:
+```
+
+Prerequisites: the secret exists (`abc secrets set <name> <value> --backend nomad --namespace <ns>`)
+and the namespace's alloc-read policy is in place (`abc secrets backend setup --backend nomad
+--namespace <ns>`, once, with a management token). If either is missing the task stays pending and
+`abc job trace` shows `Missing: nomad.var.block(abc/secrets/<ns>/<name>@…)`.
 
 ### Params file
 

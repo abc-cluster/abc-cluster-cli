@@ -7,13 +7,14 @@ import (
 
 	"github.com/abc-cluster/abc-cluster-cli/cmd/utils"
 	"github.com/abc-cluster/abc-cluster-cli/internal/config"
+	"github.com/abc-cluster/abc-cluster-cli/internal/secretref"
 	"github.com/spf13/cobra"
 )
 
 const nomadSecretsPrefix = "abc/secrets"
 
 func nomadSecretPath(ns, name string) string {
-	return nomadSecretsPrefix + "/" + ns + "/" + name
+	return secretref.NomadPath(ns, name)
 }
 
 // nomadClientForSecrets builds a NomadClient from flags and config fallback.
@@ -96,7 +97,10 @@ func runNomadList(cmd *cobra.Command, cfg *config.Config) error {
 		return fmt.Errorf("list nomad variables: %w", err)
 	}
 	if len(stubs) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No secrets under %s (namespace: %s)\n", listPrefix, ns)
+		// Nomad filters list results by ACL without an error, so an empty
+		// result can also mean "exists, but this token may not read it".
+		fmt.Fprintf(cmd.OutOrStdout(), "No secrets visible under %s (namespace: %s)\n", listPrefix, ns)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Note: Nomad hides variables your token cannot read; secrets set with an admin token may still exist.\n")
 		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "SECRETS (nomad backend, namespace %q):\n", ns)
@@ -122,28 +126,51 @@ func runNomadDelete(cmd *cobra.Command, cfg *config.Config, name string) error {
 }
 
 func nomadSecretRef(ns, name string) string {
-	path := nomadSecretPath(ns, name)
-	return fmt.Sprintf("{{ with nomadVar %q }}{{ index . \"value\" }}{{ end }}", path)
+	return secretref.TemplateRef(secretref.BackendNomad, ns, name)
+}
+
+// allocReadPolicyName is the per-namespace policy that lets job allocations
+// read abc secrets. One policy per namespace: a single shared name would make
+// each `setup --namespace X` overwrite the previous namespace's grant.
+func allocReadPolicyName(ns string) string {
+	return "abc-secrets-alloc-read-" + ns
+}
+
+// allocReadPolicyRules grants read on abc/secrets/<ns>/*. Nomad only accepts
+// a variables rule nested in a namespace block; a top-level `variables` block
+// fails strict policy parsing.
+func allocReadPolicyRules(ns string) string {
+	return fmt.Sprintf("namespace %q {\n  variables {\n    path %q {\n      capabilities = [\"read\"]\n    }\n  }\n}\n",
+		ns, secretref.NomadPolicyPathGlob(ns))
+}
+
+// allocReadPolicyBody is the PUT /v1/acl/policy body. JobACL with only a
+// Namespace attaches the policy to the workload identity of every job in that
+// namespace; without JobACL it is a plain token policy that allocations never
+// receive, so their nomadVar templates block as "Missing".
+func allocReadPolicyBody(ns string) map[string]interface{} {
+	return map[string]interface{}{
+		"Name":        allocReadPolicyName(ns),
+		"Description": "Allows job allocations in namespace " + ns + " to read abc secrets at runtime",
+		"Rules":       allocReadPolicyRules(ns),
+		"JobACL":      map[string]string{"Namespace": ns},
+	}
 }
 
 func runNomadBackendSetup(cmd *cobra.Command, cfg *config.Config) error {
 	nc := nomadClientForSecrets(cmd, cfg)
 	ns := nomadSecretsNamespace(cmd, cfg)
 
-	policyName := "abc-secrets-alloc-read"
-	rules := fmt.Sprintf("variables {\n  path %q {\n    capabilities = [\"read\"]\n  }\n}\n",
-		nomadSecretsPrefix+"/"+ns+"/*")
-
-	body := map[string]interface{}{
-		"Name":        policyName,
-		"Description": "Allows Nomad job allocations to read abc secrets variables at runtime",
-		"Rules":       rules,
+	body := allocReadPolicyBody(ns)
+	name := allocReadPolicyName(ns)
+	if err := nc.ApplyACLPolicy(context.Background(), name, body); err != nil {
+		if strings.Contains(err.Error(), "403") {
+			return fmt.Errorf("permission denied: creating ACL policy %q needs a Nomad token with acl:write (management)", name)
+		}
+		return fmt.Errorf("create ACL policy %q: %w", name, err)
 	}
-	if err := nc.ApplyACLPolicy(context.Background(), policyName, body); err != nil {
-		return fmt.Errorf("create ACL policy %q: %w", policyName, err)
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "ACL policy %q created/updated.\n", policyName)
-	fmt.Fprintf(cmd.OutOrStdout(), "Job allocations can now read secrets under %s/%s/*\n", nomadSecretsPrefix, ns)
+	fmt.Fprintf(cmd.OutOrStdout(), "ACL policy %q created/updated (attached to all jobs in namespace %s).\n", name, ns)
+	fmt.Fprintf(cmd.OutOrStdout(), "Job allocations in %s can now read secrets under %s\n", ns, secretref.NomadPolicyPathGlob(ns))
 	return nil
 }
 

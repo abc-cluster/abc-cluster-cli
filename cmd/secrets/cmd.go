@@ -374,10 +374,13 @@ func newBackendSetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Create the Nomad ACL policy that grants job allocations read access to abc/secrets/*",
-		Long: `Creates (or updates) the "abc-secrets-alloc-read" Nomad ACL policy so that
-job allocations using nomadVar template calls can read secrets at runtime.
+		Long: `Creates (or updates) the "abc-secrets-alloc-read-<namespace>" Nomad ACL
+policy, granting read on abc/secrets/<namespace>/* and attached (JobACL) to every
+job in that namespace, so job allocations using nomadVar template calls — e.g.
+abc job run --secret / --secret-file, or pipeline run secret:// params — can read
+secrets at runtime. Run once per namespace.
 
-Requires an admin Nomad token.`,
+Requires a Nomad token with acl:write (management).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load()

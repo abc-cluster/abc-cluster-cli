@@ -4,6 +4,28 @@ All notable changes to `abc-cluster-cli` are documented here. Format loosely fol
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions before v0.1.40 are
 not individually documented — see `git tag` for the full history.
 
+## v0.1.83 — 2026-11-06
+- `abc job run`: new `--secret=ENV=<name>` and `--secret-file=[<file>=]<name>`
+  (flags and `#ABC` directives) read `abc secrets` into a batch job at alloc
+  start — as an env var, or as a file under `$NOMAD_SECRETS_DIR` for multi-line
+  values such as an `rclone.conf`. The job definition carries only the
+  `nomadVar` reference, never the value. `secret://<name>` is accepted, same as
+  `pipeline run` params. Rejected with the `slurm`/`pbs` drivers, which render
+  no Nomad templates. Previously the only way to get a secret into a job was
+  to hand-edit the generated HCL.
+- `abc secrets backend setup --backend nomad` now actually grants job
+  allocations read access. The policy it wrote put `variables` at the top
+  level, which Nomad's strict policy parser rejects (so setup could never
+  succeed), and it carried no `JobACL`, so even a valid policy would never have
+  reached allocations — their templates block as
+  `Missing: nomad.var.block(...)`. It now nests the rule in
+  `namespace "<ns>" { … }`, attaches it to every job in the namespace, and is
+  named per namespace (`abc-secrets-alloc-read-<ns>`) so setting up a second
+  namespace no longer overwrites the first.
+- `abc secrets list` no longer reports "No secrets" as if the namespace were
+  empty: Nomad hides variables the caller's token cannot read, so the message
+  now says what is *visible* and that admin-written secrets may still exist.
+
 ## v0.1.70 — 2026-07-08
 - `abc job run`: unconstrained runs now default `node_pool` to `worker_pool`
   ("compute") instead of `head_pool` ("platform") — an ad-hoc job script is
