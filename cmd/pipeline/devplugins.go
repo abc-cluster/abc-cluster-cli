@@ -46,7 +46,7 @@ func defaultDevPlugins() []PluginRef {
 // Nextflow at >=26.04.3 or the pinned plugin won't load.
 const (
 	stableNfNomadVersion      = "0.4.4"
-	stableNfNomadS5cmdVersion = "0.1.7"
+	stableNfNomadS5cmdVersion = "0.1.10"
 )
 
 // defaultClusterPlugins is the baseline plugin set this abc-cluster build
