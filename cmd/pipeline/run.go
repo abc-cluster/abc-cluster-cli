@@ -193,7 +193,7 @@ EXAMPLES
 
 	// Pin specific published plugin versions — repeatable, format `id@version`.
 	// Use to test a published plugin release without --dev-plugins, e.g.
-	//   --plugin nf-nomad@0.4.4 --plugin nf-nomad-s5cmd@0.1.7
+	//   --plugin nf-nomad@0.4.4 --plugin nf-nomad-s5cmd@0.1.10
 	// Plugins listed here go directly into the generated plugins {} block;
 	// Nextflow resolves them from its standard registry. Mutually exclusive
 	// with --dev-plugins (validated below).
